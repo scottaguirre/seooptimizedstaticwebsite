@@ -1,0 +1,148 @@
+
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Privicy Policy Page</title>
+    <meta name="description" content="Privicy Policy Page">
+    <meta name="author" content="{{BUSINESS_NAME}}">
+
+
+    <!-- Favicon -->
+    <link rel="icon" href="{{FAVICON_PATH}}" type="image/x-icon" />
+
+
+    <!-- style.css will be auto-injected by HtmlWebpackPlugin -->
+    </head>
+    <body>
+        <header id="headerColor">
+            <!-- Navbar -->
+            <div class="container">
+                <nav class="navbar navbar-expand-lg navbar-light bg-light px-3">
+                    <a class="navbar-brand d-flex align-items-center" href="#">
+                        <img src="{{LOGO_PATH}}" alt="{{LOGO_ALT}}" title="{{LOGO_TITLE}}" height="80" class="me-2">
+                    </a>
+                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                        <span class="navbar-toggler-icon"></span>
+                    </button>
+                    <div class="collapse navbar-collapse" id="navbarNav">
+                        <ul class="navbar-nav ms-auto">
+                            <li class="nav-item"><a class="nav-link" href="/dist/">About Us</a></li>
+                            <li class="nav-item"><a class="nav-link {{FIRST_PAGE_NAME_ACTIVE}}" href="{{LINK_OUTSIDE_NAV_MENU}}">{{FIRST_PAGE_NAME}}</a></li>
+                            <li class="nav-item dropdown">
+                            <button class="btn btn-secondary dropdown-toggle" aria-label="Location links" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                Services
+                            </button>
+                            <ul class="dropdown-menu">
+                                {{DYNAMIC_NAV_MENU}}             
+                            </ul>
+                            </li>
+                        </ul>
+                    </div>
+                </nav>
+            </div>
+        </header>
+
+        
+        <section>
+            <div class="container section-padding">
+                <h1>Privacy Policy</h1>
+                <p>Effective Date: May 15, 2025</p>
+                <p>{{BUSINESS_NAME}} (“we,” “us,” or “our”) operates the website (https://{{DOMAIN}}) (the “Site”).
+                   This Privacy Policy outlines how we collect, use, and safeguard your information when you visit our Site.
+                </p>
+                <p>1. Information We Collect. We may collect the following types of information:
+                   Personal Information: When you submit a contact form, request a quote, or communicate
+                   with us, we may collect personal details such as your name, email address, phone number,
+                   and any other information you provide. Usage Data: We automatically collect information about your
+                   interaction with our Site, including your IP address, browser type, pages visited, and the date and
+                   time of your visit. Cookies:
+                   Our Site uses cookies to enhance user experience. Cookies are small data files stored on your device.
+                   You can configure your browser to refuse cookies, but this may limit some functionalities of the Site.
+                </p>
+                <p>2. How We Use Your Information We use the collected information to: Respond to your
+                   inquiries and provide customer support Send you updates, promotional materials, or other
+                   communications Analyze Site usage to improve our services and user experience Comply with legal obligations
+                </p>
+                <p>3. Sharing Your Information We do not sell or rent your personal information.
+                   We may share your information with: Service Providers: Third-party vendors who assist in operating our
+                   Site and providing services to you, bound by confidentiality agreements. Legal Requirements:
+                   If required by law or in response to valid requests by public authorities.
+                </p>
+                <p>4. Data Security We implement appropriate security measures to protect your personal
+                   information. However, no method of transmission over the Internet or electronic storage
+                   is 100% secure.
+                </p>
+                <p>5. Your Rights Depending on your location, you may have rights under applicable data
+                   protection laws, including: * Accessing the personal information we hold about you *
+                   Requesting correction or deletion of your personal information * Objecting to or
+                   restricting certain processing of your information To exercise these rights, please
+                   contact us at {{EMAIL}}.
+                </p>
+                <p>6. Third-Party Links Our Site may contain links to external websites. We are not
+                   responsible for the privacy practices or content of these third-party sites.
+                </p>
+                <p>7. Children’s Privacy Our services are not directed to individuals under the age of 13.
+                   We do not knowingly collect personal information from children under 13.
+                </p>
+                <p>8. Changes to This Privacy Policy We may update this Privacy Policy periodically.
+                   Changes will be posted on this page with an updated effective date.
+                </p>
+                <p>9. Contact Us If you have any questions about this Privacy Policy, please contact us
+                   at: {{BUSINESS_NAME}} Email: {{EMAIL}}
+                </p>
+            </div>
+        </section>
+
+
+        <!-- Eighth Section: Privacy policy and Socials -->
+        <footer class="text-center text-lg-start mt-auto border-top">
+            <div class="container py-4">
+                <div class="row justify-content-between align-items-center">
+                    <div class="col-md-12 text-md-end d-flex justify-content-center gap-3">
+                        <a href="/dist/accessibility.html">Accessibility</a>
+                        <a href="/dist/terms-of-use.html">Terms of Use</a>
+                        <a href="/dist/privacy-policy.html">Privacy Policy</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="container py-4">
+                <div class="row justify-content-between align-items-center">
+                    <div class="col-md-6 text-md-start mb-3 mb-md-0">
+                        <p class="mb-0">&copy; {{CURRENT_YEAR}} {{BUSINESS_NAME}}. All rights reserved.</p>
+                    </div>
+                    <div class="col-md-6 text-md-end d-flex justify-content-center justify-content-md-end gap-3">
+                        <a href="{{FACEBOOK_URL}}" target="_blank" aria-label="Facebook" rel="noopener noreferrer">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="#1877F2" viewBox="0 0 24 24" aria-label="Facebook">
+                                <path d="M22.675 0H1.325C.593 0 0 .593 0 1.326v21.348C0 23.407.593 24 1.325 24h11.495v-9.294H9.691v-3.622h3.129V8.413c0-3.1 1.894-4.788 4.659-4.788 1.325 0 2.466.099 2.798.143v3.24l-1.922.001c-1.504 0-1.796.715-1.796 1.763v2.31h3.587l-.467 3.622h-3.12V24h6.116C23.406 24 24 23.407 24 22.674V1.326C24 .593 23.407 0 22.675 0z"/>
+                            </svg>            
+                        </a>
+
+                        <a href="{{TWITTER_URL}}" target="_blank" aria-label="Twitter" rel="noopener noreferrer">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="#000000" viewBox="0 0 24 24" aria-label="Twitter (X)">
+                                <path d="M2.25 2h5.64l4.61 6.49L17.11 2h4.64l-7.57 9.35L22 22h-5.7l-5.01-7.03L5.61 22H1l8.08-9.97L2.25 2zm6.38 1.49H5.61l12.15 17.02h3.02L8.63 3.49z"/>
+                            </svg>   
+                        </a>
+
+                        <a href="{{PINTEREST_URL}}" target="_blank" aria-label="Pinterest" rel="noopener noreferrer">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="#E60023" viewBox="0 0 24 24" aria-label="Pinterest">
+                                <path d="M12 0C5.37 0 0 5.37 0 12c0 4.87 3.09 9.03 7.44 10.64-.1-.9-.19-2.28.04-3.26.21-.9 1.38-5.71 1.38-5.71s-.35-.7-.35-1.72c0-1.61.94-2.81 2.11-2.81.99 0 1.46.74 1.46 1.63 0 1-.63 2.49-.96 3.87-.27 1.14.57 2.07 1.69 2.07 2.03 0 3.6-2.14 3.6-5.24 0-2.74-1.97-4.66-4.78-4.66-3.26 0-5.17 2.45-5.17 4.98 0 .99.38 2.06.86 2.64.1.12.11.23.08.36-.09.4-.28 1.27-.32 1.45-.05.21-.17.26-.4.16-1.49-.62-2.42-2.56-2.42-4.11 0-3.35 2.44-6.42 7.05-6.42 3.7 0 6.57 2.64 6.57 6.17 0 3.68-2.31 6.64-5.52 6.64-1.08 0-2.09-.56-2.44-1.22l-.66 2.5c-.24.91-.88 2.05-1.3 2.75.98.3 2.02.46 3.1.46 6.63 0 12-5.37 12-12S18.63 0 12 0z"/>
+                            </svg>            
+                        </a>
+
+                        <a href="{{YOUTUBE_URL}}" target="_blank" aria-label="YouTube" rel="noopener noreferrer">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="#FF0000" viewBox="0 0 576 512" aria-label="YouTube">
+                                <path d="M549.7 124.1c-6.3-23.7-24.9-42.3-48.6-48.6C456.9 64 288 64 288 64S119.1 64 74.9 75.5c-23.7 6.3-42.3 24.9-48.6 48.6C15.8 168.3 15.8 256 15.8 256s0 87.7 10.5 131.9c6.3 23.7 24.9 42.3 48.6 48.6C119.1 448 288 448 288 448s168.9 0 213.1-11.5c23.7-6.3 42.3-24.9 48.6-48.6C560.2 343.7 560.2 256 560.2 256s0-87.7-10.5-131.9zM232 336V176l142 80-142 80z"/>
+                            </svg>            
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </footer>
+    </body>
+</html>
+
+

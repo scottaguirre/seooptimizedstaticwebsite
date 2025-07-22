@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Generate Website Pages</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+</head>
+<body>
+  <div class="container mt-5">
+    <div class="row justify-content-center">
+      <div class="col-lg-10 col-md-12">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <h2 class="mb-4 text-center">Generate Website</h2>
+
+            <!-- Form Start -->
+            <form id="websiteForm" action="/generate" method="POST" enctype="multipart/form-data">
+              <!-- Step 1: Ask page count -->
+              <div class="mb-3">
+                <label for="pageCount" class="form-label">How many pages?</label>
+                <input type="number" class="form-control" id="pageCount" name="pageCount" min="1" required />
+              </div>
+              <div id="pageCountError" class="text-danger mb-3" style="display: none;">
+                Please enter a number greater than 0.
+              </div>
+
+              <!-- Start Process Button -->
+              <button type="button" class="btn btn-primary mb-4" onclick="generateDynamicForm()">Start Process</button>
+
+              <!-- Dynamic Sections Go Here -->
+              <div id="dynamicFormContainer"></div>
+            </form>
+            <!-- Form End -->
+          </div>
+        </div>
+
+        <div class="text-center mt-4">
+          <a href="/dist" target="_blank">View Generated Pages</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    function generateDynamicForm() {
+      const count = parseInt(document.getElementById('pageCount').value);
+      const errorEl = document.getElementById('pageCountError');
+      const container = document.getElementById('dynamicFormContainer');
+
+      if (isNaN(count) || count < 1) {
+        errorEl.style.display = 'block';
+        container.innerHTML = '';
+        return;
+      } else {
+        errorEl.style.display = 'none';
+      }
+
+      container.innerHTML = '';
+
+      // GLOBAL SECTION
+      const globalHTML = `
+        <div class="mb-4">
+          <h4>Global Information</h4>
+          <div class="mb-3">
+            <label for="businessType" class="form-label">Business Type</label>
+            <select class="form-select" id="businessType" name="global[businessType]" required>
+              <option value="">Choose...</option>
+              <option>Plumbing</option>
+              <option>Electrician</option>
+              <option>Concrete Contractor</option>
+              <option>Roofing</option>
+              <option>HVAC</option>
+              <option>Landscaping</option>
+              <option>Law Firm</option>
+            </select>
+          </div>
+
+
+          <div class="mb-3">
+            <label class="form-label">Logo</label>
+            <input type="file" name="global[logo]" class="form-control" accept="image/*" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Favicon</label>
+            <input type="file" name="global[favicon]" class="form-control" accept="image/*" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Business Name</label>
+            <input type="text" name="global[businessName]" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Domain</label>
+            <input type="text" name="global[domain]" class="form-control" placeholder="example.com" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Address</label>
+            <input type="text" name="global[address]" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Location</label>
+            <input type="text" name="global[location]" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Phone</label>
+            <input type="tel" name="global[phone]" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" name="global[email]" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Hours (Days)</label>
+            <input type="text" name="global[hoursDays]" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Hours (Time)</label>
+            <input type="text" name="global[hoursTime]" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Google Map Image</label>
+            <input type="file" name="global[mapImage]" class="form-control" required />
+          </div>
+
+          ${[
+            'facebookUrl',
+            'twitterUrl',
+            'linkedinUrl',
+            'youtubeUrl',
+            'instagramUrl',
+            'pinterestUrl'
+          ].map(field => `
+            <div class="mb-3">
+              <label class="form-label">${field.replace('Url', '').replace(/([A-Z])/g, ' $1')} URL</label>
+              <input type="url" name="global[${field}]" class="form-control" required />
+            </div>
+          `).join('')}
+
+          <hr/>
+        </div>
+      `;
+      container.insertAdjacentHTML('beforeend', globalHTML);
+
+      // PAGE ACCORDION
+      const accordion = document.createElement('div');
+      accordion.className = 'accordion';
+      accordion.id = 'formAccordion';
+
+      for (let i = 0; i < count; i++) {
+        const item = document.createElement('div');
+        item.className = 'accordion-item';
+        item.innerHTML = `
+          <h2 class="accordion-header" id="heading${i}">
+            <button class="accordion-button ${i !== 0 ? 'collapsed' : ''}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${i}" aria-expanded="${i === 0}" aria-controls="collapse${i}">
+              Page ${i + 1}
+            </button>
+          </h2>
+          <div id="collapse${i}" class="accordion-collapse collapse ${i === 0 ? 'show' : ''}" aria-labelledby="heading${i}" data-bs-parent="#formAccordion">
+            <div class="accordion-body">
+              <div class="mb-3">
+                <label class="form-label">Page Filename</label>
+                <input type="text" name="pages[${i}][filename]" class="form-control" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Keyword</label>
+                <input type="text" name="pages[${i}][keyword]" class="form-control" required />
+              </div>
+
+              <div class="mb-3">
+                <h4>Section 1 Heading</h4>
+                <input type="text" name="pages[${i}][section1H2]" class="form-control" required />
+              </div>
+              <hr>
+              <h4>Section 2 Heading</h4>
+              <div class="mb-3">
+                <input type="text" name="pages[${i}][section2H2]" class="form-control" required />
+              </div>
+              <hr>
+              <h4>Section 3 Heading</h4>
+              <div class="mb-3">
+                <input type="text" name="pages[${i}][section3H2]" class="form-control" required />
+              </div>
+              <hr>
+              <h4>Section 4 Heading</h4>
+              <div class="mb-3">
+                <input type="text" name="pages[${i}][section4H2]" class="form-control" required />
+              </div>
+            </div>
+          </div>
+        `;
+        accordion.appendChild(item);
+      }
+
+      container.appendChild(accordion);
+
+      const submitBtn = document.createElement('div');
+      submitBtn.className = 'd-grid mt-4';
+      submitBtn.innerHTML = `<button type="submit" class="btn btn-submit btn-success btn-lg">Create Website</button>`;
+      container.appendChild(submitBtn);
+    }
+  </script>
+  <script src="/js/spinner.js"></script>
+</body>
+</html>
