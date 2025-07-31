@@ -22,15 +22,20 @@ function createPagesPrompt({ globalValues, page, keywords}) {
   You are writing the website content for a local ${category} ${typeOfCompany} named "${businessName}", located in ${location}.
   
   Write 4 sections. Each section must include:
-  - The given heading (use exactly as provided)
-  - Two short, helpful paragraphs that sound natural and professional.
+  - A heading (use ${page.keyword} as a reference to generate the heading)
+  - Two short, helpful paragraphs that sound natural and professional realated to the heading.
 
-  Use these section headings in order:
-1. ${page.section1H2} (for this section besides the 2 paragraphs, also create a relevant subheading. Do NOT include quotes, labels like (H3), or any formatting.).
+  Use this keyword to generate the content in order:
+1. ${page.keyword} (for this section generate a SEO first approach heading.
+    Besides the 2 paragraphs, also create a relevant subheading.
+    Do NOT include quotes, labels like (H3), or any formatting.).
     In the first paragraph of this section include this word ${businessName}.
-2. ${page.section2H2}. In the first paragraph of this section  include this word ${keywords[1]}.
-3. ${page.section3H2}. In the first paragraph of this section include this word ${keywords[2]}.
-4. ${page.section4H2}
+2. ${page.keyword}. for this section generate a human first approach heading.
+   In the first paragraph of this section include this word ${keywords[1]}.
+3. ${page.keyword}. for this section also generate a human first approach heading different from the previous one.
+   In the first paragraph of this section include this word ${keywords[2]}.
+4. ${page.keyword}. for this section also generate a human first approach heading different from the previous one.
+   
 
   
   
@@ -38,20 +43,20 @@ function createPagesPrompt({ globalValues, page, keywords}) {
   
   {
     "section1": {
-      "heading": "${smartTitleCase(normalizeText(page.section1H2))}",
+      "heading": "Heading text",
       "subheading": "Subheading text",
       "paragraphs": ["Paragraph 1", "Paragraph 2"]
     },
     "section2": {
-      "heading": "${smartTitleCase(normalizeText(page.section2H2))}",
+      "heading": "Heading text",
       "paragraphs": ["Paragraph 1", "Paragraph 2"]
     },
     "section3": {
-      "heading": "${smartTitleCase(normalizeText(page.section3H2))}",
+      "heading": "Heading text"",
       "paragraphs": ["Paragraph 1", "Paragraph 2"]
     },
     "section4": {
-      "heading": "${smartTitleCase(normalizeText(page.section4H2))}",
+      "heading": "Heading text"",
       "paragraphs": ["Paragraph 1", "Paragraph 2"]
     },
   }

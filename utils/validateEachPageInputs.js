@@ -4,11 +4,7 @@ const validateEachPageInputs =  function (pages, res){
     for (const [index, page] of Object.entries(pages)) {
         const requiredFields = [
         'filename',
-        'keyword',
-        'section1H2',
-        'section2H2',
-        'section3H2',
-        'section4H2'
+        'keyword'
         ];
 
         const missing = requiredFields.filter(field => !page[field]?.trim());

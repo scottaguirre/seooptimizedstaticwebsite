@@ -4,6 +4,9 @@ const { slugify } = require('./slugify');
 const { injectIndexInterlinks } = require('./injectIndexInterlinks'); 
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { generateAboutUsContent } = require('./generateAboutUsContent');
+const { getHoursDaysText, getHoursTimeText} = require('./formatDaysAndHoursForDisplay');
+const { buildAltText } = require('./buildAltText');
+
 
 
 const predefinedImagesDir = path.join(__dirname, '../src/predefined-images');
@@ -24,7 +27,6 @@ const  buildAboutUsPage =  async function (
         globalValues,
         navMenu,
         jsonLdString,
-        altTexts,
         linkOutsideNavMenu,
         firstPageName,
         firstPageNameActive,
@@ -101,6 +103,8 @@ const  buildAboutUsPage =  async function (
             const sectionsWithLinks = injectIndexInterlinks(globalValues, pages, indexInterlinks, sections);
  
             
+            // Alt text for images
+            const altTexts = buildAltText(globalValues, 'aboutIndex');
               
             aboutus = aboutus
                 .replace(/{{JSON_LD_SCHEMA}}/g, jsonLdString)
@@ -151,8 +155,8 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{NEAR_ME_P2}}/g, sectionsWithLinks.section5.paragraphs[1])
                 .replace(/{{ADDRESS}}/g, globalValues.address)
                 .replace(/{{EMAIL}}/g, globalValues.email)
-                .replace(/{{HOURS_DAYS}}/g, globalValues.hoursDays)
-                .replace(/{{HOURS_TIME}}/g, globalValues.hoursTime)
+                .replace(/{{HOURS_DAYS}}/g, getHoursDaysText(globalValues.is24Hours, globalValues.hours))
+                .replace(/{{HOURS_TIME}}/g, getHoursTimeText(globalValues.is24Hours, globalValues.hours))
                 .replace(/{{PHONE_RAW}}/g, formatPhoneForHref(globalValues.phone))
                 .replace(/{{PHONE_DISPLAY}}/g, globalValues.phone)
                 .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
@@ -160,6 +164,7 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{TWITTER_URL}}/g, globalValues.twitterUrl)
                 .replace(/{{PINTEREST_URL}}/g, globalValues.pinterestUrl)
                 .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
+                .replace(/{{LINKEDIN_URL}}/g, globalValues.linkedinUrl)
                 .replace(/{{DYNAMIC_NAV_MENU}}/g, navMenu)
                 .replace(/{{FIRST_PAGE_NAME_ACTIVE}}/g, firstPageNameActive)
                 .replace(/{{LINK_OUTSIDE_NAV_MENU}}/g, linkOutsideNavMenu)

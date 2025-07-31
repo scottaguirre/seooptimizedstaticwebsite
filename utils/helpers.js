@@ -65,8 +65,6 @@ function validateGlobalFields(global, res) {
     'email',
     'phone',
     'address',
-    'hoursDays',
-    'hoursTime',
     'facebookUrl',
     'twitterUrl',
     'linkedinUrl',
@@ -81,6 +79,13 @@ function validateGlobalFields(global, res) {
     res.status(400).send(`❌ Missing required global fields: ${missing.join(', ')}`);
     return false;
   }
+
+  // Validate business hours input
+  if (!global.is24Hours && (!global.hours || Object.keys(global.hours).length === 0)) {
+    res.status(400).send('❌ Missing business hours configuration.');
+    return false;
+  }
+
 
   return true;
 }

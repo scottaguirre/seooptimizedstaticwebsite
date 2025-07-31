@@ -110,14 +110,32 @@
             <label class="form-label">Email</label>
             <input type="email" name="global[email]" class="form-control" required />
           </div>
+
+
           <div class="mb-3">
-            <label class="form-label">Hours (Days)</label>
-            <input type="text" name="global[hoursDays]" class="form-control" required />
+            <label class="form-label">Business Hours</label>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="is24Hours" name="global[is24Hours]">
+              <label class="form-check-label" for="is24Hours">Open 24 Hours</label>
+            </div>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Hours (Time)</label>
-            <input type="text" name="global[hoursTime]" class="form-control" required />
+
+          <div id="hoursContainer">
+            ${['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map(day => `
+              <div class="row mb-2 align-items-center">
+                <div class="col-sm-2"><strong>${day}</strong></div>
+                <div class="col-sm-5">
+                  <input type="time" class="form-control" name="global[hours][${day.toLowerCase()}][open]" required>
+                </div>
+                <div class="col-sm-5">
+                  <input type="time" class="form-control" name="global[hours][${day.toLowerCase()}][close]" required>
+                </div>
+              </div>
+            `).join('')}
           </div>
+
+          <hr>
+          
           <div class="mb-3">
             <label class="form-label">Google Map Image</label>
             <input type="file" name="global[mapImage]" class="form-control" required />
@@ -165,27 +183,7 @@
               <div class="mb-3">
                 <label class="form-label">Keyword</label>
                 <input type="text" name="pages[${i}][keyword]" class="form-control" required />
-              </div>
-
-              <div class="mb-3">
-                <h4>Section 1 Heading</h4>
-                <input type="text" name="pages[${i}][section1H2]" class="form-control" required />
-              </div>
-              <hr>
-              <h4>Section 2 Heading</h4>
-              <div class="mb-3">
-                <input type="text" name="pages[${i}][section2H2]" class="form-control" required />
-              </div>
-              <hr>
-              <h4>Section 3 Heading</h4>
-              <div class="mb-3">
-                <input type="text" name="pages[${i}][section3H2]" class="form-control" required />
-              </div>
-              <hr>
-              <h4>Section 4 Heading</h4>
-              <div class="mb-3">
-                <input type="text" name="pages[${i}][section4H2]" class="form-control" required />
-              </div>
+              </div>  
             </div>
           </div>
         `;
@@ -198,8 +196,23 @@
       submitBtn.className = 'd-grid mt-4';
       submitBtn.innerHTML = `<button type="submit" class="btn btn-submit btn-success btn-lg">Create Website</button>`;
       container.appendChild(submitBtn);
+      
     }
   </script>
   <script src="/js/spinner.js"></script>
+  <script>
+    document.addEventListener("change", function (e) {
+      if (e.target.id === "is24Hours") {
+        const hoursContainer = document.getElementById("hoursContainer");
+        if (e.target.checked) {
+          hoursContainer.style.display = "none";
+          Array.from(hoursContainer.querySelectorAll("input")).forEach(input => input.required = false);
+        } else {
+          hoursContainer.style.display = "block";
+          Array.from(hoursContainer.querySelectorAll("input")).forEach(input => input.required = true);
+        }
+      }
+    });
+  </script>
 </body>
 </html>

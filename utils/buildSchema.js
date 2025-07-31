@@ -4,8 +4,37 @@ const { getFullStateName } = require('./getFullStateName');
 
 
 const buildSchema = function (globalValues, uploadedImages, index, page, coordinates, reviews){
+
     
-  //console.log(globalValues);
+  function getOpeningHours(globalValues) {
+    if (globalValues.is24Hours === 'on') {
+      return ["Mo-Su 00:00-23:59"];
+    }
+
+    const daysMap = {
+      monday: 'Mo',
+      tuesday: 'Tu',
+      wednesday: 'We',
+      thursday: 'Th',
+      friday: 'Fr',
+      saturday: 'Sa',
+      sunday: 'Su'
+    };
+
+    const openingHours = [];
+
+    for (const day in daysMap) {
+      const open = globalValues.hours?.[day]?.open;
+      const close = globalValues.hours?.[day]?.close;
+
+      if (open && close) {
+        openingHours.push(`${daysMap[day]} ${open}-${close}`);
+      }
+    }
+
+    return openingHours;
+  }
+
   
   const jsonLdString = JSON.stringify({
         "@context": "https://schema.org",
@@ -27,7 +56,8 @@ const buildSchema = function (globalValues, uploadedImages, index, page, coordin
           latitude: coordinates.latitude,
           longitude: coordinates.longitude
         },
-        openingHours: ["Mo 07:30-19:30", "Tu 07:30-19:30", "We 07:30-19:30", "Th 07:30-19:30", "Fr 07:30-19:30", "Sa 07:30-19:30", "Su 07:30-19:30"],
+        openingHours: getOpeningHours(globalValues),
+
         review: reviews
       });
 

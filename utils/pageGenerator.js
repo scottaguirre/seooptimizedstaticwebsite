@@ -28,6 +28,7 @@ const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { generateAboutUsContent } = require('./generateAboutUsContent');
 const { buildInterlinksMap } = require('./buildInterlinksMap');
 const { generatePagesContent } = require('./generatePagesContent');
+const { getHoursDaysText, getHoursTimeText} = require('./formatDaysAndHoursForDisplay');
 
 module.exports = {
   generateMetadata,
@@ -59,5 +60,7 @@ module.exports = {
   injectPagesInterlinks,
   generateAboutUsContent,
   buildInterlinksMap,
-  generatePagesContent
+  generatePagesContent,
+  getHoursDaysText,
+  getHoursTimeText
 };

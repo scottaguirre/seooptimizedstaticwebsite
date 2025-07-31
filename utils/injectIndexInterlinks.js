@@ -38,7 +38,7 @@ function injectIndexInterlinks(globalValues, pages, indexInterlinks, sections) {
           const escapedText = baseAnchorText.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
           const regex = new RegExp(`(^|\\s)(${escapedText})(?=\\s|\\.|,|$)`, 'i');
           const href = `${normalizedSlug}-${slugify(globalValues.location)}.html`;
-    a
+  
           if (regex.test(paragraph)) {
             paragraph = paragraph.replace(
               regex,

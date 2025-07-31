@@ -44,9 +44,10 @@ const {
     copyAllPredefinedImages,
     buildInterlinksMap,
     generatePagesContent,
-    injectPagesInterlinks
+    injectPagesInterlinks,
+    getHoursDaysText,
+    getHoursTimeText
   } = require('../utils/pageGenerator');
-
  
 
 // === Generate Route: POST (handles form submission) ===
@@ -138,7 +139,7 @@ router.post('/generate', upload.any(), async (req, res) => {
    
   
 
-      // 🔁 Build interlink map 
+      // Build interlink map 
       const { interlinkMap } = await buildInterlinksMap(pages);
       const indexInterlinks = interlinkMap['index'] || [];
 
@@ -156,15 +157,15 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
       const globalValues = {
-        businessName: smartTitleCase(normalizeText(global.businessName?.trim())),
+        businessName: normalizeText(global.businessName?.trim()),
         domain: global.domain?.trim(),
         businessType: global.businessType?.trim(),
         email: normalizeText(global.email?.trim()),
         phone: global.phone?.trim(),
         address: normalizeText(global.address?.trim()),
         location: formatCityState(smartTitleCase(normalizeText(global.location?.trim()))),
-        hoursDays: normalizeText(global.hoursDays?.trim()),
-        hoursTime: normalizeText(global.hoursTime?.trim()),
+        is24Hours: global.is24Hours,               // ✅ new: store 24hr toggle (may be 'on' or undefined)
+        hours: global.hours || {}, 
         facebookUrl: global.facebookUrl?.trim() || '#',
         twitterUrl: global.twitterUrl?.trim() || '#',
         pinterestUrl: global.pinterestUrl?.trim() || '#',
@@ -177,6 +178,26 @@ router.post('/generate', upload.any(), async (req, res) => {
       };
 
 
+      // Copy all predefined images to dist/assets and track them 
+      const seenImageSets = new Set();
+
+      for (let i = 0; i < pages.length; i++) {
+        const setIndex = i % 10;
+        if (seenImageSets.has(setIndex)) continue;
+
+        copyAllPredefinedImages({
+          globalValues,
+          uploadedImages,
+          keyword: slugify(pages[i].keyword),
+          index: i,
+          totalPages: pages.length
+        });
+
+        seenImageSets.add(setIndex);
+      }
+
+
+
     
       // Main loop that creates html pages from the template file
       for (const [index, page] of Object.entries(pages)) {
@@ -187,14 +208,12 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
         // Copy predefined images into dist/assets and track them 
-        const keyword = slugify(page.keyword || '');
-
         copyAllPredefinedImages({
           globalValues,
           uploadedImages,
-          keyword,
-          index: Number(index), // pass the index so we can cycle with % 4,
-          totalPages: pages.length
+          keyword: slugify(page.keyword || ''),
+          index: Number(index) // pass the index so we can cycle with % 4,
+
         });
 
 
@@ -206,7 +225,7 @@ router.post('/generate', upload.any(), async (req, res) => {
     
       
         // Build Alt descrptions in object format
-        const altTexts =  buildAltText(globalValues, index);
+        const altTexts =  buildAltText(globalValues, Number(index));
 
        
         page.filename = normalizeText(page.filename);
@@ -224,16 +243,13 @@ router.post('/generate', upload.any(), async (req, res) => {
 
         //  Insert Interlinks to Pages Content 
         const pagesInterlinks = interlinkMap[page.slug] || [];
-        console.log("== interlinkMap for pages generateRoutes.js");
-        console.log(pagesInterlinks);
-        console.log("************");
 
 
-         // Generate Page Sections Content
-         const sections = await generatePagesContent(globalValues, page, pagesInterlinks);
-         const sectionsWithLinks = injectPagesInterlinks(globalValues, pages, page, pagesInterlinks, sections);
-        
-    
+        // Generate Page Sections Content
+        const sections = await generatePagesContent(globalValues, page, pagesInterlinks);
+        const sectionsWithLinks = injectPagesInterlinks(globalValues, pages, page, pagesInterlinks, sections);
+      
+
         template = template
           .replace(/{{JSON_LD_SCHEMA}}/g, jsonLdString)
           .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
@@ -280,8 +296,8 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{LOCATION_AREA}}/g, globalValues.location)
           .replace(/{{ADDRESS}}/g, globalValues.address)
           .replace(/{{EMAIL}}/g, globalValues.email)
-          .replace(/{{HOURS_DAYS}}/g, globalValues.hoursDays)
-          .replace(/{{HOURS_TIME}}/g, globalValues.hoursTime)
+          .replace(/{{HOURS_DAYS}}/g, getHoursDaysText(globalValues.is24Hours, globalValues.hours))
+          .replace(/{{HOURS_TIME}}/g, getHoursTimeText(globalValues.is24Hours, globalValues.hours))
           .replace(/{{PHONE_RAW}}/g, formatPhoneForHref(globalValues.phone))
           .replace(/{{PHONE_DISPLAY}}/g, globalValues.phone)
           .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
@@ -289,6 +305,7 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{TWITTER_URL}}/g, globalValues.twitterUrl)
           .replace(/{{PINTEREST_URL}}/g, globalValues.pinterestUrl)
           .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
+          .replace(/{{LINKEDIN_URL}}/g, globalValues.linkedinUrl)
           .replace(/{{DYNAMIC_NAV_MENU}}/g, navMenu)
           .replace(/{{FIRST_PAGE_NAME_ACTIVE}}/g, firstPageNameActive)
           .replace(/{{LINK_OUTSIDE_NAV_MENU}}/g, linkOutsideNavMenu)
@@ -365,7 +382,6 @@ router.post('/generate', upload.any(), async (req, res) => {
                                 globalValues,
                                 navMenu,
                                 jsonLdString,
-                                altTexts,
                                 linkOutsideNavMenu,
                                 firstPageName,
                                 firstPageNameActive,

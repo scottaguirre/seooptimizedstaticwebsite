@@ -17,8 +17,7 @@ function copyPageImage({
   businessName,
   keyword,
   location,
-  totalPages,
-  setIndex,
+  index,
   uploadedImages
 }) {
   const src = path.join(srcDir, filename);
@@ -37,12 +36,10 @@ function copyPageImage({
   const imagePath = `assets/${newFilename}`;
 
   // Assign this image to every page that cycles to this set
-  for (let i = 0; i < totalPages; i++) {
-    if (i % 4 === setIndex) {
-      uploadedImages[i] ||= {};
-      uploadedImages[i][field] = imagePath;
-    }
-  }
+  uploadedImages[index] ||= {};
+  uploadedImages[index][field] = imagePath;
+    
+  
 }
 
 
@@ -50,11 +47,10 @@ function copyPageImage({
 function copyAllPredefinedImages({ globalValues,
                                    uploadedImages,
                                    keyword,
-                                   index,
-                                   totalPages
+                                   index
                                  }) {
 
-    const imageIndex = index % 4;
+    const imageIndex = index % 10;
     const folder = `page${imageIndex + 1}`;
     const businessType = slugify(globalValues.businessType);
   
@@ -67,8 +63,7 @@ function copyAllPredefinedImages({ globalValues,
       businessName: globalValues.businessName,
       keyword,
       location: globalValues.location,
-      totalPages,
-      setIndex: imageIndex,
+      index,
       uploadedImages
     };
   
