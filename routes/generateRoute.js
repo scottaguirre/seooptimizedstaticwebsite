@@ -258,7 +258,7 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
           .replace(/{{PAGE_TITLE}}/g, meta.title)
           .replace(/{{META_DESCRIPTION}}/g, meta.description)
-          .replace(/{{BUSINESS_NAME}}/g, smartTitleCase(normalizeText(page.filename)))
+          .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName)
           .replace(/{{HERO_IMG_MOBILE}}/g, uploadedImages[index]?.heroMobile || '')
           .replace(/{{HERO_IMG_TABLET}}/g, uploadedImages[index]?.heroTablet || '')
           .replace(/{{HERO_IMG_DESKTOP}}/g, uploadedImages[index]?.heroDesktop || '')

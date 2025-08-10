@@ -112,7 +112,89 @@ const imageDesc = {
                   'section4-2': 'a brand new concrete floor for a new building'
                 }     
 
-            ]
+            ],
+
+  'hvac': [
+            
+            {
+              'hero-mobile': 'a male hvac technician checking an ac unit',
+              'section2-1': 'commercial ducts installation',
+              'section2-2': 'a male hvac technician looking straight at the camera',
+              'section4-1': 'a male hvac technician replacing an ac filter',
+              'section4-2': 'a male hvac technician fixing a mini split ac'
+            },
+            {
+              'hero-mobile': '2 hvac technicians replacing a filter of an outside ac unit',
+              'section2-1': 'a male hvac technician checking a commercial ac unit on the roof of the building',
+              'section2-2': 'an ac unit outside with an ac manifold gauge next to it',
+              'section4-1': 'an hvac technician checking a mini split ac',
+              'section4-2': 'an hvac technician with an ipad filling out a report'
+            },
+            {
+              'hero-mobile': 'an hvac technician with his tools checking an outside ac unite',
+              'section2-1': 'an hvac technician using a scredriver to check the wires of an ac unite',
+              'section2-2': 'an hvac technician smiling at the camera',
+              'section4-1': 'an hvac technician using a ac current meter',
+              'section4-2': 'the hand of a person using an AC control remote to adjust the temperature'
+            },
+            {
+              'hero-mobile': 'an hvac technician in uniform using the manifold gauge to test an ac unit',
+              'section2-1': 'an hvac technician using a small freon tank to refill an ac unit',
+              'section2-2': 'an hvac technician holding a wireless temperature meter to check a vent temperature',
+              'section4-1': 'an hvac technician holding and checking an ac filter',
+              'section4-2': 'an hvac technician cleaning the ducts with a machine'
+            },
+            {
+              'hero-mobile': 'Metal air ducts',
+              'section2-1': 'a male hvac technician with a tool bag smiling at the camera',
+              'section2-2': 'a male hvac technician measuring the temperature with a device',
+              'section4-1': 'metal air ducts attached to the ceiling of a building',
+              'section4-2': 'a white AC unit outside a building'
+            },
+            {
+              'hero-mobile': 'a family outside the house smiling at the camera with a new AC unit next to them',
+              'section2-1': 'a male hvac technician checking a mini split AC unit',
+              'section2-2': '2 AC units outside the house on a concrete slabs next to each other',
+              'section4-1': 'a male hvac technician checking a furnace wiring',
+              'section4-2': 'an AC duct very dirty on the inside'
+            },
+            {
+              'hero-mobile': 'an orange cat laying on the carpet next to an AC vent',
+              'section2-1': 'a hand holding a thermostat showing 72 degree cooling',
+              'section2-2': 'a mini split AC unit mounted on the wall',
+              'section4-1': 'a male hvac technician using a current meter on a furnace unit',
+              'section4-2': 'a male hvac technician on the roof checking an AC unit'
+            },
+            {
+              'hero-mobile': 'a brand new AC unit outside on a concrete slab',
+              'section2-1': 'a mini split AC unit and an traditional AC unit showing',
+              'section2-2': 'a male hvac technician using a scredriver to open an AC unit',
+              'section4-1': 'a mini split AC unit mounted on a wall and the thermostat below it',
+              'section4-2': 'a male hvac technician cleaning the coils of an old AC unit'
+            },
+            {
+              'hero-mobile': 'a male hvac techinican using a screwdriver to open a mini split unit and smiling at the camera',
+              'section2-1': 'a male hvac technician smiling and giving a thumbs-up at the camera',
+              'section2-2': 'an hvac technician cleaning the coils of an AC unit',
+              'section4-1': 'a cool air stream coming out of a vent',
+              'section4-2': 'a family on a couch enjoying the cool air coming from a mini split AC unit'
+            },
+            {
+              'hero-mobile': 'an hvac technician on the front porch smiling at the camera and an AC unit next to him',
+              'section2-1': 'a family cuddling on the couch next to the house furnace',
+              'section2-2': 'a dirty AC duct on the inside next to a clean AC duct on the inside',
+              'section4-1': '3 hvac technician ouside a house smiling at the camera',
+              'section4-2': 'a fog meter device in the living room of a house'
+            },
+            {
+              'hero-mobile': 'traditional AC ducts installed in the attic of a house',
+              'section2-1': 'AC tools on the tailgate of a truck',
+              'section2-2': 'an hvac technician with a screwdriver checking the wiring of a furnace',
+              'section4-1': '2 hvac technician smiling at the camera',
+              'section4-2': 'an hvac technician fixing a mini split AC unit'
+            }     
+
+        ]
 };
 
 

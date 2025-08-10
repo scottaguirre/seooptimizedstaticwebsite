@@ -1,7 +1,4 @@
 
-const { smartTitleCase } = require('./smartTitleCase');
-const { normalizeText  } = require('./normalizeText');
-
 function createPagesPrompt({ globalValues, page, keywords}) {
     const { businessName, location, businessType } = globalValues;
     
