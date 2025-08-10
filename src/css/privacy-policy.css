@@ -311,6 +311,23 @@ footer a {
 }
 
 
+/* Hover-to-open dropdowns on desktop */
+@media (min-width: 992px) { /* matches .navbar-expand-lg breakpoint */
+    .navbar .dropdown:hover > .dropdown-menu {
+      display: block;
+    }
+    /* Keep tight alignment under the trigger */
+    .navbar .dropdown-menu {
+      margin-top: 0;
+    }
+    /* Optional: show active state on the trigger while hovering */
+    .navbar .dropdown:hover > .nav-link {
+      color:green;
+    }
+  }
+  
+
+
     /* 1250 */
 @media (min-width: 1250px) {
 

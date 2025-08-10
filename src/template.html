@@ -36,9 +36,10 @@
           <li class="nav-item"><a class="nav-link" href="/dist/">About Us</a></li>
           <li class="nav-item"><a class="nav-link {{FIRST_PAGE_NAME_ACTIVE}}" href="{{LINK_OUTSIDE_NAV_MENU}}">{{FIRST_PAGE_NAME}}</a></li>
           <li class="nav-item dropdown">
-            <button class="btn btn-secondary dropdown-toggle" aria-label="Location links" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-              Services
-            </button>
+            <a class="nav-link dropdown-toggle" href="#" id="servicesDropdown" role="button"
+               data-bs-toggle="dropdown" aria-expanded="false">
+               Services
+            </a>          
             <ul class="dropdown-menu">
               {{DYNAMIC_NAV_MENU}}             
             </ul>
