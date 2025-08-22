@@ -4,6 +4,32 @@ window.addEventListener('DOMContentLoaded', () => {
 
   form.addEventListener('submit', async function (e) {
     if (isSubmitting) return;
+
+    // ✅ Check for duplicate filenames
+    const filenameInputs = form.querySelectorAll('input[name^="pages"][name$="[filename]"]');
+    const filenames = Array.from(filenameInputs).map(input => input.value.trim().toLowerCase());
+    const duplicates = filenames.filter((item, index) => filenames.indexOf(item) !== index);
+
+    if (duplicates.length > 0) {
+      e.preventDefault();
+
+      // Clear previous highlighting
+      filenameInputs.forEach(input => input.classList.remove('is-invalid'));
+
+      // Highlight the duplicates
+      filenameInputs.forEach(input => {
+        const value = input.value.trim().toLowerCase();
+        if (duplicates.includes(value)) {
+          input.classList.add('is-invalid');
+        }
+      });
+
+
+      alert('Duplicate filenames detected: ' + [...new Set(duplicates)].join(', '));
+      return;
+    }
+
+    // ✅ Proceed with submission
     isSubmitting = true;
     e.preventDefault();
 

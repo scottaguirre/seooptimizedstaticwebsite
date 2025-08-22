@@ -13,8 +13,6 @@ const { formatCityForSchema } = require('./formatCityForSchema');
 const { replaceInProd } = require('./replaceInProd');
 const { removeScriptAndLinkTags } = require('./removeScriptAndLinkTags');
 const { buildAccessibilityPage } = require('./buildAccessibilityPage');
-const { validateEachPageInputs } = require('./validateEachPageInputs');
-const { validateEachPageHasFiles } = require('./validateEachPageHasFiles');
 const { buildSchema } = require('./buildSchema');
 const { buildTermsOfUsePage } = require('./buildTermsOfUsePage');
 const { getFullStateName } = require('./getFullStateName');
@@ -28,6 +26,7 @@ const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { generateAboutUsContent } = require('./generateAboutUsContent');
 const { buildInterlinksMap } = require('./buildInterlinksMap');
 const { generatePagesContent } = require('./generatePagesContent');
+const { googleMap } = require('./googleMap');
 const { getHoursDaysText, getHoursTimeText} = require('./formatDaysAndHoursForDisplay');
 
 module.exports = {
@@ -46,8 +45,6 @@ module.exports = {
   replaceInProd,
   removeScriptAndLinkTags,
   buildAccessibilityPage,
-  validateEachPageInputs,
-  validateEachPageHasFiles,
   buildSchema,
   buildTermsOfUsePage,
   getFullStateName,
@@ -62,5 +59,6 @@ module.exports = {
   buildInterlinksMap,
   generatePagesContent,
   getHoursDaysText,
-  getHoursTimeText
+  getHoursTimeText,
+  googleMap
 };

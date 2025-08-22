@@ -1,4 +1,3 @@
-const openai = require('./openaiClient');
 const axios = require('axios');
 
 // === Get lat/lng from OpenStreetMap (no API key needed) ===

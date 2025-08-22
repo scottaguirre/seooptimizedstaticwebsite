@@ -2,9 +2,15 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
-const { cleanDevFolders, validateGlobalFields } = require('../utils/helpers');
+const { 
+  cleanDevFolders,
+  validateGlobalFields,
+  jsonValidationError,
+  validateEachPageInputs
+ } = require('../utils/helpers');
 const isDev = process.env.NODE_ENV !== 'production';
 const basePath = isDev ? '/dist/' : '/';
 
@@ -34,7 +40,6 @@ const {
     formatCityState,
     slugify,
     buildAccessibilityPage,
-    validateEachPageInputs,
     buildSchema,
     buildTermsOfUsePage,
     buildPrivacyPolicyPage,
@@ -46,7 +51,8 @@ const {
     generatePagesContent,
     injectPagesInterlinks,
     getHoursDaysText,
-    getHoursTimeText
+    getHoursTimeText,
+    googleMap
   } = require('../utils/pageGenerator');
  
 
@@ -78,15 +84,19 @@ router.post('/generate', upload.any(), async (req, res) => {
         'image/jpg'
       ];
     
-      
-    
-      if (!pages || typeof pages !== 'object') {
-          return res.status(400).send('❌ No pages submitted.');
+
+      // Make sure at least one page is submitted and it's subitted the right way
+      if (!pages || typeof pages !== 'object' || Object.keys(pages).length === 0) {
+        return jsonValidationError(res, 400, '❌ No pages submitted.');
       }
+       
   
 
       // Validate global text fields from req.body
-      if(!validateGlobalFields(global, res)) return;
+      const validGlobal = validateGlobalFields(global);
+      if (!validGlobal.ok) {
+        return jsonValidationError(res, 400, validGlobal.error, validGlobal.fields);
+      }
 
   
   
@@ -96,47 +106,59 @@ router.post('/generate', upload.any(), async (req, res) => {
         
 
       for (const file of files) {
-          const globalMatch = file.fieldname.match(/global\[(.*?)\]/);
-          const ext = path.extname(file.originalname);
+        const globalMatch = file.fieldname.match(/global\[(.*?)\]/);
+        const ext = path.extname(file.originalname);
+
+        const businessSlug = slugify(global.businessName);
+        const keywordSlug = slugify(pages[0]?.filename || '');
+        const locationSlug = slugify(global.location || '');
+        const seoPrefix = `${businessSlug}-${keywordSlug}-${locationSlug}`;
 
 
-          const businessSlug = slugify(global.businessName);
-          const keywordSlug = slugify(pages[0]?.keyword || '');
-          const locationSlug = slugify(global.location || '');
-          const seoPrefix = `${businessSlug}-${keywordSlug}-${locationSlug}`;
+        if(globalMatch){
+            const field = globalMatch[1];     
+
+            const newFilename = `${seoPrefix}-${field}${ext}`;
+            const destPath = path.join(assetsDir, newFilename);
+            fs.renameSync(file.path, destPath);
+            uploadedImages.global[field] = `assets/${newFilename}`;
 
 
-          if(globalMatch){
-              const field = globalMatch[1];
+          // if it's the logo, create a 42x42 PNG favicon
+          if (field === 'logo') {
+            const faviconFilename = `${seoPrefix}-favicon-42x42.png`;
+            const faviconPath = path.join(assetsDir, faviconFilename);
 
-              if (field === 'favicon') {
-                if (!allowedFaviconTypes.includes(file.mimetype)) {
-                    return res.status(400).send('❌ Invalid favicon file type. Allowed types: .ico, .png, .svg, .jpg');
-                }
-              }      
+            await sharp(destPath)
+              .resize(42, 42, {
+                fit: 'contain', // keep aspect ratio, pad if needed
+                background: { r: 0, g: 0, b: 0, alpha: 0 } // transparent background
+              })
+              .png()
+              .toFile(faviconPath);
 
-              const newFilename = `${seoPrefix}-${field}${ext}`;
-              const destPath = path.join(assetsDir, newFilename);
-              fs.renameSync(file.path, destPath);
-              uploadedImages.global[field] = `assets/${newFilename}`;
+            uploadedImages.global.favicon = `assets/${faviconFilename}`;
           }
+        }
       }
       
   
       // Check required global files
-      if (
-        !uploadedImages.global.logo ||
-        !uploadedImages.global.favicon ||
-        !uploadedImages.global.mapImage
-      ) {
-        return res.status(400).send('❌ Global image uploads are missing.');
+      if (!uploadedImages.global.logo) {
+        const fields = [];
+        if (!uploadedImages.global.logo)     fields.push({ name: 'global[logo]', message: 'Logo is required' });
+        //if (!uploadedImages.global.mapImage) fields.push({ name: 'global[mapImage]', message: 'Map image is required' });
+        
+        return jsonValidationError(res, 400, '❌ Global image uploads are missing.', fields);
       }
-
+      
 
       
       // Validate Each Page inputs
-      validateEachPageInputs(pages, res);
-   
+      const validPages = validateEachPageInputs(pages);
+      if (!validPages.ok) {
+        return jsonValidationError(res, 400, validPages.error, validPages.fields);
+      }
   
 
       // Build interlink map 
@@ -174,8 +196,14 @@ router.post('/generate', upload.any(), async (req, res) => {
         instagramUrl: global.instagramUrl?.trim() || '#',
         logo: uploadedImages.global.logo || '',
         favicon: uploadedImages.global.favicon || '',
-        mapImage: uploadedImages.global.mapImage || ''
+        //mapImage: uploadedImages.global.mapImage || ''
       };
+
+
+
+      // Google Maps
+      globalValues.mapEmbed = await googleMap(globalValues.address);;
+
 
 
       // Copy all predefined images to dist/assets and track them 
@@ -188,7 +216,7 @@ router.post('/generate', upload.any(), async (req, res) => {
         copyAllPredefinedImages({
           globalValues,
           uploadedImages,
-          keyword: slugify(pages[i].keyword),
+          keyword: slugify(pages[i].filename),
           index: i,
           totalPages: pages.length
         });
@@ -211,7 +239,7 @@ router.post('/generate', upload.any(), async (req, res) => {
         copyAllPredefinedImages({
           globalValues,
           uploadedImages,
-          keyword: slugify(page.keyword || ''),
+          keyword: slugify(page.filename || ''),
           index: Number(index) // pass the index so we can cycle with % 4,
 
         });
@@ -229,7 +257,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
        
         page.filename = normalizeText(page.filename);
-        page.keyword = normalizeText(page.keyword);
+        page.keyword = page.filename;
     
     
         const meta        = await generateMetadata(globalValues.businessName, page.keyword, globalValues.location, formatCityState);
@@ -277,9 +305,9 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{SECTION4_IMG_TITLE1}}/g,  `${altTexts['section4-1']} - ${page.filename}`)
           .replace(/{{SECTION4_IMG_ALT2}}/g,  `${altTexts['section4-2']} - ${page.filename}`)
           .replace(/{{SECTION4_IMG_TITLE2}}/g, `${altTexts['section4-2']} - ${page.filename}`)
-          .replace(/{{MAP_IMAGE}}/g, globalValues.mapImage || '')
-          .replace(/{{MAP_ALT}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
-          .replace(/{{MAP_TITLE}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
+          .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')
+          // .replace(/{{MAP_ALT}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
+          // .replace(/{{MAP_TITLE}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
           .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading)
           .replace(/{{SECTION1_H3}}/g, sectionsWithLinks.section1.subheading)
           .replace(/{{SECTION1_P1}}/g, sectionsWithLinks.section1.paragraphs[0])

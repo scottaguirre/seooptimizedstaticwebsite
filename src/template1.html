@@ -17,7 +17,7 @@
   </script>
 
 <!-- style.css will be auto-injected by HtmlWebpackPlugin -->
-<%= htmlWebpackPlugin.tags.headTags %>
+
 
 </head>
 <body>
@@ -26,24 +26,24 @@
   <div class="container">
     <nav class="navbar navbar-expand-lg navbar-light bg-light px-3">
       <a class="navbar-brand d-flex align-items-center" href="#">
-        <img src="{{LOGO_PATH}}" alt="{{LOGO_ALT}}" title="{{LOGO_TITLE}}" height="80" class="me-2">
+        <img src="{{LOGO_PATH}}" alt="{{LOGO_ALT}}" title="{{LOGO_TITLE}}" width="150" height="90" class="me-2">
       </a>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navbarNav">
         <ul class="navbar-nav ms-auto">
-          <li class="nav-item"><a class="nav-link" href="/">About Us</a></li>
-          <li class="nav-item"><a class="nav-link" href="/services.html">Services</a></li>
+          <li class="nav-item"><a class="nav-link" href="/dist/">About Us</a></li>
+          <li class="nav-item"><a class="nav-link {{FIRST_PAGE_NAME_ACTIVE}}" href="{{LINK_OUTSIDE_NAV_MENU}}">{{FIRST_PAGE_NAME}}</a></li>
           <li class="nav-item dropdown">
-            <button class="btn btn-secondary dropdown-toggle" aria-label="Location links" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-              Locations
-            </button>
+            <a class="nav-link dropdown-toggle" href="#" id="servicesDropdown" role="button"
+               data-bs-toggle="dropdown" aria-expanded="false">
+               Services
+            </a>          
             <ul class="dropdown-menu">
               {{DYNAMIC_NAV_MENU}}             
             </ul>
           </li>
-          <li class="nav-item"><a class="nav-link" href="/blog.html">Blog</a></li>
         </ul>
       </div>
     </nav>
@@ -51,13 +51,14 @@
 </header>
 <!-- Hero section -->
 <div class="container hero-container">
-   <img class="hero-img img-fluid hero-img-mobile"  width="600" height="289" src="{{HERO_IMG_MOBILE}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
-   <img class="hero-img img-fluid hero-img-tablet"  width="750" height="422" src="{{HERO_IMG_TABLET}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
-   <img class="hero-img img-fluid hero-img-desktop" width="1250" height="636"  src="{{HERO_IMG_DESKTOP}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
-   <img class="hero-img img-fluid hero-img-large" width="1366" height="706" src="{{HERO_IMG_LARGE}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
+   <img class="hero-img img-fluid hero-img-mobile"  width="600" height="350" src="{{HERO_IMG_MOBILE}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
+   <img class="hero-img img-fluid hero-img-tablet"  width="750" height="400" src="{{HERO_IMG_TABLET}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
+   <img class="hero-img img-fluid hero-img-desktop" width="1250" height="700"  src="{{HERO_IMG_DESKTOP}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
+   <img class="hero-img img-fluid hero-img-large" width="1400" height="700" src="{{HERO_IMG_LARGE}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
    <div class="text-hero">
      <h1 class="display-4 text-primary">{{BUSINESS_NAME}}</h1>
-     <h2 class="lead">{{TAG_LINE}}</h2>
+     <div class="line-divider"></div>
+     <h2 class="lead">{{LOCATION_AREA}}</h2>
    </div> 
 </div>
 
@@ -85,10 +86,10 @@
   <div class="container section-padding">
     <div class="row">
       <div class="col-md-6 text-center img-1-div">
-        <img class="img-fluid" loading="lazy" src="{{SECTION2_IMG1}}" width="600" height="450" alt="{{SECTION2_IMG_ALT1}}" title="{{SECTION2_IMG_TITLE1}}">
+        <img class="img-fluid" loading="lazy" src="{{SECTION2_IMG1}}" width="600" height="400" alt="{{SECTION2_IMG_ALT1}}" title="{{SECTION2_IMG_TITLE1}}">
       </div>
       <div class="col-md-6 text-center">
-        <img class="img-fluid" loading="lazy" src="{{SECTION2_IMG2}}" width="600" height="450" alt="{{SECTION2_IMG_ALT2}}" title="{{SECTION2_IMG_TITLE2}}">
+        <img class="img-fluid" loading="lazy" src="{{SECTION2_IMG2}}" width="600" height="400" alt="{{SECTION2_IMG_ALT2}}" title="{{SECTION2_IMG_TITLE2}}">
       </div>
     </div>
     <div class="row">
@@ -114,6 +115,7 @@
       <div class=" col-lg-10 div-text-padding-bottom">
         <h2>{{SECTION3_H2}}</h2>
         <p>{{SECTION3_P1}}</p>
+        <p>{{SECTION3_P2}}</p>
       </div> 
     </div>
   </div>
@@ -126,16 +128,17 @@
   <div class="container section-padding">
     <div class="row">
       <div class="col-md-6 text-center img-1-div">
-        <img class="img-fluid" loading="lazy" src="{{SECTION4_IMG1}}" width="600" height="450" alt="{{SECTION4_IMG_ALT1}}" title="{{SECTION4_IMG_TITLE1}}">
+        <img class="img-fluid" loading="lazy" src="{{SECTION4_IMG1}}" width="600" height="400" alt="{{SECTION4_IMG_ALT1}}" title="{{SECTION4_IMG_TITLE1}}">
       </div>
       <div class="col-md-6 text-center">
-        <img class="img-fluid" loading="lazy" src="{{SECTION4_IMG2}}" width="600" height="450" alt="{{SECTION4_IMG_ALT2}}" title="{{SECTION4_IMG_TITLE2}}">
+        <img class="img-fluid" loading="lazy" src="{{SECTION4_IMG2}}" width="600" height="400" alt="{{SECTION4_IMG_ALT2}}" title="{{SECTION4_IMG_TITLE2}}">
       </div>
     </div>
     <div class="row">
         <div class="col-lg-10">
             <h2>{{SECTION4_H2}}</h2>
             <p>{{SECTION4_P1}}</p>
+            <p>{{SECTION4_P2}}</p>
         </div>
     </div>  
   </div>
@@ -143,35 +146,7 @@
 
 
 
-<!-- Fifth Section: Service area -->
-<section>
-  <div class="container section-padding">
-    <div class="row">
-      <div class="col-lg-10"> 
-        <h2>Service Area: All of {{LOCATION_AREA}}</h2>
-        <p>{{SERVICE_AREA_PARAGRAPH}}</p>
-      </div>   
-    </div>
-  </div>
-</section>
-
-<!-- Sixth Section: Locations -->
-<section>
-  <div class="container section-padding">
-    <h2 class="text-center">Locations</h2>
-    <div class="row">
-      <div class="col-md-6 div-text-padding-bottom">
-        {{LOCATION_LIST_LEFT}}
-      </div>
-      <div class="col-md-6">
-        {{LOCATION_LIST_RIGHT}}
-      </div>    
-    </div>
-  </div>
-</section>
-
-
-<!-- Seventh Section: NAP and Map -->
+<!-- Sixth Section: NAP and Map -->
 <section class="nap-map-section">
   <div class="container section-padding ">
     <div class="row">
@@ -197,7 +172,7 @@
       </div>
 
       <div class="col-md-6">
-        <img class="img-fluid map-img" loading="lazy" src="{{MAP_IMAGE}}" width="600" height="450" alt="{{MAP_ALT}}" title="{{MAP_TITLE}}">   
+        <img class="img-fluid map-img" loading="lazy" src="{{MAP_IMAGE}}" width="600" height="400" alt="{{MAP_ALT}}" title="{{MAP_TITLE}}">   
       </div>
 
     </div>
@@ -205,14 +180,14 @@
 </section>
 
 
-  <!-- Eighth Section: Privacy policy and Socials -->
+  <!-- Seventh Section: Privacy policy and Socials -->
   <footer class="text-center text-lg-start mt-auto border-top">
     <div class="container py-4">
       <div class="row justify-content-between align-items-center">
         <div class="col-md-12 text-md-end d-flex justify-content-center gap-3">
-          <a href="/accessibility.html">Accessibility</a>
-          <a href="/terms-of-use.html">Terms of Use</a>
-          <a href="/privacy-policy.html">Privacy Policy</a>
+          <a href="/dist/accessibility.html">Accessibility</a>
+          <a href="/dist/terms-of-use.html">Terms of Use</a>
+          <a href="/dist/privacy-policy.html">Privacy Policy</a>
         </div>
       </div>
     </div>
@@ -247,12 +222,18 @@
               <path d="M549.7 124.1c-6.3-23.7-24.9-42.3-48.6-48.6C456.9 64 288 64 288 64S119.1 64 74.9 75.5c-23.7 6.3-42.3 24.9-48.6 48.6C15.8 168.3 15.8 256 15.8 256s0 87.7 10.5 131.9c6.3 23.7 24.9 42.3 48.6 48.6C119.1 448 288 448 288 448s168.9 0 213.1-11.5c23.7-6.3 42.3-24.9 48.6-48.6C560.2 343.7 560.2 256 560.2 256s0-87.7-10.5-131.9zM232 336V176l142 80-142 80z"/>
             </svg>            
           </a>
+
+
+          <a href="{{LINKEDIN_URL}}" target="_blank" aria-label="LinkedIn" rel="noopener noreferrer">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="#0A66C2" viewBox="0 0 24 24" aria-label="LinkedIn">
+              <path d="M20.447 20.452H17.21V14.85c0-1.336-.027-3.058-1.864-3.058-1.865 0-2.15 1.454-2.15 2.957v5.703h-3.24V9h3.111v1.561h.045c.433-.82 1.493-1.683 3.073-1.683 3.287 0 3.893 2.164 3.893 4.978v6.596zM5.337 7.433a1.875 1.875 0 1 1 0-3.751 1.875 1.875 0 0 1 0 3.751zM6.766 20.452H3.91V9h2.856v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.225 0z"/>
+            </svg>            
+          </a>
+          
         </div>
       </div>
     </div>
-
   </footer>
-  <%= htmlWebpackPlugin.tags.bodyTags %>
-
+  
 </body>
 </html>

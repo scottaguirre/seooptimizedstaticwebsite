@@ -14,6 +14,20 @@
           <div class="card-body">
             <h2 class="mb-4 text-center">Generate Website</h2>
 
+            <!--  Alert message for errors -->
+            <div id="formAlert"
+                 class="alert alert-danger d-none alert-dismissible"
+                 role="alert"
+                 aria-live="polite">
+              <span id="formAlertText"></span>
+              <button type="button"
+                class="btn-close"
+                aria-label="Close"
+                onclick="document.getElementById('formAlert').classList.add('d-none')">
+              </button>
+            </div>
+
+
             <!-- Form Start -->
             <form id="websiteForm" action="/generate" method="POST" enctype="multipart/form-data">
               <!-- Step 1: Ask page count -->
@@ -33,10 +47,6 @@
             </form>
             <!-- Form End -->
           </div>
-        </div>
-
-        <div class="text-center mt-4">
-          <a href="/dist" target="_blank">View Generated Pages</a>
         </div>
       </div>
     </div>
@@ -81,10 +91,6 @@
           <div class="mb-3">
             <label class="form-label">Logo</label>
             <input type="file" name="global[logo]" class="form-control" accept="image/*" required />
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Favicon</label>
-            <input type="file" name="global[favicon]" class="form-control" accept="image/*" required />
           </div>
           <div class="mb-3">
             <label class="form-label">Business Name</label>
@@ -135,12 +141,12 @@
           </div>
 
           <hr>
-          
+          <!--
           <div class="mb-3">
             <label class="form-label">Google Map Image</label>
             <input type="file" name="global[mapImage]" class="form-control" required />
           </div>
-
+          -->
           ${[
             'facebookUrl',
             'twitterUrl',
@@ -179,11 +185,7 @@
               <div class="mb-3">
                 <label class="form-label">Page Filename</label>
                 <input type="text" name="pages[${i}][filename]" class="form-control" required />
-              </div>
-              <div class="mb-3">
-                <label class="form-label">Keyword</label>
-                <input type="text" name="pages[${i}][keyword]" class="form-control" required />
-              </div>  
+              </div> 
             </div>
           </div>
         `;
