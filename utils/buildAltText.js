@@ -31,6 +31,56 @@ const imageDesc = {
                   'section4-1': 'a backflow prevention system',
                   'section4-2': 'sink pipe leaking and some tools on the floor'
                 }
+                ,
+                {
+                  'hero-mobile': 'The torso of plumbing technician showing a tool belt',
+                  'section2-1': 'PVC pipes going underground',
+                  'section2-2': 'A technician working on a garbage disposal',
+                  'section4-1': 'A water preasure reducing valve',
+                  'section4-2': 'A sink water leak and plumbing tools on the floor'
+                },
+                {
+                  'hero-mobile': 'A plumbing technician putting his tool box back in his van',
+                  'section2-1': 'A plumber checking a toilet',
+                  'section2-2': 'A plumber working on a tankless water heater',
+                  'section4-1': 'A woman on the phone with a water leak problem underneath the kitchen sink',
+                  'section4-2': 'A plumber using a snake to clear a plumbing pipe'
+                } ,
+                {
+                  'hero-mobile': 'One rusted water heater next to a brand new water heater',
+                  'section2-1': 'A male plumber working on a water heater hanging from the wall',
+                  'section2-2': 'A male plumber working on a water heater connection',
+                  'section4-1': 'A male plumber smiling and posing to the camera',
+                  'section4-2': 'A male plumber with a screwdriver fixing a garbage diposal'
+                },
+                {
+                  'hero-mobile': 'A male plumber fixing an outdoor faucet',
+                  'section2-1': 'A wooried plumber looking at a frozen pipe',
+                  'section2-2': '4 plumbing technician posing for the camera',
+                  'section4-1': 'A plumber running a snake to clear a bathtub drain',
+                  'section4-2': 'A plumber working on commercial pipe connections'
+                } ,
+                {
+                  'hero-mobile': '2 male plumbers looking at the camera',
+                  'section2-1': 'A worried plumber in a flooded room',
+                  'section2-2': 'A plumbing technician using a tool to fix a water faucet',
+                  'section4-1': 'A male plumber checking a kitchen sink pipe connection',
+                  'section4-2': 'A tankless water heater'
+                },
+                {
+                  'hero-mobile': 'A male plumbing technician tightening a water heater connection',
+                  'section2-1': 'A sad woman looking a broken garbage disposal',
+                  'section2-2': 'Water leaking from PVC pipes',
+                  'section4-1': 'A technician fixing bathroom a water faucet',
+                  'section4-2': 'A toilet with some plumbing tools laying next to it on the floor'
+                } ,
+                {
+                  'hero-mobile': 'A male plumbing technician tightening a sink pipe',
+                  'section2-1': '3 water heaters',
+                  'section2-2': 'A male plumbing technician fixing a garbage disposal',
+                  'section4-1': 'A male plumber fixing a sink pipe',
+                  'section4-2': 'A male plumber unclogging a bathtub drain'
+                }
             ],
   'concrete-contractor': [
                 
