@@ -1,7 +1,7 @@
 
 
 function createAboutUsPrompt({ globalValues, keywords}) {
-  const { businessName, location, businessType } = globalValues;
+  const { useNearMe, businessName, location, businessType } = globalValues;
 
   const categoryMap = {
     'plumbing':        'Plumber',
@@ -16,12 +16,12 @@ function createAboutUsPrompt({ globalValues, keywords}) {
   const category = categoryMap[businessType.toLowerCase()] || businessType;
   const typeOfCompany = category === 'Lawyer' ? '' : 'company';
 
-  
+  const includeNearMe = String(useNearMe) === 'true';
 
   return `
 You are writing the "About Us" page for a local ${businessType.toLowerCase()} ${typeOfCompany} named "${businessName}", located in ${location}.
 
-Write 5 sections. Each section must include:
+Write ${includeNearMe ? 5 : 4} sections. Each section must include:
 - The given heading (use exactly as provided)
 - Two short, helpful paragraphs that sound natural and professional.
 
@@ -31,10 +31,12 @@ Use these section headings in order:
 2. 'Our Story'. In the second paragraph of this section  include this word ${keywords[1]}.
 3. 'What Makes Us Stand Out?'. In the second paragraph of this section include this word ${keywords[2]}.
 4. 'Services We Offer'. In the second paragraph of this section include this word ${keywords[3]}.
+
+${includeNearMe ? `
 5. '${category} Near Me' (this phrase must also be included naturally in the  first paragraph text).
     Please include some zip codes and landmarks of ${location}.
     In the second paragraph of this section include this word ${keywords[4]}.
-
+` : ''}
 
 Return the result as a JSON object with this exact format:
 

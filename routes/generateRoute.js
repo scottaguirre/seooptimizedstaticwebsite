@@ -73,8 +73,8 @@ router.post('/generate', upload.any(), async (req, res) => {
         jsDir,
         tempUploadDir
       });
-      
-    
+
+
       const allowedFaviconTypes = [
         'image/vnd.microsoft.icon',  // .ico
         'image/x-icon',              // .ico (alternative)
@@ -84,6 +84,8 @@ router.post('/generate', upload.any(), async (req, res) => {
         'image/jpg'
       ];
     
+
+      
 
       // Make sure at least one page is submitted and it's subitted the right way
       if (!pages || typeof pages !== 'object' || Object.keys(pages).length === 0) {
@@ -98,12 +100,14 @@ router.post('/generate', upload.any(), async (req, res) => {
         return jsonValidationError(res, 400, validGlobal.error, validGlobal.fields);
       }
 
-  
+
+     
   
       // ✅ Initialize uploadedImages early
       const uploadedImages = { global: {} };
       const files = req.files;
-        
+
+      
 
       for (const file of files) {
         const globalMatch = file.fieldname.match(/global\[(.*?)\]/);
@@ -141,18 +145,19 @@ router.post('/generate', upload.any(), async (req, res) => {
           }
         }
       }
-      
-  
+
+
+
       // Check required global files
       if (!uploadedImages.global.logo) {
         const fields = [];
         if (!uploadedImages.global.logo)     fields.push({ name: 'global[logo]', message: 'Logo is required' });
-        //if (!uploadedImages.global.mapImage) fields.push({ name: 'global[mapImage]', message: 'Map image is required' });
         
         return jsonValidationError(res, 400, '❌ Global image uploads are missing.', fields);
       }
       
-
+  
+    
       
       // Validate Each Page inputs
       const validPages = validateEachPageInputs(pages);
@@ -177,6 +182,13 @@ router.post('/generate', upload.any(), async (req, res) => {
         console.warn('⚠️ Duplicate slugs in indexInterlinks:', duplicates);
       }
 
+      // after you’ve parsed req.body and before you build/normalize `globalValues`:
+      const rawUseNearMe = req.body.global?.useNearMe ?? req.body.global?.useNearMe ?? req.body['global[useNearMe]'];
+     
+      console.log("From GeneraRoute: rawUseNearMe", rawUseNearMe);
+
+      // IMPORTANT: buildAboutUsPage expects a string "true"/"false" (per your current code)
+
 
       const globalValues = {
         businessName: normalizeText(global.businessName?.trim()),
@@ -196,7 +208,7 @@ router.post('/generate', upload.any(), async (req, res) => {
         instagramUrl: global.instagramUrl?.trim() || '#',
         logo: uploadedImages.global.logo || '',
         favicon: uploadedImages.global.favicon || '',
-        //mapImage: uploadedImages.global.mapImage || ''
+        useNearMe: String(rawUseNearMe)
       };
 
 
@@ -286,7 +298,7 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
           .replace(/{{PAGE_TITLE}}/g, meta.title)
           .replace(/{{META_DESCRIPTION}}/g, meta.description)
-          .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName)
+          .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
           .replace(/{{HERO_IMG_MOBILE}}/g, uploadedImages[index]?.heroMobile || '')
           .replace(/{{HERO_IMG_TABLET}}/g, uploadedImages[index]?.heroTablet || '')
           .replace(/{{HERO_IMG_DESKTOP}}/g, uploadedImages[index]?.heroDesktop || '')
@@ -306,19 +318,17 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{SECTION4_IMG_ALT2}}/g,  `${altTexts['section4-2']} - ${page.filename}`)
           .replace(/{{SECTION4_IMG_TITLE2}}/g, `${altTexts['section4-2']} - ${page.filename}`)
           .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')
-          // .replace(/{{MAP_ALT}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
-          // .replace(/{{MAP_TITLE}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
-          .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading)
+          .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading.toUpperCase())
           .replace(/{{SECTION1_H3}}/g, sectionsWithLinks.section1.subheading)
           .replace(/{{SECTION1_P1}}/g, sectionsWithLinks.section1.paragraphs[0])
           .replace(/{{SECTION1_P2}}/g, sectionsWithLinks.section1.paragraphs[1])
-          .replace(/{{SECTION2_H2}}/g, sectionsWithLinks.section2.heading)
+          .replace(/{{SECTION2_H2}}/g, sectionsWithLinks.section2.heading.toUpperCase())
           .replace(/{{SECTION2_P1}}/g, sectionsWithLinks.section2.paragraphs[0])
           .replace(/{{SECTION2_P2}}/g, sectionsWithLinks.section2.paragraphs[1])
-          .replace(/{{SECTION3_H2}}/g, sectionsWithLinks.section3.heading)
+          .replace(/{{SECTION3_H2}}/g, sectionsWithLinks.section3.heading.toUpperCase())
           .replace(/{{SECTION3_P1}}/g, sectionsWithLinks.section3.paragraphs[0])
           .replace(/{{SECTION3_P2}}/g, sectionsWithLinks.section3.paragraphs[1])
-          .replace(/{{SECTION4_H2}}/g, sectionsWithLinks.section4.heading)
+          .replace(/{{SECTION4_H2}}/g, sectionsWithLinks.section4.heading.toUpperCase())
           .replace(/{{SECTION4_P1}}/g, sectionsWithLinks.section4.paragraphs[0])
           .replace(/{{SECTION4_P2}}/g, sectionsWithLinks.section4.paragraphs[1])
           .replace(/{{LOCATION_AREA}}/g, globalValues.location)

@@ -71,10 +71,11 @@
 
       // GLOBAL SECTION
       const globalHTML = `
+      <!-- 1) Business Type -->
         <div class="mb-4">
           <h4>Global Information</h4>
           <div class="mb-3">
-            <label for="businessType" class="form-label">Business Type</label>
+            <label for="businessType" class="form-label">1) Business Type</label>
             <select class="form-select" id="businessType" name="global[businessType]" required>
               <option value="">Choose...</option>
               <option>Plumbing</option>
@@ -87,45 +88,68 @@
             </select>
           </div>
 
-
+          <!-- 2) LOGO -->
           <div class="mb-3">
-            <label class="form-label">Logo</label>
-            <input type="file" name="global[logo]" class="form-control" accept="image/*" required />
+            <label class="form-label"> 2) Logo </label>
+            <input type="file" name="global[logo]" class="form-control" accept="image/*" />
           </div>
+
+          <!-- 3) Business Name-->
           <div class="mb-3">
-            <label class="form-label">Business Name</label>
+            <label class="form-label">3) Business Name</label>
             <input type="text" name="global[businessName]" class="form-control" required />
           </div>
+          
+          <hr/>
+
+          <!-- 4) Near Me-->
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="useNearMe" name="global[useNearMe]" value="true" checked>
+            <label class="form-check-label" for="useNearMe">
+              4) Check to optimize About Us page with "Near Me" term
+            </label>
+          </div>
+
+          <hr/>
+
+           <!-- 5) Domain-->
           <div class="mb-3">
-            <label class="form-label">Domain</label>
+            <label class="form-label">5) Domain</label>
             <input type="text" name="global[domain]" class="form-control" placeholder="example.com" required />
           </div>
+
+           <!-- 6) Address -->
           <div class="mb-3">
-            <label class="form-label">Address</label>
+            <label class="form-label">6) Address</label>
             <input type="text" name="global[address]" class="form-control" required />
           </div>
+
+           <!-- 7) Location-->
           <div class="mb-3">
-            <label class="form-label">Location</label>
+            <label class="form-label">7) Location</label>
             <input type="text" name="global[location]" class="form-control" required />
           </div>
+
+           <!-- 8) Phone -->
           <div class="mb-3">
-            <label class="form-label">Phone</label>
+            <label class="form-label">8) Phone</label>
             <input type="tel" name="global[phone]" class="form-control" required />
           </div>
+
+           <!-- 9) Email-->
           <div class="mb-3">
-            <label class="form-label">Email</label>
+            <label class="form-label">9) Email</label>
             <input type="email" name="global[email]" class="form-control" required />
           </div>
 
-
+          <!-- 10) Business Hours-->
           <div class="mb-3">
-            <label class="form-label">Business Hours</label>
+            <label class="form-label">10) Business Hours</label>
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" id="is24Hours" name="global[is24Hours]">
               <label class="form-check-label" for="is24Hours">Open 24 Hours</label>
             </div>
           </div>
-
           <div id="hoursContainer">
             ${['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map(day => `
               <div class="row mb-2 align-items-center">
@@ -141,12 +165,9 @@
           </div>
 
           <hr>
-          <!--
-          <div class="mb-3">
-            <label class="form-label">Google Map Image</label>
-            <input type="file" name="global[mapImage]" class="form-control" required />
-          </div>
-          -->
+
+          <!-- 11) Social Profiles-->
+          <label class="form-label">11) Social Profiles</label>
           ${[
             'facebookUrl',
             'twitterUrl',
@@ -157,7 +178,7 @@
           ].map(field => `
             <div class="mb-3">
               <label class="form-label">${field.replace('Url', '').replace(/([A-Z])/g, ' $1')} URL</label>
-              <input type="url" name="global[${field}]" class="form-control" required />
+              <input type="url" name="global[${field}]" class="form-control" />
             </div>
           `).join('')}
 

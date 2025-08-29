@@ -64,13 +64,7 @@ function validateGlobalFields(global) {
     'domain',
     'email',
     'phone',
-    'address',
-    'facebookUrl',
-    'twitterUrl',
-    'linkedinUrl',
-    'youtubeUrl',
-    'instagramUrl',
-    'pinterestUrl'
+    'address'
   ];
 
   const missing = requiredGlobalFields.filter(field => !(global[field] || '').toString().trim());

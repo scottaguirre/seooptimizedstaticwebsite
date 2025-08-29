@@ -49,9 +49,23 @@ const  buildAboutUsPage =  async function (
         const category = categoryMap[businessType] || businessType;
 
         // Creating Section Content
-        const seoPrefix = `${slugify(globalValues.businessName)}-${slugify(category)}-near-me-${slugify(globalValues.location)}`;
 
-       
+       // Near Me Term Logic
+       const useNearMe = String(globalValues.useNearMe) === 'true';
+        let nearMeTerm;
+        
+        if(useNearMe){
+            nearMeTerm = "near me";
+        } else{
+            nearMeTerm = "";
+        }
+        
+
+        // seoPrefix
+        const seoPrefix = useNearMe
+        ? `${slugify(globalValues.businessName)}-${slugify(category)}-${slugify(nearMeTerm)}-${slugify(globalValues.location)}`
+        : `${slugify(globalValues.businessName)}-${slugify(category)}-${slugify(globalValues.location)}`;
+
         
         const pageImageDirs = {
                 aboutHero: path.join(predefinedImagesDir, businessType, `aboutUs/hero`),
@@ -105,55 +119,64 @@ const  buildAboutUsPage =  async function (
             
             // Alt text for images
             const altTexts = buildAltText(globalValues, 'aboutIndex');
+
               
             aboutus = aboutus
                 .replace(/{{JSON_LD_SCHEMA}}/g, jsonLdString)
                 .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
                 .replace(/{{LOGO_PATH}}/g, globalValues.logo)
-                .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${category} Near Me`)
-                .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${category} Near Me`)
-                .replace(/{{PAGE_TITLE}}/g, `${globalValues.businessName} in ${globalValues.location} - ${category} Near Me`)
-                .replace(/{{META_DESCRIPTION}}/g, `We are ${globalValues.businessName} in ${globalValues.location}. Call us if you are looking for ${category} Near Me`)
-                .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName)
+                .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${category} ${nearMeTerm}`)
+                .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${category} ${nearMeTerm}`)
+                .replace(/{{PAGE_TITLE}}/g, `${globalValues.businessName} in ${globalValues.location} - ${category} ${nearMeTerm}`)
+                .replace(/{{META_DESCRIPTION}}/g, `We are ${globalValues.businessName} in ${globalValues.location}. Call us if you are looking for ${category} ${nearMeTerm}`)
+                .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
                 .replace(/{{LOCATION}}/g, globalValues.location)
                 .replace(/{{HERO_IMG_MOBILE}}/g, `assets/${seoPrefix}-heroMobile.webp`)
                 .replace(/{{HERO_IMG_TABLET}}/g, `assets/${seoPrefix}-heroTablet.webp`)
                 .replace(/{{HERO_IMG_DESKTOP}}/g, `assets/${seoPrefix}-heroDesktop.webp`)
                 .replace(/{{HERO_IMG_LARGE}}/g, `assets/${seoPrefix}-heroLarge.webp`)
-                .replace(/{{HERO_IMG_ALT}}/g, `${altTexts['hero-mobile']} - ${category} Near Me`)
-                .replace(/{{HERO_IMG_TITLE}}/g,  `${altTexts['hero-mobile']} - ${category} Near Me`)
+                .replace(/{{HERO_IMG_ALT}}/g, `${altTexts['hero-mobile']} - ${category} ${nearMeTerm}`)
+                .replace(/{{HERO_IMG_TITLE}}/g,  `${altTexts['hero-mobile']} - ${category} ${nearMeTerm}`)
                 .replace(/{{SECTION2_IMG1}}/g, `assets/${seoPrefix}-section2Img1.webp`)
                 .replace(/{{SECTION2_IMG2}}/g, `assets/${seoPrefix}-section2Img2.webp`)
-                .replace(/{{SECTION2_IMG_ALT1}}/g, `${altTexts['section2-1']} - ${category} Near Me`)
-                .replace(/{{SECTION2_IMG_TITLE1}}/g, `${altTexts['section2-1']} - ${category} Near Me`)
-                .replace(/{{SECTION2_IMG_ALT2}}/g, `${altTexts['section2-2']} - ${category} Near Me`)
-                .replace(/{{SECTION2_IMG_TITLE2}}/g, `${altTexts['section2-2']} - ${category} Near Me`)
+                .replace(/{{SECTION2_IMG_ALT1}}/g, `${altTexts['section2-1']} - ${category} ${nearMeTerm}`)
+                .replace(/{{SECTION2_IMG_TITLE1}}/g, `${altTexts['section2-1']} - ${category} ${nearMeTerm}`)
+                .replace(/{{SECTION2_IMG_ALT2}}/g, `${altTexts['section2-2']} - ${category} ${nearMeTerm}`)
+                .replace(/{{SECTION2_IMG_TITLE2}}/g, `${altTexts['section2-2']} - ${category} ${nearMeTerm}`)
                 .replace(/{{SECTION4_IMG1}}/g, `assets/${seoPrefix}-section4Img1.webp`)
                 .replace(/{{SECTION4_IMG2}}/g, `assets/${seoPrefix}-section4Img2.webp`)
-                .replace(/{{SECTION4_IMG_ALT1}}/g, `${altTexts['section4-1']} - ${category} Near Me`)
-                .replace(/{{SECTION4_IMG_TITLE1}}/g, `${altTexts['section4-1']} - ${category} Near Me`)
-                .replace(/{{SECTION4_IMG_ALT2}}/g, `${altTexts['section4-2']} - ${category} Near Me`)
-                .replace(/{{SECTION4_IMG_TITLE2}}/g, `${altTexts['section4-2']} - ${category} Near Me`)
-                .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')
-                // .replace(/{{MAP_IMAGE}}/g, globalValues.mapImage || '')
-                // .replace(/{{MAP_ALT}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${category} Near Me`)
-                // .replace(/{{MAP_TITLE}}/g, `Google Map image of ${globalValues.businessName} in ${globalValues.location} - ${category} Near Me`)    
-                .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading)
+                .replace(/{{SECTION4_IMG_ALT1}}/g, `${altTexts['section4-1']} - ${category} ${nearMeTerm}`)
+                .replace(/{{SECTION4_IMG_TITLE1}}/g, `${altTexts['section4-1']} - ${category} ${nearMeTerm}`)
+                .replace(/{{SECTION4_IMG_ALT2}}/g, `${altTexts['section4-2']} - ${category} ${nearMeTerm}`)
+                .replace(/{{SECTION4_IMG_TITLE2}}/g, `${altTexts['section4-2']} - ${category} ${nearMeTerm}`)
+                .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')   
+                .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading.toUpperCase())
                 .replace(/{{SECTION1_H3}}/g, sectionsWithLinks.section1.subheading)
                 .replace(/{{SECTION1_P1}}/g, sectionsWithLinks.section1.paragraphs[0])
                 .replace(/{{SECTION1_P2}}/g, sectionsWithLinks.section1.paragraphs[1])
-                .replace(/{{SECTION2_H2}}/g, sectionsWithLinks.section2.heading)
+                .replace(/{{SECTION2_H2}}/g, sectionsWithLinks.section2.heading.toUpperCase())
                 .replace(/{{SECTION2_P1}}/g, sectionsWithLinks.section2.paragraphs[0])
                 .replace(/{{SECTION2_P2}}/g, sectionsWithLinks.section2.paragraphs[1])
-                .replace(/{{SECTION3_H2}}/g, sectionsWithLinks.section3.heading)
+                .replace(/{{SECTION3_H2}}/g, sectionsWithLinks.section3.heading.toUpperCase())
                 .replace(/{{SECTION3_P1}}/g, sectionsWithLinks.section3.paragraphs[0])
                 .replace(/{{SECTION3_P2}}/g, sectionsWithLinks.section3.paragraphs[1])
-                .replace(/{{SECTION4_H2}}/g, sectionsWithLinks.section4.heading)
+                .replace(/{{SECTION4_H2}}/g, sectionsWithLinks.section4.heading.toUpperCase())
                 .replace(/{{SECTION4_P1}}/g, sectionsWithLinks.section4.paragraphs[0])
-                .replace(/{{SECTION4_P2}}/g, sectionsWithLinks.section4.paragraphs[1])
-                .replace(/{{NEAR_ME_H2}}/g, sectionsWithLinks.section5.heading)
-                .replace(/{{NEAR_ME_P1}}/g, sectionsWithLinks.section5.paragraphs[0])
-                .replace(/{{NEAR_ME_P2}}/g, sectionsWithLinks.section5.paragraphs[1])
+                .replace(/{{SECTION4_P2}}/g, sectionsWithLinks.section4.paragraphs[1]);
+                
+                // === Section 5 ("Near Me") conditional block
+                if (useNearMe && sectionsWithLinks.section5) {
+                    aboutus = aboutus
+                        .replace(/{{NEAR_ME_H2}}/g, sectionsWithLinks.section5.heading.toUpperCase())
+                        .replace(/{{NEAR_ME_P1}}/g, sectionsWithLinks.section5.paragraphs[0])
+                        .replace(/{{NEAR_ME_P2}}/g, sectionsWithLinks.section5.paragraphs[1]);
+                    } else {
+                    // remove the text so the section appears empty
+                    aboutus = aboutus.replace(/<section class="nearme">[\s\S]*?<\/section>\s*/i, '');
+                    }
+                
+            // === Footer & misc replacements
+            aboutus = aboutus
                 .replace(/{{ADDRESS}}/g, globalValues.address)
                 .replace(/{{EMAIL}}/g, globalValues.email)
                 .replace(/{{HOURS_DAYS}}/g, getHoursDaysText(globalValues.is24Hours, globalValues.hours))
@@ -176,14 +199,13 @@ const  buildAboutUsPage =  async function (
                                      <script src="./js/index.js"></script>
                           </body>`);
 
-                          
-                          
-                          const debugPath = path.join(__dirname, '../debug-about-us.html');
-                          fs.writeFileSync(debugPath, aboutus);
-                          
-                    
-                          
-
+          
+        
+             
+            const debugPath = path.join(__dirname, '../debug-about-us.html');
+            fs.writeFileSync(debugPath, aboutus);
+            
+            
             fs.writeFileSync(path.join(distDir, `index.html`), aboutus);
 
             // === Auto-create index.css if it doesn't exist 

@@ -26,7 +26,7 @@ const buildPrivacyPolicyPage = function (
         firstPageNameActive = firstPageNameActive.replace(/active/g, '');
 
         privacyPolicy = privacyPolicy
-        .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName)
+        .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
         .replace(/{{DOMAIN}}/g, normalizeDomain(globalValues.domain))
         .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
         .replace(/{{LOGO_PATH}}/g, globalValues.logo)

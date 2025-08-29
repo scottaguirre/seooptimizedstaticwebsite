@@ -27,7 +27,7 @@ const buildServicesPage = async function (
 
     if(!servicesPageExists){
         services = services
-        .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName)
+        .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
         .replace(/{{TAG_LINE}}/g, tagline)
         .replace(/{{HERO_IMG_MOBILE}}/g, uploadedImages[index]?.heroMobile || '')
         .replace(/{{HERO_IMG_TABLET}}/g, uploadedImages[index]?.heroTablet || '')
