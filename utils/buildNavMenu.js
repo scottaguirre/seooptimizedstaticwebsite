@@ -1,53 +1,125 @@
 
-const { normalizeText } = require('./normalizeText.js');
-const { smartTitleCase } = require('./smartTitleCase.js');
 const { slugify } = require('./slugify.js');
+const { formatCityForSchema } = require('./formatCityForSchema');
 
-const buildNavMenu = function (pages, basePath, locationSlug, filename){
-    // ===  NavMenu =====
-    let linkOutsideNavMenu = "";
-    let firstPageName = "";
-    let firstPageNameActive = "";
+// Helper: normalize pages array (your "pages" can be object-like)
+function toArray(pages) {
+    if (!pages) return [];
+    return Array.isArray(pages) ? pages : Object.values(pages);
+}
 
-    const navMenu = Object.entries(pages).map(([i, p]) => {
-        const pageSlug = slugify(p.filename);
-        const isActive = (pageSlug === filename) ? 'active' : '';
 
-        if(Object.entries(pages).length > 1){ // If 2 pages or more are entered
+const buildNavMenu  = function (template, globalValues, pages, basePath, mainLocationSlug, filename, context){
+    // ===  Services Nav Menu =====
+    let containerMenu;
+    let FIRST_PAGE_NAME = '';
+    let FIRST_PAGE_NAME_ACTIVE = '';
+    let LINK_OUTSIDE_NAV_MENU = '';
+    const pagesArr = toArray(pages);
 
-            if(i === "0"){  
-                // Extract the first page in the 1st iteration and navMenu starting the 2ndo interaction
-
-            linkOutsideNavMenu = `${basePath}${pageSlug}-${normalizeText(locationSlug)}.html`;
-            firstPageName = smartTitleCase(p.filename);
-            firstPageNameActive = isActive;
-
-            } else {
-                    // navMenu is built starting from the 2nd iteration
-                return `<li class="nav-item">
-                            <a class="nav-link dropdown-item ${isActive}" href="${basePath}${pageSlug}-${normalizeText(locationSlug)}.html">
-                            ${smartTitleCase(p.filename)}
-                            </a>
-                        </li>`;
-            }           
-
-        } else {  // If only 1 page is entered navMenu = ""
-
-            linkOutsideNavMenu = `${basePath}${pageSlug}-${normalizeText(locationSlug)}.html`;
-            firstPageName = smartTitleCase(p.filename);
-            firstPageNameActive = isActive;
-            return  "";
+    if(pagesArr.length === 1 ){
+        const only = pagesArr[0];
+        const onlyOnePageSlug = slugify(only.filename || '');
+        LINK_OUTSIDE_NAV_MENU = `${basePath}${onlyOnePageSlug}-${mainLocationSlug}.html`;
+        FIRST_PAGE_NAME = only.filename.toUpperCase();
+        const isActiveService = context === 'services' && slugify(filename) === onlyOnePageSlug;
+        FIRST_PAGE_NAME_ACTIVE = isActiveService ? 'active' : '';
+        let aboutusActive = "";
+        if(context === "aboutus") {
+            aboutusActive  = 'active';
         }
 
-    }).join('');
 
-    return {
-                linkOutsideNavMenu,
-                firstPageName,
-                firstPageNameActive,
-                navMenu
-            };
+        containerMenu = `<div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
+                            <ul class="navbar-nav ms-auto">
+                                <li class="nav-item"><a class="nav-link ${aboutusActive}" href="/dist/">ABOUT US</a></li>
+                                <li class="nav-item"><a class="nav-link ${FIRST_PAGE_NAME_ACTIVE}" href="${LINK_OUTSIDE_NAV_MENU}">${FIRST_PAGE_NAME}</a></li>
+                                `;
 
+    } else if(pagesArr.length > 1) {
+        
+        const only = pagesArr[0];
+        const onlyOnePageSlug = slugify(only.filename || '');
+        LINK_OUTSIDE_NAV_MENU = `${basePath}${onlyOnePageSlug}-${mainLocationSlug}.html`;
+        FIRST_PAGE_NAME = only.filename.toUpperCase();
+        const isActiveService = context === 'services' && slugify(filename) === onlyOnePageSlug;
+        FIRST_PAGE_NAME_ACTIVE = isActiveService ? 'active' : '';
+        let aboutusActive = "";
+        if(context === "aboutus") {
+            aboutusActive  = 'active';
+        }
+
+        containerMenu = `<div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
+                            <ul class="navbar-nav ms-auto">
+                                <li class="nav-item"><a class="nav-link ${aboutusActive}" href="/dist/">ABOUT US</a></li>
+                                <li class="nav-item"><a class="nav-link ${FIRST_PAGE_NAME_ACTIVE}" href="${LINK_OUTSIDE_NAV_MENU}">${FIRST_PAGE_NAME}</a></li>
+                                <li class="nav-item dropdown services-dropdown-option">
+                                    <a class="nav-link dropdown-toggle" href="#" id="servicesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                        SERVICES
+                                    </a>          
+                                    <ul class="dropdown-menu">
+                                `;
+
+
+        let servicesListLinks = pagesArr.map( (page, i) => {
+            if( i > 0 ){
+                const href = `${basePath}${slugify(page.filename)}-${mainLocationSlug}.html`;
+                const isActive = context === 'services' && slugify(filename) === slugify(page.filename);
+                const label = page.filename;
+
+                return `
+                        <li>
+                            <a class="dropdown-item nav-link ${isActive ? 'active' : ''}" href="${href}">
+                                ${label.toUpperCase()}
+                            </a>
+                        </li>
+                    `;
+            }   
+        }).join('').trim();
+
+        containerMenu = `${containerMenu} ${servicesListLinks} </ul> </li>`;
+
+    }
+    
+
+    // =======  LOCATION PAGES
+
+    if(globalValues.locationPages.length > 0 ){ // If 1 location page or more are entered
+      
+        
+        let completeListLocationsNav = `<li class="nav-item dropdown locations-dropdown-option">
+                                            <a class="nav-link dropdown-toggle" href="#" id="locationsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                                LOCATIONS
+                                            </a>          
+                                            <ul class="dropdown-menu">`;
+
+        const locationsListMenu = globalValues.locationPages.map(pageLocation => {
+        const pageSlug = slugify(pageLocation.display);
+        const href = `${basePath}location-${pageSlug}.html`;
+        const cityLabel = formatCityForSchema(pageLocation.display);
+        const isActive = context === 'locations' && pageSlug === slugify(filename);
+        
+        
+        return `<li class="nav-item">
+                    <a class="nav-link dropdown-item ${isActive ? 'active' : ''}" href="${href}">
+                    ${cityLabel.toUpperCase()}
+                    </a>
+                </li>`; 
+
+        }).join('');
+
+        containerMenu = ` ${containerMenu} ${completeListLocationsNav} ${locationsListMenu} </ul> </li> </ul> </div>`;
+        
+
+    } else {
+
+        containerMenu = `${containerMenu} </ul> </div>`;       
+
+    }
+    
+    template = template.replace(/<div class="collapse navbar-collapse container-nav-menu" id="navbarNav">[\s\S]*?<\/div>\s*/i, containerMenu);
+    
+    return template;
 };
 
 module.exports = { buildNavMenu };

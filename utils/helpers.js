@@ -1,6 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 
+const { formatCityForSchema } = require('../utils/formatCityForSchema'); // city only  :contentReference[oaicite:3]{index=3}
+const { formatCityState }     = require('../utils/formatCityState');     // "City, ST"  :contentReference[oaicite:4]{index=4}
+const { slugify }             = require('../utils/slugify');
+function truthy(v){ return v === true || v === 'true' || v === 'on' || v === '1'; }
+
+const US = new Set(['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME',
+  'MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN',
+  'TX','UT','VT','VA','WA','WV','WI','WY','DC']);
+
+
 
 // 1.  Utility to Recursively Clean a Directory ===
 function cleanDirectory(dirPath) {
@@ -64,7 +74,8 @@ function validateGlobalFields(global) {
     'domain',
     'email',
     'phone',
-    'address'
+    'address',
+    'location'
   ];
 
   const missing = requiredGlobalFields.filter(field => !(global[field] || '').toString().trim());
@@ -76,30 +87,36 @@ function validateGlobalFields(global) {
   }
 
 
-  // Validate business hours input
+  // 4. Validate business hours input
   if (!global.is24Hours) {
     const hours = global.hours || {};
     const days = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
-    const missingHours = [];
+    const fields = [];
+
+    const truthy = v => v === true || v === 'true' || v === 'on' || v === '1';
 
     for (const d of days) {
-      const open = hours?.[d]?.open;
-      const close = hours?.[d]?.close;
-      if (!open || !close) {
-        missingHours.push(d);
-        fields.push({ name: `global[hours][${d}][open]`,  message: 'Required' });
-        fields.push({ name: `global[hours][${d}][close]`, message: 'Required' });
+      const day = hours?.[d] || {};
+      const isClosed = truthy(day.closed);
+      const open = (day.open || '').toString().trim();
+      const close = (day.close || '').toString().trim();
+
+      if (!isClosed) {
+        if (!open)  fields.push({ name: `global[hours][${d}][open]`,  message: 'Required' });
+        if (!close) fields.push({ name: `global[hours][${d}][close]`, message: 'Required' });
+
+        // Optional sanity: open must be before close (both "HH:MM" 24h)
+        if (open && close && open >= close) {
+          fields.push({ name: `global[hours][${d}][close]`, message: 'Must be after open' });
+        }
       }
     }
 
-    if (missingHours.length) {
-      return {
-        ok: false,
-        error: '❌ Missing business hours configuration.',
-        fields
-      };
+    if (fields.length) {
+      return { ok: false, error: '❌ Missing/invalid business hours.', fields };
     }
   }
+
 
   if (fields.length) {
     return {
@@ -114,15 +131,14 @@ function validateGlobalFields(global) {
 
 
 
-// 4. Send error message in JSON format. This is for form validation
+// 5. Send error message in JSON format. This is for form validation
 function jsonValidationError(res, status, message, fields = []) {
-  // fields = [{ name: 'global[favicon]', message: 'Invalid type' }, ...]
   return res.status(status).json({ error: message, fields });
 }
 
 
 
-// 5. Validate Each Page Inputs: returns { ok, error, fields } and NEVER sends a response
+// 6. Validate Each Page Inputs: returns { ok, error, fields } and NEVER sends a response
 const validateEachPageInputs = function (pages) {
   const fields = [];
 
@@ -149,7 +165,7 @@ const validateEachPageInputs = function (pages) {
     };
   }
 
-  // (Optional) server-side duplicate filename check (case-insensitive)
+  // 6.1 (Optional) server-side duplicate filename check (case-insensitive)
   const names = Object.entries(pages).map(([_, p]) => (p?.filename || '').toString().trim().toLowerCase());
   const seen = new Set();
   const dupFields = [];
@@ -173,11 +189,64 @@ const validateEachPageInputs = function (pages) {
 };
 
 
+// 7. === Location Pages helpers
+function validateAndNormalizeLocationPages(rawList, toggleValue) {
+  if (!truthy(toggleValue)) return { ok: true, locations: [], fields: [] };
+
+  const arr = Array.isArray(rawList) ? rawList : (rawList ? [rawList] : []);
+  if (!arr.length) {
+    return { ok:false, error:'❌ Location pages enabled but no locations provided.',
+             fields:[{ name:'global[locationPages][]', message:'Add at least one location' }]};
+  }
+
+  const fields = [];
+  const locations = [];
+  const seen = new Set();
+
+  arr.forEach((raw, i) => {
+    const s = (raw || '').trim();
+    const m = s.match(/^(.+?)[,\s]+([A-Za-z]{2})$/); // "City, ST" or "City ST"
+    if (!m) {
+      fields.push({ name:`global[locationPages][${i}]`, message:'Use "City, ST" or "City ST" (e.g., "Austin, TX")' });
+      return;
+    }
+    const cityRaw  = m[1].trim();
+    const state    = m[2].toUpperCase();
+    if (!US.has(state)) {
+      fields.push({ name:`global[locationPages][${i}]`, message:'Invalid state code' });
+      return;
+    }
+
+    // Normalized display (for titles/H1/etc.) e.g., "Austin, TX"
+    const display = formatCityState(`${cityRaw} ${state}`);  // :contentReference[oaicite:5]{index=5}
+    // City-only for JSON-LD addressLocality e.g., "Austin"
+    const cityForSchema = formatCityForSchema(`${cityRaw} ${state}`); // :contentReference[oaicite:6]{index=6}
+    // File/URL slug e.g., "austin-tx"
+    const slug = `${cityRaw} ${state}`;
+
+    if (seen.has(slug)) {
+      fields.push({ name:`global[locationPages][${i}]`, message:'Duplicate location' });
+      return;
+    }
+    seen.add(slug);
+
+    locations.push({ cityForSchema, state, display, slug });
+  });
+
+  if (fields.length) return { ok:false, error:'❌ Some location entries are invalid.', fields };
+  return { ok:true, locations, fields };
+}
+
+
+
+
+
 module.exports = {
   cleanDirectory,
   cleanDevFolders,
   validateGlobalFields,
   jsonValidationError,
-  validateEachPageInputs
-  
+  validateEachPageInputs,
+  truthy,
+  validateAndNormalizeLocationPages
 };

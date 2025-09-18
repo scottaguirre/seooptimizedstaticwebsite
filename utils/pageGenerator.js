@@ -1,64 +1,70 @@
-const { generateMetadata } = require('./generateMetadata');
-const { generateTaglineFromHeading } = require('./generateTaglineFromHeading');
-const { getCoordinatesFromAddress } = require('./getCoordinatesFromAddress');
-const { generateServiceAreaContent } = require('./generateServiceAreaContent');
-const { generateReview } = require('./generateReview');
-const { normalizeText } = require('./normalizeText');
-const { smartTitleCase } = require('./smartTitleCase');
-const { formatPhoneForHref } = require('./formatPhoneForHref');
-const { formatCityState } = require('./formatCityState');
 const { slugify } = require('./slugify');
-const { buildAltAttribute } = require('./buildAltAttribute');
-const { formatCityForSchema } = require('./formatCityForSchema');
-const { replaceInProd } = require('./replaceInProd');
-const { removeScriptAndLinkTags } = require('./removeScriptAndLinkTags');
-const { buildAccessibilityPage } = require('./buildAccessibilityPage');
+const { googleMap } = require('./googleMap');
 const { buildSchema } = require('./buildSchema');
-const { buildTermsOfUsePage } = require('./buildTermsOfUsePage');
-const { getFullStateName } = require('./getFullStateName');
-const { buildPrivacyPolicyPage } = require('./buildPrivacyPolicyPage');
-const { buildAboutUsPage } = require('./buildAboutUsPage');
-const { buildServicesPage } = require('./buildServicesPage');
 const { buildAltText } = require('./buildAltText');
 const { buildNavMenu } = require('./buildNavMenu');
-const { copyAllPredefinedImages } = require('./copyAllPredefinedImages');
-const { injectPagesInterlinks } = require('./injectPagesInterlinks');
-const { generateAboutUsContent } = require('./generateAboutUsContent');
+const { normalizeText } = require('./normalizeText');
+const { replaceInProd } = require('./replaceInProd');
+const { generateReview } = require('./generateReview');
+const { smartTitleCase } = require('./smartTitleCase');
+const { formatCityState } = require('./formatCityState');
+const { buildAboutUsPage } = require('./buildAboutUsPage');
+const { generateMetadata } = require('./generateMetadata');
+const { getFullStateName } = require('./getFullStateName');
+const { buildAltAttribute } = require('./buildAltAttribute');
+const { buildServicesPage } = require('./buildServicesPage');
+const { buildLocationPages} = require('./buildLocationPages');
 const { buildInterlinksMap } = require('./buildInterlinksMap');
+const { formatPhoneForHref } = require('./formatPhoneForHref');
+const { formatCityForSchema } = require('./formatCityForSchema');
+const { buildTermsOfUsePage } = require('./buildTermsOfUsePage');
 const { generatePagesContent } = require('./generatePagesContent');
-const { googleMap } = require('./googleMap');
-const { getHoursDaysText, getHoursTimeText} = require('./formatDaysAndHoursForDisplay');
+const { injectPagesInterlinks } = require('./injectPagesInterlinks');
+const { buildAccessibilityPage } = require('./buildAccessibilityPage');
+const { buildPrivacyPolicyPage } = require('./buildPrivacyPolicyPage');
+const { generateAboutUsContent } = require('./generateAboutUsContent');
+const { removeScriptAndLinkTags } = require('./removeScriptAndLinkTags');
+const { copyAllPredefinedImages } = require('./copyAllPredefinedImages');
+const { getCoordinatesFromAddress } = require('./getCoordinatesFromAddress');
+const { generateServiceAreaContent } = require('./generateServiceAreaContent');
+const { generateTaglineFromHeading } = require('./generateTaglineFromHeading');
+const { getHoursDaysText, getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
+
+
+
 
 module.exports = {
-  generateMetadata,
-  generateTaglineFromHeading,
-  getCoordinatesFromAddress,
-  generateServiceAreaContent,
-  generateReview,
-  normalizeText,
-  smartTitleCase,
-  formatPhoneForHref,
   slugify,
-  formatCityState,
-  buildAltAttribute,
-  formatCityForSchema,
-  replaceInProd,
-  removeScriptAndLinkTags,
-  buildAccessibilityPage,
+  googleMap,
   buildSchema,
-  buildTermsOfUsePage,
-  getFullStateName,
-  buildPrivacyPolicyPage,
-  buildAboutUsPage,
-  buildServicesPage,
   buildAltText,
   buildNavMenu,
-  copyAllPredefinedImages,
-  injectPagesInterlinks,
-  generateAboutUsContent,
-  buildInterlinksMap,
-  generatePagesContent,
+  normalizeText,
+  replaceInProd,
+  generateReview,
+  smartTitleCase,
+  formatCityState,
+  getFullStateName,
+  buildAboutUsPage,
   getHoursDaysText,
   getHoursTimeText,
-  googleMap
+  generateMetadata,
+  buildServicesPage,
+  buildAltAttribute,
+  formatPhoneForHref,
+  buildLocationPages,
+  buildInterlinksMap,
+  buildTermsOfUsePage,
+  formatCityForSchema,
+  generatePagesContent,
+  injectPagesInterlinks,
+  generateAboutUsContent,
+  buildAccessibilityPage,
+  buildPrivacyPolicyPage,
+  removeScriptAndLinkTags,
+  copyAllPredefinedImages,
+  getCoordinatesFromAddress,
+  generateServiceAreaContent,
+  generateTaglineFromHeading,
+ 
 };

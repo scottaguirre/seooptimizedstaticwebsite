@@ -31,19 +31,31 @@
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
         <span class="navbar-toggler-icon"></span>
       </button>
-      <div class="collapse navbar-collapse" id="navbarNav">
+      <div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
         <ul class="navbar-nav ms-auto">
-          <li class="nav-item"><a class="nav-link" href="/dist/">About Us</a></li>
+          <li class="nav-item"><a class="nav-link" href="/dist/">ABOUT US</a></li>
           <li class="nav-item"><a class="nav-link {{FIRST_PAGE_NAME_ACTIVE}}" href="{{LINK_OUTSIDE_NAV_MENU}}">{{FIRST_PAGE_NAME}}</a></li>
-          <li class="nav-item dropdown">
+          
+          <li class="nav-item dropdown services-dropdown-option">
             <a class="nav-link dropdown-toggle" href="#" id="servicesDropdown" role="button"
                data-bs-toggle="dropdown" aria-expanded="false">
-               Services
+               SERVICES
             </a>          
             <ul class="dropdown-menu">
-              {{DYNAMIC_NAV_MENU}}             
+              {{SERVICES_NAV_MENU}}             
+            </ul>  
+          </li>
+
+          <li class="nav-item dropdown locations-dropdown-option">
+            <a class="nav-link dropdown-toggle" href="#" id="locationsDropdown" role="button"
+               data-bs-toggle="dropdown" aria-expanded="false">
+               LOCATIONS
+            </a>          
+            <ul class="dropdown-menu">
+              {{LOCATIONS_NAV_MENU}}             
             </ul>
           </li>
+
         </ul>
       </div>
     </nav>
@@ -150,7 +162,7 @@
 <section class="nap-map-section">
   <div class="container section-padding ">
     <div class="row">
-      <div class="col-md-6 div-text-padding-bottom">
+      <div class="col-lg-6 div-text-padding-bottom">
 
         <div class="nap">
           <p>{{BUSINESS_NAME}}</p>
@@ -166,12 +178,11 @@
 
         <div class="nap">
           <p>Hours of Operation</p>
-          <p>{{HOURS_DAYS}}</p> 
           <p>{{HOURS_TIME}}</p>
         </div>
       </div>
 
-      <div class="col-md-6">
+      <div class="col-lg-5 google-map">
         <!-- Map embed -->
         <iframe
         src="{{MAP_IFRAME_SRC}}"

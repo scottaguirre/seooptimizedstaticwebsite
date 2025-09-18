@@ -1,18 +1,19 @@
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
+const { slugify } = require('./slugify');
+const { buildNavMenu } = require('./buildNavMenu');
 const { normalizeDomain}  = require('./normalizeDomain');
 const { getFullStateName } = require('./getFullStateName');
 
+const isDev = process.env.NODE_ENV !== 'production';
+const basePath = isDev ? '/dist/' : '/';
+
 
 const buildTermsOfUsePage = function (
-    distDir,
-    cssDir,
-    globalValues,
-    navMenu,
-    page,
-    linkOutsideNavMenu,
-    firstPageName,
-    firstPageNameActive
+        distDir,
+        cssDir,
+        globalValues,
+        pages
 ) {
     // Replace {{DOMAIN}}, {{BUSINESS_NAME}} from accessibility.html & save in dist
     let termsOfUse = fs.readFileSync(path.join(__dirname, '../src/termsOfUseTemplate.html'), 'utf-8');
@@ -21,24 +22,21 @@ const buildTermsOfUsePage = function (
     if(!termsOfUsePageExists){
        
         const fullStateName = getFullStateName(globalValues.location);
-        const cleanedNavMenu = navMenu.replace(/active/g, '');
-        linkOutsideNavMenu = linkOutsideNavMenu.replace(/active/g, '');
-        firstPageName = firstPageName.replace(/active/g, '');
-        firstPageNameActive = firstPageNameActive.replace(/active/g, '');
 
+         // ✅ Build & inject Services / Locations menus (and remove wrappers if empty)
+         const context = 'termsofuse';
+         termsOfUse = buildNavMenu(termsOfUse, globalValues, pages, basePath, slugify(globalValues.location), globalValues.location, context);
+ 
+       
         termsOfUse = termsOfUse
         .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
         .replace(/{{DOMAIN}}/g, normalizeDomain(globalValues.domain))
         .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
         .replace(/{{LOGO_PATH}}/g, globalValues.logo)
-        .replace(/{{DYNAMIC_NAV_MENU}}/g, cleanedNavMenu)
-        .replace(/{{FIRST_PAGE_NAME_ACTIVE}}/g, firstPageNameActive)
-        .replace(/{{LINK_OUTSIDE_NAV_MENU}}/g, linkOutsideNavMenu)
-        .replace(/{{FIRST_PAGE_NAME}}/g, firstPageName)
         .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName}`)
         .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName}`)
         .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
-        .replace(/{{EMAIL}}/g, page.email)
+        .replace(/{{EMAIL}}/g, globalValues.email)
         .replace(/{{STATE}}/g, fullStateName)
         .replace(/{{FACEBOOK_URL}}/g, globalValues.facebookUrl)
         .replace(/{{TWITTER_URL}}/g, globalValues.twitterUrl)

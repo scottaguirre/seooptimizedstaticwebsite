@@ -18,7 +18,8 @@ function copyPageImage({
   keyword,
   location,
   index,
-  uploadedImages
+  uploadedImages,
+  imageContext
 }) {
   const src = path.join(srcDir, filename);
   if (!fs.existsSync(src)) {
@@ -28,7 +29,8 @@ function copyPageImage({
 
   ensureAssetsDir();
   const ext = path.extname(filename); // get original extension
-  const seoPrefix = `${slugify(businessName)}-${slugify(keyword)}-${slugify(location)}`;
+  let seoPrefix = `${slugify(businessName)}-`;
+  seoPrefix += (imageContext === "imageLocationPages") ? `${slugify(keyword)}` : `${slugify(keyword)}-${slugify(location)}`;
   const newFilename = `${seoPrefix}-${field}${ext}`;
   const dest = path.join(assetsDir, newFilename);
 
@@ -47,7 +49,8 @@ function copyPageImage({
 function copyAllPredefinedImages({ globalValues,
                                    uploadedImages,
                                    keyword,
-                                   index
+                                   index,
+                                   imageContext
                                  }) {
 
     const imageIndex = index % 10;
@@ -64,7 +67,8 @@ function copyAllPredefinedImages({ globalValues,
       keyword,
       location: globalValues.location,
       index,
-      uploadedImages
+      uploadedImages,
+      imageContext
     };
   
     copyPageImage({ ...params, srcDir: heroDir, filename: 'hero-mobile.webp', field: 'heroMobile' });

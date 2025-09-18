@@ -1,44 +1,37 @@
-function formatTime(timeStr) {
-    if (!timeStr) return '';
-    const [hour, minute] = timeStr.split(':').map(Number);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const hour12 = hour % 12 || 12;
-    return `${hour12}:${minute.toString().padStart(2, '0')} ${ampm}`;
-  }
-  
-  function getHoursDaysText(is24Hours, hours) {
-    if (is24Hours === 'on') return 'All Week';
-  
-    const openDays = Object.entries(hours || {})
-      .filter(([_, val]) => val.open && val.close)
-      .map(([day]) => capitalize(day));
-  
-    if (openDays.length === 7) return 'Monday to Sunday';
-    if (openDays.length === 5 && openDays.includes('Monday') && openDays.includes('Friday')) return 'Monday to Friday';
-  
-    return openDays.join(', ');
-  }
-  
-  function getHoursTimeText(is24Hours, hours) {
-    if (is24Hours === 'on') return 'Open 24 Hours';
-  
-    const times = Object.values(hours || {}).filter(val => val.open && val.close);
-    const unique = new Set(times.map(val => `${val.open}-${val.close}`));
-  
-    if (unique.size === 1) {
-      const [val] = times;
-      return `${formatTime(val.open)} – ${formatTime(val.close)}`;
-    }
-  
-    return 'Varies by Day';
-  }
-  
-  function capitalize(word) {
-    return word.charAt(0).toUpperCase() + word.slice(1);
-  }
-  
-  module.exports = {
-    getHoursDaysText,
-    getHoursTimeText
-  };
-  
+// utils/formatDaysAndHoursForDisplay.js
+const ORDER = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+const SHORT = { monday:'Mon', tuesday:'Tue', wednesday:'Wed', thursday:'Thu', friday:'Fri', saturday:'Sat', sunday:'Sun' };
+const truthy = v => v === true || v === 'true' || v === 'on' || v === '1';
+
+function formatTime(hhmm='') {
+  // "21:00" -> "9:00 PM", "00:00" -> "12:00 AM", "12:00" -> "12:00 PM"
+  const [h, m] = (hhmm || '').split(':').map(Number);
+  if (Number.isNaN(h)) return '';
+  const suffix = h >= 12 ? 'PM' : 'AM';
+  const hour12 = ((h + 11) % 12) + 1;
+  return `${hour12}:${String(m ?? 0).padStart(2,'0')} ${suffix}`;
+}
+
+// Line 1: quick summary
+function getHoursDaysText(is24Hours, hours){
+  if (truthy(is24Hours)) return 'Open 24 Hours';
+  const closed = ORDER.filter(d => truthy(hours?.[d]?.closed)).map(d => SHORT[d]);
+  if (closed.length === 0) return 'All Week';
+  if (closed.length === 7) return 'Closed All Week';
+  return `Edwin: ${closed.join(', ')}`;
+}
+
+// Line 2: detailed schedule (HTML)
+function getHoursTimeText(is24Hours, hours){
+  if (truthy(is24Hours)) return 'Open 24 Hours';
+  return ORDER.map(d => {
+    const day = hours?.[d] || {};
+    if (truthy(day.closed)) return `${SHORT[d]}: Closed`;
+    const open  = formatTime(day.open);
+    const close = formatTime(day.close);
+    if (!open || !close) return `${SHORT[d]}: —`;
+    return `${SHORT[d]}: ${open} – ${close}`;
+  }).join('<br>');
+}
+
+module.exports = { getHoursDaysText, getHoursTimeText };

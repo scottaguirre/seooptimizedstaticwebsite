@@ -21,23 +21,33 @@
             <!-- Navbar -->
             <div class="container">
                 <nav class="navbar navbar-expand-lg navbar-light bg-light px-3">
-                    <a class="navbar-brand d-flex align-items-center" href="#">
-                        <img src="{{LOGO_PATH}}" alt="{{LOGO_ALT}}" title="{{LOGO_TITLE}}" height="80" class="me-2">
+                    <a class="navbar-brand d-flex align-items-center" href="/dist/">
+                        <img src="{{LOGO_PATH}}" alt="{{LOGO_ALT}}" title="{{LOGO_TITLE}}" width="110" height="80" class="me-2">
                     </a>
                     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                         <span class="navbar-toggler-icon"></span>
                     </button>
-                    <div class="collapse navbar-collapse" id="navbarNav">
+                    <div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
                         <ul class="navbar-nav ms-auto">
-                            <li class="nav-item"><a class="nav-link" href="/dist/">About Us</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/dist/">ABOUT US</a></li>
                             <li class="nav-item"><a class="nav-link {{FIRST_PAGE_NAME_ACTIVE}}" href="{{LINK_OUTSIDE_NAV_MENU}}">{{FIRST_PAGE_NAME}}</a></li>
-                            <li class="nav-item dropdown">
-                            <button class="btn btn-secondary dropdown-toggle" aria-label="Location links" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                Services
-                            </button>
-                            <ul class="dropdown-menu">
-                                {{DYNAMIC_NAV_MENU}}             
-                            </ul>
+                            <li class="nav-item dropdown services-dropdown-option">
+                                <a class="nav-link dropdown-toggle" href="#" id="servicesDropdown" role="button"
+                                   data-bs-toggle="dropdown" aria-expanded="false">
+                                   SERVICES
+                                </a>          
+                                <ul class="dropdown-menu">
+                                  {{SERVICES_NAV_MENU}}             
+                                </ul>
+                            </li>
+                            <li class="nav-item dropdown locations-dropdown-option">
+                                <a class="nav-link dropdown-toggle" href="#" id="locationsDropdown" role="button"
+                                   data-bs-toggle="dropdown" aria-expanded="false">
+                                   LOCATIONS
+                                </a>          
+                                <ul class="dropdown-menu">
+                                  {{LOCATIONS_NAV_MENU}}             
+                                </ul>
                             </li>
                         </ul>
                     </div>

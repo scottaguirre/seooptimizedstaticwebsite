@@ -40,7 +40,6 @@ const {
     slugify,
     googleMap,
     buildSchema,
-    buildNavMenu,
     buildAltText,
     normalizeText,
     smartTitleCase,
@@ -53,7 +52,9 @@ const {
     buildLocationPages,
     formatPhoneForHref,
     buildTermsOfUsePage,
+    buildservicesNavMenu,
     generatePagesContent,
+    buildLocationsNavMenu,
     injectPagesInterlinks,
     buildPrivacyPolicyPage,
     buildAccessibilityPage,
@@ -159,7 +160,23 @@ router.post('/generate', upload.any(), async (req, res) => {
       }
   
 
-      
+      // Build interlink map 
+      const { interlinkMap } = await buildInterlinksMap(pages);
+      const indexInterlinks = interlinkMap['index'] || [];
+
+      const seen = new Set();
+      const duplicates = [];
+
+      indexInterlinks.forEach(slug => {
+        if (seen.has(slug)) duplicates.push(slug);
+        seen.add(slug);
+      });
+
+      if (duplicates.length) {
+        console.warn('⚠️ Duplicate slugs in indexInterlinks:', duplicates);
+      }
+
+
       // Near Me Logic
       // after you’ve parsed req.body and before you build/normalize `globalValues`:
       const rawUseNearMe = req.body.global?.useNearMe ?? req.body.global?.useNearMe ?? req.body['global[useNearMe]'];
@@ -197,32 +214,32 @@ router.post('/generate', upload.any(), async (req, res) => {
         location: formatCityState(smartTitleCase(normalizeText(global.location?.trim()))),
       };
 
-      // Build interlink map 
-      // AFTER you’ve validated pages & locations and built globalValues
-      const { interlinkMap } = await buildInterlinksMap(pages, globalValues.locationPages);
-      const indexInterlinks = interlinkMap['index'] || [];
-
-      //console.log(`From generateRoute: ${interlinkMap}`);
-
-      const seen = new Set();
-      const duplicates = [];
-
-      indexInterlinks.forEach(slug => {
-        if (seen.has(slug)) duplicates.push(slug);
-        seen.add(slug);
-      });
-
-      if (duplicates.length) {
-        console.warn('⚠️ Duplicate slugs in indexInterlinks:', duplicates);
-      }
-
 
 
       // Google Maps
       globalValues.mapEmbed = await googleMap(globalValues.address);;
 
-      // Used to copy images inside the main loop
-      imageContext = "imageServicePages";
+
+
+      // Copy all predefined images to dist/assets and track them 
+      const seenImageSets = new Set();
+
+      for (let i = 0; i < pages.length; i++) {
+        const setIndex = i % 10;
+        if (seenImageSets.has(setIndex)) continue;
+
+        copyAllPredefinedImages({
+          globalValues,
+          uploadedImages,
+          keyword: slugify(pages[i].filename),
+          index: i,
+          totalPages: pages.length
+        });
+
+        seenImageSets.add(setIndex);
+      }
+
+
 
     
       // Main loop that creates html pages from the template file
@@ -233,46 +250,45 @@ router.post('/generate', upload.any(), async (req, res) => {
         const locationSlug = slugify(global.location || '');
 
 
-
         // Copy predefined images into dist/assets and track them 
         copyAllPredefinedImages({
           globalValues,
           uploadedImages,
           keyword: slugify(page.filename || ''),
-          index: Number(index), // pass the index so we can cycle with % 4
-          imageContext
+          index: Number(index) // pass the index so we can cycle with % 4,
 
         });
 
 
-      
 
+        // ===  Services Nav Menu Creation =====
+        const navMenuObject = buildservicesNavMenu(pages, basePath, locationSlug, filename);    
+        let { linkOutsideNavMenu, firstPageName, firstPageNameActive } = navMenuObject;
+        const { servicesNavMenu } = navMenuObject;
+
+
+
+        // === Locations Nav Menu Creation
+        const locationsNavMenu = buildLocationsNavMenu(globalValues, basePath, filenameForNav);
+    
+      
+        
         // Build Alt descrptions in object format
         const altTexts =  buildAltText(globalValues, Number(index));
 
        
         page.filename = normalizeText(page.filename);
         page.keyword = page.filename;
-
-
-
-        // ===  Services Nav Menu Creation =====
-        const context = "services";
-        template = buildNavMenu(template, globalValues, pages, basePath, slugify(globalValues.location), page.filename, context);    
-        
     
-        // Meta Title
-        const meta = await generateMetadata(globalValues.businessName, page.keyword, globalValues.location, formatCityState);
-        
-
-        
-        // Building Schema
+    
+        const meta        = await generateMetadata(globalValues.businessName, page.keyword, globalValues.location, formatCityState);
         const coordinates = await getCoordinatesFromAddress(globalValues.address);
         const reviews     = await generateReview(globalValues.businessName);
-        const jsonLdString = buildSchema(globalValues, uploadedImages, index, coordinates, reviews);
-        globalValues['jsonLdString'] = jsonLdString;
-      
 
+
+        // Building Schema
+        const jsonLdString = buildSchema(globalValues, uploadedImages, index, coordinates, reviews);
+      
 
         //  Insert Interlinks to Pages Content 
         const pagesInterlinks = interlinkMap[page.slug] || [];
@@ -280,14 +296,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
         // Generate Page Sections Content
         const sections = await generatePagesContent(globalValues, page, pagesInterlinks);
-        const sectionsWithLinks = injectPagesInterlinks(
-                                          globalValues,
-                                          pages,
-                                          page,
-                                          pagesInterlinks,
-                                          sections,
-                                          globalValues.location
-                                        );
+        const sectionsWithLinks = injectPagesInterlinks(globalValues, pages, page, pagesInterlinks, sections);
       
 
         template = template
@@ -298,7 +307,7 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
           .replace(/{{PAGE_TITLE}}/g, meta.title)
           .replace(/{{META_DESCRIPTION}}/g, meta.description)
-          .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
+          .replace(/{{BUSINESS_NAME}}/g, page.filename.toUpperCase())
           .replace(/{{HERO_IMG_MOBILE}}/g, uploadedImages[index]?.heroMobile || '')
           .replace(/{{HERO_IMG_TABLET}}/g, uploadedImages[index]?.heroTablet || '')
           .replace(/{{HERO_IMG_DESKTOP}}/g, uploadedImages[index]?.heroDesktop || '')
@@ -344,7 +353,27 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
           .replace(/{{LINKEDIN_URL}}/g, globalValues.linkedinUrl);
 
-        
+          if(servicesNavMenu === ""){
+            template = template.replace(/<li class="nav-item dropdown services-dropdown-option">[\s\S]*?<\/li>\s*/i, '');
+            
+          }else{
+            template = template.replace(/{{SERVICES_NAV_MENU}}/g, servicesNavMenu);
+          }
+
+          if(locationsNavMenu === ""){
+            template = template.replace(/<li class="nav-item dropdown locations-dropdown-option">[\s\S]*?<\/li>\s*/i, '');
+
+          } else {
+            template = template.replace(/{{LOCATIONS_NAV_MENU}}/g, locationsNavMenu);
+          }
+          
+          
+          template = template
+          .replace(/{{FIRST_PAGE_NAME_ACTIVE}}/g, firstPageNameActive)
+          .replace(/{{LINK_OUTSIDE_NAV_MENU}}/g, linkOutsideNavMenu)
+          .replace(/{{FIRST_PAGE_NAME}}/g, firstPageName);
+    
+  
   
           // Remove old hashed JS from dist
           const files = fs.readdirSync(jsDir);
@@ -382,6 +411,76 @@ router.post('/generate', upload.any(), async (req, res) => {
           fs.writeFileSync(path.join(distDir, `${filename}-${locationSlug}.html`), template);
   
   
+  
+          // Create accessibility.html, & save in dist
+          buildAccessibilityPage(
+                                  distDir,
+                                  cssDir,
+                                  globalValues,
+                                  servicesNavMenu,
+                                  locationsNavMenu,
+                                  linkOutsideNavMenu,
+                                  firstPageName,
+                                  firstPageNameActive
+                                );
+  
+  
+          // Create terms-of-use.html, & save in dist
+          buildTermsOfUsePage(
+                              distDir,
+                              cssDir,
+                              globalValues,
+                              servicesNavMenu,
+                              locationsNavMenu,
+                              page,
+                              linkOutsideNavMenu,
+                              firstPageName,
+                              firstPageNameActive
+                             );
+  
+  
+          // Create about-us.html, & save in dist
+          await buildAboutUsPage(
+                                distDir,
+                                cssDir,
+                                globalValues,
+                                servicesNavMenu,
+                                locationsNavMenu,
+                                jsonLdString,
+                                linkOutsideNavMenu,
+                                firstPageName,
+                                firstPageNameActive,
+                                indexInterlinks,
+                                pages 
+                              );
+
+
+
+          // Create location pages
+          await buildLocationPages(
+                                  distDir,
+                                  cssDir,
+                                  globalValues,
+                                  uploadedImages,
+                                  jsDir,
+                                  servicesNavMenu,
+                                  locationsNavMenu
+                                );
+  
+
+         
+          // Create privacy-policy.html, & save in dist
+          buildPrivacyPolicyPage(
+                                  distDir, 
+                                  cssDir, 
+                                  globalValues, 
+                                  servicesNavMenu,
+                                  locationsNavMenu,
+                                  page, 
+                                  firstPageNameActive, 
+                                  linkOutsideNavMenu, 
+                                  firstPageName
+                                );
 
          
           // === Auto-create CSS file.css if it doesn't exist & save in src/css
@@ -435,61 +534,6 @@ router.post('/generate', upload.any(), async (req, res) => {
             
           }     
       }
-
-
-
-      // Create about-us.html, & save in dist
-      await buildAboutUsPage(
-              distDir,
-              cssDir,
-              globalValues,
-              globalValues.jsonLdString,
-              indexInterlinks,
-              pages 
-      );
-
-
-
-
-      // Create privacy-policy.html, & save in dist
-      buildPrivacyPolicyPage(
-              distDir, 
-              cssDir, 
-              globalValues, 
-              pages
-      );
-
-
-
-      // Create terms-of-use.html, & save in dist
-      buildTermsOfUsePage(
-              distDir,
-              cssDir,
-              globalValues,
-              pages
-      );
-
-
-
-      // Create accessibility.html, & save in dist
-      buildAccessibilityPage(
-              distDir,
-              cssDir,
-              globalValues,
-              pages
-      );
-
-
-
-      // Create location pages
-      await buildLocationPages(
-              distDir,
-              cssDir,
-              globalValues,
-              pages,           // ⬅️ pass pages so Services dropdown can be built
-              uploadedImages,
-              interlinkMap
-      );
     
     
       // === Generate Success Response with Links to Pages ===

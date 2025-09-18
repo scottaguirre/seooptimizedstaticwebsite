@@ -1,16 +1,18 @@
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
+const { slugify } = require('./slugify');
+const { buildNavMenu } = require('./buildNavMenu');
 
+const isDev = process.env.NODE_ENV !== 'production';
+const basePath = isDev ? '/dist/' : '/';
 
 const buildAccessibilityPage = 
 function (
             distDir,
             cssDir,
             globalValues,
-            navMenu,
-            linkOutsideNavMenu,
-            firstPageName,
-            firstPageNameActive
+            pages
+            
    ) {
     // Replace {{DOMAIN}}, {{BUSINESS_NAME}} from accessibility.html & save in dist
     let accessibility = fs.readFileSync(path.join(__dirname, '../src/accessibilityTemplate.html'), 'utf-8');
@@ -19,20 +21,17 @@ function (
 
     if(!accessibilityExists){
 
-        const cleanedNavMenu = navMenu.replace(/active/g, '');
-        linkOutsideNavMenu = linkOutsideNavMenu.replace(/active/g, '');
-        firstPageName = firstPageName.replace(/active/g, '');
-        firstPageNameActive = firstPageNameActive.replace(/active/g, '');
+
+        // ✅ Build & inject Services / Locations menus (and remove wrappers if empty)
+        const context = 'accessibility';
+        accessibility = buildNavMenu(accessibility, globalValues, pages, basePath, slugify(globalValues.location), globalValues.location, context);
+
 
         accessibility = accessibility
         .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
         .replace(/{{DOMAIN}}/g, globalValues.domain)
         .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
         .replace(/{{LOGO_PATH}}/g, globalValues.logo)
-        .replace(/{{DYNAMIC_NAV_MENU}}/g, cleanedNavMenu)
-        .replace(/{{FIRST_PAGE_NAME_ACTIVE}}/g, firstPageNameActive)
-        .replace(/{{LINK_OUTSIDE_NAV_MENU}}/g, linkOutsideNavMenu)
-        .replace(/{{FIRST_PAGE_NAME}}/g, firstPageName)
         .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName}`)
         .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName}`)
         .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())

@@ -1,12 +1,16 @@
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 const { slugify } = require('./slugify');
-const { injectIndexInterlinks } = require('./injectIndexInterlinks'); 
-const { formatPhoneForHref } = require('./formatPhoneForHref');
-const { generateAboutUsContent } = require('./generateAboutUsContent');
-const { getHoursDaysText, getHoursTimeText} = require('./formatDaysAndHoursForDisplay');
 const { buildAltText } = require('./buildAltText');
+const { buildNavMenu } = require('./buildNavMenu');
+const { formatPhoneForHref } = require('./formatPhoneForHref');
+const { injectIndexInterlinks } = require('./injectIndexInterlinks'); 
+const { generateAboutUsContent } = require('./generateAboutUsContent');
+const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
 
+
+const isDev = process.env.NODE_ENV !== 'production';
+const basePath = isDev ? '/dist/' : '/';
 
 
 const predefinedImagesDir = path.join(__dirname, '../src/predefined-images');
@@ -22,16 +26,12 @@ function copyPageImage (srcDir, seoPrefix, filename, field) {
 
     
 const  buildAboutUsPage =  async function (
-        distDir,
-        cssDir,
-        globalValues,
-        navMenu,
-        jsonLdString,
-        linkOutsideNavMenu,
-        firstPageName,
-        firstPageNameActive,
-        indexInterlinks,
-        pages
+            distDir,
+            cssDir,
+            globalValues,
+            jsonLdString,
+            indexInterlinks,
+            pages 
 
     ){  
         const categoryMap = {
@@ -81,11 +81,6 @@ const  buildAboutUsPage =  async function (
 
         if(!aboutUsPageExists){
 
-            navMenu = navMenu.replace(/active/g, ''); 
-            linkOutsideNavMenu = linkOutsideNavMenu.replace(/active/g, '');
-            firstPageName = firstPageName.replace(/active/g, '');
-            firstPageNameActive = firstPageNameActive.replace(/active/g, '');
-
             
             // === Copy hero images
             copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-mobile.webp',  'heroMobile');
@@ -119,6 +114,12 @@ const  buildAboutUsPage =  async function (
             
             // Alt text for images
             const altTexts = buildAltText(globalValues, 'aboutIndex');
+
+
+            // ✅ Build & inject Services / Locations menus (and remove wrappers if empty)
+            const context = 'aboutus';
+            aboutus = buildNavMenu(aboutus, globalValues, pages, basePath, slugify(globalValues.location), globalValues.location, context);
+ 
 
               
             aboutus = aboutus
@@ -179,7 +180,6 @@ const  buildAboutUsPage =  async function (
             aboutus = aboutus
                 .replace(/{{ADDRESS}}/g, globalValues.address)
                 .replace(/{{EMAIL}}/g, globalValues.email)
-                .replace(/{{HOURS_DAYS}}/g, getHoursDaysText(globalValues.is24Hours, globalValues.hours))
                 .replace(/{{HOURS_TIME}}/g, getHoursTimeText(globalValues.is24Hours, globalValues.hours))
                 .replace(/{{PHONE_RAW}}/g, formatPhoneForHref(globalValues.phone))
                 .replace(/{{PHONE_DISPLAY}}/g, globalValues.phone)
@@ -189,10 +189,6 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{PINTEREST_URL}}/g, globalValues.pinterestUrl)
                 .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
                 .replace(/{{LINKEDIN_URL}}/g, globalValues.linkedinUrl)
-                .replace(/{{DYNAMIC_NAV_MENU}}/g, navMenu)
-                .replace(/{{FIRST_PAGE_NAME_ACTIVE}}/g, firstPageNameActive)
-                .replace(/{{LINK_OUTSIDE_NAV_MENU}}/g, linkOutsideNavMenu)
-                .replace(/{{FIRST_PAGE_NAME}}/g, firstPageName)
                 .replace('</head>', `<link rel="stylesheet" href="./css/bootstrap.min.css">
                                     <link rel="stylesheet" href="./css/index.css"></head>`)
                 .replace('</body>', `<script src="./js/bootstrap.bundle.min.js"></script>

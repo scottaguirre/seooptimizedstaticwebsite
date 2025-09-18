@@ -1,52 +1,34 @@
-const { OpenAI } = require('openai');
-const openai = new OpenAI(); // assumes API key is in .env
+// utils/buildInterlinksMap.js
+const { slugify } = require('./slugify');
 
+async function buildInterlinksMap(pages, locationPages = []) {
+  // 1) tag service page slugs (from filename without .html)
+  pages.forEach(p => { p.slug = String(p.filename || '').replace(/\.html$/i, ''); });
 
-async function buildInterlinksMap(pages) {
-  // pages = ONLY the pages submitted by the user via form
+  const serviceSlugs  = pages.map(p => p.slug).filter(Boolean);
 
-  // Add slug to each page
-  pages.forEach(p => {
-    p.slug = p.filename.replace('.html', '');
-  });
+  // 2) normalize location slugs (prefer explicit .slug, else from display)
+  const locationSlugs = Array.isArray(locationPages)
+    ? locationPages.map(l => l?.slug || l?.display || '').filter(Boolean)
+    : [];
+
+  // 3) combined ring order: all services, then locations
+  const order = [...serviceSlugs, ...locationSlugs];
+  const n = order.length;
 
   const interlinkMap = {};
-  const contentSlugs = pages.map(p => p.slug);
 
-  // === Build index.html backlinking ===
-  interlinkMap['index'] = Array.from(new Set(contentSlugs)).slice(0, 5); // About Us backlinks to first 5 user pages
+  // Index/About links to first 5 SERVICES (unchanged behavior)
+  interlinkMap['index'] = serviceSlugs.slice(0, 5);
 
-  // === For each user page ===
-  for (let i = 0; i < pages.length; i++) {
-    const page = pages[i];
-    const currentSlug = page.slug;
-    const linksTo = ['index'];
+  if (n === 0) return { interlinkMap };
 
-    const next1 = contentSlugs[(i + 1) % contentSlugs.length];
-    const next2 = contentSlugs[(i + 2) % contentSlugs.length];
-  
-    linksTo.push(next1, next2);
-    interlinkMap[currentSlug] = linksTo;
-  }
-
-  // === Generate synonym map for all target pages ===
-  const seenKeywords = new Set();
-
-  for (const targetSlugList of Object.values(interlinkMap)) {
-    for (const slug of targetSlugList) {
-      if (slug === 'index') continue;
-      const page = pages.find(p => p.slug === slug);
-
-
-      if (!page || !page.filename) continue;
-
-      const keyword = page.filename.replace('.html', '').replace(/-/g, ' ').toLowerCase();
-
-      if (seenKeywords.has(keyword)) continue;
-
-      seenKeywords.add(keyword);
-
-    }
+  // 4) every item links to Home + next two (wrap)
+  for (let i = 0; i < n; i++) {
+    const curr = order[i];
+    const next1 = order[(i + 1) % n];
+    const next2 = order[(i + 2) % n];
+    interlinkMap[curr] = ['index', ...(next1 === next2 ? [next1] : [next1, next2])];
   }
 
   return { interlinkMap };

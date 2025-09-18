@@ -3,7 +3,7 @@ const { normalizeDomain } = require('./normalizeDomain');
 const { getFullStateName } = require('./getFullStateName');
 
 
-const buildSchema = function (globalValues, uploadedImages, index, page, coordinates, reviews){
+const buildSchema = function (globalValues, uploadedImages, index, coordinates, reviews){
 
     
   function getOpeningHours(globalValues) {
