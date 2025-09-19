@@ -3,19 +3,14 @@ const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
 const { googleMap } = require('./googleMap');
-const { buildSchema } = require("./buildSchema");
 const { buildNavMenu } = require('./buildNavMenu'); 
 const { buildAltText } = require("./buildAltText");
-const { normalizeText } = require('./normalizeText');
-const { generateReview } = require("./generateReview");
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
 const { copyAllPredefinedImages } = require("./copyAllPredefinedImages");
-const { getCoordinatesFromAddress } = require("./getCoordinatesFromAddress");
+const { buildLocationPagesSchema } = require("./buildLocationPagesSchema");
 const { generateLocationPagesContent } = require("./generateLocationPagesContent");
-
-
 
 
 
@@ -74,20 +69,23 @@ const buildLocationPages = async function (
     // Metadata / schema
     const metaTitle = `${globalForLoc.businessName} in ${globalForLoc.location} - ${globalForLoc.businessType}`;
     const metaDesc  = `Serving ${globalForLoc.location}. Contact ${globalForLoc.businessName} for trusted ${globalForLoc.businessType.toLowerCase()} services.`;
-    const coordinates = await getCoordinatesFromAddress(globalForLoc.location);
-    const reviews     = await generateReview(globalForLoc.businessName);
-    const jsonLdString = buildSchema(globalForLoc, uploadedImages, index, coordinates, reviews);
+    const pagePath = `location-${slugify(locationPage.display)}.html`;
+    
+    const jsonLdString = buildLocationPagesSchema(
+      globalForLoc,
+      locationPage.display,               // e.g. "Dallas, TX"
+      pagePath,
+      uploadedImages[index]               // pass that page’s images (optional)
+    );
+
 
 
     //  Insert Interlinks to Pages Content 
     const pagesInterlinks = interlinkMap[locationSlug] || [];
 
-    console.log(`From buildLocatopmPages: ${pagesInterlinks}`);
-
-
 
     // Page content + alts
-    const sections = await generateLocationPagesContent(globalForLoc, normalizeText(locationPage.display), pagesInterlinks);
+    const sections = await generateLocationPagesContent(globalForLoc, pagesInterlinks);
     const altTexts = buildAltText(globalForLoc, Number(index));
 
     //console.log(`from buildLocationPages ${sections.section1.paragraphs[0]}`);
@@ -167,8 +165,8 @@ const buildLocationPages = async function (
       .replace(/{{YOUTUBE_URL}}/g, globalForLoc.youtubeUrl)
       .replace(/{{LINKEDIN_URL}}/g, globalForLoc.linkedinUrl);
 
-      // Slugify locationSlug
-      locationSlug = slugify(locationSlug);
+    // Slugify locationSlug
+    locationSlug = slugify(locationSlug);
    
     // CSS / JS includes
     template = template.replace('</head>', `

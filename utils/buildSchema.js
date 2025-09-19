@@ -5,6 +5,32 @@ const { getFullStateName } = require('./getFullStateName');
 
 const buildSchema = function (globalValues, uploadedImages, index, coordinates, reviews){
 
+  // To build sameAs to add in schema
+  function buildSameAs(vals = {}) {
+    const pick = v => {
+      if (!v) return null;
+      const s = String(v).trim();
+      if (!s || s === '#' || s.toLowerCase() === 'n/a') return null;
+      // ensure absolute URL (schema.org prefers full URLs)
+      const url = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+      // minimal sanity check: must contain a dot or be clearly a social host
+      return /\./.test(url) ? url : null;
+    };
+
+    const arr = [
+      vals.facebookUrl,
+      vals.instagramUrl,
+      vals.twitterUrl,
+      vals.linkedinUrl,
+      vals.youtubeUrl,
+      vals.pinterestUrl,
+    ]
+      .map(pick)
+      .filter(Boolean);
+
+    // de-duplicate while preserving order
+    return [...new Set(arr)];
+  }
     
   function getOpeningHours(globalValues) {
     if (globalValues.is24Hours === 'on') {
@@ -57,8 +83,11 @@ const buildSchema = function (globalValues, uploadedImages, index, coordinates, 
           longitude: coordinates.longitude
         },
         openingHours: getOpeningHours(globalValues),
+        review: reviews,
+        "hasMap": "https://www.google.com/maps?cid=",
 
-        review: reviews
+        "sameAs": buildSameAs(globalValues)
+
       });
 
       return jsonLdString;
@@ -66,3 +95,4 @@ const buildSchema = function (globalValues, uploadedImages, index, coordinates, 
 }
 
 module.exports = { buildSchema };
+

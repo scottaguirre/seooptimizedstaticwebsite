@@ -1,5 +1,9 @@
-function createLocationPagesPrompt({ globalForLoc, location, keywords = [] }) {
-  const { businessName, businessType } = globalForLoc;
+function createLocationPagesPrompt({ globalForLoc, keywords = [] }) {
+  const { businessName, businessType, location } = globalForLoc;
+
+  console.log(`Location Page location: ${location}`);
+  console.log(`Next location or service: ${keywords[1]}`);
+  console.log(`Next location or service: ${keywords[2]}`);
 
   const categoryMap = {
     plumbing: 'plumbing',
@@ -36,6 +40,8 @@ Force the following inclusions (exact phrases, lowercase, no quotes):
    In the first paragraph of this section include this word ${keywords[2]}.
 4) Section 4:
    - Human-first heading focused on ${location}.
+   In the first paragraph talk about ${location}
+   In the second paragraph include at least 4 zip codes, neighborhoods or landmarks of ${location}.
   
 
 Rules:

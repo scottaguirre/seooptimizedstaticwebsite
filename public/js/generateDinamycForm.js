@@ -72,7 +72,7 @@
   
           <!-- 7) Location-->
           <div class="mb-3">
-            <label class="form-label">7) Location</label>
+            <label class="form-label">7) Main Location</label>
             <input type="text" name="global[location]" class="form-control" required />
           </div>
 

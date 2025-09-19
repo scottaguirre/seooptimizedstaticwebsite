@@ -4,10 +4,11 @@ const { createLocationPagesPrompt } = require('./createLocationPagesPrompt');
 const { OpenAI } = require('openai');
 const openai = new OpenAI();
 
-async function generateLocationPagesContent(globalForLoc, attempt = 1) {
+async function generateLocationPagesContent(globalForLoc, pagesInterlinks, attempt = 1) {
   
   const prompt = createLocationPagesPrompt({
-    globalForLoc
+    globalForLoc,
+    keywords: pagesInterlinks
   });
 
   const response = await openai.chat.completions.create({
