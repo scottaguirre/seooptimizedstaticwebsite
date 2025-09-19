@@ -9,11 +9,12 @@
 <body>
   <div class="container mt-5">
     <div class="row justify-content-center">
-      <div class="col-lg-10 col-md-12">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h2 class="mb-4 text-center">Generate Website</h2>
-
+      <div class="col-md-8">
+        <div class="card shadow-sm border-success">
+          <div class="card-header bg-success px-5">
+            <h2 class="mb-4 mt-4  text-white text-center">Generate Website</h2>
+          </div>
+          <div class="card-body px-5">
             <!--  Alert message for errors -->
             <div id="formAlert"
                  class="alert alert-danger d-none alert-dismissible"
@@ -30,23 +31,11 @@
 
             <!-- Form Start -->
             <form id="websiteForm" action="/generate" method="POST" enctype="multipart/form-data" class="needs-validation" novalidate>
-              <!-- Step 1: Ask page count -->
-              <div class="mb-3">
-                <label for="pageCount" class="form-label">How many pages?</label>
-                <input type="number" class="form-control" id="pageCount" name="pageCount" min="1" required />
-              </div>
-              <div id="pageCountError" class="text-danger mb-3" style="display: none;">
-                Please enter a number greater than 0.
-              </div>
-
-              <!-- Start Process Button -->
-              <button type="button" class="btn btn-primary mb-4" onclick="generateDynamicForm()">Start Process</button>
-
               <!-- Dynamic Sections Go Here -->
               <div id="dynamicFormContainer"></div>
             </form>
             <!-- Form End -->
-          </div>
+          </div> <!-- End of Card Body -->
         </div>
       </div>
     </div>
