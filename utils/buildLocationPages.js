@@ -165,6 +165,18 @@ const buildLocationPages = async function (
       .replace(/{{YOUTUBE_URL}}/g, globalForLoc.youtubeUrl)
       .replace(/{{LINKEDIN_URL}}/g, globalForLoc.linkedinUrl);
 
+
+      // === Remove the email line + <hr> when email is empty ===
+      const emailVal = (globalValues.email || '').trim();
+      if (!emailVal) {
+        // Remove: <p> {{EMAIL or undefined or empty}} </p> + optional <hr...>
+        template = template.replace(
+          /<p[^>]*>\s*(?:{{EMAIL}}|undefined|&nbsp;|\s)*<\/p>\s*(?:<hr[^>]*>\s*)?/gi,
+          ''
+        );
+      }
+
+
     // Slugify locationSlug
     locationSlug = slugify(locationSlug);
    

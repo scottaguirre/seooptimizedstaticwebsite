@@ -72,10 +72,10 @@ function validateGlobalFields(global) {
     'businessName',
     'businessType',
     'domain',
-    'email',
     'phone',
     'address',
-    'location'
+    'location',
+    'email'
   ];
 
   const missing = requiredGlobalFields.filter(field => !(global[field] || '').toString().trim());

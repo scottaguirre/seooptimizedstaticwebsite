@@ -49,6 +49,7 @@ const {
     generateMetadata,
     buildAboutUsPage,
     getHoursTimeText,
+    createBuildRecord,
     buildInterlinksMap,
     buildLocationPages,
     formatPhoneForHref,
@@ -61,12 +62,15 @@ const {
     getCoordinatesFromAddress
    
   } = require('../utils/pageGenerator');
+
+  
  
 
 // === Generate Route: POST (handles form submission) ===
 router.post('/generate', upload.any(), async (req, res) => {
     const pages = req.body.pages;
     const global = req.body.global;
+    const showAboutForm = (v => v === true || v === 'true' || v === 'on' || v === '1')(global?.showAboutForm);
    
   
      // Clean js and css file from src (except bootstrap and style.css) when running dev
@@ -175,6 +179,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
       const globalValues = {
+        showAboutForm,
         wantsLocationPages,    // true/false
         locationPages: locations,
         hours: global.hours || {},
@@ -344,6 +349,16 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
           .replace(/{{LINKEDIN_URL}}/g, globalValues.linkedinUrl);
 
+           // === Remove the email line + <hr> when email is empty ===
+           const emailVal = (globalValues.email || '').trim();
+           if (!emailVal) {
+               // Remove: <p> {{EMAIL or undefined or empty}} </p> + optional <hr...>
+               template = template.replace(
+                   /<p[^>]*>\s*(?:{{EMAIL}}|undefined|&nbsp;|\s)*<\/p>\s*(?:<hr[^>]*>\s*)?/gi,
+                   ''
+               );
+           }
+
         
   
           // Remove old hashed JS from dist
@@ -497,6 +512,15 @@ router.post('/generate', upload.any(), async (req, res) => {
         const filename = `${slugify(page.filename.trim())}-${slugify(normalizeText(globalValues.location))}`;
         return `<li><a href="${basePath}${filename}.html" target="_blank">${filename}.html</a></li>`;
       }).join('');
+
+
+      // Register this build so /export-wp can convert THIS exact output
+      const buildId = createBuildRecord(distDir, {
+        businessName: globalValues?.businessName || 'Site',
+        location:     globalValues?.location || '',
+      });
+
+
     
       res.send(`
         <html>
@@ -507,6 +531,15 @@ router.post('/generate', upload.any(), async (req, res) => {
             <div class="container">
               <h2 class="mt-5">✅ Pages generated but not minified yet!</h2>
               <ul>${links}</ul>
+
+              
+              <!-- New: Export to WordPress Theme (ACF Free) -->
+              <form method="POST" action="/export-wp" class="mt-3">
+              <input type="hidden" name="buildId" value="${buildId}">
+              <button class="btn btn-outline-secondary">Export WordPress Theme (ACF Free)</button>
+              </form>
+
+
               <a href="/" class="btn btn-warning mt-3">Go Back</a>
               <a href="/production" class="btn btn-primary mt-3 ">Run Production</a>
             </div>

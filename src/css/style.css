@@ -160,7 +160,7 @@ a.nav-link.active:hover{
 }
 
 .col-md-6 img {
-    box-shadow: 10px 10px 5px #aaaaaa;
+    box-shadow: 10px 10px 5px #aaa;
     border-radius: 10px;
 }
 
@@ -211,13 +211,193 @@ footer a {
     color:darkblue;
 }
 
-/* Inputs & selects */
-.form-control:focus,
-.form-select:focus {
-  border-color: #dc3545;                         /* red border */
-  box-shadow: 0 0 0 .25rem rgba(220,53,69,.25);  /* red focus ring */
-  outline: none;                                  /* replace default blue outline */
+
+/* Form container */
+.form-container {
+    overflow: hidden;
+    width: 100%;
 }
+
+
+/* Form styles */
+.contact-form {
+    padding: 50px;
+    padding-bottom:60px;
+    max-width: 700px;
+    margin: auto;
+}
+
+.contact-form h2 {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #2d3748;
+    margin-bottom: 8px;
+    text-align: center;
+}
+
+.form-subtitle {
+    color: #718096;
+    text-align: center;
+    margin-bottom: 32px;
+    font-size: 0.95rem;
+}
+
+/* Form groups */
+.form-group {
+    margin-bottom: 24px;
+    position: relative;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #4a5568;
+    font-size: 0.9rem;
+}
+
+/* Input and textarea styles */
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    padding: 14px 0;
+    border: none;
+    border-bottom: 1px solid transparent;
+    border-radius: 0;
+    font-size: 1rem;
+    font-family: inherit;
+    background-color: transparent;
+    resize: vertical;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-bottom-color: #667eea;
+    box-shadow: 0 2px 0 0 green;
+    transform: translateY(-2px);
+}
+
+.form-group input:hover,
+.form-group textarea:hover {
+    border-bottom-color: #cbd5e0;
+}
+
+/* Textarea specific */
+.form-group textarea {
+    height: 80px;
+    min-height: 80px;
+    resize: vertical;
+}
+
+/* Submit button */
+.submit-btn {
+    width: 100%;
+    background: green;
+    color: white;
+    border: none;
+    padding: 16px 24px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-radius: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+.submit-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.6s ease;
+}
+
+.submit-btn:hover::before {
+    left: 100%;
+}
+
+.submit-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+}
+
+.submit-btn:active {
+    transform: translateY(0);
+}
+
+.btn-text {
+    position: relative;
+    z-index: 1;
+}
+
+.btn-icon {
+    position: relative;
+    z-index: 1;
+    transition: transform 0.3s ease;
+}
+
+.submit-btn:hover .btn-icon {
+    transform: translateX(4px);
+}
+
+/* Responsive design */
+@media (max-width: 600px) {
+    .form-container {
+        margin: 10px;
+        border-radius: 16px;
+    }
+    
+    .contact-form {
+        padding: 30px 25px;
+    }
+    
+    .contact-form h2 {
+        font-size: 1.75rem;
+    }
+    
+    .form-group {
+        margin-bottom: 20px;
+    }
+}
+
+/* Focus styles for accessibility */
+.submit-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.4);
+}
+
+/* Form validation styles */
+.form-group input:invalid:not(:focus):not(:placeholder-shown),
+.form-group textarea:invalid:not(:focus):not(:placeholder-shown) {
+    border-bottom-color: #082d5b;
+    /* box-shadow: 0 2px 0 0 rgba(198, 191, 191, 0.2); */
+}
+
+.form-group input:valid:not(:focus):not(:placeholder-shown),
+.form-group textarea:valid:not(:focus):not(:placeholder-shown) {
+    border-bottom-color: red;
+}
+
+/* Loading state for button */
+.submit-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.submit-btn:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
 
 
 /* 400px */

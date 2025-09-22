@@ -194,14 +194,68 @@ const  buildAboutUsPage =  async function (
                 .replace('</body>', `<script src="./js/bootstrap.bundle.min.js"></script>
                                      <script src="./js/index.js"></script>
                           </body>`);
+            
+            
+            // Normalize checkbox -> boolean
+            const normalizeBool = (v) => {
+                if (typeof v === 'boolean') return v;
+                if (typeof v === 'number') return v === 1;
+                if (!v) return false;
+                const s = String(v).toLowerCase();
+                return ['true','1','on','yes'].includes(s);
+            };
+  
+
+
+            
+            // === OPTIONAL Contact Form injection (replaces {{FORM}}) ===
+            const hasEmail = !!(globalValues.email && /\S+@\S+/.test(globalValues.email.trim()));
+            const showAboutForm = normalizeBool(globalValues.showAboutForm);
+
+            // We’ll reuse the exact form markup from the template you previously had,
+            // but now we inject it only when email is present.
+            // If you prefer, you can put this string in a separate partial and fs.readFileSync it.
+            const contactFormHtml = `
+            <section class="form-container bg-secondary-subtle">
+            <div>
+                <form class="contact-form" id="contactForm" action="mailto:${globalValues.email}" method="POST" enctype="text/plain">
+                    <h2>Get In Touch</h2>
+                    <div class="form-group">
+                        <label for="name">Full Name</label>
+                        <input type="text" id="name" name="name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="message">Message</label>
+                        <textarea id="message" name="message" rows="5" required></textarea>
+                    </div>
+                    <button type="submit" class="submit-btn">
+                        <span class="btn-text">Send Message</span>
+                        <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </form>
+            </div>
+            </section>
+            `;
+
+
+            // Replace the placeholder with the form only if BOTH are true
+            if (hasEmail && showAboutForm) {
+                aboutus = aboutus.replace(/<section>\s*{{FORM}}\s*<\/section>/i, contactFormHtml);
+            } else {
+                aboutus = aboutus.replace(/<section>\s*{{FORM}}\s*<\/section>\s*/i, '');
+            }
+
 
           
-        
-             
-            const debugPath = path.join(__dirname, '../debug-about-us.html');
-            fs.writeFileSync(debugPath, aboutus);
-            
-            
+            // Write the About Us Page file (index.html)
             fs.writeFileSync(path.join(distDir, `index.html`), aboutus);
 
             // === Auto-create index.css if it doesn't exist 

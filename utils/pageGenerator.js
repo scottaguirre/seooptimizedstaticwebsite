@@ -7,6 +7,7 @@ const { normalizeText } = require('./normalizeText');
 const { replaceInProd } = require('./replaceInProd');
 const { generateReview } = require('./generateReview');
 const { smartTitleCase } = require('./smartTitleCase');
+const { createBuildRecord } = require('./buildRegistry');
 const { formatCityState } = require('./formatCityState');
 const { buildAboutUsPage } = require('./buildAboutUsPage');
 const { generateMetadata } = require('./generateMetadata');
@@ -33,6 +34,8 @@ const { getHoursDaysText, getHoursTimeText } = require('./formatDaysAndHoursForD
 
 
 
+
+
 module.exports = {
   slugify,
   googleMap,
@@ -51,6 +54,7 @@ module.exports = {
   generateMetadata,
   buildServicesPage,
   buildAltAttribute,
+  createBuildRecord,
   formatPhoneForHref,
   buildLocationPages,
   buildInterlinksMap,
@@ -65,6 +69,7 @@ module.exports = {
   copyAllPredefinedImages,
   getCoordinatesFromAddress,
   generateServiceAreaContent,
-  generateTaglineFromHeading,
+  generateTaglineFromHeading
  
 };
+

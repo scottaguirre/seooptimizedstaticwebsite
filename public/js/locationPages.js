@@ -7,12 +7,12 @@
       const row = document.createElement('div');
       row.className = 'row g-2 align-items-center mb-2';
       row.innerHTML = `
-        <div class="col">
+        <div class="col-8">
           <input type="text" class="form-control location-input"
                  name="global[locationPages][]" placeholder="City, ST" value="${initialValue}">
         </div>
-        <div class="col-auto">
-          <button type="button" class="btn btn-outline-danger btn-sm remove-location">&times;</button>
+        <div class="col-4">
+          <button type="button" class="btn btn-danger w-100 remove-location">Delete</button>
         </div>
       `;
       list.appendChild(row);
