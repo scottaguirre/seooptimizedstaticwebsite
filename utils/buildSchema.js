@@ -1,98 +1,87 @@
+// utils/buildSchema.js
 const { formatCityForSchema } = require('./formatCityForSchema');
-const { normalizeDomain } = require('./normalizeDomain');
-const { getFullStateName } = require('./getFullStateName');
+const { normalizeDomain }     = require('./normalizeDomain');
+const { getFullStateName }    = require('./getFullStateName');
+const { truthy }              = require('./helpers');
 
+const buildSchema = function (globalValues, uploadedImages, index, coordinates, reviews) {
 
-const buildSchema = function (globalValues, uploadedImages, index, coordinates, reviews){
-
-  // To build sameAs to add in schema
   function buildSameAs(vals = {}) {
     const pick = v => {
       if (!v) return null;
       const s = String(v).trim();
       if (!s || s === '#' || s.toLowerCase() === 'n/a') return null;
-      // ensure absolute URL (schema.org prefers full URLs)
       const url = /^https?:\/\//i.test(s) ? s : `https://${s}`;
-      // minimal sanity check: must contain a dot or be clearly a social host
-      return /\./.test(url) ? url : null;
+      return /\./.test(url) ? url : null;     // <-- fixed
     };
-
-    const arr = [
-      vals.facebookUrl,
-      vals.instagramUrl,
-      vals.twitterUrl,
-      vals.linkedinUrl,
-      vals.youtubeUrl,
-      vals.pinterestUrl,
-    ]
-      .map(pick)
-      .filter(Boolean);
-
-    // de-duplicate while preserving order
-    return [...new Set(arr)];
-  }
-    
-  function getOpeningHours(globalValues) {
-    if (globalValues.is24Hours === 'on') {
-      return ["Mo-Su 00:00-23:59"];
-    }
-
-    const daysMap = {
-      monday: 'Mo',
-      tuesday: 'Tu',
-      wednesday: 'We',
-      thursday: 'Th',
-      friday: 'Fr',
-      saturday: 'Sa',
-      sunday: 'Su'
-    };
-
-    const openingHours = [];
-
-    for (const day in daysMap) {
-      const open = globalValues.hours?.[day]?.open;
-      const close = globalValues.hours?.[day]?.close;
-
-      if (open && close) {
-        openingHours.push(`${daysMap[day]} ${open}-${close}`);
-      }
-    }
-
-    return openingHours;
+    return [...new Set([
+      vals.facebookUrl, vals.instagramUrl, vals.twitterUrl,
+      vals.linkedinUrl, vals.youtubeUrl,  vals.pinterestUrl
+    ].map(pick).filter(Boolean))];
   }
 
-  
-  const jsonLdString = JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "LocalBusiness",
-        name: globalValues.businessName,
-        url: `https://${normalizeDomain(globalValues.domain)}`,
-        telephone: globalValues.phone,
-        image: Object.values(uploadedImages[index] || {}),
-        address: {
-          "@type": "PostalAddress",
-          streetAddress: globalValues.address,
-          addressLocality: formatCityForSchema(globalValues.location),
-          addressRegion: getFullStateName(globalValues.location),
-          postalCode: globalValues.address.match(/\b\d{5}\b/)?.[0] || "",
-          addressCountry: "United States"
-        },
-        geo: {
-          "@type": "GeoCoordinates",
-          latitude: coordinates.latitude,
-          longitude: coordinates.longitude
-        },
-        openingHours: getOpeningHours(globalValues),
-        review: reviews,
-        "hasMap": "https://www.google.com/maps?cid=",
+  function getOpeningHours(vals) {
+    if (truthy(vals.is24Hours)) return ["Mo-Su 00:00-23:59"];
+    const daysMap = { monday:'Mo', tuesday:'Tu', wednesday:'We', thursday:'Th', friday:'Fr', saturday:'Sa', sunday:'Su' };
+    const out = [];
+    for (const d in daysMap) {
+      const open  = vals.hours?.[d]?.open;
+      const close = vals.hours?.[d]?.close;
+      if (open && close) out.push(`${daysMap[d]} ${open}-${close}`);
+    }
+    return out;
+  }
 
-        "sameAs": buildSameAs(globalValues)
+  // areaServed: main location + any extra location pages (deduped)
+  const areaServed = [];
+  const push = s => { const v = (s || '').trim(); if (v && !areaServed.includes(v)) areaServed.push(v); };
+  push(globalValues.location);
+  if (globalValues.wantsLocationPages && Array.isArray(globalValues.locationPages)) {
+    for (const lp of globalValues.locationPages) push(lp?.display);
+  }
 
-      });
+  // images (optional)
+  const imgs = Object.values(uploadedImages?.[index] || {}).filter(Boolean);
 
-      return jsonLdString;
-    
-}
+  const schema = {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    name: globalValues.businessName,
+    url: `https://${normalizeDomain(globalValues.domain)}`,
+    telephone: globalValues.phone,
+    ...(imgs.length ? { image: imgs } : {}),
+    address: {
+      "@type": "PostalAddress",
+      streetAddress: globalValues.address,
+      addressLocality: formatCityForSchema(globalValues.location),
+      addressRegion: getFullStateName(globalValues.location),
+      postalCode: globalValues.address.match(/\b\d{5}\b/)?.[0] || "",
+      addressCountry: "United States"
+    },
+    review: reviews,
+    sameAs: buildSameAs(globalValues)
+  };
+
+  // geo (optional)
+  const lat = Number(coordinates?.latitude);
+  const lng = Number(coordinates?.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    schema.geo = { "@type": "GeoCoordinates", latitude: lat, longitude: lng };
+  }
+
+  // openingHours (optional)
+  const opening = getOpeningHours(globalValues);
+  if (opening?.length) schema.openingHours = opening;
+
+  // areaServed (optional)
+  if (areaServed.length) schema.areaServed = areaServed;
+
+  // hasMap via CID (optional)
+  if (globalValues.googleMapCid) {
+    schema.hasMap = `https://www.google.com/maps?cid=${encodeURIComponent(globalValues.googleMapCid)}`;
+  }
+
+  return JSON.stringify(schema);
+};
 
 module.exports = { buildSchema };
-

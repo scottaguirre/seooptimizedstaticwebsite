@@ -35,6 +35,8 @@ const buildTermsOfUsePage = function (
         .replace(/{{LOGO_PATH}}/g, globalValues.logo)
         .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName}`)
         .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName}`)
+        .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
+        .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
         .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
         .replace(/{{EMAIL}}/g, globalValues.email)
         .replace(/{{STATE}}/g, fullStateName)

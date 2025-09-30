@@ -128,6 +128,8 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{LOGO_PATH}}/g, globalValues.logo)
                 .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${category} ${nearMeTerm}`)
                 .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${category} ${nearMeTerm}`)
+                .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
+                .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
                 .replace(/{{PAGE_TITLE}}/g, `${globalValues.businessName} in ${globalValues.location} - ${category} ${nearMeTerm}`)
                 .replace(/{{META_DESCRIPTION}}/g, `We are ${globalValues.businessName} in ${globalValues.location}. Call us if you are looking for ${category} ${nearMeTerm}`)
                 .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())

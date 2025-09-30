@@ -75,7 +75,8 @@ const buildLocationPages = async function (
       globalForLoc,
       locationPage.display,               // e.g. "Dallas, TX"
       pagePath,
-      uploadedImages[index]               // pass that page’s images (optional)
+      uploadedImages[index],               // pass that page’s images (optional)
+      globalValues.location               
     );
 
 
@@ -117,6 +118,8 @@ const buildLocationPages = async function (
       .replace(/{{LOGO_PATH}}/g, globalForLoc.logo)
       .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalForLoc.businessName} in  - ${locationPage.display}`)
       .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalForLoc.businessName} in  - ${locationPage.display}`)
+      .replace(/{{LOGO_WIDTH}}/g, String(globalForLoc.logoWidth))
+      .replace(/{{LOGO_HEIGHT}}/g, String(globalForLoc.logoHeight))
       .replace(/{{PAGE_TITLE}}/g, metaTitle)
       .replace(/{{META_DESCRIPTION}}/g, metaDesc)
       .replace(/{{BUSINESS_NAME}}/g, globalForLoc.businessName.toUpperCase())

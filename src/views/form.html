@@ -8,31 +8,55 @@
  
   <style>
     body{
-      background: #0A0606;
+      background: #082d5b;;
     }
     .card{
-      background: lightgray;
+      border: none;
+      background: none;
+      box-shadow: 10px 10px 10px black;
+      margin-bottom:50px;
     }
     .btnHover:hover{
-      background: rgb(20, 120, 20) !important;
+      background: rgb(24, 148, 24) !important;
+    }
+
+    .btnHoverBack:hover{
+      background: rgb(15, 127, 179) !important;
     }
     .border-card{
-      border:none;
+      border: none;
+      
     }
     .btn-dark{
       color:white;
     }
+    
     input[type=text],
     input[type=tel],
     input[type=email],
     input[type=url],
-    input[type=file],
-    select {
-      background:#e4e6e7 !important;
+    input[type=file] {
+      background:#e4e6e7;
+    }
+
+    .card-header {
+      background:#082d5b; 
+    }
+
+    .card-body h3,
+    label,
+    strong,
+    h4,
+    .form-text,
+    legend,
+    h5, hr {
+      color: white;
+    }
+
+    .card-body-bottom{
+      margin-bottom: 50px;
     }
    
-    
-    
   </style>
 
 </head>
@@ -40,11 +64,11 @@
   <div class="container mt-5">
     <div class="row justify-content-center">
       <div class="col-md-8">
-        <div class="card shadow-sm border-card">
-          <div style="background:#082d5b" class="card-header px-5">
+        <div class="card border-card">
+          <div class="card-header px-5">
             <h2 class="mb-4 mt-4  text-white text-center">Generate Website</h2>
           </div>
-          <div class="card-body px-5">
+          <div class="card-body px-5 card-body-bottom">
             <!--  Alert message for errors -->
             <div id="formAlert"
                  class="alert alert-danger d-none alert-dismissible"

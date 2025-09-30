@@ -198,9 +198,20 @@ router.post('/generate', upload.any(), async (req, res) => {
         address: normalizeText(global.address?.trim()),
         pinterestUrl: (global.pinterestUrl || '').trim(),
         instagramUrl: (global.instagramUrl || '').trim(),
+        googleMapCid: (global.googleMapCid || '').trim(),
         businessName: normalizeText(global.businessName?.trim()), 
         location: formatCityState(smartTitleCase(normalizeText(global.location?.trim()))),
       };
+
+
+      // read the posted value (fallback = rectangular)
+      globalValues.logoType = String(global.logoType || 'rect').toLowerCase();
+
+      // the two sizes we need
+      const isSquare = globalValues.logoType === 'square';
+      globalValues.logoWidth  = 130;
+      globalValues.logoHeight = isSquare ? 130 : 100;
+
 
       // Build interlink map 
       // AFTER you’ve validated pages & locations and built globalValues
@@ -301,6 +312,8 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{LOGO_PATH}}/g, globalValues.logo)
           .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
           .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
+          .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
+          .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
           .replace(/{{PAGE_TITLE}}/g, meta.title)
           .replace(/{{META_DESCRIPTION}}/g, meta.description)
           .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
@@ -531,14 +544,6 @@ router.post('/generate', upload.any(), async (req, res) => {
             <div class="container">
               <h2 class="mt-5">✅ Pages generated but not minified yet!</h2>
               <ul>${links}</ul>
-
-              
-              <!-- New: Export to WordPress Theme (ACF Free) -->
-              <form method="POST" action="/export-wp" class="mt-3">
-              <input type="hidden" name="buildId" value="${buildId}">
-              <button class="btn btn-outline-secondary">Export WordPress Theme (ACF Free)</button>
-              </form>
-
 
               <a href="/" class="btn btn-warning mt-3">Go Back</a>
               <a href="/production" class="btn btn-primary mt-3 ">Run Production</a>
