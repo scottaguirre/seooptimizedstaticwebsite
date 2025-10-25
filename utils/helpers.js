@@ -1,5 +1,8 @@
-const fs = require('fs');
 const path = require('path');
+const fs  = require('fs');
+const fsp = fs.promises;
+
+
 
 const { formatCityForSchema } = require('../utils/formatCityForSchema'); // city only  :contentReference[oaicite:3]{index=3}
 const { formatCityState }     = require('../utils/formatCityState');     // "City, ST"  :contentReference[oaicite:4]{index=4}
@@ -48,13 +51,19 @@ function cleanDevFolders({
     }
   });
 
-  // Clean src/css/ but keep style.css & bootstrap.min.css
-  fs.readdirSync(srcCssDir).forEach(file => {
-    if (file.endsWith('.css') && !keepCss.includes(file)) {
-      fs.unlinkSync(path.join(srcCssDir, file));
-     
+  // Clean src/css/ but keep theme files and bootstrap.min.css
+  const themesDir = path.join(srcCssDir, 'themes');
+
+  fs.readdirSync(srcCssDir, { withFileTypes: true }).forEach(entry => {
+    // Skip the themes directory entirely
+    if (entry.isDirectory() && entry.name === 'themes') return;
+
+    if (entry.isFile() && entry.name.endsWith('.css') && entry.name !== 'bootstrap.min.css') {
+      fs.unlinkSync(path.join(srcCssDir, entry.name));
     }
   });
+
+
 
   // Clean dist subdirectories
   [distDir, assetsDir, cssDir, jsDir].forEach(cleanDirectory);
@@ -63,7 +72,20 @@ function cleanDevFolders({
   [tempUploadDir, distDir, assetsDir, cssDir, jsDir].forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   });
+
 }
+
+  // 2.1 Cleand temp upload files
+  async function moveOrCopyThenDelete(src, dest) {
+    try {
+      await fsp.rename(src, dest);           // same disk: atomic move (src gone)
+    } catch (err) {
+      if (err.code !== 'EXDEV') throw err;   // different device: copy+delete
+      await fsp.copyFile(src, dest);
+      await fsp.unlink(src);
+    }
+  }
+
 
 
 // 3. Validate Global Fields
@@ -237,16 +259,37 @@ function validateAndNormalizeLocationPages(rawList, toggleValue) {
   return { ok:true, locations, fields };
 }
 
+// 8 Escape Attribute Helper
+const escapeAttr = (s = '') =>
+  String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+
+
+// 9 Select CSS Them. Prefer /src/css/themes/<styleKey>.css, else /src/css/<styleKey>.css
+function resolveThemeCss(styleKey) {
+  const safe = String(styleKey || 'style').trim().replace(/[^a-z0-9_-]/gi, '');
+  const themesPath = path.join(__dirname, '../src/css/themes', `${safe}.css`);
+  const rootPath   = path.join(__dirname, '../src/css',        `${safe}.css`);
+  if (fs.existsSync(themesPath)) return themesPath;
+  if (fs.existsSync(rootPath))   return rootPath;
+  throw new Error(
+    `Theme CSS not found for "${safe}". Looked in:\n- ${themesPath}\n- ${rootPath}`
+  );
+}
+
+
 
 
 
 
 module.exports = {
+  truthy,
+  escapeAttr,
   cleanDirectory,
   cleanDevFolders,
-  validateGlobalFields,
+  resolveThemeCss,
   jsonValidationError,
+  validateGlobalFields,
+  moveOrCopyThenDelete,
   validateEachPageInputs,
-  truthy,
   validateAndNormalizeLocationPages
 };

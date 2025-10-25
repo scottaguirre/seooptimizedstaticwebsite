@@ -1,5 +1,15 @@
 // /public/js/generateDinamycForm.js
 (function () {
+
+  // CSS Design options
+  const THEMES = [
+    { key: 'style',  label: 'Style 1', preview: '/previews/style.png' },
+    { key: 'style2', label: 'Style 2', preview: '/previews/style2.png' },
+    { key: 'style3', label: 'Style 3', preview: '/previews/style3.png' }
+    // add more later: { key: 'style3', label: 'Style 3', preview: '/previews/style3.jpg' }, ...
+  ];
+
+  
   // -----------------------------
   // Small helpers
   // -----------------------------
@@ -95,6 +105,7 @@
   // State
   // -----------------------------
   const state = {
+    styleKey: 'style',
     businessType: '',
     logoType: 'square',     // 'square' | 'rect'
     logoFile: null,
@@ -149,7 +160,7 @@
           <div class="col-12">
             <select class="form-select" id="businessType" required>
               <option value="">Choose...</option>
-              ${['Plumbing','Electrician','Concrete Contractor','Roofing','HVAC','Landscaping','Law Firm']
+              ${['Plumbing', 'Fencing', 'Electrician','Concrete Contractor','Roofing','HVAC','Landscaping','Law Firm']
                 .map(bt => `<option ${state.businessType===bt?'selected':''}>${bt}</option>`).join('')}
             </select>
             <div class="form-text">You can adjust this later.</div>
@@ -314,13 +325,7 @@
   }
 
   // -----------------------------
-  // Step 2: Main Form (no logo, no pages/locations here)
-  // -----------------------------
-  // -----------------------------
-  // Step 2: Main Form (no logo, no pages/locations here) — with validation
-  // -----------------------------
-  // -----------------------------
-  // Step 2: Main Form (no logo, no pages/locations here) — with validation incl. hours
+  // Step 2: Main Form Theme/Design
   // -----------------------------
   function renderMainForm() {
     container.innerHTML = '';
@@ -331,6 +336,7 @@
       <div class="d-flex flex-wrap gap-2">
         <span class="badge text-bg-primary">Business Type: ${state.businessType}</span>
         <span class="badge text-bg-secondary">Logo: ${state.logoFile ? (state.logoFile.name || 'selected') : '—'}</span>
+        <span class="badge text-bg-info">Theme: ${state.styleKey}.css</span>
       </div>
     `;
     container.appendChild(header);
@@ -468,7 +474,7 @@
     // Footer: Back/Next (Next validates)
     const footer = el('div', { class: 'd-flex gap-2 mt-4' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
-    const resetBtn = el('button', { type: 'button', class: 'btn btn-dark', style: 'min-width:150px;font-size:18px;' }, 'Start Over');
+    const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px' }, 'Start Over');
 
     const nextBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto', style: 'min-width:150px;font-size:18px;' }, 'Continue');
     footer.append(backBtn, resetBtn, nextBtn);
@@ -491,7 +497,7 @@
 
     backBtn.addEventListener('click', () => {
       state.mainFormSnapshot = snapshotFormValues(form);
-      go(1);
+      go(2);
     });
 
     nextBtn.addEventListener('click', () => {
@@ -576,14 +582,14 @@
 
       // All good — snapshot and move on
       state.mainFormSnapshot = snapshotFormValues(form);
-      go(3);
+      go(4);
     });
   }
 
 
 
   // -----------------------------
-  // Step 3 (final): Service Pages + Location Pages
+  // Step 3 : Service Pages + Location Pages
   // -----------------------------
   function renderPagesAndLocationsStep() {
     container.innerHTML = '';
@@ -662,7 +668,7 @@
     // ===== NAV (Back to Main Form, Submit) =====
     const footer = el('div', { class: 'd-flex gap-2 mt-4' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
-    const resetBtn = el('button', { type: 'button', class: 'btn btn-dark', style: 'min-width:150px;font-size:18px;' }, 'Start Over');
+    const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px;' }, 'Start Over');
     const submitBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Create Website');
     footer.append(backBtn, resetBtn, submitBtn);
     container.appendChild(footer);
@@ -680,7 +686,7 @@
       const li = container.querySelectorAll('#locationsList input[name="global[locationPages][]"]');
       state.addLocations = !!locToggle.checked;
       state.locations = state.addLocations ? [...li].map(i => i.value.trim()).filter(Boolean) : [];
-      go(2);
+      go(3);
     });
 
     submitBtn.addEventListener('click', () => {
@@ -801,6 +807,52 @@
     }, { once: true });
   }
 
+
+  // Step 4: Design and Theme Selection
+
+  function renderDesignStep() {
+    container.innerHTML = '';
+    const h = el('h3', {}, 'Design & Theme');
+    const desc = el('p', {}, 'Pick a design. You can preview each one.');
+    container.append(h, desc);
+  
+    const list = el('div', { class: 'row g-3' });
+    THEMES.forEach(({ key, label, preview }) => {
+      const col = el('div', { class: 'col-12' });
+      col.innerHTML = `
+        <div class="border rounded p-3 d-flex align-items-center justify-content-between" style="background:#0b3f7a33;">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="global[styleKey]" id="theme-${key}" value="${key}" ${state.styleKey === key ? 'checked' : ''} required>
+            <label class="form-check-label" for="theme-${key}">
+              ${label} <small class="text-white-50">(${key}.css)</small>
+            </label>
+          </div>
+          <div class="d-flex gap-2">
+            <a class="btn btn-outline-light btn-sm" href="${preview}" target="_blank" rel="noopener">Preview</a>
+          </div>
+        </div>
+      `;
+      list.appendChild(col);
+    });
+    container.appendChild(list);
+  
+    const nav = renderNav(container, {
+      showBack: true,
+      backText: 'Back',
+      nextText: 'Next',
+      onBack: () => { go(1); },
+      onNext: () => {
+        // update state from currently checked radio
+        const picked = container.querySelector('input[name="global[styleKey]"]:checked');
+        state.styleKey = picked ? picked.value : state.styleKey;
+        go(3); // go to Main Form step
+      }
+    });
+  }
+
+  
+
+
   // -----------------------------
   // Pages section helpers (reused)
   // -----------------------------
@@ -836,8 +888,10 @@
   const steps = [
     renderBusinessTypeStep,     // 0
     renderLogoStep,             // 1
-    renderMainForm,             // 2
-    renderPagesAndLocationsStep // 3
+    renderDesignStep,           // 2
+    renderMainForm,             // 3
+    renderPagesAndLocationsStep // 4
+    
   ];
   let current = 0;
   function go(index) {
@@ -900,6 +954,8 @@
   state.pages             = [];
   state.locations         = [];
   state.addLocations      = true;
+  state.styleKey = 'style';
+
 
   // 6) Jump back to the first step (Business Type)
   go(0);
@@ -954,7 +1010,7 @@
       // Guard: must have ≥1 service page
       if (pagesVals.length === 0) {
         e.preventDefault();
-        go(3);
+        go(4);
         // highlight first page input if it's on screen
         pageInputsDom[0]?.classList.add('is-invalid');
         pageInputsDom[0]?.focus();
@@ -965,7 +1021,7 @@
       // Guard: if locations are ON, must have ≥1 location
       if (addLoc && locVals.length === 0) {
         e.preventDefault();
-        go(3);
+        go(4);
         // highlight first location input if it's on screen
         locInputsDom[0]?.classList.add('is-invalid');
         locInputsDom[0]?.focus();
@@ -1004,6 +1060,21 @@
         form.appendChild(logoTypeHidden);
       }
       logoTypeHidden.value = state.logoType; // "square" or "rect"
+
+
+
+      // === Inject styleKey hidden field (ensures backend gets the chosen theme) ===
+      let styleKeyHidden = form.querySelector('input[name="global[styleKey]"]');
+      if (!styleKeyHidden) {
+        styleKeyHidden = document.createElement('input');
+        styleKeyHidden.type = 'hidden';
+        styleKeyHidden.name = 'global[styleKey]';
+        // so startOver() cleans it with the rest
+        styleKeyHidden.classList.add('js-hidden-mirror');
+        form.appendChild(styleKeyHidden);
+      }
+      styleKeyHidden.value = state.styleKey;
+
 
 
 

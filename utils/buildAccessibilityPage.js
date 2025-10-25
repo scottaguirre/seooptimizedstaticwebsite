@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
+const { resolveThemeCss } = require('./helpers');
 const { buildNavMenu } = require('./buildNavMenu');
 
 const isDev = process.env.NODE_ENV !== 'production';
@@ -52,9 +53,14 @@ function (
         // === Auto-create accessibility.css if it doesn't exist 
         const cssFilePath = path.join(__dirname, '../', 'src/css', `accessibility.css`);
 
-        // Create accessibility.css in src/css for webpack use
-        const fallbackStyle = path.join(__dirname, '../', 'src/css/style.css');
-        fs.copyFileSync(fallbackStyle, cssFilePath);
+        // Chosen theme key from the form (default 'style')
+        const chosenKey = (globalValues?.styleKey || 'style');
+
+        // Create index.css in src/css for webpack use
+        // Source: selected theme
+        const srcCss = resolveThemeCss(chosenKey);
+        fs.copyFileSync(srcCss, cssFilePath);
+
         
         // Copy generated accessibility.css to dist/css for dev use
         fs.copyFileSync(

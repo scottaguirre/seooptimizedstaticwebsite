@@ -5,6 +5,7 @@ const { slugify } = require('./slugify');
 const { googleMap } = require('./googleMap');
 const { buildNavMenu } = require('./buildNavMenu'); 
 const { buildAltText } = require("./buildAltText");
+const { escapeAttr, resolveThemeCss } = require("./helpers");
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
@@ -142,6 +143,7 @@ const buildLocationPages = async function (
       .replace(/{{SECTION4_IMG_ALT2}}/g, `${altTexts['section4-2']} - ${locationSlug}`)
       .replace(/{{SECTION4_IMG_TITLE2}}/g, `${altTexts['section4-2']} - ${locationSlug}`)
       .replace(/{{MAP_IFRAME_SRC}}/g, globalForLoc.mapEmbed || '')
+      .replace(/{{MAP_IFRAME_TITLE}}/g, escapeAttr(`Google map of ${globalValues.businessName} — ${globalValues.address || globalValues.location}`))
       .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading.toUpperCase())
       .replace(/{{SECTION1_H3}}/g, sectionsWithLinks.section1.subheading)
       .replace(/{{SECTION1_P1}}/g, sectionsWithLinks.section1.paragraphs[0])
@@ -196,10 +198,16 @@ const buildLocationPages = async function (
     fs.writeFileSync(path.join(distDir, `location-${locationSlug}.html`), template);
 
     // Dev: ensure CSS and JS stubs
-    const cssFilePath = path.join(__dirname, '../src/css', `location-${locationSlug}.css`);
-    if (isDev && !fs.existsSync(cssFilePath)) {
-      const fallbackStyle = path.join(__dirname, '../src/css/style.css');
-      fs.copyFileSync(fallbackStyle, cssFilePath);
+    const destCss = path.join(__dirname, '../src/css', `location-${locationSlug}.css`);
+
+    if (isDev && !fs.existsSync(destCss)) {
+
+      // Create CSS file.css in src/css for webpack use
+      const styleKey = (globalValues.styleKey || 'style');
+      const srcCssTheme = resolveThemeCss(styleKey);
+      
+      fs.copyFileSync(srcCssTheme, destCss);
+       
       fs.copyFileSync(
         path.join(__dirname, `../src/css/location-${locationSlug}.css`),
         path.join(cssDir, `location-${locationSlug}.css`)

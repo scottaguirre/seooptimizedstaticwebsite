@@ -57,7 +57,7 @@ function buildAndInjectMenusForTemplate(template, opts) {
       const isActive = context?.type === 'service' && context?.serviceSlug === svcSlug;
       const label = smartTitleCase(p.filename || '');
       return `
-        <li>
+        <li class="nav-item">
           <a class="dropdown-item ${isActive ? 'active' : ''}" href="${href}">
             ${label}
           </a>

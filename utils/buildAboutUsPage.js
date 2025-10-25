@@ -3,6 +3,7 @@ const path = require('path');
 const { slugify } = require('./slugify');
 const { buildAltText } = require('./buildAltText');
 const { buildNavMenu } = require('./buildNavMenu');
+const { escapeAttr, resolveThemeCss } = require('./helpers');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectIndexInterlinks } = require('./injectIndexInterlinks'); 
 const { generateAboutUsContent } = require('./generateAboutUsContent');
@@ -152,7 +153,9 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{SECTION4_IMG_TITLE1}}/g, `${altTexts['section4-1']} - ${category} ${nearMeTerm}`)
                 .replace(/{{SECTION4_IMG_ALT2}}/g, `${altTexts['section4-2']} - ${category} ${nearMeTerm}`)
                 .replace(/{{SECTION4_IMG_TITLE2}}/g, `${altTexts['section4-2']} - ${category} ${nearMeTerm}`)
-                .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')   
+                .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')
+                .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')
+                .replace(/{{MAP_IFRAME_TITLE}}/g, escapeAttr(`Google map of ${globalValues.businessName} — ${globalValues.address || globalValues.location}`))
                 .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading.toUpperCase())
                 .replace(/{{SECTION1_H3}}/g, sectionsWithLinks.section1.subheading)
                 .replace(/{{SECTION1_P1}}/g, sectionsWithLinks.section1.paragraphs[0])
@@ -260,12 +263,18 @@ const  buildAboutUsPage =  async function (
             // Write the About Us Page file (index.html)
             fs.writeFileSync(path.join(distDir, `index.html`), aboutus);
 
-            // === Auto-create index.css if it doesn't exist 
+            // === Destination: Auto-create index.css if it doesn't exist 
             const cssFilePath = path.join(__dirname, '../', 'src/css', `index.css`);
 
+            // Chosen theme key from the form (default 'style')
+            const chosenKey = (globalValues.styleKey || 'style');
+            console.log(`chosenKey: ${chosenKey}`);
+
             // Create index.css in src/css for webpack use
-            const fallbackStyle = path.join(__dirname, '../', 'src/css/style.css');
-            fs.copyFileSync(fallbackStyle, cssFilePath);
+            // Source: selected theme
+            const srcCss = resolveThemeCss(chosenKey);
+            console.log(`srcCss: ${srcCss}`);
+            fs.copyFileSync(srcCss, cssFilePath);
            
 
             // Copy generated index.css to dist/css for dev use

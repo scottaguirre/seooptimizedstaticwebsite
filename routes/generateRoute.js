@@ -1,17 +1,21 @@
 // === Required Modules and Setup ===
 const express = require('express');
-const router = express.Router();
 const multer = require('multer');
+const router = express.Router();
 const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
+const fsp = fs.promises;
 
 
 const {
   truthy, 
+  escapeAttr,
   cleanDevFolders,
+  resolveThemeCss,
   jsonValidationError,
   validateGlobalFields,
+  moveOrCopyThenDelete,
   validateEachPageInputs,
   validateAndNormalizeLocationPages
  } = require('../utils/helpers');
@@ -22,9 +26,9 @@ const basePath = isDev ? '/dist/' : '/';
 
 
 // === Directory Setup ===
-const srcJsDir = path.join(__dirname, '../src/js');
-const srcCssDir = path.join(__dirname, '../src/css');
 const tempUploadDir = path.join(__dirname, '../public/uploads');
+const srcCssDir = path.join(__dirname, '../src/css');
+const srcJsDir = path.join(__dirname, '../src/js');
 const distDir = path.join(__dirname, '../dist');
 const assetsDir = path.join(distDir, 'assets');
 const cssDir = path.join(distDir, 'css');
@@ -68,10 +72,15 @@ const {
 
 // === Generate Route: POST (handles form submission) ===
 router.post('/generate', upload.any(), async (req, res) => {
+  
+  const tempFiles = (req.files || []).map(f => f.path);
+
+  try {
     const pages = req.body.pages;
     const global = req.body.global;
     const showAboutForm = (v => v === true || v === 'true' || v === 'on' || v === '1')(global?.showAboutForm);
-   
+    
+
   
      // Clean js and css file from src (except bootstrap and style.css) when running dev
     if (isDev) {
@@ -115,14 +124,14 @@ router.post('/generate', upload.any(), async (req, res) => {
         const businessSlug = slugify(global.businessName);
         const keywordSlug = slugify(pages[0]?.filename || '');
         const locationSlug = slugify(global.location || '');
-        const seoPrefix = `${businessSlug}-${keywordSlug}-${locationSlug}`;
+        const seoPrefix = `${businessSlug}-${locationSlug}`;
 
 
         if(globalMatch){
             const field = globalMatch[1];     
             const newFilename = `${seoPrefix}-${field}${ext}`;
             const destPath = path.join(assetsDir, newFilename);
-            fs.renameSync(file.path, destPath);
+            await moveOrCopyThenDelete(file.path, destPath);
             uploadedImages.global[field] = `assets/${newFilename}`;
 
 
@@ -179,10 +188,12 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
       const globalValues = {
+        
         showAboutForm,
         wantsLocationPages,    // true/false
         locationPages: locations,
         hours: global.hours || {},
+        styleKey: global.styleKey,
         is24Hours: global.is24Hours,    // ✅ new: store 24hr toggle (may be 'on' or undefined)
         phone: global.phone?.trim(),
         domain: global.domain?.trim(),
@@ -208,17 +219,23 @@ router.post('/generate', upload.any(), async (req, res) => {
       globalValues.logoType = String(global.logoType || 'rect').toLowerCase();
 
       // the two sizes we need
-      const isSquare = globalValues.logoType === 'square';
-      globalValues.logoWidth  = 130;
-      globalValues.logoHeight = isSquare ? 130 : 100;
+      
+      if(globalValues.logoType === 'square'){
+        globalValues.logoWidth  = 100;
+        globalValues.logoHeight = 100;
+      } else {
+        globalValues.logoWidth  = 130;
+        globalValues.logoHeight = 100;
+      }
+
+      
+    
 
 
       // Build interlink map 
       // AFTER you’ve validated pages & locations and built globalValues
       const { interlinkMap } = await buildInterlinksMap(pages, globalValues.locationPages);
       const indexInterlinks = interlinkMap['index'] || [];
-
-      //console.log(`From generateRoute: ${interlinkMap}`);
 
       const seen = new Set();
       const duplicates = [];
@@ -238,7 +255,7 @@ router.post('/generate', upload.any(), async (req, res) => {
       globalValues.mapEmbed = await googleMap(globalValues.address);;
 
       // Used to copy images inside the main loop
-      imageContext = "imageServicePages";
+      const imageContext = "imageServicePages";
 
     
       // Main loop that creates html pages from the template file
@@ -316,6 +333,7 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
           .replace(/{{PAGE_TITLE}}/g, meta.title)
           .replace(/{{META_DESCRIPTION}}/g, meta.description)
+          .replace(/{{PAGE_NAME}}/g, page.filename.toUpperCase())
           .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
           .replace(/{{HERO_IMG_MOBILE}}/g, uploadedImages[index]?.heroMobile || '')
           .replace(/{{HERO_IMG_TABLET}}/g, uploadedImages[index]?.heroTablet || '')
@@ -336,6 +354,7 @@ router.post('/generate', upload.any(), async (req, res) => {
           .replace(/{{SECTION4_IMG_ALT2}}/g,  `${altTexts['section4-2']} - ${page.filename}`)
           .replace(/{{SECTION4_IMG_TITLE2}}/g, `${altTexts['section4-2']} - ${page.filename}`)
           .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')
+          .replace(/{{MAP_IFRAME_TITLE}}/g, escapeAttr(`Google map of ${globalValues.businessName} — ${globalValues.address || globalValues.location}`))
           .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading.toUpperCase())
           .replace(/{{SECTION1_H3}}/g, sectionsWithLinks.section1.subheading)
           .replace(/{{SECTION1_P1}}/g, sectionsWithLinks.section1.paragraphs[0])
@@ -413,12 +432,15 @@ router.post('/generate', upload.any(), async (req, res) => {
 
          
           // === Auto-create CSS file.css if it doesn't exist & save in src/css
-          const cssFilePath = path.join(__dirname, '../src/css', `${filename}.css`);
+          const destCss = path.join(__dirname, '../src/css', `${filename}.css`);
     
-          if (isDev && !fs.existsSync(cssFilePath)) {
+          if (isDev && !fs.existsSync(destCss)) {
             // Create CSS file.css in src/css for webpack use
-            const fallbackStyle = path.join(__dirname, '../src/css/style.css');
-            fs.copyFileSync(fallbackStyle, cssFilePath);
+            const styleKey = (globalValues.styleKey || 'style');
+            const srcCssTheme = resolveThemeCss(styleKey);
+
+
+            fs.copyFileSync(srcCssTheme, destCss);
            
   
   
@@ -535,23 +557,65 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
     
-      res.send(`
+      return res.send(`
         <html>
           <head>
             <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+            <style>
+              
+              .container {
+                width: 90%;
+                margin: auto;
+                text-align: center;
+                padding-top: 100px;
+              }
+
+              .index-page {
+                text-decoration: none;
+                font-size: 20px;
+                color: darkgreen;
+              }
+
+              li{
+                list-style-type: none;
+              }
+
+              h2 {
+                margin-bottom:50px;
+              }
+              
+              ul {
+                margin-bottom: 50px;
+              }
+
+            </style>
           </head>
           <body>
             <div class="container">
-              <h2 class="mt-5">✅ Pages generated but not minified yet!</h2>
-              <ul>${links}</ul>
-
+           
+              <h2>Visit website but is not minified yet!</h2>
+              <ul>
+                <li>
+                  <a href="./dist" class="index-page" target="_blank"> Click Here to Visit Website</a>
+                </li>
+              </ul>
+           
               <a href="/" class="btn btn-warning mt-3">Go Back</a>
               <a href="/production" class="btn btn-primary mt-3 ">Run Production</a>
+          
             </div>
           </body>
         </html>
       `);
-    }
+     } 
+
+  } catch (err) {
+    console.error('Error during /generate:', err);
+    return jsonValidationError(res, 500, 'Generation failed.');
+  } finally {
+    // delete any temp files that weren’t moved (or if an error happened)
+    await Promise.allSettled(tempFiles.map(p => fsp.unlink(p).catch(() => {})));
+  }
     
 });
 

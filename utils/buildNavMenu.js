@@ -68,7 +68,7 @@ const buildNavMenu  = function (template, globalValues, pages, basePath, mainLoc
                 const label = page.filename;
 
                 return `
-                        <li>
+                        <li class="nav-item">
                             <a class="dropdown-item nav-link ${isActive ? 'active' : ''}" href="${href}">
                                 ${label.toUpperCase()}
                             </a>

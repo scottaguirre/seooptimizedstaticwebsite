@@ -6,13 +6,14 @@ function createLocationPagesPrompt({ globalForLoc, keywords = [] }) {
   console.log(`Next location or service: ${keywords[2]}`);
 
   const categoryMap = {
-    plumbing: 'plumbing',
-    electrician: 'electrical services',
-    roofing: 'roofing',
+    'plumbing': 'plumbing',
+    'electrician': 'electrical services',
+    'roofing': 'roofing',
     'concrete contractor': 'concrete services',
-    hvac: 'hvac',
-    landscaping: 'landscaping',
-    'law firm': 'law firm'
+    'hvac': 'hvac',
+    'landscaping': 'landscaping',
+    'law firm': 'law firm',
+    'fencing':   'fencing'
   };
 
   const category = categoryMap[(businessType || '').toLowerCase()] || businessType || 'services';

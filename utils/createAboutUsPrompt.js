@@ -10,7 +10,8 @@ function createAboutUsPrompt({ globalValues, keywords}) {
     'concrete contractor': 'Concrete Contractor',
     'hvac':            'HVAC Technician',
     'landscaping':     'Landscaper',
-    'law firm':      'Lawyer'
+    'law firm':        'Lawyer',
+    'fencing':         'Fencing'
   };
 
   const category = categoryMap[businessType.toLowerCase()] || businessType;

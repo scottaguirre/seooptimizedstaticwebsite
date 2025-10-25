@@ -9,7 +9,8 @@ function createPagesPrompt({ globalValues, page, keywords}) {
       'concrete contractor': 'concrete services',
       'hvac': 'hvac',
       'landscaping': 'landscaping',
-      'law lirm': 'law firm'
+      'law lirm': 'law firm',
+      'fencing':  'Fencing'
     };
   
     const category = categoryMap[businessType.toLowerCase()] || businessType;

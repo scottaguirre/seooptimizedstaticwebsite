@@ -40,17 +40,28 @@ router.get('/production', (req,res) => {
   
       res.send(`
         <html>
-        <head>
-          <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
-        </head>
-        <body>
-        <div class="container">
-          <h2>✅ Pages generated and optimized successfully!</h2>
-          <a href="/download-zip" class="btn btn-success mt-5 ml-5">Download Website ZIP</a>
-          <a href="/" class="btn btn-primary mt-5 ml-5">Go Back</a>
-        </div>
-          
-        </body>
+          <head>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+            <style>
+              .container {
+                width:90%;
+                padding-top: 100px;
+                text-align: center;
+                margin: auto;
+              
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              
+              <h2>✅ Pages generated and optimized successfully!</h2>
+            
+              <a href="/download-zip" class="btn btn-success mt-5 ml-5">Download Website ZIP</a>
+              <a href="/" class="btn btn-primary mt-5 ml-5">Go Back</a>
+             
+            </div>
+          </body>
         </html>
       `);
     });

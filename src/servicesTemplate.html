@@ -23,14 +23,14 @@
         <header id="headerColor">
             <!-- Navbar -->
             <div class="container">
-                <nav class="navbar navbar-expand-lg navbar-light bg-light px-3">
+                <nav class="navbar navbar-expand-lg navbar-light bg-light px-3 navbar-vertical-padding">
                 <a class="navbar-brand d-flex align-items-center" href="/dist/">
                     <img src="{{LOGO_PATH}}" alt="{{LOGO_ALT}}" title="{{LOGO_TITLE}}"
                         width="{{LOGO_WIDTH}}"
                         height="{{LOGO_HEIGHT}}"
                         class="me-2">
                 </a>
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-label="Open mobile menu">
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <div class="collapse navbar-collapse" id="navbarNav">
@@ -71,6 +71,8 @@
         </header>
         <!-- Hero section -->
         <div class="container hero-container">
+            <!-- Gradient overlay -->
+            <div class="hero-gradient"></div>
             <img class="hero-img img-fluid hero-img-mobile"  width="600" height="289" src="{{HERO_IMG_MOBILE}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
             <img class="hero-img img-fluid hero-img-tablet"  width="750" height="422" src="{{HERO_IMG_TABLET}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
             <img class="hero-img img-fluid hero-img-desktop" width="1250" height="636"  src="{{HERO_IMG_DESKTOP}}" alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}">
