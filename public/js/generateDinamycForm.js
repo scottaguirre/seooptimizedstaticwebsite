@@ -5,7 +5,8 @@
   const THEMES = [
     { key: 'style',  label: 'Style 1', preview: '/previews/style.png' },
     { key: 'style2', label: 'Style 2', preview: '/previews/style2.png' },
-    { key: 'style3', label: 'Style 3', preview: '/previews/style3.png' }
+    { key: 'style3', label: 'Style 3', preview: '/previews/style3.png' },
+    { key: 'style4', label: 'Style 4', preview: '/previews/style4.png' }
     // add more later: { key: 'style3', label: 'Style 3', preview: '/previews/style3.jpg' }, ...
   ];
 
