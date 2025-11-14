@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Generate Website Pages</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+
  
   <style>
     body{
@@ -63,6 +65,45 @@
 
 </head>
 <body>
+  <header class="d-flex justify-content-between align-items-center p-3 bg-dark text-white">
+    <div>
+      <strong>SEO Site Generator</strong>
+      <span id="user-info" class="ms-3 small"></span>
+    </div>
+  
+    <div class="d-flex align-items-center gap-3">
+  
+      <!-- Actions area (Buy credits + Admin menu) -->
+      <div id="user-actions"></div>
+  
+      <!-- Profile Icon + Dropdown -->
+      <div class="dropdown">
+        <i class="bi bi-person-circle fs-4 dropdown-toggle" 
+           role="button"
+           id="profileMenuButton"
+           data-bs-toggle="dropdown"
+           aria-expanded="false"
+           style="cursor: pointer;">
+        </i>
+  
+        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark" aria-labelledby="profileMenuButton">
+          <li><a class="dropdown-item" href="/dashboard">My Dashboard</a></li>
+          <li><a class="dropdown-item" href="/buy-credits">Buy Credits</a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <form action="/logout" method="POST" class="px-3">
+              <button class="btn btn-danger btn-sm w-100">Logout</button>
+            </form>
+          </li>
+        </ul>
+      </div>
+      
+    </div>
+  </header>
+  
+  
+  
+
   <div class="container mt-5">
     <div class="row justify-content-center">
       <div class="col-md-8">
@@ -103,6 +144,6 @@
   <script src="/js/locationPages.js" defer></script>
   <script src="/js/generateDinamycForm.js" defer></script>
   <script src="/js/spinner.js" defer></script>
-  
+  <script src="/js/currentUserInfo.js" defer></script> 
 </body>
 </html>

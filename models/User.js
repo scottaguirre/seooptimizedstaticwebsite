@@ -1,0 +1,42 @@
+// models/User.js
+const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+
+const userSchema = new mongoose.Schema({
+  email: {
+    type: String,
+    unique: true,
+    required: true,
+    lowercase: true,
+    trim: true
+  },
+  passwordHash: {
+    type: String,
+    required: true
+  },
+  credits: {
+    type: Number,
+    default: 20
+  },
+  role: {
+    type: String,
+    enum: ['admin', 'subscriber', 'free'],
+    default: 'subscriber'   // new users become "subscriber" by default
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// Set password
+userSchema.methods.setPassword = async function (plain) {
+  this.passwordHash = await bcrypt.hash(plain, 10);
+};
+
+// Validate password
+userSchema.methods.validatePassword = async function (plain) {
+  return bcrypt.compare(plain, this.passwordHash);
+};
+
+module.exports = mongoose.model('User', userSchema);

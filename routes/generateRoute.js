@@ -1,4 +1,6 @@
 // === Required Modules and Setup ===
+const requireAuth = require('../middleware/requireAuth');
+const User = require('../models/User');
 const express = require('express');
 const multer = require('multer');
 const router = express.Router();
@@ -8,9 +10,14 @@ const fs = require('fs');
 const fsp = fs.promises;
 
 
+
+
+
+
 const {
   truthy, 
   escapeAttr,
+  checkCredits,
   cleanDevFolders,
   resolveThemeCss,
   jsonValidationError,
@@ -71,12 +78,27 @@ const {
  
 
 // === Generate Route: POST (handles form submission) ===
-router.post('/generate', upload.any(), async (req, res) => {
+router.post('/generate', requireAuth, upload.any(), async (req, res) => {
   
   const tempFiles = (req.files || []).map(f => f.path);
 
   try {
     const pages = req.body.pages;
+
+    // --- CREDITS CHECK ---
+    const { ok, pagesCount, totalCost } = await checkCredits(req.user, req.body.pages);
+
+    if (!ok) {
+      return res.status(400).send(`
+        <h2>Not enough credits</h2>
+        <p>You need ${totalCost} credits to generate ${pagesCount} page(s).</p>
+        <p>Your current credits: ${req.user.credits}</p>
+        <a href="/">Go back</a>
+      `);
+    }
+    // --- END CREDITS CHECK ---
+
+
     const global = req.body.global;
     const showAboutForm = (v => v === true || v === 'true' || v === 'on' || v === '1')(global?.showAboutForm);
     

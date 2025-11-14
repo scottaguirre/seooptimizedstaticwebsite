@@ -326,7 +326,89 @@ const imageDesc = {
               'section4-2': 'a wooden fence with water from the rain on it'
             }     
 
+        ],
+  'law-firm': [
+            
+            {
+              'hero-mobile': 'a man taking a picture with his phone under the hood of his lemon car',
+              'section2-1': 'a man taking a report from the owner of a lemon car',
+              'section2-2': 'a lawyer in his office explaining the lemon law to a customer',
+              'section4-1': 'a lawyer giving a presentation with some statistics of vehicle repair history',
+              'section4-2': 'a woman representative holding a contract at a car dealership'
+            },
+            {
+              'hero-mobile': 'a male lawyer smiling at the camera with a lemon car in the background',
+              'section2-1': 'a female representative pointing with a pen to a car sales contract',
+              'section2-2': 'a lemon law lawyer in his office reading a bill of sales and purchase agreement',
+              'section4-1': 'a lemon law lawyer shaking hands with a customer in his office',
+              'section4-2': 'a lemon law lawyer handing a check to his customer after winning his case'
+            },
+            {
+              'hero-mobile': 'legal documents on top of a desk in a lemon law office',
+              'section2-1': 'a lawyer seating at his desk with a sign next to him that says lemon law',
+              'section2-2': 'a lemon law attorney smiling at the camera',
+              'section4-1': 'a lawyer with an ipad explaining something to his client',
+              'section4-2': 'a key set on top of a folder that says case won'
+            },
+            {
+              'hero-mobile': 'a lwayer in his office showing a laptop screen that says lemon law firm',
+              'section2-1': 'a gavel with some car keys next to it',
+              'section2-2': 'a lawyer walking with a customer and both are smiling',
+              'section4-1': 'A lawyer seating at his office reading legal documents',
+              'section4-2': 'a scale of justice on a lawyer office desk '
+            },
+            {
+              'hero-mobile': 'a scale of justice with some legal documents next to it',
+              'section2-1': 'the front entrance of a law firm building',
+              'section2-2': 'a lawyer handing a man a business card',
+              'section4-1': 'a lawyer having a video call meeting with a client',
+              'section4-2': 'a lemon law lawyer smilig as he shows a contract to a woman'
+            },
+            {
+              'hero-mobile': 'a lawyer using a tv screen to give a presentation',
+              'section2-1': 'a lawyer walking in a hall with a briefcase',
+              'section2-2': 'a lawyer walking down the stairs of a courthouse entrance',
+              'section4-1': 'a female lawyer reading a legal book',
+              'section4-2': 'the waiting area of a law firm'
+            },
+            {
+              'hero-mobile': 'a lawyer using a pen to highlight a document',
+              'section2-1': 'a female lawyer reading a document outside of a coffee place',
+              'section2-2': 'a male lawyer reading a legal book',
+              'section4-1': 'a male lawyer holding a book while posing for the camera',
+              'section4-2': 'a lawyer with a client reviewing a document'
+            },
+            {
+              'hero-mobile': 'the statue of lady justice',
+              'section2-1': 'a young lawyer smiling at the camera',
+              'section2-2': 'a young lawyer focused reading a legal document',
+              'section4-1': 'a lawyer talking to a youg couple in his office',
+              'section4-2': 'an empty office with bookshelves and the scale of justice on the desktop'
+            },
+            {
+              'hero-mobile': 'a group of lawyers in a meeting',
+              'section2-1': 'a lawyer reviewing a legal document',
+              'section2-2': 'a female lawyer talking on her phone while holding a legal document',
+              'section4-1': 'a male lawyer talking on his phone while holding a legal document',
+              'section4-2': '4 lawyers walking down the hall of a building'
+            },
+            {
+              'hero-mobile': '2 hands shaking closing a deal and a legal document underneath them;',
+              'section2-1': 'a lawyer presenting his case in a court room',
+              'section2-2': '3 lawyers in an office discussing a legal case',
+              'section4-1': '4 lawyers celebrating with champagne they won a case',
+              'section4-2': 'a female lawyer in a court room writing on her notes'
+            },
+            {
+              'hero-mobile': '4 lawyers happy and smiling at the camera',
+              'section2-1': 'a scale of justice on a desk with the amercian flag in the background',
+              'section2-2': 'a female lawyer showing some data from her laptop',
+              'section4-1': 'a lawyer talking to a client on the street while holding a clipboard that says lemon law',
+              'section4-2': 'a young lawyer smiling at the camera'
+            }     
+
         ]
+
 };
 
 

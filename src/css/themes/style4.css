@@ -15,17 +15,17 @@
      background: transparent !important;
     }
 
-.navbar-toggler{
+.navbar-toggler {
     background-color: white; 
 } 
 
-.nav-link{
+.nav-link {
     color:black;
     font-size: 16px;
     font-weight: 600;
 }
 
-a.nav-link:hover{
+a.nav-link:hover {
     color:#be1010;
 }
 
@@ -47,7 +47,7 @@ a.nav-link.active:hover {
 }
 
 .dropdown-menu {
-    background: #000000;
+    background: white;
 }
 
 .dropdown-menu .nav-item {
@@ -61,10 +61,12 @@ a.nav-link.active:hover {
 
 .dropdown-item {
     padding:8px;
+    margin:0;
 }
 
 .dropdown-menu .nav-item a.active {
-    background: #202225;
+    width:100%;
+    border-radius: 0;
 }
 
 
@@ -698,7 +700,11 @@ footer a {
     }
     /* Optional: show active state on the trigger while hovering */
     .navbar .dropdown:hover > .nav-link {
-      color:rgb(140, 21, 196);
+      color:#c10a0a;
+    }
+
+    .nav-item {
+        padding-left: 0 !important;
     }
 
     .style-4-image-wrap {

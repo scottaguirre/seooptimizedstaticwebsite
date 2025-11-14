@@ -276,14 +276,44 @@ function resolveThemeCss(styleKey) {
   );
 }
 
+// 10  ======= CREDIT CHECKER =======
+async function checkCredits(user, pagesData, costPerPage = 1) {
+  let pagesCount;
 
+  if (Array.isArray(pagesData)) {
+    pagesCount = pagesData.length;
+  } else if (typeof pagesData === 'object' && pagesData !== null) {
+    pagesCount = Object.keys(pagesData).length;
+  } else {
+    pagesCount = 1;
+  }
 
+  const totalCost = pagesCount * costPerPage;
+
+  if (user.credits < totalCost) {
+    return {
+      ok: false,
+      pagesCount,
+      totalCost
+    };
+  }
+
+  user.credits -= totalCost;
+  await user.save();
+
+  return {
+    ok: true,
+    pagesCount,
+    totalCost
+  };
+}
 
 
 
 module.exports = {
   truthy,
   escapeAttr,
+  checkCredits,
   cleanDirectory,
   cleanDevFolders,
   resolveThemeCss,
