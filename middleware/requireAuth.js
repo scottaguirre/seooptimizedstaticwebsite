@@ -3,21 +3,26 @@ const User = require('../models/User');
 
 module.exports = async function requireAuth(req, res, next) {
   try {
-    if (!req.session.userId) {
+    // If session or userId is missing, send to login
+    if (!req.session || !req.session.userId) {
       return res.redirect('/login');
     }
 
     const user = await User.findById(req.session.userId);
+
     if (!user) {
-      req.session.destroy(() => {});
+      // If user not found, clear session just in case
+      if (req.session) {
+        req.session.destroy(() => {});
+      }
       return res.redirect('/login');
     }
 
-    // make user available downstream
+    // Attach user to request for later use
     req.user = user;
     next();
   } catch (err) {
     console.error('Auth middleware error:', err);
-    return res.redirect('/login');
+    return res.status(500).send('Authentication error');
   }
 };

@@ -23,10 +23,16 @@ const userSchema = new mongoose.Schema({
     enum: ['admin', 'subscriber', 'free'],
     default: 'subscriber'   // new users become "subscriber" by default
   },
+  // 🔹 New fields for email verification
+  verified: { type: Boolean, default: false },
+
+  verificationToken: { type: String, default: null },
+
   createdAt: {
     type: Date,
     default: Date.now
   }
+  
 });
 
 // Set password
@@ -40,3 +46,4 @@ userSchema.methods.validatePassword = async function (plain) {
 };
 
 module.exports = mongoose.model('User', userSchema);
+

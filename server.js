@@ -14,12 +14,12 @@ const distDir = path.join(__dirname, 'dist');
 const formRoute = require('./routes/formRoute');
 const authRoute = require('./routes/authRoute');
 const adminRoute = require('./routes/adminRoute');
+const creditsRoute = require('./routes/creditsRoute');
 const wpThemeRoute = require('./routes/wpThemeRoute');
 const requireAuth = require('./middleware/requireAuth');
 const generateRoute = require('./routes/generateRoute');
 const productionRoute = require('./routes/productionRoute');
 const downloadZipRoute = require('./routes/downloadZipRoute'); 
-
 
 
 
@@ -40,14 +40,17 @@ const PORT = 3000;
 
 
 
-// === Express Middleware ===
+// ===== STATIC FILES =====
 app.use(express.static('public'));
 app.use('/dist', express.static(distDir));
+
+
+// ===== BODY PARSERS =====
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 
-// Express Session Middleware
+// ===== Express Session Middleware
 app.use(session({
     secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
     resave: false,
@@ -60,15 +63,23 @@ app.use(session({
         httpOnly: true
     }
 }));
+
+
+// ===== AUTH UNPROTECTED ROUTES FIRST =====
+app.use('/', authRoute); 
+// login, signup, logout
+// these must come before requireAuth middleware
   
 
-app.use('/', authRoute);
-app.use('/', adminRoute);
-app.use('/', requireAuth, formRoute);     // handles routes like '/', maybe '/form'
-app.use('/', requireAuth, wpThemeRoute);
-app.use('/', requireAuth, generateRoute); // handles '/generate', 
-app.use('/', requireAuth, productionRoute);// handles '/production'
+// ===== PROTECTED ROUTES (requireAuth) =====
+app.use('/', requireAuth, creditsRoute);      // /api/check-credits
+app.use('/', requireAuth, adminRoute);        // /admin section
+app.use('/', requireAuth, formRoute);         // /
+app.use('/', requireAuth, wpThemeRoute);      // /wp-theme
+app.use('/', requireAuth, generateRoute);     // /generate
+app.use('/', requireAuth, productionRoute);   // /production
 app.use('/', requireAuth, downloadZipRoute);
+
 
 
 

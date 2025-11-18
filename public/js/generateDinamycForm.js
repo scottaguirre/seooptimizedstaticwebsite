@@ -161,7 +161,7 @@
           <div class="col-12">
             <select class="form-select" id="businessType" required>
               <option value="">Choose...</option>
-              ${['Plumbing', 'Fencing', 'Electrician','Concrete Contractor','Roofing','HVAC','Landscaping','Law Firm']
+              ${['Plumbing', 'Fencing', 'Electrician','Concrete Contractor','Roofing','HVAC','Landscaping','Law Firm', "Web Design"]
                 .map(bt => `<option ${state.businessType===bt?'selected':''}>${bt}</option>`).join('')}
             </select>
             <div class="form-text">You can adjust this later.</div>
