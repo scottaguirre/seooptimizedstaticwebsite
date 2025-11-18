@@ -8,7 +8,9 @@ module.exports = async function requireAdmin(req, res, next) {
     }
 
     const user = await User.findById(req.session.userId);
-    if (!user || user.role !== 'admin') {
+
+    // Allow both admin and superadmin
+    if (!user || (user.role !== 'admin' && user.role !== 'superadmin')){
       return res.status(403).send('Access denied — Admins only');
     }
 

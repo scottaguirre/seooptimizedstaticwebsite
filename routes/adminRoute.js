@@ -10,7 +10,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
     const { q, role } = req.query;
 
     const filter = {};
-    const validRoles = ['admin', 'subscriber', 'free'];
+    const validRoles = ['superadmin', 'admin', 'subscriber', 'free'];
 
     // Search by email (case-insensitive substring)
     if (q && q.trim()) {
@@ -26,31 +26,81 @@ router.get('/admin', requireAdmin, async (req, res) => {
 
     const rows = users.map(u => {
       const isSelf = String(u._id) === String(req.user._id);
+      const isSuperAdmin = u.role === 'superadmin';
+
+      const roleBadgeClass =
+        u.role === 'superadmin'
+          ? 'bg-dark'
+          : u.role === 'admin'
+          ? 'bg-danger'
+          : u.role === 'subscriber'
+          ? 'bg-primary'
+          : 'bg-secondary';
+
+      const roleLabel = u.role === 'superadmin' ? 'SUPERADMIN' : u.role;
+
+      // Change Role cell: lock for superadmin
+      const roleCellHtml = isSuperAdmin
+        ? `<span class="text-muted small">Role locked (superadmin)</span>`
+        : `
+          <form action="/admin/users/${u._id}/role" method="POST" class="d-inline">
+            <select name="role" class="form-select form-select-sm d-inline w-auto">
+              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
+              <option value="subscriber" ${u.role === 'subscriber' ? 'selected' : ''}>subscriber</option>
+              <option value="free" ${u.role === 'free' ? 'selected' : ''}>free</option>
+            </select>
+            <button type="submit" class="btn btn-sm btn-secondary ms-1">Update</button>
+          </form>
+        `;
+
+      // Verify / Delete cell: protect superadmin from deletion & UI actions
+      const actionsCellHtml = isSuperAdmin
+        ? `<span class="text-muted small">Superadmin protected</span>`
+        : `
+          <form action="/admin/users/${u._id}/verify" method="POST" class="d-inline">
+            <button 
+              type="submit" 
+              class="btn btn-sm ${u.verified ? 'btn-outline-success' : 'btn-success'}"
+            >
+              ${u.verified ? 'Re-Verify' : 'Mark Verified'}
+            </button>
+          </form>
+
+          <form 
+            action="/admin/users/${u._id}/delete" 
+            method="POST" 
+            class="d-inline ms-1"
+            onsubmit="return confirm('Are you sure you want to delete this user?');"
+          >
+            <button 
+              type="submit" 
+              class="btn btn-sm btn-danger"
+              ${isSelf ? 'disabled' : ''}
+            >
+              Delete
+            </button>
+          </form>
+        `;
 
       return `
         <tr>
           <td>${u.email}</td>
           <td>
-            <span class="badge bg-${u.role === 'admin' ? 'danger' : u.role === 'subscriber' ? 'primary' : 'secondary'}">
-              ${u.role}
+            <span class="badge ${roleBadgeClass}">
+              ${roleLabel}
             </span>
           </td>
           <td>${u.credits}</td>
-          <td>${u.verified ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-warning text-dark">No</span>'}</td>
+          <td>${
+            u.verified
+              ? '<span class="badge bg-success">Yes</span>'
+              : '<span class="badge bg-warning text-dark">No</span>'
+          }</td>
           <td>${new Date(u.createdAt).toLocaleString()}</td>
 
           <!-- Change Role -->
           <td>
-            <form action="/admin/users/${u._id}/role" method="POST" class="d-inline">
-              <select name="role" class="form-select form-select-sm d-inline w-auto" ${isSelf ? 'disabled' : ''}>
-                <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
-                <option value="subscriber" ${u.role === 'subscriber' ? 'selected' : ''}>subscriber</option>
-                <option value="free" ${u.role === 'free' ? 'selected' : ''}>free</option>
-              </select>
-              <button type="submit" class="btn btn-sm btn-secondary ms-1" ${isSelf ? 'disabled' : ''}>
-                Update
-              </button>
-            </form>
+            ${roleCellHtml}
           </td>
 
           <!-- Set Credits -->
@@ -69,29 +119,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
 
           <!-- Verify / Delete -->
           <td>
-            <form action="/admin/users/${u._id}/verify" method="POST" class="d-inline">
-              <button 
-                type="submit" 
-                class="btn btn-sm ${u.verified ? 'btn-outline-success' : 'btn-success'}"
-              >
-                ${u.verified ? 'Re-Verify' : 'Mark Verified'}
-              </button>
-            </form>
-
-            <form 
-              action="/admin/users/${u._id}/delete" 
-              method="POST" 
-              class="d-inline ms-1"
-              onsubmit="return confirm('Are you sure you want to delete this user?');"
-            >
-              <button 
-                type="submit" 
-                class="btn btn-sm btn-danger"
-                ${isSelf ? 'disabled' : ''}
-              >
-                Delete
-              </button>
-            </form>
+            ${actionsCellHtml}
           </td>
         </tr>
       `;
@@ -111,7 +139,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
       <body class="bg-dark text-white">
         <div class="container mt-5 mb-5">
           <h1 class="mb-3">Admin - Users</h1>
-          <p class="mb-3">Logged in as: <strong>${req.user.email}</strong> (admin)</p>
+          <p class="mb-3">Logged in as: <strong>${req.user.email}</strong> (${req.user.role})</p>
 
           <div class="mb-3 d-flex gap-2">
             <a href="/" class="btn btn-primary btn-sm">Back to Generator</a>
@@ -138,6 +166,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
                   <label class="form-label">Filter by role</label>
                   <select name="role" class="form-select form-select-sm">
                     <option value="">All roles</option>
+                    <option value="superadmin" ${currentRole === 'superadmin' ? 'selected' : ''}>superadmin</option>
                     <option value="admin" ${currentRole === 'admin' ? 'selected' : ''}>admin</option>
                     <option value="subscriber" ${currentRole === 'subscriber' ? 'selected' : ''}>subscriber</option>
                     <option value="free" ${currentRole === 'free' ? 'selected' : ''}>free</option>
@@ -231,6 +260,7 @@ router.post('/admin/users', requireAdmin, async (req, res) => {
       return res.status(400).send('Email and password are required');
     }
 
+    // superadmin can only be set via DB manually — keep UI roles limited
     const validRoles = ['admin', 'subscriber', 'free'];
     const finalRole = validRoles.includes(role) ? role : 'free';
 
@@ -247,7 +277,6 @@ router.post('/admin/users', requireAdmin, async (req, res) => {
       verificationToken: null
     });
 
-    // Use the model method to hash password
     await user.setPassword(password);
     await user.save();
 
@@ -258,7 +287,7 @@ router.post('/admin/users', requireAdmin, async (req, res) => {
   }
 });
 
-// POST /admin/users/:id/role - update role
+// POST /admin/users/:id/role - update role (not for superadmin)
 router.post('/admin/users/:id/role', requireAdmin, async (req, res) => {
   try {
     const { role } = req.body;
@@ -268,8 +297,18 @@ router.post('/admin/users/:id/role', requireAdmin, async (req, res) => {
       return res.status(400).send('Invalid role');
     }
 
-    // Prevent removing your own admin role
-    if (String(req.params.id) === String(req.user._id) && role !== 'admin') {
+    const target = await User.findById(req.params.id);
+    if (!target) {
+      return res.status(404).send('User not found');
+    }
+
+    // Do not allow changing superadmin role via UI
+    if (target.role === 'superadmin') {
+      return res.status(400).send('Cannot change superadmin role.');
+    }
+
+    // Prevent removing your own admin role (if not superadmin)
+    if (String(req.params.id) === String(req.user._id) && req.user.role === 'admin' && role !== 'admin') {
       return res.status(400).send('You cannot remove your own admin role.');
     }
 
@@ -299,10 +338,16 @@ router.post('/admin/users/:id/credits', requireAdmin, async (req, res) => {
 // POST /admin/users/:id/verify - mark user as verified (or re-verify)
 router.post('/admin/users/:id/verify', requireAdmin, async (req, res) => {
   try {
-    await User.findByIdAndUpdate(req.params.id, {
-      verified: true,
-      verificationToken: null
-    });
+    const target = await User.findById(req.params.id);
+    if (!target) {
+      return res.status(404).send('User not found');
+    }
+
+    // No special reason to block superadmin here, but we already lock UI for it
+    target.verified = true;
+    target.verificationToken = null;
+    await target.save();
+
     res.redirect('/admin');
   } catch (err) {
     console.error('Admin verify user error:', err);
@@ -313,9 +358,19 @@ router.post('/admin/users/:id/verify', requireAdmin, async (req, res) => {
 // POST /admin/users/:id/delete - delete user
 router.post('/admin/users/:id/delete', requireAdmin, async (req, res) => {
   try {
-    // Safety: don't let admin delete themselves
+    const target = await User.findById(req.params.id);
+    if (!target) {
+      return res.status(404).send('User not found');
+    }
+
+    // Safety: don't let anyone delete a superadmin
+    if (target.role === 'superadmin') {
+      return res.status(400).send('Cannot delete superadmin account.');
+    }
+
+    // Safety: don't let user delete themselves
     if (String(req.params.id) === String(req.user._id)) {
-      return res.status(400).send('You cannot delete your own admin account.');
+      return res.status(400).send('You cannot delete your own account.');
     }
 
     await User.findByIdAndDelete(req.params.id);

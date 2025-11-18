@@ -20,7 +20,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'subscriber', 'free'],
+    enum: ['superadmin', 'admin', 'subscriber', 'free'],  // 👈 add superadmin here
     default: 'subscriber'   // new users become "subscriber" by default
   },
   // 🔹 New fields for email verification
@@ -32,18 +32,14 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
-  
 });
 
-// Set password
 userSchema.methods.setPassword = async function (plain) {
   this.passwordHash = await bcrypt.hash(plain, 10);
 };
 
-// Validate password
 userSchema.methods.validatePassword = async function (plain) {
   return bcrypt.compare(plain, this.passwordHash);
 };
 
 module.exports = mongoose.model('User', userSchema);
-
