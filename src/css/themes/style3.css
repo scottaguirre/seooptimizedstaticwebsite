@@ -168,17 +168,25 @@ a.nav-link.active:hover{
 }
 
 
-.section-1, .section-2, .section-3, .section-4 {
+.section-1, .section-2, .section-3, .section-4, .section-5 {
     background-color: #131415 !important;
     color:rgb(238, 234, 234);
 }
 
-.section-1 a, .section-2 a, .section-3 a, .section-4 a {
-   
+.section-1 a, .section-2 a, .section-3 a, .section-4 a, .section-5 a {
     color:#cf3def;
 }
 
+.nearme {
+    background-color: #131415 !important;
+    color:rgb(238, 234, 234);
+}
 
+
+.about-video-section {
+    width: 80%;
+    padding: 30px 10px;
+}
 
 .section-padding {
     padding-top:60px;
@@ -264,7 +272,6 @@ a.nav-link.active:hover{
 }
 
 .btn-container-2 {
-
     padding-top:50px;
     padding-bottom:50px;
 }
@@ -309,9 +316,16 @@ footer a {
 /* Form container */
 .form-container {
     overflow: hidden;
+    width: 100%;
+    background-color: #131415 !important;
+    padding-top: 50px;
+    padding-bottom: 50px;
+}
+
+
+.form-container div {
     width: 90%;
-    margin:auto;
-    margin-bottom: 60px;
+    margin: auto;
     border-radius: 16px;
 }
 
@@ -386,6 +400,7 @@ footer a {
     height: 80px;
     min-height: 80px;
     resize: vertical;
+    margin-bottom: 20px;
 }
 
 /* Submit button */
@@ -571,6 +586,16 @@ footer a {
     .img-1-div {
         margin-bottom: auto;
     }
+
+    .about-video-section {
+        width: 60%;
+        padding: 15px;
+    }
+
+    .form-container div {
+        width: 60%;
+    }
+    
 
 }
 

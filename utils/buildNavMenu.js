@@ -32,7 +32,7 @@ const buildNavMenu  = function (template, globalValues, pages, basePath, mainLoc
 
         containerMenu = `<div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
                             <ul class="navbar-nav ms-auto">
-                                <li class="nav-item"><a class="nav-link ${aboutusActive}" href="/dist/">ABOUT US</a></li>
+                                <li class="nav-item"><a class="nav-link ${aboutusActive}" href="index.html">ABOUT US</a></li>
                                 <li class="nav-item"><a class="nav-link ${FIRST_PAGE_NAME_ACTIVE}" href="${LINK_OUTSIDE_NAV_MENU}">${FIRST_PAGE_NAME}</a></li>
                                 `;
 
@@ -51,7 +51,7 @@ const buildNavMenu  = function (template, globalValues, pages, basePath, mainLoc
 
         containerMenu = `<div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
                             <ul class="navbar-nav ms-auto">
-                                <li class="nav-item"><a class="nav-link ${aboutusActive}" href="/dist/">ABOUT US</a></li>
+                                <li class="nav-item"><a class="nav-link ${aboutusActive}" href="index.html">ABOUT US</a></li>
                                 <li class="nav-item"><a class="nav-link ${FIRST_PAGE_NAME_ACTIVE}" href="${LINK_OUTSIDE_NAV_MENU}">${FIRST_PAGE_NAME}</a></li>
                                 <li class="nav-item dropdown services-dropdown-option">
                                     <a class="nav-link dropdown-toggle" href="#" id="servicesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">

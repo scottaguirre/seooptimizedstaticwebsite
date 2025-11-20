@@ -8,6 +8,10 @@ async function generateAboutUsContent(globalValues, indexInterlinks, attempt = 1
   /* console.log('🧠 Backlink/pages slugs passed for content generation: generateAboutUsContent.js', indexInterlinks);
   console.log('🔗 Synonyms map passed to OpenAI: ====', allSynonymsCombined);
   */
+
+  console.log("====== Generate About Us Content");
+  console.log(indexInterlinks.length);
+  console.log(indexInterlinks);
   
   const prompt = createAboutUsPrompt({
     globalValues,

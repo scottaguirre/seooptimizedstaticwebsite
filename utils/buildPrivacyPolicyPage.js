@@ -6,7 +6,7 @@ const { buildNavMenu } = require('./buildNavMenu');
 const { normalizeDomain}  = require('./normalizeDomain');
 
 const isDev = process.env.NODE_ENV !== 'production';
-const basePath = isDev ? '/dist/' : '/';
+const basePath = '';
 
 
 

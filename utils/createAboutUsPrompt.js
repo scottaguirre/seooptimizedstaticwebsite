@@ -10,14 +10,38 @@ function createAboutUsPrompt({ globalValues, keywords}) {
     'concrete contractor': 'Concrete Contractor',
     'hvac':            'Air Conditioning Repair',
     'landscaping':     'Landscaper',
-    'law firm':        'Lawyer',
-    'fencing':         'Fence Company'
+    'law firm':        'Lemon Law Lawyer',
+    'fencing':         'Fence Company',
+    'junk removal':    'Junk Removal'
   };
 
   const category = categoryMap[businessType.toLowerCase()] || businessType;
-  const typeOfCompany = category === 'Lawyer' ? '' : 'company';
+  const typeOfCompany = category === 'Lemon Law Lawyer' ? '' : 'company';
 
   const includeNearMe = String(useNearMe) === 'true';
+
+  // 🔹 NEW: normalize and pad keywords so we never hit undefined
+  const requiredCount = includeNearMe ? 5 : 4;
+  const rawKeywords = Array.isArray(keywords) ? [...keywords] : [];
+
+  const fallbackPool = [
+    businessName,
+    location,
+    category,
+    `${category} in ${location}`,
+    `${businessName} ${category}`
+  ].filter(Boolean);
+
+  while (rawKeywords.length < requiredCount) {
+    const idx = rawKeywords.length % fallbackPool.length;
+    rawKeywords.push(
+      fallbackPool[idx] ||
+      businessName ||
+      location ||
+      'our services'
+    );
+  }
+
 
   return `
 You are writing the "About Us" page for a local ${businessType.toLowerCase()} ${typeOfCompany} named "${businessName}", located in ${location}.
@@ -28,16 +52,23 @@ Write ${includeNearMe ? 5 : 4} sections. Each section must include:
 
 Use these section headings in order:
 1. 'Who We Are' (besides the 2 paragraphs, also create a subheading related to 'Who We Are').
-    In the second paragraph of this section include this word ${keywords[0]}.
-2. 'Our Story'. In the second paragraph of this section  include this word ${keywords[1]}.
-3. 'What Makes Us Stand Out?'. In the second paragraph of this section include this word ${keywords[2]}.
-4. 'Services We Offer'. In the second paragraph of this section include this word ${keywords[3]}.
+    In the second paragraph of this section include this word ${rawKeywords[0]}.
+
+2. 'What Makes Us Stand Out?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
+
+3. 'Services We Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
+In the second paragraph of this section include this word ${rawKeywords[2]}.
+
+4. Talk about ${location}.
+Please include the 7 closest zip codes to the main location ${location} and 5 landmarks of ${location}.
+In the second paragraph of this section  include this word ${rawKeywords[3]}.
 
 ${includeNearMe ? `
 5. '${category} Near Me' (this phrase must also be included naturally in the  first paragraph text).
-    Please include some zip codes and landmarks of ${location}.
-    In the second paragraph of this section include this word ${keywords[4]}.
+    In the second paragraph of this section include this word ${rawKeywords[4]}.
 ` : ''}
+
+
 
 Return the result as a JSON object with this exact format:
 
@@ -48,7 +79,7 @@ Return the result as a JSON object with this exact format:
     "paragraphs": ["Paragraph 1", "Paragraph 2"]
   },
   "section2": {
-    "heading": "Our Story",
+    "heading": "Services We Offer",
     "paragraphs": ["Paragraph 1", "Paragraph 2"]
   },
   "section3": {
@@ -56,7 +87,7 @@ Return the result as a JSON object with this exact format:
     "paragraphs": ["Paragraph 1", "Paragraph 2"]
   },
   "section4": {
-    "heading": "Services We Offer",
+    "heading": "${location}",
     "paragraphs": ["Paragraph 1", "Paragraph 2"]
   },
   "section5": {

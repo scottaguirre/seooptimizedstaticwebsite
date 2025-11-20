@@ -5,7 +5,7 @@ const { resolveThemeCss } = require('./helpers');
 const { buildNavMenu } = require('./buildNavMenu');
 
 const isDev = process.env.NODE_ENV !== 'production';
-const basePath = isDev ? '/dist/' : '/';
+const basePath = '';
 
 const buildAccessibilityPage = 
 function (

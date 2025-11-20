@@ -15,11 +15,12 @@ const formRoute = require('./routes/formRoute');
 const authRoute = require('./routes/authRoute');
 const adminRoute = require('./routes/adminRoute');
 const creditsRoute = require('./routes/creditsRoute');
-const wpThemeRoute = require('./routes/wpThemeRoute');
 const requireAuth = require('./middleware/requireAuth');
 const generateRoute = require('./routes/generateRoute');
 const productionRoute = require('./routes/productionRoute');
-const downloadZipRoute = require('./routes/downloadZipRoute'); 
+const downloadZipRoute = require('./routes/downloadZipRoute');
+const exportWpThemeRoute = require('./routes/exportWpThemeRoute');
+
 
 
 
@@ -75,10 +76,10 @@ app.use('/', authRoute);
 app.use('/', requireAuth, creditsRoute);      // /api/check-credits
 app.use('/', requireAuth, adminRoute);        // /admin section
 app.use('/', requireAuth, formRoute);         // /
-app.use('/', requireAuth, wpThemeRoute);      // /wp-theme
 app.use('/', requireAuth, generateRoute);     // /generate
 app.use('/', requireAuth, productionRoute);   // /production
 app.use('/', requireAuth, downloadZipRoute);
+app.use('/', requireAuth, exportWpThemeRoute);
 
 
 

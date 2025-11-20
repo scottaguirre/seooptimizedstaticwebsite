@@ -308,6 +308,39 @@ async function checkCredits(user, pagesData, costPerPage = 1) {
   };
 }
 
+// 11 ======= YouTube Video Iframe for About Us Page =======
+function buildYouTubeEmbedHtml(videoUrl, businessName, location) {
+  if (!videoUrl) return '';
+
+  const trimmed = String(videoUrl).trim();
+  if (!trimmed) return '';
+
+  // Try to extract video ID from different YouTube URL formats
+  const match = trimmed.match(
+    /(?:youtu\.be\/|v=|embed\/|shorts\/)([A-Za-z0-9_-]{6,})/
+  );
+  const videoId = match ? match[1] : null;
+  const embedUrl = videoId
+    ? `https://www.youtube.com/embed/${videoId}`
+    : trimmed; // fallback: use the URL as-is
+
+  const title = `Intro video for ${businessName || ''} in ${location || ''}`.trim();
+
+  return `
+    <div class="ratio ratio-16x9 about-video-wrapper">
+      <iframe
+        src="${embedUrl}"
+        title="${escapeAttr(title)}"
+        loading="lazy"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerpolicy="strict-origin-when-cross-origin"
+        allowfullscreen
+      >
+      </iframe>
+    </div>
+  `.trim();
+}
+
 
 
 module.exports = {
@@ -320,6 +353,7 @@ module.exports = {
   jsonValidationError,
   validateGlobalFields,
   moveOrCopyThenDelete,
+  buildYouTubeEmbedHtml,
   validateEachPageInputs,
   validateAndNormalizeLocationPages
 };

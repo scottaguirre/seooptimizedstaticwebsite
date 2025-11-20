@@ -9,12 +9,21 @@ function createPagesPrompt({ globalValues, page, keywords}) {
       'concrete contractor': 'concrete services',
       'hvac': 'hvac',
       'landscaping': 'landscaping',
-      'law lirm': 'law firm',
-      'fencing':  'Fencing'
+      'law lirm': 'lemon law lawyer',
+      'fencing':  'Fencing',
+      'junk removal': 'junk removal'
     };
   
     const category = categoryMap[businessType.toLowerCase()] || businessType;
-    const typeOfCompany = category === 'law firm' ? '' : 'company';
+    const typeOfCompany = category === 'lemon law lawyer' ? '' : 'company';
+
+    // 🔹 NEW: make sure we have at least 3 keyword entries
+  const safeKeywords = Array.isArray(keywords) ? [...keywords] : [];
+  const fallback = page.keyword || category || businessName || 'our services';
+  while (safeKeywords.length < 3) {
+    safeKeywords.push(fallback);
+  }
+
   
     return `
   You are writing the website content for a local ${category} ${typeOfCompany} named "${businessName}", located in ${location}.
@@ -29,9 +38,9 @@ function createPagesPrompt({ globalValues, page, keywords}) {
     Do NOT include quotes, labels like (H3), or any formatting.).
     In the first paragraph of this section include this word ${businessName}.
 2. ${page.keyword}. for this section generate a human first approach heading.
-   In the first paragraph of this section include this word ${keywords[1]}.
+   In the first paragraph of this section include this word ${safeKeywords[1]}.
 3. ${page.keyword}. for this section also generate a human first approach heading different from the previous one.
-   In the first paragraph of this section include this word ${keywords[2]}.
+   In the first paragraph of this section include this word ${safeKeywords[2]}.
 4. ${page.keyword}. for this section also generate a human first approach heading different from the previous one.
    
 

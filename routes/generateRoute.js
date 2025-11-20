@@ -10,14 +10,9 @@ const fs = require('fs');
 const fsp = fs.promises;
 
 
-
-
-
-
 const {
   truthy, 
   escapeAttr,
-  checkCredits,
   cleanDevFolders,
   resolveThemeCss,
   jsonValidationError,
@@ -29,17 +24,27 @@ const {
 
 
 const isDev = process.env.NODE_ENV !== 'production';
-const basePath = isDev ? '/dist/' : '/';
+const basePath = '';
 
 
 // === Directory Setup ===
 const tempUploadDir = path.join(__dirname, '../public/uploads');
 const srcCssDir = path.join(__dirname, '../src/css');
 const srcJsDir = path.join(__dirname, '../src/js');
-const distDir = path.join(__dirname, '../dist');
-const assetsDir = path.join(distDir, 'assets');
-const cssDir = path.join(distDir, 'css');
-const jsDir = path.join(distDir, 'js');
+const baseDistDir = path.join(__dirname, '../dist');
+
+
+
+// Helper to build per-user dist paths
+function getUserDirs(userId) {
+  const safeId = String(userId);
+  const distDir = path.join(baseDistDir, `user_${safeId}`);
+  const assetsDir = path.join(distDir, 'assets');
+  const cssDir = path.join(distDir, 'css');
+  const jsDir = path.join(distDir, 'js');
+  return { distDir, assetsDir, cssDir, jsDir };
+}
+
 
 
 // === Multer Setup
@@ -78,8 +83,9 @@ const {
  
 
 // === Generate Route: POST (handles form submission) ===
-router.post('/generate', requireAuth, upload.any(), async (req, res) => {
-  
+router.post('/generate', upload.any(), async (req, res) => {
+
+
   const tempFiles = (req.files || []).map(f => f.path);
 
   try {
@@ -88,8 +94,20 @@ router.post('/generate', requireAuth, upload.any(), async (req, res) => {
     const showAboutForm = (v => v === true || v === 'true' || v === 'on' || v === '1')(global?.showAboutForm);
     
 
-  
-     // Clean js and css file from src (except bootstrap and style.css) when running dev
+    // 🔐 Per-user dist directories
+    const userId = req.user._id.toString();
+    const { distDir, assetsDir, cssDir, jsDir } = getUserDirs(userId);
+
+    // Make sure this user's folders exist
+    await fs.promises.mkdir(distDir, { recursive: true });
+    await Promise.all([
+      fs.promises.mkdir(assetsDir, { recursive: true }),
+      fs.promises.mkdir(cssDir, { recursive: true }),
+      fs.promises.mkdir(jsDir, { recursive: true })
+    ]);
+
+
+    // Clean js and css file from src (except bootstrap and style.css) when running dev
     if (isDev) {
       cleanDevFolders({
         srcJsDir,
@@ -134,30 +152,39 @@ router.post('/generate', requireAuth, upload.any(), async (req, res) => {
         const seoPrefix = `${businessSlug}-${locationSlug}`;
 
 
-        if(globalMatch){
-            const field = globalMatch[1];     
-            const newFilename = `${seoPrefix}-${field}${ext}`;
-            const destPath = path.join(assetsDir, newFilename);
-            await moveOrCopyThenDelete(file.path, destPath);
-            uploadedImages.global[field] = `assets/${newFilename}`;
-
-
-          // if it's the logo, create a 42x42 PNG favicon
+        if (globalMatch) {
+          const field = globalMatch[1];
+          const newFilename = `${seoPrefix}-${field}${ext}`;
+          const destPath = path.join(assetsDir, newFilename);
+        
+          // If it's the logo, generate the favicon FROM THE TEMP FILE first
           if (field === 'logo') {
             const faviconFilename = `${seoPrefix}-favicon-42x42.png`;
             const faviconPath = path.join(assetsDir, faviconFilename);
-
-            await sharp(destPath)
-              .resize(42, 42, {
-                fit: 'contain', // keep aspect ratio, pad if needed
-                background: { r: 0, g: 0, b: 0, alpha: 0 } // transparent background
-              })
-              .png()
-              .toFile(faviconPath);
-
-            uploadedImages.global.favicon = `assets/${faviconFilename}`;
+        
+            try {
+              // Use the temp upload as source – it definitely exists at this point
+              await sharp(file.path)
+                .resize(42, 42, {
+                  fit: 'contain',
+                  background: { r: 0, g: 0, b: 0, alpha: 0 }
+                })
+                .png()
+                .toFile(faviconPath);
+        
+              uploadedImages.global.favicon = `assets/${faviconFilename}`;
+            } catch (err) {
+              console.error('Error generating favicon from logo:', err);
+              // Fallback: we'll at least have the logo; favicon can default to it later if needed
+              uploadedImages.global.favicon = `assets/${newFilename}`;
+            }
           }
+        
+          // Now move the uploaded file into the per-user assets folder
+          await moveOrCopyThenDelete(file.path, destPath);
+          uploadedImages.global[field] = `assets/${newFilename}`;
         }
+        
       }
 
 
@@ -217,6 +244,7 @@ router.post('/generate', requireAuth, upload.any(), async (req, res) => {
         pinterestUrl: (global.pinterestUrl || '').trim(),
         instagramUrl: (global.instagramUrl || '').trim(),
         googleMapCid: (global.googleMapCid || '').trim(),
+        youtubeVideoUrl: (global.youtubeVideoUrl || '').trim(),
         businessName: normalizeText(global.businessName?.trim()), 
         location: formatCityState(smartTitleCase(normalizeText(global.location?.trim()))),
       };
@@ -236,9 +264,6 @@ router.post('/generate', requireAuth, upload.any(), async (req, res) => {
       }
 
       
-    
-
-
       // Build interlink map 
       // AFTER you’ve validated pages & locations and built globalValues
       const { interlinkMap } = await buildInterlinksMap(pages, globalValues.locationPages);
@@ -276,12 +301,12 @@ router.post('/generate', requireAuth, upload.any(), async (req, res) => {
 
         // Copy predefined images into dist/assets and track them 
         copyAllPredefinedImages({
+          distDir,
           globalValues,
           uploadedImages,
           keyword: slugify(page.filename || ''),
           index: Number(index), // pass the index so we can cycle with % 4
           imageContext
-
         });
 
 
@@ -549,11 +574,6 @@ router.post('/generate', requireAuth, upload.any(), async (req, res) => {
       );
     
     
-      // === Generate Success Response with Links to Pages ===
-      const links = Object.entries(pages).map(([_, page]) => {
-        const filename = `${slugify(page.filename.trim())}-${slugify(normalizeText(globalValues.location))}`;
-        return `<li><a href="${basePath}${filename}.html" target="_blank">${filename}.html</a></li>`;
-      }).join('');
 
 
       // Register this build so /export-wp can convert THIS exact output
@@ -603,12 +623,14 @@ router.post('/generate', requireAuth, upload.any(), async (req, res) => {
               <h2>Visit website but is not minified yet!</h2>
               <ul>
                 <li>
-                  <a href="./dist" class="index-page" target="_blank"> Click Here to Visit Website</a>
+                  <a href="./dist/user_${userId}" class="index-page" target="_blank"> Click Here to Visit Website</a>
                 </li>
               </ul>
            
               <a href="/" class="btn btn-warning mt-3">Go Back</a>
               <a href="/production" class="btn btn-primary mt-3 ">Run Production</a>
+              <a href="/export-wp-theme" class="btn btn-success mt-3 ">Convert into Wordpress</a>
+              
           
             </div>
           </body>

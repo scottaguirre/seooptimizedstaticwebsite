@@ -3,24 +3,28 @@ const path = require('path');
 const { slugify } = require('./slugify');
 const { buildAltText } = require('./buildAltText');
 const { buildNavMenu } = require('./buildNavMenu');
-const { escapeAttr, resolveThemeCss } = require('./helpers');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectIndexInterlinks } = require('./injectIndexInterlinks'); 
 const { generateAboutUsContent } = require('./generateAboutUsContent');
 const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
+const { escapeAttr, resolveThemeCss, buildYouTubeEmbedHtml } = require('./helpers');
 
 
 const isDev = process.env.NODE_ENV !== 'production';
-const basePath = isDev ? '/dist/' : '/';
+const basePath = '';
 
 
 const predefinedImagesDir = path.join(__dirname, '../src/predefined-images');
 
-function copyPageImage (srcDir, seoPrefix, filename, field) {
+function copyPageImage (srcDir, seoPrefix, filename, field, distDir) {
   const src = path.join(srcDir, filename);
   if (fs.existsSync(src)) {
     const newFilename = `${seoPrefix}-${field}.webp`;
-    const dest = path.join(__dirname, `../dist/assets/${newFilename}`);
+
+    const assetsDir = path.join(distDir, 'assets');
+    fs.mkdirSync(assetsDir, { recursive: true });
+    
+    const dest = path.join(assetsDir, newFilename);
     fs.copyFileSync(src, dest);
   }
 };
@@ -42,7 +46,8 @@ const  buildAboutUsPage =  async function (
             'concrete-contractor': 'Concrete Contractor',
             'hvac':            'Hvac Technician',
             'landscaping':     'Landscaper',
-            'law-firm':      'Lawyer'
+            'law-firm':        'Lawyer',
+            'junk-removal':    'junk removal'
           };
 
         const businessType = slugify(globalValues.businessType);
@@ -77,25 +82,25 @@ const  buildAboutUsPage =  async function (
         
         // Create About Us page from aboutUsTamplate.html & save in dist
         let aboutus = fs.readFileSync(path.join(__dirname, '../src/aboutUsTemplate.html'), 'utf-8');
-        let aboutUsPageExists = fs.existsSync(path.join(distDir, '/index.html'), 'utf-8');
+        let aboutUsPageExists = fs.existsSync(path.join(distDir, 'index.html'));
         
 
         if(!aboutUsPageExists){
 
             
             // === Copy hero images
-            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-mobile.webp',  'heroMobile');
-            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-tablet.webp',  'heroTablet');
-            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-desktop.webp', 'heroDesktop');
-            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-large.webp',   'heroLarge');
+            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-mobile.webp',  'heroMobile', distDir);
+            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-tablet.webp',  'heroTablet', distDir);
+            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-desktop.webp', 'heroDesktop', distDir);
+            copyPageImage(pageImageDirs.aboutHero, seoPrefix, 'hero-large.webp',   'heroLarge', distDir);
 
             // === Copy section2 images
-            copyPageImage(pageImageDirs.aboutSection2, seoPrefix, 'section2-1.webp', 'section2Img1');
-            copyPageImage(pageImageDirs.aboutSection2, seoPrefix, 'section2-2.webp', 'section2Img2');
+            copyPageImage(pageImageDirs.aboutSection2, seoPrefix, 'section2-1.webp', 'section2Img1', distDir);
+            copyPageImage(pageImageDirs.aboutSection2, seoPrefix, 'section2-2.webp', 'section2Img2', distDir);
 
             // === Copy section4 images
-            copyPageImage(pageImageDirs.aboutSection4, seoPrefix, 'section4-1.webp', 'section4Img1');
-            copyPageImage(pageImageDirs.aboutSection4, seoPrefix, 'section4-2.webp', 'section4Img2');
+            copyPageImage(pageImageDirs.aboutSection4, seoPrefix, 'section4-1.webp', 'section4Img1', distDir);
+            copyPageImage(pageImageDirs.aboutSection4, seoPrefix, 'section4-2.webp', 'section4Img2', distDir);
 
             
             
@@ -122,6 +127,12 @@ const  buildAboutUsPage =  async function (
             aboutus = buildNavMenu(aboutus, globalValues, pages, basePath, slugify(globalValues.location), globalValues.location, context);
  
 
+            const aboutVideoHtml = buildYouTubeEmbedHtml(
+                globalValues.youtubeVideoUrl,
+                globalValues.businessName,
+                globalValues.location
+              );
+              
               
             aboutus = aboutus
                 .replace(/{{JSON_LD_SCHEMA}}/g, jsonLdString)
@@ -194,11 +205,22 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{PINTEREST_URL}}/g, globalValues.pinterestUrl)
                 .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
                 .replace(/{{LINKEDIN_URL}}/g, globalValues.linkedinUrl)
+                .replace(/{{ABOUT_VIDEO}}/g, aboutVideoHtml)  
                 .replace('</head>', `<link rel="stylesheet" href="./css/bootstrap.min.css">
                                     <link rel="stylesheet" href="./css/index.css"></head>`)
                 .replace('</body>', `<script src="./js/bootstrap.bundle.min.js"></script>
                                      <script src="./js/index.js"></script>
                           </body>`);
+
+            
+                // If there's no video HTML, remove the entire YouTube container
+                if (!aboutVideoHtml) {
+                    aboutus = aboutus.replace(
+                    /<div class="container about-video-section[^>]*>[\s\S]*?<\/div>\s*/i,
+                    ''
+                    );
+                }
+  
             
             
             // Normalize checkbox -> boolean
@@ -221,8 +243,8 @@ const  buildAboutUsPage =  async function (
             // but now we inject it only when email is present.
             // If you prefer, you can put this string in a separate partial and fs.readFileSync it.
             const contactFormHtml = `
-            <section class="form-container bg-secondary-subtle">
-            <div>
+            <section class="form-container">
+            <div class="bg-secondary-subtle">
                 <form class="contact-form" id="contactForm" action="mailto:${globalValues.email}" method="POST" enctype="text/plain">
                     <h2>Get In Touch</h2>
                     <div class="form-group">

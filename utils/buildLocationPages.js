@@ -16,7 +16,7 @@ const { generateLocationPagesContent } = require("./generateLocationPagesContent
 
 
 const isDev = process.env.NODE_ENV !== 'production';
-const basePath = isDev ? '/dist/' : '/';
+const basePath = '';
 
 /**
  * Build Location Pages
@@ -52,6 +52,7 @@ const buildLocationPages = async function (
      // Copy predefined images into dist/assets and track them 
      
      copyAllPredefinedImages({
+      distDir,
       globalValues,
       uploadedImages,
       keyword: slugify(locationSlug || ''),

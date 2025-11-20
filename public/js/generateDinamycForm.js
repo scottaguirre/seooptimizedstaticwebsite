@@ -161,7 +161,7 @@
           <div class="col-12">
             <select class="form-select" id="businessType" required>
               <option value="">Choose...</option>
-              ${['Plumbing', 'Fencing', 'Electrician','Concrete Contractor','Roofing','HVAC','Landscaping','Law Firm', "Web Design"]
+              ${['Plumbing', 'Fencing', 'Junk Removal', 'Electrician','Concrete Contractor','Roofing','HVAC','Landscaping','Law Firm', "Web Design"]
                 .map(bt => `<option ${state.businessType===bt?'selected':''}>${bt}</option>`).join('')}
             </select>
             <div class="form-text">You can adjust this later.</div>
@@ -379,6 +379,7 @@
           <input type="tel" name="global[phone]" class="form-control" required />
         </div>
 
+
         <!-- Email-->
         <div class="mb-3">
           <label class="form-label">Email</label>
@@ -468,6 +469,27 @@
             <input type="url" name="global[${field}]" class="form-control" />
           </div>
         `).join('')}
+
+        <hr>
+
+        <div class="mb-3">
+          <label for="youtubeVideoUrl" class="form-label">
+            Provide a YouTube video URL (optional)
+          </label>
+          <input
+            type="url"
+            class="form-control"
+            id="youtubeVideoUrl"
+            name="global[youtubeVideoUrl]"
+            placeholder="https://www.youtube.com/watch?v=XXXXXXXXXXX"
+          >
+          <div class="form-text">
+            Paste a full YouTube link. This video will show on the About / Home page.
+          </div>
+        </div>
+
+
+
       </div>
     `;
     container.appendChild(block);

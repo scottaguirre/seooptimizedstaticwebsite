@@ -7,7 +7,7 @@ const { normalizeDomain}  = require('./normalizeDomain');
 const { getFullStateName } = require('./getFullStateName');
 
 const isDev = process.env.NODE_ENV !== 'production';
-const basePath = isDev ? '/dist/' : '/';
+const basePath = '';
 
 
 const buildTermsOfUsePage = function (

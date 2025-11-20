@@ -13,7 +13,8 @@ function createLocationPagesPrompt({ globalForLoc, keywords = [] }) {
     'hvac': 'hvac',
     'landscaping': 'landscaping',
     'law firm': 'law firm',
-    'fencing':   'fencing'
+    'fencing':   'fencing',
+    'junk removal': 'junk removal'
   };
 
   const category = categoryMap[(businessType || '').toLowerCase()] || businessType || 'services';

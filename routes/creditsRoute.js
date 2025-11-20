@@ -5,7 +5,7 @@ const express = require('express');
 const router = express.Router();
 
 // GET /buy-credits – simple page to show current credits + placeholder
-router.get("/buy-credits", requireAuth, (req, res) => {
+router.get("/buy-credits", (req, res) => {
   const user = req.user; // requireAuth puts user on req
 
   res.send(`
