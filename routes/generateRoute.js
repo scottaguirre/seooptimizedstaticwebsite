@@ -630,8 +630,6 @@ router.post('/generate', upload.any(), async (req, res) => {
               <a href="/" class="btn btn-warning mt-3">Go Back</a>
               <a href="/production" class="btn btn-primary mt-3 ">Run Production</a>
               <a href="/export-wp-theme" class="btn btn-success mt-3 ">Convert into Wordpress</a>
-              
-          
             </div>
           </body>
         </html>
