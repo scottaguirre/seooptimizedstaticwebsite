@@ -18,17 +18,11 @@ const US = new Set(['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID',
 // 1.  Utility to Recursively Clean a Directory ===
 function cleanDirectory(dirPath) {
   if (fs.existsSync(dirPath)) {
-    fs.readdirSync(dirPath).forEach(file => {
-      const filePath = path.join(dirPath, file);
-      if (fs.lstatSync(filePath).isDirectory()) {
-        cleanDirectory(filePath);
-        fs.rmdirSync(filePath);
-      } else {
-        fs.unlinkSync(filePath);
-      }
-    });
+    // Remove the directory and everything inside it
+    fs.rmSync(dirPath, { recursive: true, force: true });
   }
 }
+
 
 // 2. Utility to Clean JS/CSS & Ensure Dist Structure ===
 function cleanDevFolders({
