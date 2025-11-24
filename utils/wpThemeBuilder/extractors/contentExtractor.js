@@ -2,6 +2,8 @@
 
 const { stripTagsToText, extractAllTagContents } = require('../wpHelpers/htmlHelpers');
 
+
+
 /**
  * Rewrite asset URLs in HTML for WordPress
  */
@@ -51,6 +53,7 @@ function rewriteAssetsForWordPress(html) {
   return processed;
 }
 
+
 /**
  * Find matching closing tag for an opening tag
  */
@@ -86,12 +89,172 @@ function findMatchingClosingTag(html, startPos, tagName) {
   return -1;
 }
 
+
+/**
+ * Extract complete head metadata including schema
+ */
+function extractHeadMetadata(html) {
+  const metadata = {
+    title: '',
+    description: '',
+    author: '',
+    favicon: '',
+    schemaJson: '',
+  };
+  
+  // Extract title
+  const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+  if (titleMatch) {
+    metadata.title = titleMatch[1].trim();
+  }
+  
+  // Extract meta description
+  const descMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([^"']*)["']/i);
+  if (descMatch) {
+    metadata.description = descMatch[1].trim();
+  }
+  
+  // Extract meta author
+  const authorMatch = html.match(/<meta\s+name=["']author["']\s+content=["']([^"']*)["']/i);
+  if (authorMatch) {
+    metadata.author = authorMatch[1].trim();
+  }
+  
+  // Extract favicon
+  const faviconMatch = html.match(/<link\s+rel=["']icon["'][^>]*href=["']([^"']*)["']/i);
+  if (faviconMatch) {
+    let faviconPath = faviconMatch[1];
+    // Convert relative path to WordPress path
+    if (faviconPath.startsWith('assets/')) {
+      faviconPath = faviconPath.replace('assets/', '');
+    } else if (faviconPath.startsWith('./assets/')) {
+      faviconPath = faviconPath.replace('./assets/', '');
+    }
+    metadata.favicon = faviconPath;
+  }
+  
+  // Extract JSON-LD schema
+  const schemaMatch = html.match(/<script\s+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (schemaMatch) {
+    try {
+      // Clean up the JSON
+      const jsonStr = schemaMatch[1].trim();
+      // Validate it's proper JSON
+      JSON.parse(jsonStr);
+      metadata.schemaJson = jsonStr;
+    } catch (e) {
+      console.warn('Failed to parse schema JSON:', e);
+    }
+  }
+  
+  return metadata;
+}
+
+
+/**
+ * Extract header content
+ */
+function extractHeaderContent(html) {
+  const headerRegex = /<header[^>]*>/i;
+  const match = headerRegex.exec(html);
+  
+  if (!match) return null;
+  
+  const startPos = match.index;
+  const afterOpenTag = match.index + match[0].length;
+  const endPos = findMatchingClosingTag(html, afterOpenTag, 'header');
+  
+  if (endPos === -1) return null;
+  
+  const headerHtml = html.substring(startPos, endPos);
+  const processedHeaderHtml = rewriteAssetsForWordPress(headerHtml);
+  
+  return {
+    rawHtml: processedHeaderHtml,
+  };
+}
+
+
+
+/**
+ * Extract footer content
+ */
+function extractFooterContent(html) {
+  const footerRegex = /<footer[^>]*>/i;
+  const match = footerRegex.exec(html);
+  
+  if (!match) return null;
+  
+  const startPos = match.index;
+  const afterOpenTag = match.index + match[0].length;
+  const endPos = findMatchingClosingTag(html, afterOpenTag, 'footer');
+  
+  if (endPos === -1) return null;
+  
+  const footerHtml = html.substring(startPos, endPos);
+  const processedFooterHtml = rewriteAssetsForWordPress(footerHtml);
+  
+  return {
+    rawHtml: processedFooterHtml,
+  };
+}
+
+
+
+/**
+ * Extract global info
+ */
+function extractGlobalInfo(html) {
+  const global = {};
+  
+  const phoneRegex = /tel:([+\d\s()-]+)/gi;
+  const phoneMatches = [...html.matchAll(phoneRegex)];
+  if (phoneMatches.length > 0) {
+    global.phone = phoneMatches[0][1].trim();
+  }
+  
+  const emailRegex = /mailto:([^\s"'<>]+@[^\s"'<>]+)/i;
+  const emailMatch = html.match(emailRegex);
+  if (emailMatch) {
+    global.email = emailMatch[1];
+  }
+  
+  const socialPlatforms = {
+    facebook: /facebook\.com\/([^"'\s?]+)/i,
+    twitter: /twitter\.com\/([^"'\s?]+)/i,
+    instagram: /instagram\.com\/([^"'\s?]+)/i,
+    linkedin: /linkedin\.com\/(company|in)\/([^"'\s?]+)/i,
+    youtube: /youtube\.com\/(channel|c|user)\/([^"'\s?]+)/i,
+  };
+  
+  Object.entries(socialPlatforms).forEach(([platform, regex]) => {
+    const match = html.match(regex);
+    if (match) {
+      global[`${platform}_url`] = match[0];
+    }
+  });
+  
+  const addressMatch = html.match(/"streetAddress"\s*:\s*"([^"]+)"/);
+  if (addressMatch) {
+    global.address = addressMatch[1];
+  }
+  
+  const cityMatch = html.match(/"addressLocality"\s*:\s*"([^"]+)"/);
+  if (cityMatch) {
+    global.location = cityMatch[1];
+  }
+  
+  return global;
+}
+
+
+
 /**
  * Extract page content from HTML
  */
 function extractPageContent(html) {
   return {
-    meta: extractMetaTags(html),
+    headMetadata: extractHeadMetadata(html),
     header: extractHeaderContent(html),
     contentBlocks: extractAllContentBlocks(html),
     footer: extractFooterContent(html),
@@ -278,127 +441,23 @@ function extractEditableFields(html, blockType) {
   return fields;
 }
 
-/**
- * Extract header content
- */
-function extractHeaderContent(html) {
-  const headerRegex = /<header[^>]*>/i;
-  const match = headerRegex.exec(html);
-  
-  if (!match) return null;
-  
-  const startPos = match.index;
-  const afterOpenTag = match.index + match[0].length;
-  const endPos = findMatchingClosingTag(html, afterOpenTag, 'header');
-  
-  if (endPos === -1) return null;
-  
-  const headerHtml = html.substring(startPos, endPos);
-  const processedHeaderHtml = rewriteAssetsForWordPress(headerHtml);
-  
-  return {
-    rawHtml: processedHeaderHtml,
-  };
-}
 
-/**
- * Extract footer content
- */
-function extractFooterContent(html) {
-  const footerRegex = /<footer[^>]*>/i;
-  const match = footerRegex.exec(html);
-  
-  if (!match) return null;
-  
-  const startPos = match.index;
-  const afterOpenTag = match.index + match[0].length;
-  const endPos = findMatchingClosingTag(html, afterOpenTag, 'footer');
-  
-  if (endPos === -1) return null;
-  
-  const footerHtml = html.substring(startPos, endPos);
-  const processedFooterHtml = rewriteAssetsForWordPress(footerHtml);
-  
-  return {
-    rawHtml: processedFooterHtml,
-  };
-}
 
-/**
- * Extract meta tags
- */
-function extractMetaTags(html) {
-  const meta = {};
-  
-  const titleMatch = html.match(/<title>(.*?)<\/title>/i);
-  if (titleMatch) {
-    meta.title = stripTagsToText(titleMatch[1]);
-  }
-  
-  const descMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([^"']*)["']/i);
-  if (descMatch) {
-    meta.description = descMatch[1];
-  }
-  
-  const authorMatch = html.match(/<meta\s+name=["']author["']\s+content=["']([^"']*)["']/i);
-  if (authorMatch) {
-    meta.author = authorMatch[1];
-  }
-  
-  return meta;
-}
-
-/**
- * Extract global info
- */
-function extractGlobalInfo(html) {
-  const global = {};
-  
-  const phoneRegex = /tel:([+\d\s()-]+)/gi;
-  const phoneMatches = [...html.matchAll(phoneRegex)];
-  if (phoneMatches.length > 0) {
-    global.phone = phoneMatches[0][1].trim();
-  }
-  
-  const emailRegex = /mailto:([^\s"'<>]+@[^\s"'<>]+)/i;
-  const emailMatch = html.match(emailRegex);
-  if (emailMatch) {
-    global.email = emailMatch[1];
-  }
-  
-  const socialPlatforms = {
-    facebook: /facebook\.com\/([^"'\s?]+)/i,
-    twitter: /twitter\.com\/([^"'\s?]+)/i,
-    instagram: /instagram\.com\/([^"'\s?]+)/i,
-    linkedin: /linkedin\.com\/(company|in)\/([^"'\s?]+)/i,
-    youtube: /youtube\.com\/(channel|c|user)\/([^"'\s?]+)/i,
-  };
-  
-  Object.entries(socialPlatforms).forEach(([platform, regex]) => {
-    const match = html.match(regex);
-    if (match) {
-      global[`${platform}_url`] = match[0];
-    }
-  });
-  
-  const addressMatch = html.match(/"streetAddress"\s*:\s*"([^"]+)"/);
-  if (addressMatch) {
-    global.address = addressMatch[1];
-  }
-  
-  const cityMatch = html.match(/"addressLocality"\s*:\s*"([^"]+)"/);
-  if (cityMatch) {
-    global.location = cityMatch[1];
-  }
-  
-  return global;
-}
 
 /**
  * Flatten extracted content for WordPress post meta
  */
 function flattenContentForMeta(extracted) {
   const flat = {};
+
+   // Store head metadata
+   if (extracted.headMetadata) {
+    if (extracted.headMetadata.title) flat.page_title = extracted.headMetadata.title;
+    if (extracted.headMetadata.description) flat.page_description = extracted.headMetadata.description;
+    if (extracted.headMetadata.author) flat.page_author = extracted.headMetadata.author;
+    if (extracted.headMetadata.favicon) flat.page_favicon = extracted.headMetadata.favicon;
+    if (extracted.headMetadata.schemaJson) flat.page_schema_json = extracted.headMetadata.schemaJson;
+  }
   
   // Store header HTML
   if (extracted.header && extracted.header.rawHtml) {
@@ -461,8 +520,8 @@ function getExtractionSummary(extracted) {
 module.exports = {
   extractPageContent,
   flattenContentForMeta,
+  extractHeadMetadata,
   getExtractionSummary,
-  extractMetaTags,
   extractHeaderContent,
   extractFooterContent,
   extractAllContentBlocks,

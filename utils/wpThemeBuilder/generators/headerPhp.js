@@ -27,14 +27,49 @@ function generateHeaderPhp(options = {}) {
     <link rel="profile" href="https://gmpg.org/xfn/11">
 
     <?php
-    // Custom meta description from page field or global
-    if ( is_singular() ) {
-        $meta_desc = get_page_field( 'meta_description' );
-        if ( $meta_desc ) {
-            echo '<meta name="description" content="' . esc_attr( $meta_desc ) . '">' . "\\n";
-        }
-    }
+    // Output custom title from post meta or fallback to WordPress default
+    $custom_title = get_post_meta( get_the_ID(), '${funcPrefix}_page_title', true );
+    if ( $custom_title ) :
     ?>
+    <title><?php echo esc_html( $custom_title ); ?></title>
+    <?php else : ?>
+    <title><?php wp_title( '|', true, 'right' ); ?><?php bloginfo( 'name' ); ?></title>
+    <?php endif; ?>
+
+    <?php
+    // Output custom meta description
+    $custom_description = get_post_meta( get_the_ID(), '${funcPrefix}_page_description', true );
+    if ( $custom_description ) :
+    ?>
+    <meta name="description" content="<?php echo esc_attr( $custom_description ); ?>">
+    <?php endif; ?>
+
+    <?php
+    // Output custom meta author
+    $custom_author = get_post_meta( get_the_ID(), '${funcPrefix}_page_author', true );
+    if ( $custom_author ) :
+    ?>
+    <meta name="author" content="<?php echo esc_attr( $custom_author ); ?>">
+    <?php endif; ?>
+
+    <?php
+    // Output custom favicon
+    $custom_favicon = get_post_meta( get_the_ID(), '${funcPrefix}_page_favicon', true );
+    if ( $custom_favicon ) :
+        $favicon_url = get_template_directory_uri() . '/assets/' . $custom_favicon;
+    ?>
+    <link rel="icon" href="<?php echo esc_url( $favicon_url ); ?>" type="image/x-icon" />
+    <?php endif; ?>
+
+    <?php
+    // Output JSON-LD Schema
+    $schema_json = get_post_meta( get_the_ID(), '${funcPrefix}_page_schema_json', true );
+    if ( $schema_json ) :
+    ?>
+    <script type="application/ld+json">
+    <?php echo $schema_json; ?>
+    </script>
+    <?php endif; ?>
 
     <?php wp_head(); ?>
 </head>
@@ -155,5 +190,5 @@ function ${funcPrefix}_fallback_menu() {
 }
 
 module.exports = {
-  generateHeaderPhp,
+  generateHeaderPhp
 };
