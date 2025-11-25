@@ -15,6 +15,7 @@ function generateHeaderPhp(options = {}) {
  * Header Template
  * 
  * Outputs the stored header HTML from the database
+ * Replaces static navigation with WordPress dynamic menu
  *
  * @package ${themeSlug}
  */
@@ -83,15 +84,13 @@ function generateHeaderPhp(options = {}) {
     </a>
 
     <?php
-    // Output the stored header HTML from the page meta
+    // Get the stored header HTML
     $header_html = '';
     
-    // Try to get from current page first
     if ( is_singular() ) {
         $header_html = get_post_meta( get_the_ID(), '${funcPrefix}_header_html', true );
     }
     
-    // Fallback: get from front page
     if ( empty( $header_html ) ) {
         $front_page_id = get_option( 'page_on_front' );
         if ( $front_page_id ) {
@@ -99,14 +98,93 @@ function generateHeaderPhp(options = {}) {
         }
     }
     
-    // Output the stored header HTML
     if ( ! empty( $header_html ) ) {
+        // CRITICAL: Replace static navigation with WordPress dynamic menu
+        
+        // Find the nav element and replace it with WordPress menu
+        $nav_pattern = '/<nav[^>]*>.*?<\\/nav>/is';
+        
+        if ( preg_match( $nav_pattern, $header_html, $matches ) ) {
+            $original_nav = $matches[0];
+            
+            // Extract logo from original nav for reuse
+            $logo_html = '';
+            $logo_pattern = '/<img[^>]*(?:class="[^"]*"[^>]*|[^>]*)>/i';
+            if ( preg_match( $logo_pattern, $original_nav, $logo_match ) ) {
+                $logo_html = $logo_match[0];
+                // Fix logo src path
+                $template_uri = get_template_directory_uri();
+                // Extract logo from original nav for reuse
+                
+                $logo_html = '';
+                $logo_pattern = '/<img[^>]*(?:class="[^"]*"[^>]*|[^>]*)>/i';
+                if ( preg_match( $logo_pattern, $original_nav, $logo_match ) ) {
+                    $logo_html = $logo_match[0];
+                    // Only fix relative paths, not absolute URLs
+                    $template_uri = get_template_directory_uri();
+                    $logo_html = preg_replace(
+                        '/src=(["\\'])(?!https?:\\/\\/)(?:(?:\\.\\/)?assets\\/)?([^"\\']+)\\1/i',
+                        'src=$1' . $template_uri . '/assets/$2$1',
+                        $logo_html
+                    );
+                }
+            }
+            
+            // Build WordPress menu with same structure
+            ob_start();
+            ?>
+            <nav class="navbar navbar-expand-lg navbar-light bg-light px-3 navbar-vertical-padding">
+                <div class="container">
+                    <a class="navbar-brand d-flex align-items-center" href="<?php echo esc_url( home_url( '/' ) ); ?>">
+                        <?php
+                        if ( ! empty( $logo_html ) ) {
+                            echo $logo_html;
+                        } else {
+                            // Fallback logo
+                            $logo_path = get_template_directory() . '/assets/';
+                            $logo_files = glob( $logo_path . '*logo*.{png,jpg,jpeg,webp}', GLOB_BRACE );
+                            if ( ! empty( $logo_files ) ) {
+                                $logo_file = basename( $logo_files[0] );
+                                $logo_url = get_template_directory_uri() . '/assets/' . $logo_file;
+                                echo '<img src="' . esc_url( $logo_url ) . '" alt="' . esc_attr( get_bloginfo( 'name' ) ) . '" width="100" height="100" class="me-2">';
+                            } else {
+                                echo '<span class="site-title">' . esc_html( get_bloginfo( 'name' ) ) . '</span>';
+                            }
+                        }
+                        ?>
+                    </a>
+
+                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="<?php esc_attr_e( 'Toggle navigation', '${themeSlug}' ); ?>">
+                        <span class="navbar-toggler-icon"></span>
+                    </button>
+
+                    <div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
+                        <?php
+                        // Output WordPress dynamic menu
+                        wp_nav_menu( array(
+                            'theme_location' => 'primary',
+                            'container'      => false,
+                            'menu_class'     => 'navbar-nav ms-auto',
+                            'fallback_cb'    => '${funcPrefix}_fallback_menu',
+                            'depth'          => 2,
+                        ) );
+                        ?>
+                    </div>
+                </div>
+            </nav>
+            <?php
+            $wordpress_nav = ob_get_clean();
+            
+            // Replace static nav with WordPress nav
+            $header_html = str_replace( $original_nav, $wordpress_nav, $header_html );
+        }
+        
         echo $header_html;
     } else {
         // Fallback header if no stored HTML exists
         ?>
         <header id="masthead" class="site-header">
-            <nav class="navbar navbar-expand-lg">
+            <nav class="navbar navbar-expand-lg navbar-light bg-light px-3 navbar-vertical-padding">
                 <div class="container">
                     <a class="navbar-brand" href="<?php echo esc_url( home_url( '/' ) ); ?>" rel="home">
                         <?php
@@ -151,10 +229,11 @@ function generateHeaderPhp(options = {}) {
                         ?>
 
                         <?php
-                        $phone = get_global_setting( 'phone' );
+                        $settings = get_option( '${funcPrefix}_global_settings', array() );
+                        $phone = isset( $settings['phone'] ) ? $settings['phone'] : '';
                         if ( $phone ) :
                         ?>
-                            <a href="tel:<?php echo esc_attr( get_phone_href() ); ?>" class="btn btn-primary ms-lg-3 header-cta">
+                            <a href="tel:<?php echo esc_attr( str_replace( array( ' ', '-', '(', ')' ), '', $phone ) ); ?>" class="btn btn-primary ms-lg-3 header-cta">
                                 <span class="phone-icon">&#9742;</span>
                                 <?php echo esc_html( $phone ); ?>
                             </a>
@@ -190,5 +269,5 @@ function ${funcPrefix}_fallback_menu() {
 }
 
 module.exports = {
-  generateHeaderPhp
+  generateHeaderPhp,
 };

@@ -5,7 +5,7 @@ const { stripTagsToText, extractAllTagContents } = require('../wpHelpers/htmlHel
 
 
 /**
- * Rewrite asset URLs in HTML for WordPress
+ * Rewrite asset URLs and internal links in HTML for WordPress
  */
 function rewriteAssetsForWordPress(html) {
   if (!html || typeof html !== 'string') return html;
@@ -47,6 +47,28 @@ function rewriteAssetsForWordPress(html) {
         }
       );
       return `srcset=${quote1}${processedSrcset}${quote2}`;
+    }
+  );
+
+  // CRITICAL: Convert internal .html links to WordPress permalinks
+  // Convert index.html to home URL
+  processed = processed.replace(
+    /href=(["'])\.?\/?index\.html?(["'])/gi,
+    'href=$1<?php echo esc_url( home_url( \'/\' ) ); ?>$2'
+  );
+
+  // Convert other .html links to WordPress permalinks
+  // Example: href="water-heater-repair-leander-tx.html" → href="<?php echo esc_url( home_url( '/water-heater-repair-leander-tx/' ) ); ?>"
+  processed = processed.replace(
+    /href=(["'])\.?\/?([a-z0-9-]+)\.html?(["'])/gi,
+    (match, quote1, slug, quote2) => {
+      // Skip if it's index.html (already handled above)
+      if (slug === 'index') {
+        return match;
+      }
+      
+      // Convert to WordPress permalink
+      return `href=${quote1}<?php echo esc_url( home_url( '/${slug}/' ) ); ?>${quote2}`;
     }
   );
 
@@ -152,6 +174,114 @@ function extractHeadMetadata(html) {
 
 
 /**
+ * Extract intelligent page name from HTML
+ * Removes location suffixes, generic words, etc.
+ * 
+ * @param {string} html - HTML content
+ * @param {string} filename - Original filename (e.g., "index.html", "water-heater-repair-leander-tx.html")
+ * @returns {string} - Clean page name
+ */
+function extractPageName(html, filename = '') {
+  // CRITICAL: Check filename FIRST before processing title
+  // Special case: index.html = "About Us"
+  if (filename) {
+    const baseFilename = filename.replace(/\.html?$/i, '').toLowerCase();
+    
+    if (baseFilename === 'index' || baseFilename === 'home' || baseFilename === 'about') {
+      return 'About Us';
+    }
+    
+    // SPECIAL CASE: Location pages should use <h2 class="lead"> instead of <h1>
+    if (baseFilename.startsWith('location-')) {
+      // Try to extract city name from <h2 class="lead">
+      const leadMatch = html.match(/<h2[^>]*class=["'][^"']*lead[^"']*["'][^>]*>(.*?)<\/h2>/i);
+      if (leadMatch) {
+        let cityName = leadMatch[1].trim();
+        
+        // Remove state abbreviations
+        cityName = cityName.replace(/,\s*[A-Z]{2}\s*$/i, '').trim();
+        
+        // If we got a clean city name, return it
+        if (cityName && cityName.length > 0) {
+          return cityName;
+        }
+      }
+      
+      // Fallback: Try to extract from filename
+      // "location-austin-tx" → "Austin"
+      const citySlug = baseFilename.replace(/^location-/, '').replace(/-[a-z]{2}$/i, '');
+      if (citySlug) {
+        return citySlug
+          .split('-')
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+          .join(' ');
+      }
+    }
+  }
+  
+  let pageName = '';
+  
+  // Try to extract from <title> tag
+  const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+  if (titleMatch) {
+    pageName = titleMatch[1].trim();
+    
+    // Remove common separators and everything after them
+    pageName = pageName.split('|')[0].trim();
+    pageName = pageName.split('-')[0].trim();
+    pageName = pageName.split('–')[0].trim();
+    pageName = pageName.split('—')[0].trim();
+    
+    // Remove " in [City], [State]" patterns
+    pageName = pageName.replace(/\s+in\s+[^,]+,\s*[A-Z]{2}$/i, '');
+    
+    // Remove "[City], [State]" patterns
+    pageName = pageName.replace(/[^,]+,\s*[A-Z]{2}$/i, '');
+    
+    // Remove generic suffixes
+    const suffixesToRemove = [
+      'location',
+      'near me'
+    ];
+    
+    suffixesToRemove.forEach(suffix => {
+      const regex = new RegExp(`\\s+${suffix}\\s*$`, 'gi');
+      pageName = pageName.replace(regex, '');
+    });
+    
+    pageName = pageName.trim();
+  }
+  
+  // If still empty, derive from filename
+  if (!pageName && filename) {
+    // Remove .html extension
+    pageName = filename.replace(/\.html?$/i, '');
+    
+    // Remove city and state patterns from filename
+    // Examples: "water-heater-repair-leander-tx" → "water-heater-repair"
+    pageName = pageName.replace(/-[a-z]+-[a-z]{2}$/i, '');
+    
+    // Convert hyphens to spaces and title case
+    pageName = pageName
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  }
+  
+  // Final cleanup
+  pageName = pageName.trim();
+  
+  // If still empty, return default
+  if (!pageName) {
+    pageName = 'Untitled Page';
+  }
+  
+  return pageName;
+}
+
+
+
+/**
  * Extract header content
  */
 function extractHeaderContent(html) {
@@ -252,9 +382,10 @@ function extractGlobalInfo(html) {
 /**
  * Extract page content from HTML
  */
-function extractPageContent(html) {
+function extractPageContent(html, filename) {
   return {
     headMetadata: extractHeadMetadata(html),
+    pageName: extractPageName(html, filename), 
     header: extractHeaderContent(html),
     contentBlocks: extractAllContentBlocks(html),
     footer: extractFooterContent(html),
@@ -450,6 +581,11 @@ function extractEditableFields(html, blockType) {
 function flattenContentForMeta(extracted) {
   const flat = {};
 
+  // Store page name
+  if (extracted.pageName) {
+    flat.page_name = extracted.pageName;
+  }
+
    // Store head metadata
    if (extracted.headMetadata) {
     if (extracted.headMetadata.title) flat.page_title = extracted.headMetadata.title;
@@ -520,6 +656,7 @@ function getExtractionSummary(extracted) {
 module.exports = {
   extractPageContent,
   flattenContentForMeta,
+  extractPageName,
   extractHeadMetadata,
   getExtractionSummary,
   extractHeaderContent,

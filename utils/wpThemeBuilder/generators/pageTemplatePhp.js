@@ -2,16 +2,22 @@
 
 const { makePhpIdentifier } = require('../wpHelpers/phpHelpers');
 
+/**
+ * Generate page.php - Generic page template
+ * Uses the NEW block-based extraction method
+ */
 function generatePagePhp(options = {}) {
   const {
     themeSlug = 'local-business-theme',
   } = options;
 
+  const funcPrefix = makePhpIdentifier(themeSlug);
+
   return `<?php
 /**
  * Default Page Template
  * 
- * Outputs stored HTML sections
+ * Displays content blocks stored in post meta
  *
  * @package ${themeSlug}
  */
@@ -21,51 +27,29 @@ get_header();
 
 <main id="main-content" class="site-main page-template">
 
-    <?php if ( have_posts() ) : while ( have_posts() ) : the_post(); ?>
-
-        <article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
-
-            <!-- Hero Section -->
-            <?php
-            $hero_html = get_page_field( 'hero_html' );
+    <?php
+    while ( have_posts() ) :
+        the_post();
+        
+        // Output all content blocks in order
+        $block_index = 0;
+        
+        while ( true ) {
+            $block_html = get_post_meta( get_the_ID(), '${funcPrefix}_block_' . $block_index . '_html', true );
             
-            if ( $hero_html ) :
-                echo $hero_html;
-            endif;
-            ?>
-
-            <!-- Dynamic Sections -->
-            <?php
-            $section_count = get_section_count();
-
-            for ( $i = 0; $i < $section_count; $i++ ) :
-                $section_html = get_page_field( 'section_' . $i . '_html' );
-                
-                if ( $section_html ) :
-                    echo $section_html;
-                endif;
-            endfor;
-            ?>
-
-            <!-- CTA Section -->
-            <?php
-            $phone = get_global_setting( 'phone' );
-            if ( $phone ) :
-            ?>
-            <section class="cta-section bg-primary text-white">
-                <div class="container text-center">
-                    <h2><?php esc_html_e( 'Ready to Get Started?', '${themeSlug}' ); ?></h2>
-                    <p><?php esc_html_e( 'Contact us today for a free consultation.', '${themeSlug}' ); ?></p>
-                    <a href="tel:<?php echo esc_attr( get_phone_href() ); ?>" class="btn btn-light btn-lg">
-                        <?php esc_html_e( 'Call', '${themeSlug}' ); ?> <?php echo esc_html( $phone ); ?>
-                    </a>
-                </div>
-            </section>
-            <?php endif; ?>
-
-        </article>
-
-    <?php endwhile; endif; ?>
+            // If no more blocks, break
+            if ( empty( $block_html ) ) {
+                break;
+            }
+            
+            // Output the block
+            echo $block_html;
+            
+            $block_index++;
+        }
+        
+    endwhile;
+    ?>
 
 </main>
 
@@ -74,94 +58,20 @@ get_footer();
 `;
 }
 
-function generatePageSlugTemplate(slug, title, options = {}) {
-  const { themeSlug = 'local-business-theme' } = options;
-
-  return `<?php
 /**
- * Page Template: ${title}
- * 
- * Template for the ${title} page
- *
- * @package ${themeSlug}
+ * Generate index.php - Fallback template
+ * WordPress requires this file to exist
  */
-
-get_header();
-?>
-
-<main id="main-content" class="site-main page-<?php echo esc_attr( '${slug}' ); ?>">
-
-    <?php if ( have_posts() ) : while ( have_posts() ) : the_post(); ?>
-
-        <article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
-
-            <!-- Hero Section -->
-            <?php
-            $hero_html = get_page_field( 'hero_html' );
-            
-            if ( $hero_html ) :
-                echo $hero_html;
-            endif;
-            ?>
-
-            <!-- Dynamic Sections -->
-            <?php
-            $section_count = get_section_count();
-
-            for ( $i = 0; $i < $section_count; $i++ ) :
-                $section_html = get_page_field( 'section_' . $i . '_html' );
-                
-                if ( $section_html ) :
-                    echo $section_html;
-                endif;
-            endfor;
-            ?>
-
-            <!-- Contact CTA Section -->
-            <?php
-            $phone = get_global_setting( 'phone' );
-            $location = get_global_setting( 'location' );
-            ?>
-            <section class="cta-section bg-primary text-white">
-                <div class="container text-center">
-                    <h2>
-                        <?php
-                        printf(
-                            esc_html__( 'Need %s Services%s?', '${themeSlug}' ),
-                            esc_html( '${title}' ),
-                            $location ? ' in ' . esc_html( $location ) : ''
-                        );
-                        ?>
-                    </h2>
-                    <p><?php esc_html_e( 'Contact our team today for fast, reliable service.', '${themeSlug}' ); ?></p>
-                    
-                    <?php if ( $phone ) : ?>
-                        <a href="tel:<?php echo esc_attr( get_phone_href() ); ?>" class="btn btn-light btn-lg">
-                            <?php esc_html_e( 'Call', '${themeSlug}' ); ?> <?php echo esc_html( $phone ); ?>
-                        </a>
-                    <?php endif; ?>
-                </div>
-            </section>
-
-        </article>
-
-    <?php endwhile; endif; ?>
-
-</main>
-
-<?php
-get_footer();
-`;
-}
-
 function generateIndexPhp(options = {}) {
   const { themeSlug = 'local-business-theme' } = options;
+  const funcPrefix = makePhpIdentifier(themeSlug);
 
   return `<?php
 /**
  * Index Template (Fallback)
  * 
  * WordPress requires this file
+ * Falls back to displaying content blocks like page.php
  *
  * @package ${themeSlug}
  */
@@ -170,41 +80,139 @@ get_header();
 ?>
 
 <main id="main-content" class="site-main">
-    <div class="container">
 
-        <?php if ( have_posts() ) : ?>
+    <?php if ( have_posts() ) : ?>
 
-            <?php while ( have_posts() ) : the_post(); ?>
-                <article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
-                    <header class="entry-header">
-                        <h1 class="entry-title">
-                            <a href="<?php the_permalink(); ?>"><?php the_title(); ?></a>
-                        </h1>
-                    </header>
+        <?php while ( have_posts() ) : the_post(); ?>
+        
+            <?php
+            // Check if this is a page with blocks
+            $has_blocks = get_post_meta( get_the_ID(), '${funcPrefix}_block_0_html', true );
+            
+            if ( $has_blocks ) :
+                // Output content blocks
+                $block_index = 0;
+                
+                while ( true ) {
+                    $block_html = get_post_meta( get_the_ID(), '${funcPrefix}_block_' . $block_index . '_html', true );
+                    
+                    if ( empty( $block_html ) ) {
+                        break;
+                    }
+                    
+                    echo $block_html;
+                    $block_index++;
+                }
+            else :
+                // Fallback for posts or pages without blocks
+                ?>
+                <div class="container">
+                    <article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
+                        <header class="entry-header">
+                            <h1 class="entry-title">
+                                <?php if ( is_singular() ) : ?>
+                                    <?php the_title(); ?>
+                                <?php else : ?>
+                                    <a href="<?php the_permalink(); ?>"><?php the_title(); ?></a>
+                                <?php endif; ?>
+                            </h1>
+                        </header>
 
-                    <div class="entry-content">
-                        <?php the_excerpt(); ?>
-                    </div>
-                </article>
-            <?php endwhile; ?>
+                        <div class="entry-content">
+                            <?php
+                            if ( is_singular() ) {
+                                the_content();
+                            } else {
+                                the_excerpt();
+                            }
+                            ?>
+                        </div>
+                    </article>
+                </div>
+                <?php
+            endif;
+            ?>
 
-            <?php the_posts_pagination(); ?>
+        <?php endwhile; ?>
 
-        <?php else : ?>
+        <?php
+        // Pagination for archives
+        if ( ! is_singular() ) {
+            the_posts_pagination( array(
+                'mid_size'  => 2,
+                'prev_text' => __( '&laquo; Previous', '${themeSlug}' ),
+                'next_text' => __( 'Next &raquo;', '${themeSlug}' ),
+            ) );
+        }
+        ?>
 
+    <?php else : ?>
+
+        <div class="container">
             <article class="no-results">
                 <header class="entry-header">
                     <h1 class="entry-title"><?php esc_html_e( 'Nothing Found', '${themeSlug}' ); ?></h1>
                 </header>
 
                 <div class="entry-content">
-                    <p><?php esc_html_e( 'It seems we can&rsquo;t find what you&rsquo;re looking for.', '${themeSlug}' ); ?></p>
+                    <p><?php esc_html_e( 'It seems we can&rsquo;t find what you&rsquo;re looking for. Perhaps searching can help.', '${themeSlug}' ); ?></p>
+                    <?php get_search_form(); ?>
                 </div>
             </article>
+        </div>
 
-        <?php endif; ?>
+    <?php endif; ?>
 
-    </div>
+</main>
+
+<?php
+get_footer();
+`;
+}
+
+/**
+ * Generate a page template for a specific slug (optional, not needed for basic functionality)
+ */
+function generatePageSlugTemplate(slug, title, options = {}) {
+  const { themeSlug = 'local-business-theme' } = options;
+  const funcPrefix = makePhpIdentifier(themeSlug);
+
+  return `<?php
+/**
+ * Page Template: ${title}
+ * Template Name: ${title}
+ * 
+ * Custom template for ${title}
+ *
+ * @package ${themeSlug}
+ */
+
+get_header();
+?>
+
+<main id="main-content" class="site-main page-${slug}">
+
+    <?php
+    while ( have_posts() ) :
+        the_post();
+        
+        // Output all content blocks
+        $block_index = 0;
+        
+        while ( true ) {
+            $block_html = get_post_meta( get_the_ID(), '${funcPrefix}_block_' . $block_index . '_html', true );
+            
+            if ( empty( $block_html ) ) {
+                break;
+            }
+            
+            echo $block_html;
+            $block_index++;
+        }
+        
+    endwhile;
+    ?>
+
 </main>
 
 <?php

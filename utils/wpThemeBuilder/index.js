@@ -110,7 +110,7 @@ async function buildWordPressTheme(distDir, options = {}) {
     console.log(`   Processing: ${filename}`);
 
     // Extract content from HTML
-    const extracted = extractPageContent(html);
+    const extracted = extractPageContent(html, filename);
     const summary = getExtractionSummary(extracted);
 
     console.log(`      - Sections: ${summary.sectionCount}`);

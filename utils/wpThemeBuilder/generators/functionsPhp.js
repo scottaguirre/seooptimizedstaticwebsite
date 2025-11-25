@@ -104,6 +104,27 @@ function ${funcPrefix}_enqueue_assets() {
     } elseif ( is_page() ) {
         global $post;
         $page_slug = $post->post_name;
+        
+        // CRITICAL FIX: Try to find CSS file with or without location suffix
+        // Service pages have slugs like "water-heater-repair-leander-tx"
+        // But CSS files are named "water-heater-repair.css"
+        
+        $page_css_path = get_template_directory() . '/css/' . $page_slug . '.css';
+        
+        // If exact match doesn't exist, try removing location suffix
+        if ( ! file_exists( $page_css_path ) ) {
+            // Remove common location patterns: "-leander-tx", "-austin-tx", etc.
+            // Pattern: remove "-[city]-[state]" from the end
+            $slug_without_location = preg_replace( '/-[a-z]+-[a-z]{2}$/i', '', $page_slug );
+            
+            if ( $slug_without_location !== $page_slug ) {
+                $alternate_css_path = get_template_directory() . '/css/' . $slug_without_location . '.css';
+                
+                if ( file_exists( $alternate_css_path ) ) {
+                    $page_slug = $slug_without_location;
+                }
+            }
+        }
     }
 
     // Enqueue page-specific CSS if it exists
