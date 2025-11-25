@@ -136,22 +136,7 @@ function generateHeaderPhp(options = {}) {
             <nav class="navbar navbar-expand-lg navbar-light bg-light px-3 navbar-vertical-padding">
                 <div class="container">
                     <a class="navbar-brand d-flex align-items-center" href="<?php echo esc_url( home_url( '/' ) ); ?>">
-                        <?php
-                        if ( ! empty( $logo_html ) ) {
-                            echo $logo_html;
-                        } else {
-                            // Fallback logo
-                            $logo_path = get_template_directory() . '/assets/';
-                            $logo_files = glob( $logo_path . '*logo*.{png,jpg,jpeg,webp}', GLOB_BRACE );
-                            if ( ! empty( $logo_files ) ) {
-                                $logo_file = basename( $logo_files[0] );
-                                $logo_url = get_template_directory_uri() . '/assets/' . $logo_file;
-                                echo '<img src="' . esc_url( $logo_url ) . '" alt="' . esc_attr( get_bloginfo( 'name' ) ) . '" width="100" height="100" class="me-2">';
-                            } else {
-                                echo '<span class="site-title">' . esc_html( get_bloginfo( 'name' ) ) . '</span>';
-                            }
-                        }
-                        ?>
+                        <?php ${funcPrefix}_display_logo(); ?>
                     </a>
 
                     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="<?php esc_attr_e( 'Toggle navigation', '${themeSlug}' ); ?>">

@@ -59,6 +59,15 @@ function ${funcPrefix}_setup() {
 
     // Enable support for post thumbnails
     add_theme_support( 'post-thumbnails' );
+    
+    // Enable custom logo support
+    add_theme_support( 'custom-logo', array(
+        'height'      => 100,
+        'width'       => 100,
+        'flex-height' => true,
+        'flex-width'  => true,
+        'header-text' => array( 'site-title', 'site-description' ),
+    ) );
 
     // HTML5 support for search form, gallery, etc.
     add_theme_support( 'html5', array(
@@ -77,6 +86,65 @@ function ${funcPrefix}_setup() {
     ) );
 }
 add_action( 'after_setup_theme', '${funcPrefix}_setup' );
+
+/**
+ * Customize the Customizer
+ * Add custom settings for logo and favicon
+ */
+function ${funcPrefix}_customize_register( $wp_customize ) {
+    // Modify the logo section to add helper text
+    $logo_control = $wp_customize->get_control( 'custom_logo' );
+    if ( null !== $logo_control ) {
+        $logo_control->description = __( 'Upload a custom logo to replace the default theme logo.', '${themeSlug}' );
+    }
+    
+    // Add helper text for Site Icon (Favicon)
+    $site_icon_control = $wp_customize->get_control( 'site_icon' );
+    if ( null !== $site_icon_control ) {
+        $site_icon_control->description = __( 'Upload a custom favicon (Site Icon). Recommended size: 512x512 pixels.', '${themeSlug}' );
+    }
+}
+
+add_action( 'customize_register', '${funcPrefix}_customize_register' );
+
+/**
+ * Get the logo URL - custom logo or fallback to theme default
+ */
+function ${funcPrefix}_get_logo_url() {
+    // Check if custom logo is set
+    if ( has_custom_logo() ) {
+        $custom_logo_id = get_theme_mod( 'custom_logo' );
+        $logo_data = wp_get_attachment_image_src( $custom_logo_id, 'full' );
+        
+        if ( $logo_data ) {
+            return $logo_data[0];
+        }
+    }
+    
+    // Fallback to theme default logo
+    $logo_path = get_template_directory() . '/assets/';
+    $logo_files = glob( $logo_path . '*logo*.{png,jpg,jpeg,webp,svg}', GLOB_BRACE );
+    
+    if ( ! empty( $logo_files ) ) {
+        $logo_file = basename( $logo_files[0] );
+        return get_template_directory_uri() . '/assets/' . $logo_file;
+    }
+    
+    return '';
+}
+
+/**
+ * Display the logo (custom or default)
+ */
+function ${funcPrefix}_display_logo() {
+    $logo_url = ${funcPrefix}_get_logo_url();
+    
+    if ( $logo_url ) {
+        echo '<img src="' . esc_url( $logo_url ) . '" alt="' . esc_attr( get_bloginfo( 'name' ) ) . '" width="100" height="100" class="me-2">';
+    } else {
+        echo '<span class="site-title">' . esc_html( get_bloginfo( 'name' ) ) . '</span>';
+    }
+}
 
 /**
  * Enqueue styles and scripts
