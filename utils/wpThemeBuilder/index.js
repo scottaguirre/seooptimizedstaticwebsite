@@ -20,6 +20,8 @@ const {
 } = require('./extractors/contentExtractor');
 
 // Generators
+const { generateNewPageLayoutCss } = require('./generators/newPageCss');
+const { generateNewPageMetaBoxesPhp } = require('./generators/newPageMetaBoxesPhp');
 const { generateFunctionsPhp } = require('./generators/functionsPhp');
 const { generateThemeActivationPhp } = require('./generators/themeActivationPhp');
 const { generateMetaBoxesPhp } = require('./generators/metaBoxesPhp');
@@ -28,6 +30,8 @@ const { generateTemplateHelpersPhp } = require('./generators/templateHelpersPhp'
 const { generateHeaderPhp } = require('./generators/headerPhp');
 const { generateFooterPhp } = require('./generators/footerPhp');
 const { generateFrontPagePhp } = require('./generators/frontPagePhp');
+const { generateNewPageLayoutPhp } = require('./generators/newPageLayoutPhp');
+
 const {
   generatePagePhp,
   generatePageSlugTemplate,
@@ -266,6 +270,18 @@ async function buildWordPressTheme(distDir, options = {}) {
     generateIndexPhp({ themeSlug })
   );
 
+  // Custom reusable layout template for new pages
+  await writeFile(
+    path.join(wpThemeRoot, 'page-new-page-layout.php'),
+    generateNewPageLayoutPhp({ themeSlug })
+  );
+
+  await writeFile(
+    path.join(incDir, 'newpage-meta-boxes.php'),
+    generateNewPageMetaBoxesPhp({ themeSlug })
+  );
+  
+
   // Generate page-specific templates (except front page)
   for (const page of sortedPages) {
     if (!page.isFrontPage && page.slug !== 'about') {
@@ -306,6 +322,11 @@ async function buildWordPressTheme(distDir, options = {}) {
     path.join(wpThemeRoot, 'theme-global-settings.php'),
     generateGlobalSettingsPhp(finalGlobalSettings)
   );
+
+
+  // 8.5. Generate new-page-layout.css
+  console.log('🎨 Generating new-page-layout.css...');
+  generateNewPageLayoutCss(distDir);
 
   // 9. Copy assets
   console.log('📦 Copying assets...');

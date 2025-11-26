@@ -33,22 +33,36 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Register meta box for pages
+ * Register meta boxes for pages
+ * ONLY shows "Page Content" for imported static pages
+ * New Page Layout meta boxes are handled in newpage-meta-boxes.php
  */
 function ${funcPrefix}_register_meta_boxes() {
-    add_meta_box(
-        '${funcPrefix}_page_content',
-        __( 'Page Content', '${themeSlug}' ),
-        '${funcPrefix}_render_content_meta_box',
-        'page',
-        'normal',
-        'high'
-    );
+    global $post;
+    
+    if ( ! $post ) {
+        return;
+    }
+    
+    // Get the template for this page
+    $template = get_post_meta( $post->ID, '_wp_page_template', true );
+    
+    // Show "Page Content" meta box ONLY for pages NOT using New Page Layout
+    if ( $template !== 'page-new-page-layout.php' ) {
+        add_meta_box(
+            '${funcPrefix}_page_content',
+            __( 'Page Content', '${themeSlug}' ),
+            '${funcPrefix}_render_content_meta_box',
+            'page',
+            'normal',
+            'high'
+        );
+    }
 }
 add_action( 'add_meta_boxes', '${funcPrefix}_register_meta_boxes' );
 
 /**
- * Render the meta box content
+ * Render the meta box content for imported static pages
  * Groups fields by block for organized display
  */
 function ${funcPrefix}_render_content_meta_box( $post ) {
@@ -73,6 +87,11 @@ function ${funcPrefix}_render_content_meta_box( $post ) {
             continue;
         }
 
+        // Skip New Page Layout fields (handled in newpage-meta-boxes.php)
+        if ( strpos( $key, $prefix . 'npl_' ) === 0 ) {
+            continue;
+        }
+
         // Parse block fields: local_business_theme_block_0_h2_0
         if ( preg_match( '/^' . preg_quote( $prefix, '/' ) . 'block_(\\d+)_(.+)$/', $key, $matches ) ) {
             $block_index = $matches[1];
@@ -81,12 +100,12 @@ function ${funcPrefix}_render_content_meta_box( $post ) {
             if ( ! isset( $blocks[ $block_index ] ) ) {
                 $blocks[ $block_index ] = array(
                     'fields' => array(),
-                    'type' => get_post_meta( $post->ID, $prefix . 'block_' . $block_index . '_type', true ),
+                    'type'   => get_post_meta( $post->ID, $prefix . 'block_' . $block_index . '_type', true ),
                 );
             }
 
             $blocks[ $block_index ]['fields'][ $field_name ] = array(
-                'key' => $key,
+                'key'   => $key,
                 'value' => isset( $values[0] ) ? $values[0] : '',
             );
         }
@@ -137,12 +156,12 @@ function ${funcPrefix}_render_content_meta_box( $post ) {
 }
 
 /**
- * Render a single field
+ * Render a single field for imported static blocks
  */
 function ${funcPrefix}_render_field( $field_name, $field_data ) {
-    $field_id = $field_data['key'];
+    $field_id    = $field_data['key'];
     $field_value = $field_data['value'];
-    $label = ${funcPrefix}_format_field_label( $field_name );
+    $label       = ${funcPrefix}_format_field_label( $field_name );
 
     // Determine if this should be a textarea
     $is_textarea = ${funcPrefix}_is_textarea_field( $field_name, $field_value );
@@ -167,7 +186,7 @@ function ${funcPrefix}_render_field( $field_name, $field_data ) {
 function ${funcPrefix}_format_field_label( $field_name ) {
     // Handle h1_0, h2_0, p_0, etc.
     if ( preg_match( '/^([a-z]+\\d?)_(\\d+)$/', $field_name, $matches ) ) {
-        $tag = $matches[1];
+        $tag   = $matches[1];
         $index = intval( $matches[2] ) + 1;
 
         $tag_labels = array(
@@ -218,11 +237,11 @@ function ${funcPrefix}_is_textarea_field( $field_name, $field_value ) {
  */
 function ${funcPrefix}_save_meta( $post_id ) {
     // Security checks
-    if ( ! isset( \$_POST['${funcPrefix}_meta_nonce'] ) ) {
+    if ( ! isset( $_POST['${funcPrefix}_meta_nonce'] ) ) {
         return;
     }
 
-    if ( ! wp_verify_nonce( \$_POST['${funcPrefix}_meta_nonce'], '${funcPrefix}_save_meta' ) ) {
+    if ( ! wp_verify_nonce( $_POST['${funcPrefix}_meta_nonce'], '${funcPrefix}_save_meta' ) ) {
         return;
     }
 
@@ -237,7 +256,7 @@ function ${funcPrefix}_save_meta( $post_id ) {
     // Save all theme meta fields
     $prefix = '${funcPrefix}_';
 
-    foreach ( \$_POST as $key => $value ) {
+    foreach ( $_POST as $key => $value ) {
         if ( strpos( $key, $prefix ) !== 0 ) {
             continue;
         }
@@ -250,11 +269,14 @@ function ${funcPrefix}_save_meta( $post_id ) {
         // Sanitize based on field type
         $clean_key = substr( $key, strlen( $prefix ) );
 
-        if ( strpos( $clean_key, 'p_' ) === 0 || strpos( $clean_key, 'li_' ) === 0 ) {
-            // Paragraphs and list items
+        // Paragraph-type fields and long text
+        if (
+            strpos( $clean_key, 'p_' ) === 0
+            || strpos( $clean_key, 'li_' ) === 0
+        ) {
             $sanitized = sanitize_textarea_field( $value );
         } else {
-            // Headings, links, short text
+            // Headings, URLs, short text, etc.
             $sanitized = sanitize_text_field( $value );
         }
 
@@ -265,7 +287,7 @@ add_action( 'save_post', '${funcPrefix}_save_meta' );
 
 /**
  * Hide default custom fields meta box
- * We're replacing it with our custom one
+ * We're replacing it with our custom ones
  */
 function ${funcPrefix}_hide_default_custom_fields() {
     remove_meta_box( 'postcustom', 'page', 'normal' );

@@ -47,6 +47,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 require_once get_template_directory() . '/inc/theme-activation.php';
 require_once get_template_directory() . '/inc/meta-boxes.php';
+require_once get_template_directory() . '/inc/newpage-meta-boxes.php';
 require_once get_template_directory() . '/inc/theme-settings.php';
 require_once get_template_directory() . '/inc/template-helpers.php';
 
@@ -54,6 +55,9 @@ require_once get_template_directory() . '/inc/template-helpers.php';
  * Theme setup
  */
 function ${funcPrefix}_setup() {
+    // Make theme available for translation
+    load_theme_textdomain( '${themeSlug}', get_template_directory() . '/languages' );
+
     // Let WordPress manage the document title
     add_theme_support( 'title-tag' );
 
@@ -160,6 +164,7 @@ function ${funcPrefix}_enqueue_assets() {
         '5.3.0'
     );
 
+
     // Get current page slug
     $page_slug = '';
     if ( is_front_page() || is_home() ) {
@@ -171,25 +176,49 @@ function ${funcPrefix}_enqueue_assets() {
         }
     } elseif ( is_page() ) {
         global $post;
-        $page_slug = $post->post_name;
         
-        // CRITICAL FIX: Try to find CSS file with or without location suffix
-        // Service pages have slugs like "water-heater-repair-leander-tx"
-        // But CSS files are named "water-heater-repair.css"
+        // Check if this page uses New Page Layout template
+        $template = get_page_template_slug( $post->ID );
         
-        $page_css_path = get_template_directory() . '/css/' . $page_slug . '.css';
-        
-        // If exact match doesn't exist, try removing location suffix
-        if ( ! file_exists( $page_css_path ) ) {
-            // Remove common location patterns: "-leander-tx", "-austin-tx", etc.
-            // Pattern: remove "-[city]-[state]" from the end
-            $slug_without_location = preg_replace( '/-[a-z]+-[a-z]{2}$/i', '', $page_slug );
+        if ( $template === 'page-new-page-layout.php' ) {
+            // New pages use generic service page CSS
+            // Try to find any service page CSS to reuse
+            $service_css_files = array(
+                'water-heater-repair',
+                'faucet-installation',
+                'drain-cleaning',
+                'emergency-plumbing',
+                'service-page', // Generic fallback
+            );
             
-            if ( $slug_without_location !== $page_slug ) {
-                $alternate_css_path = get_template_directory() . '/css/' . $slug_without_location . '.css';
+            foreach ( $service_css_files as $css_file ) {
+                if ( file_exists( get_template_directory() . '/css/' . $css_file . '.css' ) ) {
+                    $page_slug = $css_file;
+                    break;
+                }
+            }
+        } else {
+            // For imported pages, use page-specific CSS
+            $page_slug = $post->post_name;
+            
+            // CRITICAL FIX: Try to find CSS file with or without location suffix
+            // Service pages have slugs like "water-heater-repair-leander-tx"
+            // But CSS files are named "water-heater-repair.css"
+            
+            $page_css_path = get_template_directory() . '/css/' . $page_slug . '.css';
+            
+            // If exact match doesn't exist, try removing location suffix
+            if ( ! file_exists( $page_css_path ) ) {
+                // Remove common location patterns: "-leander-tx", "-austin-tx", etc.
+                // Pattern: remove "-[city]-[state]" from the end
+                $slug_without_location = preg_replace( '/-[a-z]+-[a-z]{2}$/i', '', $page_slug );
                 
-                if ( file_exists( $alternate_css_path ) ) {
-                    $page_slug = $slug_without_location;
+                if ( $slug_without_location !== $page_slug ) {
+                    $alternate_css_path = get_template_directory() . '/css/' . $slug_without_location . '.css';
+                    
+                    if ( file_exists( $alternate_css_path ) ) {
+                        $page_slug = $slug_without_location;
+                    }
                 }
             }
         }
@@ -213,9 +242,21 @@ ${bootstrapJsCode}
 add_action( 'wp_enqueue_scripts', '${funcPrefix}_enqueue_assets' );
 
 /**
- * Register widget areas
+ * Register widget areas and sidebar
  */
 function ${funcPrefix}_widgets_init() {
+    // Main sidebar (not yet used in templates)
+    register_sidebar( array(
+        'name'          => __( 'Sidebar', '${themeSlug}' ),
+        'id'            => 'sidebar-1',
+        'description'   => __( 'Add widgets here to appear in the sidebar.', '${themeSlug}' ),
+        'before_widget' => '<section id="%1$s" class="widget %2$s">',
+        'after_widget'  => '</section>',
+        'before_title'  => '<h2 class="widget-title">',
+        'after_title'   => '</h2>',
+    ) );
+
+    // Footer widget area (existing)
     register_sidebar( array(
         'name'          => __( 'Footer Widgets', '${themeSlug}' ),
         'id'            => 'footer-1',
@@ -249,6 +290,58 @@ function ${funcPrefix}_excerpt_length( $length ) {
     return 30;
 }
 add_filter( 'excerpt_length', '${funcPrefix}_excerpt_length' );
+
+/**
+ * SEO: Custom document title for New Page Layout pages
+ */
+function ${funcPrefix}_filter_document_title( $title ) {
+    if ( ! is_page() ) {
+        return $title;
+    }
+
+    $post_id = get_queried_object_id();
+    if ( ! $post_id ) {
+        return $title;
+    }
+
+    $template = get_page_template_slug( $post_id );
+    if ( $template !== 'page-new-page-layout.php' ) {
+        return $title;
+    }
+
+    $seo_title = get_post_meta( $post_id, '${funcPrefix}_npl_seo_title', true );
+    if ( ! empty( $seo_title ) ) {
+        return $seo_title;
+    }
+
+    return $title;
+}
+add_filter( 'pre_get_document_title', '${funcPrefix}_filter_document_title' );
+
+/**
+ * SEO: Meta description for New Page Layout pages
+ */
+function ${funcPrefix}_output_newpage_meta_description() {
+    if ( ! is_page() ) {
+        return;
+    }
+
+    $post_id = get_queried_object_id();
+    if ( ! $post_id ) {
+        return;
+    }
+
+    $template = get_page_template_slug( $post_id );
+    if ( $template !== 'page-new-page-layout.php' ) {
+        return;
+    }
+
+    $seo_description = get_post_meta( $post_id, '${funcPrefix}_npl_seo_description', true );
+    if ( ! empty( $seo_description ) ) {
+        echo '<meta name="description" content="' . esc_attr( $seo_description ) . '">' . "\\n";
+    }
+}
+add_action( 'wp_head', '${funcPrefix}_output_newpage_meta_description', 5 );
 
 /**
  * Filter content to convert PHP template tags into actual URLs
