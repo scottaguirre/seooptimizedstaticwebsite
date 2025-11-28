@@ -31,11 +31,14 @@ const { generateHeaderPhp } = require('./generators/headerPhp');
 const { generateFooterPhp } = require('./generators/footerPhp');
 const { generateFrontPagePhp } = require('./generators/frontPagePhp');
 const { generateNewPageLayoutPhp } = require('./generators/newPageLayoutPhp');
+const { generateContactFormHandlerPhp } = require('./generators/contactFormHandlerPhp');
+const { generateContactFormJs } = require('./generators/contactFormJs');
 
 const {
   generatePagePhp,
   generatePageSlugTemplate,
   generateIndexPhp,
+  replaceContactForm,
 } = require('./generators/pageTemplatePhp');
 const { generateStyleCss } = require('./generators/styleCss');
 
@@ -57,6 +60,8 @@ const {
   mergeGlobalSettings,
   normalizeSocialUrls,
 } = require('./dataFiles/globalSettings');
+
+const { makePhpIdentifier } = require('./wpHelpers/phpHelpers');
 
 /**
  * Main function: Build a complete WordPress theme from static HTML
@@ -82,13 +87,17 @@ async function buildWordPressTheme(distDir, options = {}) {
     globalSettings = {},
   } = options;
 
+  const funcPrefix = makePhpIdentifier(themeSlug);
+
   // 1. Setup theme directory structure
   console.log('📁 Creating theme directory structure...');
   const wpThemeRoot = path.join(distDir, 'wp-theme', themeSlug);
   const incDir = path.join(wpThemeRoot, 'inc');
+  const jsDir = path.join(wpThemeRoot, 'js');
 
   await ensureDir(wpThemeRoot);
   await ensureDir(incDir);
+  await ensureDir(jsDir);
 
   // 2. Find and process HTML files
   console.log('🔍 Scanning HTML files...');
@@ -108,10 +117,19 @@ async function buildWordPressTheme(distDir, options = {}) {
   // 3. Process each HTML file
   for (const filename of htmlFiles) {
     const filePath = path.join(distDir, filename);
-    const html = await readFile(filePath);
+    let html = await readFile(filePath);
     const baseName = filename.replace(/\.html$/i, '');
 
     console.log(`   Processing: ${filename}`);
+
+    // Determine if this is the front page
+    const isFrontPage = baseName === 'index' || baseName === 'about' || baseName === 'home';
+
+    // Replace contact form on front page only
+    if (isFrontPage) {
+      html = replaceContactForm(html, funcPrefix);
+      console.log(`      - Replaced contact form with WordPress handler`);
+    }
 
     // Extract content from HTML
     const extracted = extractPageContent(html, filename);
@@ -147,9 +165,6 @@ async function buildWordPressTheme(distDir, options = {}) {
       .split(/[\s-]+/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(' ');
-
-    // Determine if this is the front page
-    const isFrontPage = baseName === 'index' || baseName === 'about' || baseName === 'home';
 
     // Store content
     if (isFrontPage) {
@@ -201,7 +216,7 @@ async function buildWordPressTheme(distDir, options = {}) {
 
   // Detect CSS and JS files
   const cssDir = path.join(distDir, 'css');
-  const jsDir = path.join(distDir, 'js');
+  const jsSourceDir = path.join(distDir, 'js');
 
   let cssFiles = [];
   let hasBootstrapJs = false;
@@ -211,9 +226,9 @@ async function buildWordPressTheme(distDir, options = {}) {
     cssFiles = fs.readdirSync(cssDir).filter(f => f.endsWith('.css'));
   }
 
-  if (fileExists(jsDir)) {
+  if (fileExists(jsSourceDir)) {
     const fs = require('fs');
-    const jsFiles = fs.readdirSync(jsDir);
+    const jsFiles = fs.readdirSync(jsSourceDir);
     hasBootstrapJs = jsFiles.includes('bootstrap.bundle.min.js');
   }
 
@@ -228,7 +243,7 @@ async function buildWordPressTheme(distDir, options = {}) {
     path.join(incDir, 'theme-activation.php'),
     generateThemeActivationPhp({ themeSlug, themeName })
   );
-
+  
   await writeFile(
     path.join(incDir, 'meta-boxes.php'),
     generateMetaBoxesPhp({ themeSlug })
@@ -249,6 +264,22 @@ async function buildWordPressTheme(distDir, options = {}) {
     path.join(wpThemeRoot, 'header.php'),
     generateHeaderPhp({ themeSlug, themeName })
   );
+
+  // Generate contact-form-handler.php
+  const contactFormHandlerContent = generateContactFormHandlerPhp({ themeSlug });
+  await writeFile(
+    path.join(incDir, 'contact-form-handler.php'),
+    contactFormHandlerContent
+  );
+  console.log('   Generated inc/contact-form-handler.php');
+
+  // Generate contact-form-handler.js
+  const contactFormJsContent = generateContactFormJs();
+  await writeFile(
+    path.join(jsDir, 'contact-form-handler.js'),
+    contactFormJsContent
+  );
+  console.log('   Generated js/contact-form-handler.js');
 
   await writeFile(
     path.join(wpThemeRoot, 'footer.php'),
@@ -281,7 +312,6 @@ async function buildWordPressTheme(distDir, options = {}) {
     generateNewPageMetaBoxesPhp({ themeSlug })
   );
   
-
   // Generate page-specific templates (except front page)
   for (const page of sortedPages) {
     if (!page.isFrontPage && page.slug !== 'about') {
@@ -322,7 +352,6 @@ async function buildWordPressTheme(distDir, options = {}) {
     path.join(wpThemeRoot, 'theme-global-settings.php'),
     generateGlobalSettingsPhp(finalGlobalSettings)
   );
-
 
   // 8.5. Generate new-page-layout.css
   console.log('🎨 Generating new-page-layout.css...');
@@ -371,9 +400,13 @@ Edit site-wide settings through **Appearance → Theme Settings**:
 - Business information
 - Contact details
 - Social media links
+- Contact form email
 
 ### Navigation Menu
 Customize the menu through **Appearance → Menus**.
+
+### Contact Form
+The contact form on the front page is automatically functional. Configure the recipient email in **Appearance → Theme Settings → Contact Form Email**.
 
 ## Theme Info
 
@@ -388,6 +421,7 @@ Customize the menu through **Appearance → Menus**.
 - Images are stored with WordPress template tags and will work automatically
 - CSS is enqueued properly through functions.php
 - All content is editable through the WordPress admin
+- Contact form uses Ajax submission (no page reload)
 
 ## Support
 

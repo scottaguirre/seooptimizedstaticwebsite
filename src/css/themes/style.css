@@ -6,32 +6,36 @@
     background-color: #082d5b !important;
 }
 
-.navbar-toggler{
+.navbar-toggler {
     background-color: white;
 } 
 
-.nav-link{
-    color:white;
+.nav-link, .menu-item a {
+    text-transform: uppercase;
+    color: white;
+    text-decoration: none;
+    
 }
 
-a.nav-link:hover{
-    color:green;
+
+a.nav-link:hover, .menu-item a:hover {
+    color: green;
 }
 
 
-a.nav-link.active{
-    color:lightgreen !important;
+a.nav-link.active, .current-menu-item a {
+    color: lightgreen !important;
 }
 
-a.nav-link.active:hover{
+a.nav-link.active:hover, .current-menu-item a:hover {
     color:green !important;
 }
 
-.dropdown-menu {
+.dropdown-menu, .sub-menu {
     background: #082d5b;
 }
 
-.dropdown-menu .nav-item{
+.dropdown-menu .nav-item, .sub-menu .menu-item {
     border-bottom: solid gray 2px;
     padding-left: 10px;
 }
@@ -501,33 +505,71 @@ footer a {
       display: block;
     }
     /* Keep tight alignment under the trigger */
-    .navbar .dropdown-menu {
+    .navbar .dropdown-menu, .sub-menu {
       margin-top: 0;
     }
     /* Optional: show active state on the trigger while hovering */
     .navbar .dropdown:hover > .nav-link {
       color:green;
     }
+    
+    .nav-link, .menu-item a {
+      margin-right: 15px;
+      margin-left: 15px;
+    }
+    
+    .menu-item-has-children {
+        position: relative;
+        z-index: 1;
+        padding-bottom: 20px;
+    }
+    
+    .sub-menu {
+        display: none;
+        position: absolute;
+        z-index: 3;
+        border: 2px solid #08203d;
+        border-radius: 10px;
+        padding: 0;
+        margin-top: 10px;
+
+    }
+    
+     .menu-item-has-children:hover .sub-menu {
+        display: block;
+        -webkit-transition: all 1s ease;
+        transition: all 1s ease;
+    }
+    
+    
+    .sub-menu .menu-item {
+        padding: 10px;
+    }
+    
+      .dropdown .dropdown-menu li, .sub-menu .menu-item  {
+        width: 250px;
+    }
+    
+     .nav-item.dropdown .dropdown-menu, .sub-menu {
+        left: -100px !important;
+    }
+
+
+    .dropdown .dropdown-menu li a, .sub-menu .menu-item a {
+        white-space: normal;
+    }
+    
+    
 }
   
 
 
     /* 1250 */
 @media (min-width: 1250px) {
+    
+  
 
-    .nav-item.dropdown .dropdown-menu{
-        left: -50px !important;
-    }
-
-    .dropdown .dropdown-menu li  {
-        width: 200px;
-    }
-
-    .dropdown .dropdown-menu li a {
-        white-space: normal;
-    }
-
-    .hero-img-desktop{
+    .hero-img-desktop {
         display: none;
     }
 
@@ -553,5 +595,3 @@ footer a {
     }
 
 }
-  
- 

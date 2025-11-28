@@ -102,7 +102,7 @@ get_header();
             </div>
             <div class="col-lg-6 order-lg-1 text-hero">
                 <?php if ( $hero_h1 ) : ?>
-                    <h1 class="display-4 text-primary"><?php echo esc_html( $hero_h1 ); ?></h1>
+                    <h1 class="display-4 text-primary"><?php echo do_shortcode( wp_kses_post( $hero_h1 ) ); ?></h1>
                 <?php else : ?>
                     <h1 class="display-4 text-primary"><?php the_title(); ?></h1>
                 <?php endif; ?>
@@ -110,7 +110,7 @@ get_header();
                 <div class="line-divider"></div>
                 
                 <?php if ( $hero_h2 ) : ?>
-                    <h2 class="lead"><?php echo esc_html( $hero_h2 ); ?></h2>
+                    <h2 class="lead"><?php echo do_shortcode( wp_kses_post( $hero_h2 ) ); ?></h2>
                 <?php endif; ?>
             </div>
         </div>
@@ -145,13 +145,13 @@ get_header();
         
         <div class="text-hero-for-style-and-style3 text-hero-for-style4">
             <?php if ( $hero_h1 ) : ?>
-                <h1 class="display-4 text-primary"><?php echo esc_html( $hero_h1 ); ?></h1>
+                <h1 class="display-4 text-primary"><?php echo do_shortcode( wp_kses_post( $hero_h1 ) ); ?></h1>
             <?php else : ?>
                 <h1 class="display-4 text-primary"><?php the_title(); ?></h1>
             <?php endif; ?>
             <div class="line-divider"></div>
             <?php if ( $hero_h2 ) : ?>
-                <h2 class="lead"><?php echo esc_html( $hero_h2 ); ?></h2>
+                <h2 class="lead"><?php echo do_shortcode( wp_kses_post( $hero_h2 ) ); ?></h2>
             <?php endif; ?>
         </div>
     </div>
@@ -174,19 +174,19 @@ get_header();
                 <div class="row">
                     <div class="col-lg-10">
                         <?php if ( $section1_h2 ) : ?>
-                            <h2><?php echo esc_html( $section1_h2 ); ?></h2>
+                            <h2><?php echo do_shortcode( wp_kses_post( $section1_h2 ) ); ?></h2>
                         <?php endif; ?>
                         
                         <?php if ( $section1_h3 ) : ?>
-                            <h3><?php echo esc_html( $section1_h3 ); ?></h3>
+                            <h3><?php echo do_shortcode( wp_kses_post( $section1_h3 ) ); ?></h3>
                         <?php endif; ?>
                         
                         <?php if ( $section1_p1 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section1_p1 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section1_p1 ) ) ); ?></p>
                         <?php endif; ?>
                         
                         <?php if ( $section1_p2 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section1_p2 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section1_p2 ) ) ); ?></p>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -227,15 +227,15 @@ get_header();
                 <div class="row">
                     <div class="col-lg-10">
                         <?php if ( $section2_h2 ) : ?>
-                            <h2><?php echo esc_html( $section2_h2 ); ?></h2>
+                            <h2><?php echo do_shortcode( wp_kses_post( $section2_h2 ) ); ?></h2>
                         <?php endif; ?>
                         
                         <?php if ( $section2_p1 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section2_p1 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section2_p1 ) ) ); ?></p>
                         <?php endif; ?>
                         
                         <?php if ( $section2_p2 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section2_p2 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section2_p2 ) ) ); ?></p>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -261,15 +261,15 @@ get_header();
                 <div class="row">
                     <div class="col-lg-10 div-text-padding-bottom">
                         <?php if ( $section3_h2 ) : ?>
-                            <h2><?php echo esc_html( $section3_h2 ); ?></h2>
+                            <h2><?php echo do_shortcode( wp_kses_post( $section3_h2 ) ); ?></h2>
                         <?php endif; ?>
                         
                         <?php if ( $section3_p1 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section3_p1 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section3_p1 ) ) ); ?></p>
                         <?php endif; ?>
                         
                         <?php if ( $section3_p2 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section3_p2 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section3_p2 ) ) ); ?></p>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -310,15 +310,15 @@ get_header();
                 <div class="row">
                     <div class="col-lg-10">
                         <?php if ( $section4_h2 ) : ?>
-                            <h2><?php echo esc_html( $section4_h2 ); ?></h2>
+                            <h2><?php echo do_shortcode( wp_kses_post( $section4_h2 ) ); ?></h2>
                         <?php endif; ?>
                         
                         <?php if ( $section4_p1 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section4_p1 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section4_p1 ) ) ); ?></p>
                         <?php endif; ?>
                         
                         <?php if ( $section4_p2 ) : ?>
-                            <p><?php echo wp_kses_post( nl2br( $section4_p2 ) ); ?></p>
+                            <p><?php echo do_shortcode( wp_kses_post( nl2br( $section4_p2 ) ) ); ?></p>
                         <?php endif; ?>
                     </div>
                 </div>

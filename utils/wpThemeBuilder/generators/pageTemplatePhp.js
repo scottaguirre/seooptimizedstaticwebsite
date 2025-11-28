@@ -3,6 +3,58 @@
 const { makePhpIdentifier } = require('../wpHelpers/phpHelpers');
 
 /**
+ * Replace mailto contact form with WordPress-powered form
+ */
+function replaceContactForm(htmlContent, funcPrefix) {
+  // Find the form section
+  const formRegex = /<section class="form-container"[\s\S]*?<\/section>/;
+  
+  if (!formRegex.test(htmlContent)) {
+    return htmlContent; // No form found
+  }
+  
+  const wpForm = `<section class="form-container">
+    <div class="bg-secondary-subtle">
+        <form class="contact-form" id="contactForm" method="POST" action="<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>">
+            <?php wp_nonce_field( 'contact_form', 'contact_nonce' ); ?>
+            <input type="hidden" name="action" value="submit_contact_form">
+            
+            <!-- Honeypot field for spam protection (hidden from users) -->
+            <input type="text" name="website" style="display:none;" tabindex="-1" autocomplete="off">
+            
+            <h2>Get In Touch</h2>
+            
+            <div class="form-group">
+                <label for="name">Full Name</label>
+                <input type="text" id="name" name="name" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input type="email" id="email" name="email" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="message">Message</label>
+                <textarea id="message" name="message" rows="5" required></textarea>
+            </div>
+            
+            <button type="submit" class="submit-btn">
+                <span class="btn-text">Send Message</span>
+                <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </form>
+    </div>
+</section>`;
+
+  return htmlContent.replace(formRegex, wpForm);
+}
+
+/**
  * Generate page.php - Generic page template
  * Uses the NEW block-based extraction method
  */
@@ -224,4 +276,5 @@ module.exports = {
   generatePagePhp,
   generatePageSlugTemplate,
   generateIndexPhp,
+  replaceContactForm,
 };

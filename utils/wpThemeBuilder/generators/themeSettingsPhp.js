@@ -58,10 +58,10 @@ function ${funcPrefix}_render_settings_page() {
     }
 
     // Handle form submission
-    if ( isset( \$_POST['${funcPrefix}_save_settings'] ) ) {
+    if ( isset( $_POST['${funcPrefix}_save_settings'] ) ) {
         // Verify nonce
-        if ( ! isset( \$_POST['${funcPrefix}_settings_nonce'] ) ||
-             ! wp_verify_nonce( \$_POST['${funcPrefix}_settings_nonce'], '${funcPrefix}_save_settings' ) ) {
+        if ( ! isset( $_POST['${funcPrefix}_settings_nonce'] ) ||
+             ! wp_verify_nonce( $_POST['${funcPrefix}_settings_nonce'], '${funcPrefix}_save_settings' ) ) {
             add_settings_error( '${funcPrefix}_messages', '${funcPrefix}_error', __( 'Security check failed.', '${themeSlug}' ), 'error' );
         } else {
             // Save settings
@@ -157,6 +157,16 @@ function ${funcPrefix}_render_settings_page() {
                         <td>
                             <input type="email" id="email" name="email" class="regular-text"
                                 value="<?php echo esc_attr( isset( $settings['email'] ) ? $settings['email'] : '' ); ?>" />
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="contact_email"><?php esc_html_e( 'Contact Form Email', '${themeSlug}' ); ?></label>
+                        </th>
+                        <td>
+                            <input type="email" id="contact_email" name="contact_email" class="regular-text"
+                                value="<?php echo esc_attr( isset( $settings['contact_email'] ) ? $settings['contact_email'] : '' ); ?>" />
+                            <p class="description"><?php esc_html_e( 'Email address where contact form submissions will be sent. If empty, uses WordPress admin email.', '${themeSlug}' ); ?></p>
                         </td>
                     </tr>
                     <tr>
@@ -261,25 +271,26 @@ function ${funcPrefix}_render_settings_page() {
 function ${funcPrefix}_save_settings() {
     $settings = array(
         // Business info
-        'business_name' => isset( \$_POST['business_name'] ) ? sanitize_text_field( \$_POST['business_name'] ) : '',
-        'business_type' => isset( \$_POST['business_type'] ) ? sanitize_text_field( \$_POST['business_type'] ) : '',
-        'location'      => isset( \$_POST['location'] ) ? sanitize_text_field( \$_POST['location'] ) : '',
+        'business_name' => isset( $_POST['business_name'] ) ? sanitize_text_field( $_POST['business_name'] ) : '',
+        'business_type' => isset( $_POST['business_type'] ) ? sanitize_text_field( $_POST['business_type'] ) : '',
+        'location'      => isset( $_POST['location'] ) ? sanitize_text_field( $_POST['location'] ) : '',
 
         // Contact info
-        'phone'   => isset( \$_POST['phone'] ) ? sanitize_text_field( \$_POST['phone'] ) : '',
-        'email'   => isset( \$_POST['email'] ) ? sanitize_email( \$_POST['email'] ) : '',
-        'address' => isset( \$_POST['address'] ) ? sanitize_textarea_field( \$_POST['address'] ) : '',
+        'phone'         => isset( $_POST['phone'] ) ? sanitize_text_field( $_POST['phone'] ) : '',
+        'email'         => isset( $_POST['email'] ) ? sanitize_email( $_POST['email'] ) : '',
+        'contact_email' => isset( $_POST['contact_email'] ) ? sanitize_email( $_POST['contact_email'] ) : '',
+        'address'       => isset( $_POST['address'] ) ? sanitize_textarea_field( $_POST['address'] ) : '',
 
         // Social media
-        'social_facebook'  => isset( \$_POST['social_facebook'] ) ? esc_url_raw( \$_POST['social_facebook'] ) : '',
-        'social_twitter'   => isset( \$_POST['social_twitter'] ) ? esc_url_raw( \$_POST['social_twitter'] ) : '',
-        'social_instagram' => isset( \$_POST['social_instagram'] ) ? esc_url_raw( \$_POST['social_instagram'] ) : '',
-        'social_linkedin'  => isset( \$_POST['social_linkedin'] ) ? esc_url_raw( \$_POST['social_linkedin'] ) : '',
-        'social_youtube'   => isset( \$_POST['social_youtube'] ) ? esc_url_raw( \$_POST['social_youtube'] ) : '',
-        'social_pinterest' => isset( \$_POST['social_pinterest'] ) ? esc_url_raw( \$_POST['social_pinterest'] ) : '',
+        'social_facebook'  => isset( $_POST['social_facebook'] ) ? esc_url_raw( $_POST['social_facebook'] ) : '',
+        'social_twitter'   => isset( $_POST['social_twitter'] ) ? esc_url_raw( $_POST['social_twitter'] ) : '',
+        'social_instagram' => isset( $_POST['social_instagram'] ) ? esc_url_raw( $_POST['social_instagram'] ) : '',
+        'social_linkedin'  => isset( $_POST['social_linkedin'] ) ? esc_url_raw( $_POST['social_linkedin'] ) : '',
+        'social_youtube'   => isset( $_POST['social_youtube'] ) ? esc_url_raw( $_POST['social_youtube'] ) : '',
+        'social_pinterest' => isset( $_POST['social_pinterest'] ) ? esc_url_raw( $_POST['social_pinterest'] ) : '',
 
         // Additional
-        'google_map_cid' => isset( \$_POST['google_map_cid'] ) ? sanitize_text_field( \$_POST['google_map_cid'] ) : '',
+        'google_map_cid' => isset( $_POST['google_map_cid'] ) ? sanitize_text_field( $_POST['google_map_cid'] ) : '',
     );
 
     update_option( '${funcPrefix}_global_settings', $settings );

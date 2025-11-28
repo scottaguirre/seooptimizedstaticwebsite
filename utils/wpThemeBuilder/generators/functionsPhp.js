@@ -50,6 +50,7 @@ require_once get_template_directory() . '/inc/meta-boxes.php';
 require_once get_template_directory() . '/inc/newpage-meta-boxes.php';
 require_once get_template_directory() . '/inc/theme-settings.php';
 require_once get_template_directory() . '/inc/template-helpers.php';
+require_once get_template_directory() . '/inc/contact-form-handler.php';
 
 /**
  * Theme setup
@@ -90,6 +91,8 @@ function ${funcPrefix}_setup() {
     ) );
 }
 add_action( 'after_setup_theme', '${funcPrefix}_setup' );
+
+
 
 /**
  * Customize the Customizer
@@ -238,6 +241,17 @@ function ${funcPrefix}_enqueue_assets() {
         }
     }
 ${bootstrapJsCode}
+
+    // Enqueue contact form JavaScript on front page
+    if ( is_front_page() || is_home() ) {
+        wp_enqueue_script(
+            '${themeSlug}-contact-form',
+            $theme_uri . '/js/contact-form-handler.js',
+            array(),
+            '1.0.0',
+            true
+        );
+    }
 }
 add_action( 'wp_enqueue_scripts', '${funcPrefix}_enqueue_assets' );
 
