@@ -32,8 +32,12 @@ function generateContactFormJs() {
               // Get form data
               const formData = new FormData(form);
   
+              // CRITICAL FIX: Use getAttribute instead of form.action
+              // form.action returns the hidden input element, not the URL!
+              const actionUrl = form.getAttribute('action');
+  
               // Send Ajax request
-              fetch(form.action, {
+              fetch(actionUrl, {
                   method: 'POST',
                   body: formData,
                   credentials: 'same-origin'

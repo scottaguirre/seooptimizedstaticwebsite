@@ -86,7 +86,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     line-height: 1.2;
 }
 
-.text-hero-for-style-and-style3 h2{
+.text-hero-for-style-and-style3 h2 {
     width: 55%;
     padding:0 0 0px 30px;
     font-size: 18px;
@@ -103,7 +103,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 
-.btn-container{
+.btn-container {
     padding: 25px;
     background-color:#082d5b;
 }
@@ -182,13 +182,16 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     border-radius: 10px;
 }
 
+.nearme {
+    border-bottom: 1px solid black;
+}
+
 .google-map iframe {
     width: 100%;
     
 }
 
-.btn-container-2{
-
+.btn-container-2 {
     padding-top:50px;
     padding-bottom:50px;
 }
@@ -201,12 +204,12 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     text-decoration: none;
 }
 
-.nap-map-section{
+.nap-map-section {
     background: #082d5b;
     color:white;
 }
 
-.nap p{
+.nap p {
     font-size: 20px;
     padding-bottom:10px;
 }
@@ -557,17 +560,14 @@ footer a {
 
     .dropdown .dropdown-menu li a, .sub-menu .menu-item a {
         white-space: normal;
-    }
-    
+    }   
     
 }
   
 
 
     /* 1250 */
-@media (min-width: 1250px) {
-    
-  
+@media (min-width: 1250px) {    
 
     .hero-img-desktop {
         display: none;
