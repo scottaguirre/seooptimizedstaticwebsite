@@ -33,6 +33,10 @@ const { generateFrontPagePhp } = require('./generators/frontPagePhp');
 const { generateNewPageLayoutPhp } = require('./generators/newPageLayoutPhp');
 const { generateContactFormHandlerPhp } = require('./generators/contactFormHandlerPhp');
 const { generateContactFormJs } = require('./generators/contactFormJs');
+const { generateBlogAutomationSettingsPhp } = require('./generators/blogAutomationSettingsPhp');
+const { generateBlogAutomationEnginePhp } = require('./generators/blogAutomationEnginePhp');
+const { generateBlogAutomationSchedulerPhp } = require('./generators/blogAutomationSchedulerPhp');
+
 
 const {
   generatePagePhp,
@@ -259,6 +263,8 @@ async function buildWordPressTheme(distDir, options = {}) {
     generateTemplateHelpersPhp({ themeSlug })
   );
 
+
+
   // Generate templates
   await writeFile(
     path.join(wpThemeRoot, 'header.php'),
@@ -280,6 +286,26 @@ async function buildWordPressTheme(distDir, options = {}) {
     contactFormJsContent
   );
   console.log('   Generated js/contact-form-handler.js');
+
+
+// Generate Blog creation and Scheduler php files
+  await writeFile(
+    path.join(incDir, 'blog-automation-settings.php'),
+    generateBlogAutomationSettingsPhp({ themeSlug })
+  );
+  
+  await writeFile(
+    path.join(incDir, 'blog-automation-engine.php'),
+    generateBlogAutomationEnginePhp({ themeSlug })
+  );
+  
+  await writeFile(
+    path.join(incDir, 'blog-automation-scheduler.php'),
+    generateBlogAutomationSchedulerPhp({ themeSlug })
+  );
+
+
+
 
   await writeFile(
     path.join(wpThemeRoot, 'footer.php'),

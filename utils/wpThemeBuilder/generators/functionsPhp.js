@@ -51,6 +51,9 @@ require_once get_template_directory() . '/inc/newpage-meta-boxes.php';
 require_once get_template_directory() . '/inc/theme-settings.php';
 require_once get_template_directory() . '/inc/template-helpers.php';
 require_once get_template_directory() . '/inc/contact-form-handler.php';
+require_once get_template_directory() . '/inc/blog-automation-settings.php';
+require_once get_template_directory() . '/inc/blog-automation-engine.php';
+require_once get_template_directory() . '/inc/blog-automation-scheduler.php';
 
 /**
  * Theme setup

@@ -3,10 +3,11 @@
 
   // CSS Design options
   const THEMES = [
-    { key: 'style',  label: 'Style 1', preview: '/previews/style.png' },
-    { key: 'style2', label: 'Style 2', preview: '/previews/style2.png' },
-    { key: 'style3', label: 'Style 3', preview: '/previews/style3.png' },
-    { key: 'style4', label: 'Style 4', preview: '/previews/style4.png' }
+    { key: 'style',  label: 'Design 1', preview: '/previews/style.png'  },
+    { key: 'style2', label: 'Design 2', preview: '/previews/style2.png' },
+    { key: 'style3', label: 'Design 3', preview: '/previews/style3.png' },
+    { key: 'style4', label: 'Design 4', preview: '/previews/style4.png' },
+    { key: 'style5', label: 'Design 5', preview: '/previews/style5.png' }
     // add more later: { key: 'style3', label: 'Style 3', preview: '/previews/style3.jpg' }, ...
   ];
 
@@ -847,7 +848,7 @@
           <div class="form-check">
             <input class="form-check-input" type="radio" name="global[styleKey]" id="theme-${key}" value="${key}" ${state.styleKey === key ? 'checked' : ''} required>
             <label class="form-check-label" for="theme-${key}">
-              ${label} <small class="text-white-50">(${key}.css)</small>
+              ${label}
             </label>
           </div>
           <div class="d-flex gap-2">
