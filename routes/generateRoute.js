@@ -611,8 +611,12 @@ router.post('/generate', upload.any(), async (req, res) => {
                 margin-bottom:50px;
               }
               
-              ul {
+              h1 {
                 margin-bottom: 50px;
+              }
+
+              h2 {
+                color: green;
               }
 
             </style>
@@ -620,12 +624,10 @@ router.post('/generate', upload.any(), async (req, res) => {
           <body>
             <div class="container">
            
-              <h2>Visit website but is not minified yet!</h2>
-              <ul>
-                <li>
-                  <a href="./dist/user_${userId}" class="index-page" target="_blank"> Click Here to Visit Website</a>
-                </li>
-              </ul>
+              <h1>Visit website but is not minified yet!</h1>
+                <h2>
+                  <a href="./dist/user_${userId}" class="index-page" target="_blank"> CLICK HERE TO VISIT WEBSITE</a>
+                </h2>
            
               <a href="/" class="btn btn-warning mt-3">Go Back</a>
               <a href="/production" class="btn btn-primary mt-3 ">Run Production</a>

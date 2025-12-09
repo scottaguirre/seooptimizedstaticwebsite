@@ -7,13 +7,10 @@
     
 }
 
-#headerColor, #headerColor .navbar {
-    
-}
 
 #headerColor .navbar {
      background: transparent !important;
-    }
+}
 
 .navbar-toggler {
     background-color: white; 
@@ -23,6 +20,7 @@
     color:black;
     font-size: 16px;
     font-weight: 600;
+    background: none !important;
 }
 
 a.nav-link:hover {
@@ -33,7 +31,7 @@ a.nav-link:hover {
 a.nav-link.active {
     color: white!important;
     padding:7px;
-    background: #c10a0a;
+    background: #c10a0a !important;
     border-radius: 20px;
 }
 
@@ -247,8 +245,8 @@ a.nav-link.active:hover {
     color:rgb(0, 0, 0);
 }
 
-.section-1 a, .section-2 a, .section-3 a, .section-4 a {
-   
+.section-3, .nearme {
+   border-bottom: 2px solid black;
 }
 
 
@@ -597,7 +595,7 @@ footer a {
 /* 400px */
 @media (min-width: 400px) {
 
-   
+
     
 }
 
@@ -614,12 +612,18 @@ footer a {
         font-size: 1.75rem;
         width: 70%;
     }
+
+   
     
 }
 
 
 /* 601 */
 @media (min-width: 601px) {
+
+    .navbar-nav {
+        width: 70%; 
+   }
 
     .style-4-image-wrap {
         width: 80%;
@@ -694,6 +698,16 @@ footer a {
     .navbar .dropdown:hover > .dropdown-menu {
       display: block;
     }
+
+    .navbar-nav {
+        width: initial; 
+    }
+
+    .navbar-nav li a {
+        margin-left: 10px;
+        margin-right: 10px;
+    }
+
     /* Keep tight alignment under the trigger */
     .navbar .dropdown-menu {
       margin-top: 0;
