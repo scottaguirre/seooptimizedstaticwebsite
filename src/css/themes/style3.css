@@ -7,9 +7,7 @@
 }
 
 #headerColor, #headerColor .navbar {
-   /* background-color: transparent !important; */
-   background: black !important; 
-    
+   background: black !important;    
 }
 
 .navbar-toggler {
@@ -19,17 +17,28 @@
 .nav-link, .menu-item a {
     color:white;
     text-decoration: none;
-     text-transform: uppercase;
+    text-transform: uppercase;
+}
+
+.dropdown-menu .nav-item:last-child, .sub-menu .menu-item:last-child  {
+    border-bottom: none;
 }
 
 a.nav-link:hover, .menu-item a:hover {
     color:rgb(209, 36, 243);
+    background: none;
 }
 
+.navbar-nav .nav-link.show {
+    color: white;
+}
+
+.nav-link:focus {
+    color: white;
+}
 
 a.nav-link.active, .current-menu-item a {
     color:#c333fc !important;
-   
 }
 
 a.nav-link.active:hover, .current-menu-item a:hover {
@@ -40,13 +49,18 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     margin-top: 15px;
 }
 
-#navbarNav li, .menu-item {
+#navbarNav li {
     font-size: 16px;
     padding-bottom: 15px;
 }
 
+.menu-item {
+    font-size: 16px;
+    padding-bottom: 25px !important;
+}
 
-.menu-item-has-children {
+
+.dropdown, .menu-item-has-children {
     position: relative;
     z-index: 1;
 }
@@ -64,33 +78,32 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 
-.dropdown-menu, .sub-menu {
+.dropdown .dropdown-menu, .sub-menu {
     left: 40px;
     position: relative;
     background: #000000;
     list-style: none;
     width: 250px;
     padding: 15px 0;
+    
+   /* transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out, visibility 0.3s; */ /* Smooth transition for all properties */ 
+}
+
+.sub-menu {
     display: none;
-   /* transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out, visibility 0.3s; */ /* Smooth transition for all properties */
-  
 }
 
 
 .menu-item-has-children:hover .sub-menu {
-
     display: block;
-
 }
+
 
 .dropdown-menu .nav-item, .sub-menu .menu-item {
     border-bottom: solid gray 2px;
     padding: 15px 0;
 }
 
-.dropdown-menu .nav-item a:hover, .sub-menu .menu-item a:hover {
-    background: white;
-}
 
 .dropdown-item {
     padding:8px;
@@ -206,6 +219,10 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 
 .cta-btn a {
     text-decoration: none; 
+}
+
+.section-1 {
+    border-bottom: 2px solid black;
 }
 
 
@@ -657,11 +674,18 @@ footer a {
     #navbarNav {
       margin-top: 0;
     }
+
+   
+    #navbarNav li {
+      margin-left: 15px;
+      margin-right: 15px;
+      padding-bottom: initial;
+    }
+
+    .menu-item {
+      padding-bottom: initial !important;
+    }
     
-     #navbarNav li {
-         margin-left: 15px;
-         margin-right: 15px;
-     }
     .navbar .dropdown:hover > .dropdown-menu {
       display: block;
     }
