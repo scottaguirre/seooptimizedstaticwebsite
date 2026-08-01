@@ -1,458 +1,382 @@
 // utils/wpThemeBuilder/generators/themeActivationPhp.js
+//
+// Imports the content model into WordPress on theme activation.
+//
+// The old version stored each block's frozen HTML. This one writes one meta
+// field per editable value, which is what lets the renderer rebuild pages
+// from fields and lets the admin label them meaningfully.
 
 const { makePhpIdentifier } = require('../wpHelpers/phpHelpers');
 
-/**
- * Generate the inc/theme-activation.php file
- * This handles importing content into WordPress on theme activation
- *
- * @param {object} options - Configuration options
- * @param {string} options.themeSlug - Theme slug
- * @param {string} options.themeName - Theme display name
- * @returns {string} - Complete PHP code for theme-activation.php
- */
 function generateThemeActivationPhp(options = {}) {
   const {
     themeSlug = 'local-business-theme',
     themeName = 'Local Business Theme',
   } = options;
 
-  const funcPrefix = makePhpIdentifier(themeSlug);
+  const p = makePhpIdentifier(themeSlug);
 
   return `<?php
 /**
- * Theme Activation Handler
- * 
- * Imports content from static HTML build into WordPress database
- * Runs once when the theme is activated
+ * Theme Activation
+ *
+ * Creates the pages and imports content from theme-content-model.php
+ * into individual editable meta fields.
  *
  * @package ${themeSlug}
  */
 
-// Prevent direct access
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
 /**
- * Run on theme activation
+ * Load the generated content model.
  */
-function ${funcPrefix}_on_activation() {
-    // Import global settings
-    ${funcPrefix}_import_global_settings();
-
-    // Import pages and their content
-    ${funcPrefix}_import_pages();
-
-    // Set up navigation menu
-    ${funcPrefix}_setup_navigation();
-}
-add_action( 'after_switch_theme', '${funcPrefix}_on_activation' );
-
-/**
- * Import global settings into wp_options
- */
-function ${funcPrefix}_import_global_settings() {
-    $settings_file = get_template_directory() . '/theme-global-settings.php';
-
-    if ( ! file_exists( $settings_file ) ) {
-        return;
+function ${p}_load_model() {
+    $file = get_template_directory() . '/theme-content-model.php';
+    if ( ! file_exists( $file ) ) {
+        return array( 'global' => array(), 'pages' => array() );
     }
 
-    $settings = include $settings_file;
-
-    if ( ! is_array( $settings ) ) {
-        return;
+    $model = include $file;
+    if ( ! is_array( $model ) ) {
+        return array( 'global' => array(), 'pages' => array() );
     }
 
-    // Store in wp_options
-    update_option( '${funcPrefix}_global_settings', $settings );
+    return wp_parse_args( $model, array( 'global' => array(), 'pages' => array() ) );
 }
 
 /**
- * Import pages and store content as post meta
+ * Write one section's fields onto a post.
  */
-function ${funcPrefix}_import_pages() {
-    // Load page definitions
-    $pages_file = get_template_directory() . '/theme-pages.php';
-    if ( ! file_exists( $pages_file ) ) {
+function ${p}_import_section( $post_id, $section ) {
+    $key = isset( $section['key'] ) ? $section['key'] : '';
+    if ( $key === '' ) {
         return;
     }
 
-    $page_defs = include $pages_file;
-    if ( ! is_array( $page_defs ) ) {
-        return;
+    $base = '${p}_s_' . $key . '_';
+
+    update_post_meta( $post_id, $base . 'heading', isset( $section['heading'] ) ? $section['heading'] : '' );
+    update_post_meta( $post_id, $base . 'subheading', isset( $section['subheading'] ) ? $section['subheading'] : '' );
+
+    // Paragraphs, stored one per field so each gets its own editor
+    $paragraphs = isset( $section['paragraphs'] ) && is_array( $section['paragraphs'] )
+        ? array_values( $section['paragraphs'] )
+        : array();
+
+    update_post_meta( $post_id, $base . 'p_count', count( $paragraphs ) );
+    foreach ( $paragraphs as $i => $text ) {
+        update_post_meta( $post_id, $base . 'p_' . $i, wp_kses_post( $text ) );
     }
 
-    // Load page content
-    $content_file = get_template_directory() . '/theme-page-content.php';
-    $page_content = array();
-    if ( file_exists( $content_file ) ) {
-        $maybe_content = include $content_file;
-        if ( is_array( $maybe_content ) ) {
-            $page_content = $maybe_content;
+    // Images, keyed by their stable role
+    $images = isset( $section['images'] ) && is_array( $section['images'] ) ? $section['images'] : array();
+    foreach ( $images as $img ) {
+        if ( empty( $img['role'] ) ) {
+            continue;
+        }
+        $role = $img['role'];
+        update_post_meta( $post_id, $base . 'img_' . $role, isset( $img['src'] ) ? $img['src'] : '' );
+        update_post_meta( $post_id, $base . 'img_' . $role . '_alt', isset( $img['alt'] ) ? $img['alt'] : '' );
+        update_post_meta( $post_id, $base . 'img_' . $role . '_dim', array(
+            'width'  => isset( $img['width'] ) ? $img['width'] : '',
+            'height' => isset( $img['height'] ) ? $img['height'] : '',
+        ) );
+    }
+
+    // FAQ pairs, numbered so each gets its own editable field
+    if ( isset( $section['faqs'] ) && is_array( $section['faqs'] ) ) {
+        $faqs = array_values( $section['faqs'] );
+        update_post_meta( $post_id, $base . 'faq_count', count( $faqs ) );
+        foreach ( $faqs as $i => $faq ) {
+            update_post_meta( $post_id, $base . 'faq_q_' . $i, isset( $faq['question'] ) ? $faq['question'] : '' );
+            update_post_meta( $post_id, $base . 'faq_a_' . $i, wp_kses_post( isset( $faq['answer'] ) ? $faq['answer'] : '' ) );
         }
     }
 
-    $front_page_id = 0;
+    // Type-specific extras
+    if ( isset( $section['video_url'] ) ) {
+        update_post_meta( $post_id, $base . 'video_url', $section['video_url'] );
+    }
+    if ( isset( $section['map_embed'] ) ) {
+        update_post_meta( $post_id, $base . 'map_embed', $section['map_embed'] );
+    }
+    if ( isset( $section['address_override'] ) ) {
+        update_post_meta( $post_id, $base . 'address_override', $section['address_override'] );
+    }
+}
 
-    // Create or update each page
-    foreach ( $page_defs as $def ) {
-        $slug     = isset( $def['slug'] ) ? sanitize_title( $def['slug'] ) : '';
-        $title    = isset( $def['title'] ) ? sanitize_text_field( $def['title'] ) : '';
-        $template = isset( $def['template'] ) ? sanitize_text_field( $def['template'] ) : '';
-        $order    = isset( $def['menu_order'] ) ? intval( $def['menu_order'] ) : 0;
+/**
+ * Descriptor list the renderer walks. Content lives in its own fields;
+ * this only records order, type and layout hints.
+ */
+function ${p}_section_descriptors( $sections ) {
+    $out = array();
 
-        if ( empty( $slug ) || empty( $title ) ) {
+    foreach ( $sections as $s ) {
+        if ( empty( $s['key'] ) || empty( $s['type'] ) ) {
             continue;
         }
 
-        // Check if page already exists
-        $existing = get_page_by_path( $slug );
+        $d = array(
+            'key'   => $s['key'],
+            'label' => isset( $s['label'] ) ? $s['label'] : $s['key'],
+            'type'  => $s['type'],
+        );
 
+        foreach ( array( 'css_class', 'row_class', 'image_roles', 'cta_after', 'heading_tag' ) as $extra ) {
+            if ( isset( $s[ $extra ] ) ) {
+                $d[ $extra ] = $s[ $extra ];
+            }
+        }
+
+        $out[] = $d;
+    }
+
+    return $out;
+}
+
+/**
+ * Create (or reuse) a page and import its content.
+ */
+function ${p}_import_page( $page ) {
+    $slug = isset( $page['slug'] ) ? $page['slug'] : '';
+    if ( $slug === '' ) {
+        return 0;
+    }
+
+    $existing = get_page_by_path( $slug );
+
+    $postarr = array(
+        'post_title'   => isset( $page['title'] ) ? $page['title'] : $slug,
+        'post_name'    => $slug,
+        'post_status'  => 'publish',
+        'post_type'    => 'page',
+        'post_content' => '',
+        'menu_order'   => isset( $page['menu_order'] ) ? (int) $page['menu_order'] : 0,
+    );
+
+    if ( $existing ) {
+        $postarr['ID'] = $existing->ID;
+        $post_id = wp_update_post( $postarr );
+    } else {
+        $post_id = wp_insert_post( $postarr );
+    }
+
+    if ( is_wp_error( $post_id ) || ! $post_id ) {
+        return 0;
+    }
+
+    // Template
+    if ( ! empty( $page['template'] ) && ! empty( $page['is_front_page'] ) === false ) {
+        update_post_meta( $post_id, '_wp_page_template', $page['template'] );
+    }
+
+    // SEO
+    update_post_meta( $post_id, '${p}_page_title', isset( $page['meta_title'] ) ? $page['meta_title'] : '' );
+    update_post_meta( $post_id, '${p}_page_description', isset( $page['meta_description'] ) ? $page['meta_description'] : '' );
+    update_post_meta( $post_id, '${p}_page_schema_json', isset( $page['schema'] ) ? $page['schema'] : '' );
+    update_post_meta( $post_id, '${p}_page_type', isset( $page['type'] ) ? $page['type'] : '' );
+    update_post_meta( $post_id, '${p}_page_city', isset( $page['city'] ) ? $page['city'] : '' );
+
+    // Sections
+    $sections = isset( $page['sections'] ) && is_array( $page['sections'] ) ? $page['sections'] : array();
+    update_post_meta( $post_id, '${p}_sections', ${p}_section_descriptors( $sections ) );
+
+    foreach ( $sections as $section ) {
+        ${p}_import_section( $post_id, $section );
+    }
+
+    return $post_id;
+}
+
+/**
+ * Build the Primary menu so it mirrors the static site exactly:
+ *
+ *   ABOUT US            -> front page
+ *   <first service>     -> top-level link
+ *   SERVICES            -> custom link "#" with the remaining services under it
+ *   LOCATIONS           -> custom link "#" with each location under it
+ *
+ * Creating it here means the client opens Appearance -> Menus and finds a
+ * real, populated menu they can reorder, rename or extend — rather than an
+ * empty screen. The Bootstrap walker renders it, so it still matches the
+ * design.
+ *
+ * Re-running clears existing items first, so activation stays idempotent.
+ */
+function ${p}_build_menu( $front_page_id, $services, $locations ) {
+    $menu_name = __( 'Primary Menu', '${themeSlug}' );
+    $menu = wp_get_nav_menu_object( $menu_name );
+
+    if ( $menu ) {
+        $menu_id = $menu->term_id;
+        $existing = wp_get_nav_menu_items( $menu_id );
         if ( $existing ) {
-            $page_id = $existing->ID;
-
-            // Update existing page title
-            wp_update_post( array(
-                'ID'         => $page_id,
-                'post_title' => $title,
-                'menu_order' => $order,
-            ) );
-        } else {
-            // Create new page
-            $page_id = wp_insert_post( array(
-                'post_title'  => $title,
-                'post_name'   => $slug,
-                'post_type'   => 'page',
-                'post_status' => 'publish',
-                'menu_order'  => $order,
-            ) );
-        }
-
-        if ( ! $page_id || is_wp_error( $page_id ) ) {
-            continue;
-        }
-
-        // Set page template if specified
-        if ( ! empty( $template ) ) {
-            update_post_meta( $page_id, '_wp_page_template', $template );
-        }
-
-        // Store content as post meta
-        if ( isset( $page_content[ $slug ] ) && is_array( $page_content[ $slug ] ) ) {
-            foreach ( $page_content[ $slug ] as $meta_key => $meta_value ) {
-                update_post_meta( $page_id, '${funcPrefix}_' . $meta_key, $meta_value );
-            }
-
-            // IMPORTANT: If we have a custom extracted page_name, update the page title
-            // This ensures the admin page list shows clean names like "Water Heater Repair" 
-            // instead of "Water Heater Repair Leander TX"
-            if ( isset( $page_content[ $slug ]['page_name'] ) && ! empty( $page_content[ $slug ]['page_name'] ) ) {
-                $custom_page_name = sanitize_text_field( $page_content[ $slug ]['page_name'] );
-                
-                // Update the page title with the extracted clean name
-                wp_update_post( array(
-                    'ID'         => $page_id,
-                    'post_title' => $custom_page_name,
-                ) );
+            foreach ( $existing as $item ) {
+                wp_delete_post( $item->ID, true );
             }
         }
-
-        // Track front page
-        if ( $template === 'front-page.php' || $slug === 'about' || $slug === 'home' ) {
-            $front_page_id = $page_id;
+    } else {
+        $menu_id = wp_create_nav_menu( $menu_name );
+        if ( is_wp_error( $menu_id ) ) {
+            return;
         }
     }
 
-    // Set the front page
+    $position = 1;
+
+    $add_page = function( $post_id, $title, $parent = 0 ) use ( $menu_id, &$position ) {
+        return wp_update_nav_menu_item( $menu_id, 0, array(
+            'menu-item-title'     => $title,
+            'menu-item-object'    => 'page',
+            'menu-item-object-id' => $post_id,
+            'menu-item-type'      => 'post_type',
+            'menu-item-status'    => 'publish',
+            'menu-item-parent-id' => $parent,
+            'menu-item-position'  => $position++,
+        ) );
+    };
+
+    $add_group = function( $title ) use ( $menu_id, &$position ) {
+        return wp_update_nav_menu_item( $menu_id, 0, array(
+            'menu-item-title'    => $title,
+            'menu-item-url'      => '#',
+            'menu-item-type'     => 'custom',
+            'menu-item-status'   => 'publish',
+            'menu-item-position' => $position++,
+        ) );
+    };
+
+    // 1. About Us
+    if ( $front_page_id ) {
+        $add_page( $front_page_id, __( 'About Us', '${themeSlug}' ) );
+    }
+
+    // 2. First service sits outside the dropdown
+    if ( ! empty( $services ) ) {
+        $first = array_shift( $services );
+        $add_page( $first['id'], $first['title'] );
+    }
+
+    // 3. Remaining services under a SERVICES group
+    if ( ! empty( $services ) ) {
+        $parent = $add_group( __( 'Services', '${themeSlug}' ) );
+        if ( ! is_wp_error( $parent ) ) {
+            foreach ( $services as $svc ) {
+                $add_page( $svc['id'], $svc['title'], $parent );
+            }
+        }
+    }
+
+    // 4. Locations, labelled by city
+    if ( ! empty( $locations ) ) {
+        $parent = $add_group( __( 'Locations', '${themeSlug}' ) );
+        if ( ! is_wp_error( $parent ) ) {
+            foreach ( $locations as $loc ) {
+                $add_page( $loc['id'], $loc['title'], $parent );
+            }
+        }
+    }
+
+    // 5. Assign to the theme's Primary location
+    $locations_mod = get_theme_mod( 'nav_menu_locations' );
+    if ( ! is_array( $locations_mod ) ) {
+        $locations_mod = array();
+    }
+    $locations_mod['primary'] = $menu_id;
+    set_theme_mod( 'nav_menu_locations', $locations_mod );
+}
+
+
+/**
+ * Run the full import. Idempotent: safe to run again.
+ */
+function ${p}_activate() {
+    $model = ${p}_load_model();
+
+    // 1. Global settings
+    if ( ! empty( $model['global'] ) ) {
+        $existing = get_option( '${p}_global_settings', array() );
+        if ( ! is_array( $existing ) ) {
+            $existing = array();
+        }
+        // Imported values win on first activation; later edits are preserved
+        // because activation only runs when the theme is switched on.
+        update_option( '${p}_global_settings', array_merge( $existing, $model['global'] ) );
+    }
+
+    // 2. Pages
+    $front_page_id = 0;
+    $services  = array();
+    $locations = array();
+
+    foreach ( $model['pages'] as $page ) {
+        $post_id = ${p}_import_page( $page );
+        if ( ! $post_id ) {
+            continue;
+        }
+
+        if ( ! empty( $page['is_front_page'] ) ) {
+            $front_page_id = $post_id;
+            continue;
+        }
+
+        $type = isset( $page['type'] ) ? $page['type'] : '';
+
+        if ( $type === 'service' ) {
+            $services[] = array(
+                'id'    => $post_id,
+                'title' => isset( $page['title'] ) ? $page['title'] : '',
+            );
+        } elseif ( $type === 'location' ) {
+            // Locations show the city only, as on the static site
+            $label = ! empty( $page['city'] )
+                ? $page['city']
+                : trim( current( explode( ',', isset( $page['title'] ) ? $page['title'] : '' ) ) );
+
+            $locations[] = array(
+                'id'    => $post_id,
+                'title' => $label,
+            );
+        }
+    }
+
+    // 3. Front page
     if ( $front_page_id ) {
         update_option( 'show_on_front', 'page' );
         update_option( 'page_on_front', $front_page_id );
     }
+
+    // 4. Menu, mirroring the static site's structure
+    ${p}_build_menu( $front_page_id, $services, $locations );
+
+    // 5. Pretty permalinks
+    flush_rewrite_rules();
 }
+add_action( 'after_switch_theme', '${p}_activate' );
 
 /**
- * Set up the navigation menu
+ * Manual re-import, in case activation ran before files were in place.
  */
-function ${funcPrefix}_setup_navigation() {
-    $menu_name = '${themeName} Menu';
-    $menu = wp_get_nav_menu_object( $menu_name );
-
-    // Create menu if it doesn't exist
-    if ( ! $menu ) {
-        $menu_id = wp_create_nav_menu( $menu_name );
-        
-        if ( is_wp_error( $menu_id ) ) {
-            return;
-        }
-    } else {
-        $menu_id = $menu->term_id;
-        
-        // Clear existing menu items to repopulate with current pages
-        $menu_items = wp_get_nav_menu_items( $menu_id );
-        if ( $menu_items ) {
-            foreach ( $menu_items as $item ) {
-                wp_delete_post( $item->ID, true );
-            }
-        }
-    }
-
-    // Assign menu to primary location
-    $locations = get_nav_menu_locations();
-    if ( ! is_array( $locations ) ) {
-        $locations = array();
-    }
-    $locations['primary'] = $menu_id;
-    set_theme_mod( 'nav_menu_locations', $locations );
-
-    // Load page definitions to build menu
-    $pages_file = get_template_directory() . '/theme-pages.php';
-    if ( ! file_exists( $pages_file ) ) {
+function ${p}_reimport_notice() {
+    if ( ! current_user_can( 'manage_options' ) ) {
         return;
     }
 
-    $page_defs = include $pages_file;
-    if ( ! is_array( $page_defs ) ) {
-        return;
-    }
-
-    // Load page content to get extracted page names
-    $content_file = get_template_directory() . '/theme-page-content.php';
-    $page_content = array();
-    if ( file_exists( $content_file ) ) {
-        $maybe_content = include $content_file;
-        if ( is_array( $maybe_content ) ) {
-            $page_content = $maybe_content;
-        }
-    }
-
-    // Helper function to get the best menu title
-    $get_menu_title = function( $def ) use ( $page_content ) {
-        $slug = isset( $def['slug'] ) ? $def['slug'] : '';
-        
-        // First, try to use extracted page_name from content
-        if ( isset( $page_content[ $slug ]['page_name'] ) && ! empty( $page_content[ $slug ]['page_name'] ) ) {
-            return $page_content[ $slug ]['page_name'];
-        }
-        
-        // Fallback to title from definition
-        if ( isset( $def['title'] ) && ! empty( $def['title'] ) ) {
-            return $def['title'];
-        }
-        
-        // Last resort: convert slug to title case
-        return ucwords( str_replace( '-', ' ', $slug ) );
-    };
-
-    // Helper function to clean menu titles
-    $clean_menu_title = function( $title, $is_location = false ) {
-        if ( empty( $title ) ) {
-            return $title;
-        }
-        
-        // Remove common state abbreviations
-        $states = array(
-            'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-            'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
-            'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-            'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-            'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'
-        );
-        
-        // Remove state abbreviations (case insensitive)
-        foreach ( $states as $state ) {
-            // Remove ", TX" or " TX" at the end
-            $title = preg_replace( '/[,\\s]+' . $state . '\\s*$/i', '', $title );
-            // Remove "TX " at the beginning
-            $title = preg_replace( '/^' . $state . '\\s+/i', '', $title );
-        }
-        
-        // For location pages, remove "Location" prefix
-        if ( $is_location ) {
-            $title = preg_replace( '/^Location\\s+/i', '', $title );
-        }
-        
-        // For service pages, remove city names from the end
-        $title = preg_replace( '/\\s+in\\s+[A-Z][a-z]+$/i', '', $title );
-        
-        // Remove common location words
-        $location_words = array( 'Leander', 'Austin', 'Cedar Park', 'Round Rock', 'Georgetown' );
-        foreach ( $location_words as $location ) {
-            // Remove location at the end
-            $title = preg_replace( '/\\s+' . preg_quote( $location, '/' ) . '\\s*$/i', '', $title );
-            // Remove "in Location" pattern
-            $title = preg_replace( '/\\s+in\\s+' . preg_quote( $location, '/' ) . '\\s*$/i', '', $title );
-        }
-        
-        // Remove extra spaces and trim
-        $title = preg_replace( '/\\s+/', ' ', $title );
-        $title = trim( $title );
-        
-        return $title;
-    };
-
-    // Sort pages by menu_order
-    usort( $page_defs, function( $a, $b ) {
-        $order_a = isset( $a['menu_order'] ) ? intval( $a['menu_order'] ) : 0;
-        $order_b = isset( $b['menu_order'] ) ? intval( $b['menu_order'] ) : 0;
-        return $order_a - $order_b;
-    } );
-
-    // Separate pages into categories
-    $home_page = null;
-    $service_pages = array();
-    $location_pages = array();
-    $other_pages = array();
-
-    foreach ( $page_defs as $def ) {
-        $slug     = isset( $def['slug'] ) ? $def['slug'] : '';
-        $template = isset( $def['template'] ) ? $def['template'] : '';
-
-        // Skip legal pages (they go in footer)
-        if ( in_array( $slug, array( 'privacy-policy', 'terms-of-use', 'accessibility' ), true ) ) {
-            continue;
-        }
-
-        // Identify home/about page
-        if ( $template === 'front-page.php' || $slug === 'about' || $slug === 'home' || $slug === 'index' ) {
-            $home_page = $def;
-            continue;
-        }
-
-        // Identify location pages
-        if ( strpos( $slug, 'location-' ) === 0 ) {
-            $location_pages[] = $def;
-            continue;
-        }
-
-        // Everything else is a service page
-        $service_pages[] = $def;
-    }
-
-    // Add Home to menu
-    if ( $home_page ) {
-        $page = get_page_by_path( $home_page['slug'] );
-        if ( $page ) {
-            $menu_title = $get_menu_title( $home_page );
-            
-            // Special case: Override menu title for front page
-            if ( $home_page['slug'] === 'index' || $home_page['slug'] === 'home' ) {
-                $menu_title = 'About Us';
-            }
-            
-            // Clean the title
-            $menu_title = $clean_menu_title( $menu_title, false );
-            
-            wp_update_nav_menu_item( $menu_id, 0, array(
-                'menu-item-title'     => $menu_title,
-                'menu-item-object'    => 'page',
-                'menu-item-object-id' => $page->ID,
-                'menu-item-type'      => 'post_type',
-                'menu-item-status'    => 'publish',
-            ) );
-        }
-    }
-
-    // Add service pages
-    if ( count( $service_pages ) === 1 ) {
-        // Single service: add directly to menu
-        $svc = $service_pages[0];
-        $page = get_page_by_path( $svc['slug'] );
-        if ( $page ) {
-            $menu_title = $get_menu_title( $svc );
-            $menu_title = $clean_menu_title( $menu_title, false );
-            
-            wp_update_nav_menu_item( $menu_id, 0, array(
-                'menu-item-title'     => $menu_title,
-                'menu-item-object'    => 'page',
-                'menu-item-object-id' => $page->ID,
-                'menu-item-type'      => 'post_type',
-                'menu-item-status'    => 'publish',
-            ) );
-        }
-    } elseif ( count( $service_pages ) > 1 ) {
-        // Multiple services: create dropdown
-        $services_parent_id = wp_update_nav_menu_item( $menu_id, 0, array(
-            'menu-item-title'  => __( 'Services', '${themeSlug}' ),
-            'menu-item-url'    => '#',
-            'menu-item-type'   => 'custom',
-            'menu-item-status' => 'publish',
-        ) );
-
-        foreach ( $service_pages as $svc ) {
-            $page = get_page_by_path( $svc['slug'] );
-            if ( $page ) {
-                $menu_title = $get_menu_title( $svc );
-                $menu_title = $clean_menu_title( $menu_title, false );
-                
-                wp_update_nav_menu_item( $menu_id, 0, array(
-                    'menu-item-title'     => $menu_title,
-                    'menu-item-object'    => 'page',
-                    'menu-item-object-id' => $page->ID,
-                    'menu-item-type'      => 'post_type',
-                    'menu-item-parent-id' => $services_parent_id,
-                    'menu-item-status'    => 'publish',
-                ) );
-            }
-        }
-    }
-
-    // Add location pages
-    if ( count( $location_pages ) > 0 ) {
-        $locations_parent_id = wp_update_nav_menu_item( $menu_id, 0, array(
-            'menu-item-title'  => __( 'Locations', '${themeSlug}' ),
-            'menu-item-url'    => '#',
-            'menu-item-type'   => 'custom',
-            'menu-item-status' => 'publish',
-        ) );
-
-        foreach ( $location_pages as $loc ) {
-            $page = get_page_by_path( $loc['slug'] );
-            if ( $page ) {
-                $menu_title = $get_menu_title( $loc );
-                $menu_title = $clean_menu_title( $menu_title, true ); // true = is_location
-                
-                wp_update_nav_menu_item( $menu_id, 0, array(
-                    'menu-item-title'     => $menu_title,
-                    'menu-item-object'    => 'page',
-                    'menu-item-object-id' => $page->ID,
-                    'menu-item-type'      => 'post_type',
-                    'menu-item-parent-id' => $locations_parent_id,
-                    'menu-item-status'    => 'publish',
-                ) );
-            }
-        }
-    }
-
-    // Add other pages that don't fit categories
-    foreach ( $other_pages as $other ) {
-        $page = get_page_by_path( $other['slug'] );
-        if ( $page ) {
-            $menu_title = $get_menu_title( $other );
-            $menu_title = $clean_menu_title( $menu_title, false );
-            
-            wp_update_nav_menu_item( $menu_id, 0, array(
-                'menu-item-title'     => $menu_title,
-                'menu-item-object'    => 'page',
-                'menu-item-object-id' => $page->ID,
-                'menu-item-type'      => 'post_type',
-                'menu-item-status'    => 'publish',
-            ) );
-        }
+    if ( isset( $_GET['${p}_reimport'] ) && check_admin_referer( '${p}_reimport' ) ) {
+        ${p}_activate();
+        echo '<div class="notice notice-success"><p>' .
+             esc_html__( 'Content re-imported from the theme model.', '${themeSlug}' ) .
+             '</p></div>';
     }
 }
-
-/**
- * Helper: Get a global setting
- */
-function ${funcPrefix}_get_global_setting( $key, $default = '' ) {
-    $settings = get_option( '${funcPrefix}_global_settings', array() );
-    return isset( $settings[ $key ] ) ? $settings[ $key ] : $default;
-}
+add_action( 'admin_notices', '${p}_reimport_notice' );
 `;
 }
 
 module.exports = {
-  generateThemeActivationPhp
+  generateThemeActivationPhp,
 };

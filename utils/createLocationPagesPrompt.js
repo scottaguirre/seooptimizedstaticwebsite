@@ -11,11 +11,17 @@ function createLocationPagesPrompt({ globalForLoc, keywords = [] }) {
     'roofing': 'roofing',
     'concrete contractor': 'concrete services',
     'hvac': 'hvac',
+    'air conditioning': 'air conditioning',
     'landscaping': 'landscaping',
-    'law firm': 'law firm',
+    'law firm': 'lemon law firm',
     'fencing':   'fencing',
-    'junk removal': 'junk removal'
+    'junk removal': 'junk removal',
+    'tree removal':     'tree removal',
+    'paving':          'paving',
+    'swimming pool contractor': 'swimming pool contractor',
+    'water damage restoration': 'water damage restoration'
   };
+
 
   const category = categoryMap[(businessType || '').toLowerCase()] || businessType || 'services';
   const typeOfCompany = category === 'law firm' ? '' : 'company';

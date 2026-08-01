@@ -70,6 +70,24 @@ function ${funcPrefix}_render_settings_page() {
         }
     }
 
+    // Re-import content from the theme's data file.
+    //
+    // Activation only fires on after_switch_theme, so uploading a new theme
+    // ZIP over an active theme replaces the files but leaves the old content
+    // in the database. This button re-runs the import without needing to
+    // switch themes away and back.
+    if ( isset( $_POST['${funcPrefix}_do_reimport'] ) ) {
+        if ( ! isset( $_POST['${funcPrefix}_reimport_nonce'] ) ||
+             ! wp_verify_nonce( $_POST['${funcPrefix}_reimport_nonce'], '${funcPrefix}_reimport' ) ) {
+            add_settings_error( '${funcPrefix}_messages', '${funcPrefix}_error', __( 'Security check failed.', '${themeSlug}' ), 'error' );
+        } elseif ( function_exists( '${funcPrefix}_activate' ) ) {
+            ${funcPrefix}_activate();
+            add_settings_error( '${funcPrefix}_messages', '${funcPrefix}_reimported', __( 'Content re-imported from the theme.', '${themeSlug}' ), 'updated' );
+        } else {
+            add_settings_error( '${funcPrefix}_messages', '${funcPrefix}_error', __( 'Import function unavailable.', '${themeSlug}' ), 'error' );
+        }
+    }
+
     // Get current settings
     $settings = get_option( '${funcPrefix}_global_settings', array() );
 
@@ -261,6 +279,24 @@ function ${funcPrefix}_render_settings_page() {
 
             <?php submit_button( __( 'Save Settings', '${themeSlug}' ), 'primary', '${funcPrefix}_save_settings' ); ?>
         </form>
+
+        <!-- Re-import, kept in its own form so it can't be triggered by
+             saving settings -->
+        <div class="${funcPrefix}-settings-section">
+            <h2><?php esc_html_e( 'Content', '${themeSlug}' ); ?></h2>
+            <p class="description">
+                <?php esc_html_e( 'Re-import all pages and content from the theme files. Use this after uploading an updated version of the theme.', '${themeSlug}' ); ?>
+            </p>
+            <p class="description" style="color:#b32d2e;">
+                <?php esc_html_e( 'Warning: this overwrites any edits made in the WordPress admin with the content from the theme.', '${themeSlug}' ); ?>
+            </p>
+            <form method="post" action="" onsubmit="return confirm('<?php echo esc_js( __( 'This will overwrite page content with the version from the theme files. Continue?', '${themeSlug}' ) ); ?>');">
+                <?php wp_nonce_field( '${funcPrefix}_reimport', '${funcPrefix}_reimport_nonce' ); ?>
+                <button type="submit" name="${funcPrefix}_do_reimport" class="button button-secondary">
+                    <?php esc_html_e( 'Re-import content from theme', '${themeSlug}' ); ?>
+                </button>
+            </form>
+        </div>
     </div>
     <?php
 }

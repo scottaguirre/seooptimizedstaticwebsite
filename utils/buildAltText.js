@@ -1,5 +1,6 @@
 const { slugify } = require('./slugify');
 
+
 const imageDesc = {
   plumbing: [
 
@@ -174,8 +175,8 @@ const imageDesc = {
               'section4-2': 'a male hvac technician fixing a mini split ac'
             },
             {
-              'hero-mobile': '2 hvac technicians replacing a filter of an outside ac unit',
-              'section2-1': 'a male hvac technician checking a commercial ac unit on the roof of the building',
+              'hero-mobile': 'a male hvac technician assessing an outside ac unit',
+              'section2-1': 'a male hvac technician checking a commercial ac unit located on the roof of the building',
               'section2-2': 'an ac unit outside with an ac manifold gauge next to it',
               'section4-1': 'an hvac technician checking a mini split ac',
               'section4-2': 'an hvac technician with an ipad filling out a report'
@@ -245,6 +246,88 @@ const imageDesc = {
             }     
 
         ],
+
+  'air-conditioning': [
+            
+              {
+                'hero-mobile': 'a male air conditioning technician checking an ac unit',
+                'section2-1': 'commercial ducts installation',
+                'section2-2': 'a male air conditioning technician looking straight at the camera',
+                'section4-1': 'a male air conditioning technician replacing an ac filter',
+                'section4-2': 'a male air conditioning technician fixing a mini split ac'
+              },
+              {
+                'hero-mobile': 'a male air conditioning technician testing an outside ac unit',
+                'section2-1': 'a male air conditioning technician checking a commercial ac unit located on the roof of the building',
+                'section2-2': 'an ac unit outside with an ac manifold gauge next to it',
+                'section4-1': 'an air conditioning technician checking a mini split ac',
+                'section4-2': 'an air conditioning technician with an ipad filling out a report'
+              },
+              {
+                'hero-mobile': 'an air conditioning technician with his tools checking an outside ac unite',
+                'section2-1': 'an air conditioning technician using a scredriver to check the wires of an ac unite',
+                'section2-2': 'an air conditioning technician smiling at the camera',
+                'section4-1': 'an air conditioning technician using a ac current meter',
+                'section4-2': 'the hand of a person using an AC control remote to adjust the temperature'
+              },
+              {
+                'hero-mobile': 'an air conditioning technician in uniform using the manifold gauge to test an ac unit',
+                'section2-1': 'an air conditioning technician using a small freon tank to refill an ac unit',
+                'section2-2': 'an air conditioning technician holding a wireless temperature meter to check a vent temperature',
+                'section4-1': 'an air conditioning technician holding and checking an ac filter',
+                'section4-2': 'an air conditioning technician cleaning the ducts with a machine'
+              },
+              {
+                'hero-mobile': 'Metal air ducts',
+                'section2-1': 'a male hvac technician with a tool bag smiling at the camera',
+                'section2-2': 'a male hvac technician measuring the temperature with a device',
+                'section4-1': 'metal air ducts attached to the ceiling of a building',
+                'section4-2': 'a white AC unit outside a building'
+              },
+              {
+                'hero-mobile': 'a family outside the house smiling at the camera with a new AC unit next to them',
+                'section2-1': 'a male air conditioning technician checking a mini split AC unit',
+                'section2-2': '2 AC units outside the house on a concrete slabs next to each other',
+                'section4-1': 'a male air conditioning technician checking a furnace wiring',
+                'section4-2': 'an AC duct very dirty on the inside'
+              },
+              {
+                'hero-mobile': 'an orange cat laying on the carpet next to an AC vent',
+                'section2-1': 'a hand holding a thermostat showing 72 degree cooling',
+                'section2-2': 'a mini split AC unit mounted on the wall',
+                'section4-1': 'a male air conditioning technician using a current meter on a furnace unit',
+                'section4-2': 'a male air conditioning technician on the roof checking an AC unit'
+              },
+              {
+                'hero-mobile': 'a brand new AC unit outside on a concrete slab',
+                'section2-1': 'a mini split AC unit and an traditional AC unit showing',
+                'section2-2': 'a male air conditioning technician using a scredriver to open an AC unit',
+                'section4-1': 'a mini split AC unit mounted on a wall and the thermostat below it',
+                'section4-2': 'a male air conditioning technician cleaning the coils of an old AC unit'
+              },
+              {
+                'hero-mobile': 'a male air conditioning techinican using a screwdriver to open a mini split unit and smiling at the camera',
+                'section2-1': 'a male air conditioning technician smiling and giving a thumbs-up at the camera',
+                'section2-2': 'an air conditioning technician cleaning the coils of an AC unit',
+                'section4-1': 'a cool air stream coming out of a vent',
+                'section4-2': 'a family on a couch enjoying the cool air coming from a mini split AC unit'
+              },
+              {
+                'hero-mobile': 'an air conditioning technician on the front porch smiling at the camera and an AC unit next to him',
+                'section2-1': 'a family cuddling on the couch next to the house furnace',
+                'section2-2': 'a dirty air conditioning duct on the inside next to a clean AC duct on the inside',
+                'section4-1': '3 air conditioning technician ouside a house smiling at the camera',
+                'section4-2': 'a fog meter device in the living room of a house'
+              },
+              {
+                'hero-mobile': 'traditional air conditioning ducts installed in the attic of a house',
+                'section2-1': 'AC tools on the tailgate of a truck',
+                'section2-2': 'an air conditioning technician with a screwdriver checking the wiring of a furnace',
+                'section4-1': '2 air conditioning technician smiling at the camera',
+                'section4-2': 'an air conditioning technician fixing a mini split AC unit'
+              }     
+
+            ],
 
   'fencing': [
             
@@ -393,7 +476,7 @@ const imageDesc = {
               'section4-2': '4 lawyers walking down the hall of a building'
             },
             {
-              'hero-mobile': '2 hands shaking closing a deal and a legal document underneath them;',
+              'hero-mobile': '2 hands shaking closing a deal and a legal document underneath them',
               'section2-1': 'a lawyer presenting his case in a court room',
               'section2-2': '3 lawyers in an office discussing a legal case',
               'section4-1': '4 lawyers celebrating with champagne they won a case',
@@ -407,13 +490,175 @@ const imageDesc = {
               'section4-2': 'a young lawyer smiling at the camera'
             }     
 
-        ]
+        ],
+'french-drain-installation': [
+            
+            {
+              'hero-mobile': '2 contractors laying pipes for a new french drain',
+              'section2-1': 'a contractor leveling a french drain pipe',
+              'section2-2': 'a french drain pipe in a dirt ditch',
+              'section4-1': 'a tractor digging a ditch',
+              'section4-2': 'a french drain worker giving a thumbs up'
+            },
+            {
+              'hero-mobile': 'a french drain contractor measuring the depht of a ditch',
+              'section2-1': 'a french drain contractor squating giving a thumbs up',
+              'section2-2': 'a gravel-filled trench',
+              'section4-1': 'a brand new french drain',
+              'section4-2': 'a gravel-filled ditch'
+            },
+            {
+              'hero-mobile': 'a french drain contractor writting on a clipboard ',
+              'section2-1': 'a pipe laid in a recent dug ditch',
+              'section2-2': 'a very shallow ditch',
+              'section4-1': 'a ditch filled with gravel and a pipe laying in it',
+              'section4-2': 'a pipe in a french drain ditch with some tools laying arround'
+            },
+            {
+              'hero-mobile': '2 contractos working on a french drain project',
+              'section2-1': 'a large pipe in a ditch',
+              'section2-2': 'a french drain contractor smiling and giving a thumbs up',
+              'section4-1': 'A french drain project in progress',
+              'section4-2': 'a gravel-filled ditch'
+            },
+            {
+              'hero-mobile': '2 workers laying a pipe on a french drain ditch',
+              'section2-1': 'a gravel-filled ditch',
+              'section2-2': 'a worker giving a thumbs up',
+              'section4-1': 'a pipe laying on gravel in a ditch',
+              'section4-2': 'a french drain project in progress'
+            },
+            {
+              'hero-mobile': '3 workers marking where to dig a french drain ditch',
+              'section2-1': 'a pipe line laid on a large ditch',
+              'section2-2': 'a pipe for a french drain project in a ditch',
+              'section4-1': 'a large ditch with a large pipe in it',
+              'section4-2': 'a perforated pipe inside a ditch for a french drain project'
+            },
+            {
+              'hero-mobile': '2 workers digging a ditch',
+              'section2-1': 'a perforated pipe laid on a ditch',
+              'section2-2': 'a ditch in a backyard for a french drain project',
+              'section4-1': 'a pipe laying in a ditch',
+              'section4-2': 'a ditch with a pipe and some tools laying around'
+            },
+            {
+              'hero-mobile': 'a worker with an excavator digging a ditch',
+              'section2-1': 'a ditch seen from an upclose angle',
+              'section2-2': 'a french drain contractor talking to a customer',
+              'section4-1': 'a ditch next to a retaining wall',
+              'section4-2': 'a large ditch ready for a french drain project'
+            },
+            {
+              'hero-mobile': 'the marks where a french drain will be installed',
+              'section2-1': '2 worker shoveling gravel in a ditch',
+              'section2-2': 'a large pipe laying on a ditch',
+              'section4-1': 'the hands of a worker holding a perforated pipe',
+              'section4-2': 'a ditch with a layer sheet ready for a pipe line to be placed on it'
+            },
+            {
+              'hero-mobile': '2 french drain contractors smiling at the camera',
+              'section2-1': 'a pipe laid on a ditch',
+              'section2-2': 'a perforated pipe laid on a ditch',
+              'section4-1': 'a ditch with a perforated pipe in it',
+              'section4-2': 'a shovel pouring gravel in a ditch to cover a pipe'
+            },
+            {
+              'hero-mobile': '3 workers smiling at the camera',
+              'section2-1': 'a contractor smiling while removing an old french drain pipe',
+              'section2-2': 'a french drain contractor smiling at the camera with a white van in the background',
+              'section4-1': 'a french drain contractor with a customer smiling both at the camera',
+              'section4-2': 'tools laying on the ground'
+            }     
+
+        ],
+
+      'tree-removal': [
+            
+        {
+          'hero-mobile': `hero image`,
+          'section2-1':  `image`,
+          'section2-2':  `image`,
+          'section4-1':  `image`,
+          'section4-2':  `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+         'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        },
+        {
+          'hero-mobile': `hero image`,
+          'section2-1': `image`,
+          'section2-2': `image`,
+          'section4-1': `image`,
+          'section4-2': `image`
+        }     
+
+    ]
 
 };
 
 
 function buildAltText(globalValues, index) {
-  const name = globalValues.businessName;
   const location = globalValues.location;
   const businessType = slugify(globalValues.businessType);
   const imageSets = imageDesc[businessType];
@@ -438,7 +683,7 @@ function buildAltText(globalValues, index) {
   const result = {};
 
   for (const [key, desc] of Object.entries(selectedSet)) {
-    result[key] = `${desc} from ${name} in ${location}`;
+    result[key] = `${desc} from ${globalValues.businessName} in ${location}`;
   }
 
   return result;

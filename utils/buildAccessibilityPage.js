@@ -1,10 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
-const { resolveThemeCss } = require('./helpers');
+const { writePageAssets } = require('./buildAssets');
+const { buildSocialLinks } = require('./buildSocialLinks');
+const CM = require('./contentModel');
 const { buildNavMenu } = require('./buildNavMenu');
 
-const isDev = process.env.NODE_ENV !== 'production';
 const basePath = '';
 
 const buildAccessibilityPage = 
@@ -38,10 +39,7 @@ function (
         .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
         .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
         .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
-        .replace(/{{FACEBOOK_URL}}/g, globalValues.facebookUrl)
-        .replace(/{{TWITTER_URL}}/g, globalValues.twitterUrl)
-        .replace(/{{PINTEREST_URL}}/g, globalValues.pinterestUrl)
-        .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
+        .replace(/{{SOCIAL_LINKS}}/g, buildSocialLinks(globalValues))
         .replace('</head>', `<link rel="stylesheet" href="./css/bootstrap.min.css">
                             <link rel="stylesheet" href="./css/accessibility.css"></head>`)
         .replace('</body>', `<script src="./js/bootstrap.bundle.min.js"></script>
@@ -50,44 +48,33 @@ function (
 
         fs.writeFileSync(path.join(distDir, `accessibility.html`), accessibility);
 
-        // === Auto-create accessibility.css if it doesn't exist 
-        const cssFilePath = path.join(__dirname, '../', 'src/css', `accessibility.css`);
+        // === Stylesheet + Webpack entry stub, inside this user's folder
+        writePageAssets({
+            distDir,
+            cssDir,
+            entryName: 'accessibility',
+            cssName: 'accessibility',
+            styleKey: globalValues.styleKey
+        });
 
-        // Chosen theme key from the form (default 'style')
-        const chosenKey = (globalValues?.styleKey || 'style');
+        // === Semantic model for the WordPress exporter ===
+        // The policy text only exists in the template, so pull it into the
+        // model here. Without this the exported theme had blank legal pages.
+        return CM.legalPage({
+            slug: 'accessibility',
+            title: 'Accessibility',
+            menuOrder: 10000,
+            meta: {
+                title: `Accessibility | ${globalValues.businessName}`,
+                description: `Accessibility for ${globalValues.businessName}.`,
+            },
+            sections: CM.sectionsFromLegalHtml(accessibility),
+        });
 
-        // Create index.css in src/css for webpack use
-        // Source: selected theme
-        const srcCss = resolveThemeCss(chosenKey);
-        fs.copyFileSync(srcCss, cssFilePath);
-
-        
-        // Copy generated accessibility.css to dist/css for dev use
-        fs.copyFileSync(
-        path.join(__dirname, '../', `src/css/accessibility.css`),
-        path.join(cssDir, `accessibility.css`) // result = dist/css/accessibility.css
-        );
-
-
-        // === Create JS stub ( for prod, needed for Webpack build)
-        const jsFilePath = path.join(__dirname, '../src/js', `accessibility.js`);
-        const jsContent = `
-        // Auto-generated JS stub for accessibility.js
-        import '../css/bootstrap.min.css';
-        import '../css/accessibility.css';
-        import './bootstrap.bundle.min.js';
-        // Add your JS logic for accessibility.js here
-        `;
-
-        if (!fs.existsSync(jsFilePath)) {
-            // Create js file.js in src/js for webpack use
-            fs.writeFileSync(jsFilePath, jsContent);
-            
-        } 
+ 
 
     }
 
 }
 
 module.exports = { buildAccessibilityPage };
-

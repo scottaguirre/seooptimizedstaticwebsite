@@ -13,7 +13,6 @@ const { buildAboutUsPage } = require('./buildAboutUsPage');
 const { generateMetadata } = require('./generateMetadata');
 const { getFullStateName } = require('./getFullStateName');
 const { buildAltAttribute } = require('./buildAltAttribute');
-const { buildServicesPage } = require('./buildServicesPage');
 const { buildLocationPages} = require('./buildLocationPages');
 const { buildInterlinksMap } = require('./buildInterlinksMap');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
@@ -52,7 +51,6 @@ module.exports = {
   getHoursDaysText,
   getHoursTimeText,
   generateMetadata,
-  buildServicesPage,
   buildAltAttribute,
   createBuildRecord,
   formatPhoneForHref,

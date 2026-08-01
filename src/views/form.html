@@ -182,7 +182,10 @@
   <script src="/js/generateDinamycForm.js" defer></script>
   <script src="/js/spinner.js" defer></script>
   <script src="/js/currentUserInfo.js" defer></script> 
-  <script src="/js/checkUserCredits.js" defer></script>
+  <!-- checkUserCredits.js removed: it bound a SECOND submit handler that
+       called form.submit() while spinner.js was already POSTing, starting two
+       concurrent generations from one click. Its credit check now lives in
+       spinner.js, which is the single submit handler. -->
   <script src="/js/notEnoughCreditsModal.js" defer></script>
 </body>
 </html>

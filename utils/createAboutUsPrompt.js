@@ -4,15 +4,20 @@ function createAboutUsPrompt({ globalValues, keywords}) {
   const { useNearMe, businessName, location, businessType } = globalValues;
 
   const categoryMap = {
-    'plumbing':        'Plumber',
-    'electrician':     'Electrician',
-    'roofing':         'Roofing Contractor',
+    'plumbing':         'Plumber',
+    'electrician':      'Electrician',
+    'roofing':          'Roofing Contractor',
     'concrete contractor': 'Concrete Contractor',
-    'hvac':            'Air Conditioning Repair',
-    'landscaping':     'Landscaper',
-    'law firm':        'Lemon Law Lawyer',
-    'fencing':         'Fence Company',
-    'junk removal':    'Junk Removal'
+    'hvac':             'Hvac Repair',
+    'air conditioning': 'Air Conditioning',
+    'landscaping':      'Landscaper',
+    'law firm':         'Lemon Law Lawyer',
+    'fencing':          'Fence Company',
+    'junk removal':     'Junk Removal',
+    'tree removal':     'Tree Removal',
+    'paving':          'Paving',
+    'swimming pool contractor': 'Swimming Pool Contractor',
+    'water damage restoration': 'Water Damage Restoration'
   };
 
   const category = categoryMap[businessType.toLowerCase()] || businessType;
@@ -51,12 +56,13 @@ Write ${includeNearMe ? 5 : 4} sections. Each section must include:
 - Two short, helpful paragraphs that sound natural and professional.
 
 Use these section headings in order:
-1. 'Who We Are' (besides the 2 paragraphs, also create a subheading related to 'Who We Are').
+1. 'Who is ${businessName}?' (besides the 2 paragraphs, also create a subheading related to 'Who We Are' but including ${category} ).
+    The first paragraph should start with this phrase: ${businessName} is a local ${category} company serving ${location}.
     In the second paragraph of this section include this word ${rawKeywords[0]}.
 
 2. 'What Makes Us Stand Out?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
 
-3. 'Services We Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
+3. '${businessType} Services We Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
 In the second paragraph of this section include this word ${rawKeywords[2]}.
 
 4. Talk about ${location}.
@@ -74,7 +80,7 @@ Return the result as a JSON object with this exact format:
 
 {
   "section1": {
-    "heading": "Who We Are",
+    "heading": "Who is ${businessName}",
     "subheading": "Subheading text",
     "paragraphs": ["Paragraph 1", "Paragraph 2"]
   },

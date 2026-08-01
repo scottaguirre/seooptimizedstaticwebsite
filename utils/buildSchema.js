@@ -49,7 +49,7 @@ const buildSchema = function (globalValues, uploadedImages, index, coordinates, 
     name: globalValues.businessName,
     url: `https://${normalizeDomain(globalValues.domain)}`,
     telephone: globalValues.phone,
-    ...(imgs.length ? { image: imgs } : {}),
+    // ...(imgs.length ? { image: imgs } : {}),
     address: {
       "@type": "PostalAddress",
       streetAddress: globalValues.address,

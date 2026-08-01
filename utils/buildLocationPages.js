@@ -5,7 +5,10 @@ const { slugify } = require('./slugify');
 const { googleMap } = require('./googleMap');
 const { buildNavMenu } = require('./buildNavMenu'); 
 const { buildAltText } = require("./buildAltText");
-const { escapeAttr, resolveThemeCss } = require("./helpers");
+const { escapeAttr } = require("./helpers");
+const { writePageAssets } = require('./buildAssets');
+const { buildSocialLinks } = require('./buildSocialLinks');
+const CM = require('./contentModel');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
@@ -15,7 +18,6 @@ const { generateLocationPagesContent } = require("./generateLocationPagesContent
 
 
 
-const isDev = process.env.NODE_ENV !== 'production';
 const basePath = '';
 
 /**
@@ -31,21 +33,25 @@ const buildLocationPages = async function (
     interlinkMap
 ) {
   
-  if (!(globalValues.wantsLocationPages && globalValues.locationPages.length)) return;
+  if (!(globalValues.wantsLocationPages && globalValues.locationPages.length)) return [];
   
   const baseTemplatePath = path.join(__dirname, '../src/locationPagesTemplate.html');
   const fallbackTemplatePath = path.join(__dirname, '../src/template.html');
   const hasLocationTpl = fs.existsSync(baseTemplatePath);
 
-  if (!hasLocationTpl) return; // use your fallback if you prefer
+  if (!hasLocationTpl) return []; // use your fallback if you prefer
 
   // Used to copy images inside the main loop
   const locationPages = globalValues.locationPages;
   imageContext = "imageLocationPages";
 
+  // Semantic model for the WordPress exporter
+  const modelPages = [];
+
 
   for (const [index, locationPage] of locationPages.entries()) {
     let locationSlug = locationPage.slug || locationPage.display || ''; // e.g., "Austin TX"
+    const altSuffix = locationSlug;
     const globalForLoc = { ...globalValues, location: locationPage.display };
 
 
@@ -165,11 +171,7 @@ const buildLocationPages = async function (
       .replace(/{{PHONE_RAW}}/g, formatPhoneForHref(globalValues.phone))
       .replace(/{{PHONE_DISPLAY}}/g, globalForLoc.phone)
       .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
-      .replace(/{{FACEBOOK_URL}}/g, globalForLoc.facebookUrl)
-      .replace(/{{TWITTER_URL}}/g, globalForLoc.twitterUrl)
-      .replace(/{{PINTEREST_URL}}/g, globalForLoc.pinterestUrl)
-      .replace(/{{YOUTUBE_URL}}/g, globalForLoc.youtubeUrl)
-      .replace(/{{LINKEDIN_URL}}/g, globalForLoc.linkedinUrl);
+      .replace(/{{SOCIAL_LINKS}}/g, buildSocialLinks(globalForLoc));
 
 
       // === Remove the email line + <hr> when email is empty ===
@@ -198,35 +200,82 @@ const buildLocationPages = async function (
     // Write page
     fs.writeFileSync(path.join(distDir, `location-${locationSlug}.html`), template);
 
-    // Dev: ensure CSS and JS stubs
-    const destCss = path.join(__dirname, '../src/css', `location-${locationSlug}.css`);
+    // === Stylesheet + Webpack entry stub, inside this user's folder
+    writePageAssets({
+      distDir,
+      cssDir,
+      entryName: `location-${locationSlug}`,
+      cssName: `location-${locationSlug}`,
+      styleKey: globalValues.styleKey
+    });
 
-    if (isDev && !fs.existsSync(destCss)) {
+    // === Semantic model for this location page ===
+    const heroAlt = `${altTexts['hero-mobile']} - ${altSuffix}`;
+    modelPages.push({
+      type: CM.PAGE_TYPES.LOCATION,
+      htmlFile: `location-${locationSlug}.html`,
+      slug: `location-${locationSlug}`,
+      cssName: `location-${locationSlug}`,
+      title: locationPage.display,
+      isFrontPage: false,
+      menuOrder: 100 + Number(index),
+      display: locationPage.display,
+      cityForSchema: locationPage.cityForSchema || '',
+      state: locationPage.state || '',
+      meta: { title: metaTitle, description: metaDesc },
+      schema: jsonLdString || '',
+      sections: [
+        CM.heroSection({
+          h1: globalForLoc.businessName.toUpperCase(),
+          tagline: globalForLoc.location,
+          imageList: CM.heroImages(uploadedImages[index] || {}, heroAlt, heroAlt),
+        }),
+        CM.section({
+          key: 'section1', label: 'Section 1',
+          type: CM.SECTION_TYPES.TEXT,
+          source: sectionsWithLinks.section1 || {},
+        }),
+        CM.section({
+          key: 'section2', label: 'Section 2',
+          type: CM.SECTION_TYPES.TEXT_IMAGES,
+          source: sectionsWithLinks.section2 || {},
+          imageList: [
+            CM.image({ role:'section2-img1', src:uploadedImages[index]?.section2Img1,
+                       alt:`${altTexts['section2-1']} - ${altSuffix}`, width:600, height:400 }),
+            CM.image({ role:'section2-img2', src:uploadedImages[index]?.section2Img2,
+                       alt:`${altTexts['section2-2']} - ${altSuffix}`, width:600, height:400 }),
+          ],
+        }),
+        CM.section({
+          key: 'section3', label: 'Section 3',
+          type: CM.SECTION_TYPES.TEXT,
+          source: sectionsWithLinks.section3 || {},
+        }),
+        CM.section({
+          key: 'section4', label: 'Section 4',
+          type: CM.SECTION_TYPES.TEXT_IMAGES,
+          source: sectionsWithLinks.section4 || {},
+          imageList: [
+            CM.image({ role:'section4-img1', src:uploadedImages[index]?.section4Img1,
+                       alt:`${altTexts['section4-1']} - ${altSuffix}`, width:600, height:400 }),
+            CM.image({ role:'section4-img2', src:uploadedImages[index]?.section4Img2,
+                       alt:`${altTexts['section4-2']} - ${altSuffix}`, width:600, height:400 }),
+          ],
+        }),
+        {
+          key: 'napMap', label: 'Contact Details & Map',
+          type: CM.SECTION_TYPES.NAP_MAP,
+          heading: '', paragraphs: [], images: [],
+          mapEmbed: globalForLoc.mapEmbed || '',
+        },
+      ],
+      interlinks: locInterlinks || [],
+    });
 
-      // Create CSS file.css in src/css for webpack use
-      const styleKey = (globalValues.styleKey || 'style');
-      const srcCssTheme = resolveThemeCss(styleKey);
-      
-      fs.copyFileSync(srcCssTheme, destCss);
-       
-      fs.copyFileSync(
-        path.join(__dirname, `../src/css/location-${locationSlug}.css`),
-        path.join(cssDir, `location-${locationSlug}.css`)
-      );
-    }
 
-    const jsFilePath = path.join(__dirname, '../src/js', `location-${locationSlug}.js`);
-    const jsContent = `
-      // Auto-generated JS stub for ${locationSlug}
-      import '../css/bootstrap.min.css';
-      import '../css/location-${locationSlug}.css';
-      import './bootstrap.bundle.min.js';
-      // Add your JS logic for ${locationSlug} here
-    `;
-    if (isDev && !fs.existsSync(jsFilePath)) {
-      fs.writeFileSync(jsFilePath, jsContent);
-    }
   }
+
+  return modelPages;
 };
 
 module.exports = { buildLocationPages };

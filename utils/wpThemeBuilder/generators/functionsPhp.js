@@ -47,7 +47,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 require_once get_template_directory() . '/inc/theme-activation.php';
 require_once get_template_directory() . '/inc/meta-boxes.php';
-require_once get_template_directory() . '/inc/newpage-meta-boxes.php';
+require_once get_template_directory() . '/inc/section-renderer.php';
+require_once get_template_directory() . '/inc/template-nav.php';
 require_once get_template_directory() . '/inc/theme-settings.php';
 require_once get_template_directory() . '/inc/template-helpers.php';
 require_once get_template_directory() . '/inc/contact-form-handler.php';
@@ -92,6 +93,20 @@ function ${funcPrefix}_setup() {
     register_nav_menus( array(
         'primary' => __( 'Primary Menu', '${themeSlug}' ),
     ) );
+
+    // Hero sizes.
+    //
+    // A client uploads ONE hero image; WordPress generates these on upload so
+    // the theme can serve a phone the small file instead of the 1400px one.
+    // Generated pages keep their four purpose-cropped files and do not use
+    // these sizes.
+    //
+    // Cropped to the same proportions the generated heroes use at each
+    // breakpoint, so a single upload still fills the space correctly.
+    add_image_size( '${funcPrefix}-hero-mobile',  600,  350,  true );
+    add_image_size( '${funcPrefix}-hero-tablet',  750,  400,  true );
+    add_image_size( '${funcPrefix}-hero-desktop', 1250, 700,  true );
+    add_image_size( '${funcPrefix}-hero-large',   1400, 700,  true );
 }
 add_action( 'after_setup_theme', '${funcPrefix}_setup' );
 
@@ -171,78 +186,48 @@ function ${funcPrefix}_enqueue_assets() {
     );
 
 
-    // Get current page slug
-    $page_slug = '';
+    // Exactly one theme stylesheet per page.
+    //
+    // Every generated page ships its own copy (index.css, location-x.css,
+    // ...) so it can be edited independently. Resolve that first.
+    //
+    // Pages a client creates in WordPress, and blog posts, have no matching
+    // file — they fall back to theme.css. Without that fallback they would
+    // load Bootstrap only and lose the entire design.
+    $page_css = '';
+
     if ( is_front_page() || is_home() ) {
-        // Try both 'index' and 'about' for front page
-        if ( file_exists( get_template_directory() . '/css/index.css' ) ) {
-            $page_slug = 'index';
-        } elseif ( file_exists( get_template_directory() . '/css/about.css' ) ) {
-            $page_slug = 'about';
-        }
-    } elseif ( is_page() ) {
-        global $post;
-        
-        // Check if this page uses New Page Layout template
-        $template = get_page_template_slug( $post->ID );
-        
-        if ( $template === 'page-new-page-layout.php' ) {
-            // New pages use generic service page CSS
-            // Try to find any service page CSS to reuse
-            $service_css_files = array(
-                'water-heater-repair',
-                'faucet-installation',
-                'drain-cleaning',
-                'emergency-plumbing',
-                'service-page', // Generic fallback
-            );
-            
-            foreach ( $service_css_files as $css_file ) {
-                if ( file_exists( get_template_directory() . '/css/' . $css_file . '.css' ) ) {
-                    $page_slug = $css_file;
-                    break;
-                }
-            }
-        } else {
-            // For imported pages, use page-specific CSS
-            $page_slug = $post->post_name;
-            
-            // CRITICAL FIX: Try to find CSS file with or without location suffix
-            // Service pages have slugs like "water-heater-repair-leander-tx"
-            // But CSS files are named "water-heater-repair.css"
-            
-            $page_css_path = get_template_directory() . '/css/' . $page_slug . '.css';
-            
-            // If exact match doesn't exist, try removing location suffix
-            if ( ! file_exists( $page_css_path ) ) {
-                // Remove common location patterns: "-leander-tx", "-austin-tx", etc.
-                // Pattern: remove "-[city]-[state]" from the end
-                $slug_without_location = preg_replace( '/-[a-z]+-[a-z]{2}$/i', '', $page_slug );
-                
-                if ( $slug_without_location !== $page_slug ) {
-                    $alternate_css_path = get_template_directory() . '/css/' . $slug_without_location . '.css';
-                    
-                    if ( file_exists( $alternate_css_path ) ) {
-                        $page_slug = $slug_without_location;
-                    }
+        $page_css = 'index';
+    } elseif ( is_singular() ) {
+        $post_obj = get_queried_object();
+        if ( $post_obj && ! empty( $post_obj->post_name ) ) {
+            $slug = $post_obj->post_name;
+
+            if ( file_exists( get_template_directory() . '/css/' . $slug . '.css' ) ) {
+                $page_css = $slug;
+            } else {
+                // Service pages are slugged "<service>-<city>-<st>" but their
+                // stylesheet is named "<service>.css".
+                $trimmed = preg_replace( '/-[a-z]+-[a-z]{2}$/i', '', $slug );
+                if ( $trimmed !== $slug
+                     && file_exists( get_template_directory() . '/css/' . $trimmed . '.css' ) ) {
+                    $page_css = $trimmed;
                 }
             }
         }
     }
 
-    // Enqueue page-specific CSS if it exists
-    if ( $page_slug ) {
-        $page_css_path = get_template_directory() . '/css/' . $page_slug . '.css';
-        
-        if ( file_exists( $page_css_path ) ) {
-            wp_enqueue_style(
-                '${themeSlug}-' . $page_slug,
-                $theme_uri . '/css/' . $page_slug . '.css',
-                array( '${themeSlug}-bootstrap' ),
-                '1.0.0'
-            );
-        }
+    // Fallback for anything without its own stylesheet
+    if ( $page_css === '' || ! file_exists( get_template_directory() . '/css/' . $page_css . '.css' ) ) {
+        $page_css = 'theme';
     }
+
+    wp_enqueue_style(
+        '${themeSlug}-page',
+        $theme_uri . '/css/' . $page_css . '.css',
+        array( '${themeSlug}-bootstrap' ),
+        '1.0.0'
+    );
 ${bootstrapJsCode}
 
     // Enqueue contact form JavaScript on front page
@@ -309,10 +294,15 @@ function ${funcPrefix}_excerpt_length( $length ) {
 add_filter( 'excerpt_length', '${funcPrefix}_excerpt_length' );
 
 /**
- * SEO: Custom document title for New Page Layout pages
+ * SEO: document title.
+ *
+ * These filters used to be gated on 'page-new-page-layout.php' and read
+ * ${funcPrefix}_npl_seo_* meta — a template and meta keys that no longer
+ * exist, so neither ever ran. Every page fell back to WordPress's default
+ * "Page Title - Site Name", discarding the generated SEO title entirely.
  */
 function ${funcPrefix}_filter_document_title( $title ) {
-    if ( ! is_page() ) {
+    if ( ! is_singular() ) {
         return $title;
     }
 
@@ -321,106 +311,66 @@ function ${funcPrefix}_filter_document_title( $title ) {
         return $title;
     }
 
-    $template = get_page_template_slug( $post_id );
-    if ( $template !== 'page-new-page-layout.php' ) {
-        return $title;
-    }
+    $seo_title = get_post_meta( $post_id, '${funcPrefix}_page_title', true );
 
-    $seo_title = get_post_meta( $post_id, '${funcPrefix}_npl_seo_title', true );
-    if ( ! empty( $seo_title ) ) {
-        return $seo_title;
-    }
-
-    return $title;
+    return ! empty( $seo_title ) ? $seo_title : $title;
 }
 add_filter( 'pre_get_document_title', '${funcPrefix}_filter_document_title' );
 
 /**
- * SEO: Meta description for New Page Layout pages
+ * SEO: meta description.
+ *
+ * Stored on every generated page, and editable per page in the SEO box.
+ * Falls back to the site tagline so no page ships without one.
  */
-function ${funcPrefix}_output_newpage_meta_description() {
-    if ( ! is_page() ) {
-        return;
+function ${funcPrefix}_output_meta_description() {
+    $description = '';
+
+    if ( is_singular() ) {
+        $post_id = get_queried_object_id();
+        if ( $post_id ) {
+            $description = get_post_meta( $post_id, '${funcPrefix}_page_description', true );
+
+            // Posts published by the blog automation have no SEO fields set,
+            // so derive something useful rather than repeating the tagline on
+            // every one of them.
+            if ( empty( $description ) && 'post' === get_post_type( $post_id ) ) {
+                $excerpt = get_the_excerpt( $post_id );
+                if ( $excerpt ) {
+                    $description = wp_trim_words( wp_strip_all_tags( $excerpt ), 30, '' );
+                }
+            }
+        }
     }
 
-    $post_id = get_queried_object_id();
-    if ( ! $post_id ) {
-        return;
+    if ( empty( $description ) ) {
+        $description = get_bloginfo( 'description' );
     }
 
-    $template = get_page_template_slug( $post_id );
-    if ( $template !== 'page-new-page-layout.php' ) {
-        return;
-    }
-
-    $seo_description = get_post_meta( $post_id, '${funcPrefix}_npl_seo_description', true );
-    if ( ! empty( $seo_description ) ) {
-        echo '<meta name="description" content="' . esc_attr( $seo_description ) . '">' . "\\n";
+    if ( ! empty( $description ) ) {
+        echo '<meta name="description" content="' . esc_attr( wp_strip_all_tags( $description ) ) . '">' . "\n";
     }
 }
-add_action( 'wp_head', '${funcPrefix}_output_newpage_meta_description', 5 );
+add_action( 'wp_head', '${funcPrefix}_output_meta_description', 1 );
 
 /**
- * Filter content to convert PHP template tags into actual URLs
- * This executes the template tags stored in post meta
+ * NOTE: this file used to define ${funcPrefix}_filter_meta_content(), hooked to
+ * get_post_metadata, which eval()'d any meta value containing PHP tags.
+ *
+ * It was removed for two reasons:
+ *
+ * 1. CORRECTNESS. A get_post_metadata filter that returns non-null
+ *    short-circuits WordPress own lookup, and WordPress then does:
+ *
+ *        if ( $single && is_array( $check ) ) { return $check[0]; }
+ *
+ *    Several of this theme's meta values are arrays - the ordered section
+ *    descriptors, image dimensions, custom sections - so every one of them
+ *    was silently reduced to its first element. Pages rendered empty.
+ *
+ * 2. SECURITY. It executed stored post meta as PHP. Nothing in this theme
+ *    stores PHP in meta; asset paths are resolved by the section renderer.
  */
-function ${funcPrefix}_process_content_php( $content ) {
-    // Only process if content contains PHP tags
-    if ( strpos( $content, '<' . '?php' ) === false ) {
-        return $content;
-    }
-
-    // Start output buffering
-    ob_start();
-    
-    // Evaluate the PHP code in the content
-    // This converts template tags into actual URLs
-    eval( '?' . '>' . $content );
-    
-    // Get the processed content
-    $processed = ob_get_clean();
-    
-    return $processed;
-}
-
-/**
- * Filter post meta to process PHP template tags
- */
-function ${funcPrefix}_filter_meta_content( $value, $object_id, $meta_key, $single ) {
-    // Only process our theme's meta fields
-    if ( strpos( $meta_key, '${funcPrefix}_' ) !== 0 ) {
-        return $value;
-    }
-
-    // Remove this filter to prevent infinite loops
-    remove_filter( 'get_post_metadata', '${funcPrefix}_filter_meta_content', 10 );
-    
-    // Get the actual meta value
-    $meta_value = get_post_meta( $object_id, $meta_key, $single );
-    
-    // Re-add the filter
-    add_filter( 'get_post_metadata', '${funcPrefix}_filter_meta_content', 10, 4 );
-    
-    // Process PHP tags if present
-    if ( is_string( $meta_value ) && strpos( $meta_value, '<' . '?php' ) !== false ) {
-        $meta_value = ${funcPrefix}_process_content_php( $meta_value );
-    }
-    
-    return $meta_value;
-}
-add_filter( 'get_post_metadata', '${funcPrefix}_filter_meta_content', 10, 4 );
-
-/**
- * Additional fallback: Filter the_content for any PHP tags
- * This catches content displayed via the_content() instead of meta fields
- */
-function ${funcPrefix}_process_the_content( $content ) {
-    if ( strpos( $content, '<' . '?php' ) !== false ) {
-        return ${funcPrefix}_process_content_php( $content );
-    }
-    return $content;
-}
-add_filter( 'the_content', '${funcPrefix}_process_the_content', 5 );
 `;
 }
 

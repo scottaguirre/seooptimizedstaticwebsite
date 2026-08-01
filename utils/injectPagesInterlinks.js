@@ -52,12 +52,12 @@ function injectPagesInterlinks(
 
           // ----- Special case: index (About/Home) -----
           if (slug === 'index') {
-            const aboutAnchor = `<a href="index.html">${globalValues.businessName}</a>`;
+            const aboutAnchor = `<a href="./">${globalValues.businessName}</a>`;
             const regex = new RegExp(`(^|\\s)(${globalValues.businessName})(?=\\s|\\.|,|$)`, 'i');
 
             if (regex.test(paragraph)) {
               paragraph = paragraph.replace(regex, (match, leadingSpace, matchedText) => {
-                return `${leadingSpace}<a href="index.html">${matchedText}</a>`;
+                return `${leadingSpace}<a href="./">${matchedText}</a>`;
               });
             } else {
               // Fallback: append small line with link

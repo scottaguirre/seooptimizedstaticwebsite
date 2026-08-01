@@ -73,14 +73,11 @@ router.post("/api/check-credits", requireAuth, async (req, res) => {
   try {
     const pages = req.body.pages;
 
-    const { ok, pagesCount, totalCost } = await checkCredits(req.user, pages);
+    // Read only: this endpoint no longer deducts. Charging happens in
+    // /generate, after the build succeeds.
+    const { ok, pagesCount, totalCost, available } = checkCredits(req.user, pages);
 
-    res.json({
-      ok,
-      pagesCount,
-      totalCost,
-      available: req.user.credits
-    });
+    res.json({ ok, pagesCount, totalCost, available });
 
   } catch (err) {
     console.error("check-credits error:", err);

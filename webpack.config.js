@@ -6,12 +6,23 @@ const Critters = require('critters-webpack-plugin');
 const { PurgeCSSPlugin } = require('purgecss-webpack-plugin');
 const glob = require('glob');
 
-// ========== Dynamic build folder (per user) ==========
-// Example: BUILD_SUBDIR=user_653f2a... -> dist/user_653f2a...
+// ========== Build folder resolution ==========
+// Preferred: BUILD_DIR is an absolute path to the folder being optimized.
+//   e.g. BUILD_DIR=/srv/app/builds/work/user_653f2a...
+// Fallback (legacy): BUILD_SUBDIR names a folder inside dist/
+//   e.g. BUILD_SUBDIR=user_653f2a...  ->  dist/user_653f2a...
+const buildDirEnv = process.env.BUILD_DIR || '';
 const buildSubdir = process.env.BUILD_SUBDIR || '';
-const distPath = path.resolve(__dirname, 'dist', buildSubdir);
 
-// Collect HTML files for this build
+const distPath = buildDirEnv
+  ? path.resolve(buildDirEnv)
+  : path.resolve(__dirname, 'dist', buildSubdir);
+
+// Entry stubs live INSIDE the build folder so concurrent builds never collide.
+// (They used to live in the shared src/js folder.)
+const entryDir = path.join(distPath, '_src', 'js');
+
+// Collect HTML files for this build (top level only)
 let htmlFiles = [];
 if (fs.existsSync(distPath)) {
   htmlFiles = fs.readdirSync(distPath).filter(f => f.endsWith('.html'));
@@ -19,14 +30,16 @@ if (fs.existsSync(distPath)) {
   console.warn(`⚠️ distPath "${distPath}" does not exist. No HTML files found for Webpack.`);
 }
 
-// Build JS entrypoints for pages that have a matching stub in src/js/<name>.js
-// e.g. index.html -> src/js/index.js, privacy-policy.html -> src/js/privacy-policy.js
+// Build JS entrypoints for pages that have a matching stub in <build>/_src/js/<name>.js
+// e.g. index.html -> _src/js/index.js, privacy-policy.html -> _src/js/privacy-policy.js
 const entries = {};
 htmlFiles.forEach(file => {
   const name = path.basename(file, '.html');
-  const jsPath = path.resolve(__dirname, 'src/js', `${name}.js`);
+  const jsPath = path.join(entryDir, `${name}.js`);
   if (fs.existsSync(jsPath)) {
     entries[name] = jsPath;
+  } else {
+    console.warn(`⚠️ No entry stub for "${file}" (looked for ${jsPath})`);
   }
 });
 
@@ -34,7 +47,7 @@ module.exports = {
   mode: 'production',
   entry: entries,
   output: {
-    // IMPORTANT: write back into the same user's folder, not global dist/
+    // Write back into the same build folder
     path: distPath,
     filename: 'js/[name].[contenthash].js',
     // Do NOT clean the folder; we don't want to delete HTML or assets
@@ -42,7 +55,6 @@ module.exports = {
   },
   module: {
     rules: [
-      // Keep JS simple – no Babel needed if you're just using basic syntax
       {
         test: /\.css$/i,
         use: [MiniCssExtractPlugin.loader, 'css-loader']
@@ -63,7 +75,7 @@ module.exports = {
       filename: 'css/[name].[contenthash].css'
     }),
 
-    // One HtmlWebpackPlugin instance per HTML file in this user's folder
+    // One HtmlWebpackPlugin instance per HTML file in this build folder
     ...htmlFiles.map(file => {
       const name = path.basename(file, '.html');
       const chunks = entries[name] ? [name] : [];
@@ -89,9 +101,8 @@ module.exports = {
       pruneSource: false
     }),
 
-    // Purge unused CSS per user's HTML/JS
+    // Purge unused CSS against this build's HTML/JS only
     new PurgeCSSPlugin({
-      // Look only inside this user's dist folder
       paths: glob.sync(`${distPath}/**/*.{html,js}`, { nodir: true }),
       safelist: {
         standard: [

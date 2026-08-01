@@ -1,4 +1,19 @@
 // utils/wpThemeBuilder/generators/headerPhp.js
+//
+// Emits the SAME markup as src/template.html so the generated stylesheet
+// (#headerColor, .navbar-vertical-padding, .container-nav-menu, the
+// services/locations dropdown classes) applies unchanged.
+//
+// The old version echoed a stored header_html blob and fell back to generic
+// Bootstrap markup when that was missing. The model path never stores that
+// blob, so the fallback was always used and none of the theme CSS matched.
+//
+// The nav is rebuilt from page type (stored on each page at activation),
+// mirroring utils/buildNavMenu.js:
+//   - ABOUT US            -> front page
+//   - first service       -> top-level link
+//   - remaining services  -> SERVICES dropdown
+//   - locations           -> LOCATIONS dropdown
 
 const { makePhpIdentifier } = require('../wpHelpers/phpHelpers');
 
@@ -8,14 +23,13 @@ function generateHeaderPhp(options = {}) {
     themeName = 'Local Business Theme',
   } = options;
 
-  const funcPrefix = makePhpIdentifier(themeSlug);
+  const p = makePhpIdentifier(themeSlug);
 
   return `<?php
 /**
  * Header Template
- * 
- * Outputs the stored header HTML from the database
- * Replaces static navigation with WordPress dynamic menu
+ *
+ * Markup mirrors the generated static site so the chosen stylesheet applies.
  *
  * @package ${themeSlug}
  */
@@ -25,54 +39,26 @@ function generateHeaderPhp(options = {}) {
 <head>
     <meta charset="<?php bloginfo( 'charset' ); ?>">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="profile" href="https://gmpg.org/xfn/11">
 
     <?php
-    // Output custom title from post meta or fallback to WordPress default
-    $custom_title = get_post_meta( get_the_ID(), '${funcPrefix}_page_title', true );
-    if ( $custom_title ) :
-    ?>
-    <title><?php echo esc_html( $custom_title ); ?></title>
-    <?php else : ?>
-    <title><?php wp_title( '|', true, 'right' ); ?><?php bloginfo( 'name' ); ?></title>
-    <?php endif; ?>
+    // Favicon from the generated assets, unless a Site Icon is set
+    if ( ! has_site_icon() ) {
+        $favicon = ${p}_get_setting( 'favicon' );
+        if ( $favicon ) {
+            echo '<link rel="icon" href="' . esc_url( ${p}_image_url( $favicon ) ) . '">' . "\\n";
+        }
+    }
 
-    <?php
-    // Output custom meta description
-    $custom_description = get_post_meta( get_the_ID(), '${funcPrefix}_page_description', true );
-    if ( $custom_description ) :
-    ?>
-    <meta name="description" content="<?php echo esc_attr( $custom_description ); ?>">
-    <?php endif; ?>
+    // Per-page JSON-LD captured at generation time
+    // Per-page JSON-LD. Generated pages carry schema from build time; pages
+    // created in WordPress get one built from Theme Settings.
+    $schema_json = is_singular() ? ${p}_get_page_schema( get_the_ID() ) : '';
+    if ( ! empty( $schema_json ) ) {
+        echo '<script type="application/ld+json">' . $schema_json . '</script>' . "\\n";
+    }
 
-    <?php
-    // Output custom meta author
-    $custom_author = get_post_meta( get_the_ID(), '${funcPrefix}_page_author', true );
-    if ( $custom_author ) :
+    wp_head();
     ?>
-    <meta name="author" content="<?php echo esc_attr( $custom_author ); ?>">
-    <?php endif; ?>
-
-    <?php
-    // Output custom favicon
-    $custom_favicon = get_post_meta( get_the_ID(), '${funcPrefix}_page_favicon', true );
-    if ( $custom_favicon ) :
-        $favicon_url = get_template_directory_uri() . '/assets/' . $custom_favicon;
-    ?>
-    <link rel="icon" href="<?php echo esc_url( $favicon_url ); ?>" type="image/x-icon" />
-    <?php endif; ?>
-
-    <?php
-    // Output JSON-LD Schema
-    $schema_json = get_post_meta( get_the_ID(), '${funcPrefix}_page_schema_json', true );
-    if ( $schema_json ) :
-    ?>
-    <script type="application/ld+json">
-    <?php echo $schema_json; ?>
-    </script>
-    <?php endif; ?>
-
-    <?php wp_head(); ?>
 </head>
 
 <body <?php body_class(); ?>>
@@ -83,176 +69,325 @@ function generateHeaderPhp(options = {}) {
         <?php esc_html_e( 'Skip to content', '${themeSlug}' ); ?>
     </a>
 
-    <?php
-    // Get the stored header HTML
-    $header_html = '';
-    
-    if ( is_singular() ) {
-        $header_html = get_post_meta( get_the_ID(), '${funcPrefix}_header_html', true );
-    }
-    
-    if ( empty( $header_html ) ) {
-        $front_page_id = get_option( 'page_on_front' );
-        if ( $front_page_id ) {
-            $header_html = get_post_meta( $front_page_id, '${funcPrefix}_header_html', true );
-        }
-    }
-    
-    if ( ! empty( $header_html ) ) {
-        // CRITICAL: Replace static navigation with WordPress dynamic menu
-        
-        // Find the nav element and replace it with WordPress menu
-        $nav_pattern = '/<nav[^>]*>.*?<\\/nav>/is';
-        
-        if ( preg_match( $nav_pattern, $header_html, $matches ) ) {
-            $original_nav = $matches[0];
-            
-            // Extract logo from original nav for reuse
-            $logo_html = '';
-            $logo_pattern = '/<img[^>]*(?:class="[^"]*"[^>]*|[^>]*)>/i';
-            if ( preg_match( $logo_pattern, $original_nav, $logo_match ) ) {
-                $logo_html = $logo_match[0];
-                // Fix logo src path
-                $template_uri = get_template_directory_uri();
-                // Extract logo from original nav for reuse
-                
-                $logo_html = '';
-                $logo_pattern = '/<img[^>]*(?:class="[^"]*"[^>]*|[^>]*)>/i';
-                if ( preg_match( $logo_pattern, $original_nav, $logo_match ) ) {
-                    $logo_html = $logo_match[0];
-                    // Only fix relative paths, not absolute URLs
-                    $template_uri = get_template_directory_uri();
-                    $logo_html = preg_replace(
-                        '/src=(["\\'])(?!https?:\\/\\/)(?:(?:\\.\\/)?assets\\/)?([^"\\']+)\\1/i',
-                        'src=$1' . $template_uri . '/assets/$2$1',
-                        $logo_html
-                    );
-                }
-            }
-            
-            // Build WordPress menu with same structure
-            ob_start();
-            ?>
-            <nav class="navbar navbar-expand-lg navbar-light bg-light px-3 navbar-vertical-padding">
-                <div class="container">
-                    <a class="navbar-brand d-flex align-items-center" href="<?php echo esc_url( home_url( '/' ) ); ?>">
-                        <?php ${funcPrefix}_display_logo(); ?>
-                    </a>
+<header id="headerColor">
+  <!-- Navbar -->
+  <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-light bg-light px-3 navbar-vertical-padding">
+      <a class="navbar-brand d-flex align-items-center" href="<?php echo esc_url( home_url( '/' ) ); ?>">
+        <?php ${p}_the_logo(); ?>
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-label="<?php esc_attr_e( 'Open mobile menu', '${themeSlug}' ); ?>">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <?php ${p}_the_nav_menu(); ?>
+    </nav>
+  </div>
+</header>
+`;
+}
 
-                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="<?php esc_attr_e( 'Toggle navigation', '${themeSlug}' ); ?>">
-                        <span class="navbar-toggler-icon"></span>
-                    </button>
 
-                    <div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
-                        <?php
-                        // Output WordPress dynamic menu
-                        wp_nav_menu( array(
-                            'theme_location' => 'primary',
-                            'container'      => false,
-                            'menu_class'     => 'navbar-nav ms-auto',
-                            'fallback_cb'    => '${funcPrefix}_fallback_menu',
-                            'depth'          => 2,
-                        ) );
-                        ?>
-                    </div>
-                </div>
-            </nav>
-            <?php
-            $wordpress_nav = ob_get_clean();
-            
-            // Replace static nav with WordPress nav
-            $header_html = str_replace( $original_nav, $wordpress_nav, $header_html );
-        }
-        
-        echo $header_html;
-    } else {
-        // Fallback header if no stored HTML exists
-        ?>
-        <header id="masthead" class="site-header">
-            <nav class="navbar navbar-expand-lg navbar-light bg-light px-3 navbar-vertical-padding">
-                <div class="container">
-                    <a class="navbar-brand" href="<?php echo esc_url( home_url( '/' ) ); ?>" rel="home">
-                        <?php
-                        $custom_logo_id = get_theme_mod( 'custom_logo' );
-                        if ( $custom_logo_id ) {
-                            echo wp_get_attachment_image( $custom_logo_id, 'full', false, array(
-                                'class' => 'custom-logo',
-                                'alt'   => get_bloginfo( 'name' ),
-                            ) );
-                        } else {
-                            $logo_path = get_template_directory() . '/assets/';
-                            $logo_url = '';
-                            
-                            $logo_files = glob( $logo_path . '*logo*' );
-                            if ( ! empty( $logo_files ) ) {
-                                $logo_file = basename( $logo_files[0] );
-                                $logo_url = get_template_directory_uri() . '/assets/' . $logo_file;
-                            }
+/**
+ * Nav + logo helpers. Written into inc/template-nav.php so header.php stays
+ * readable and the same functions can be reused by the footer.
+ */
+function generateNavHelpersPhp(options = {}) {
+  const { themeSlug = 'local-business-theme' } = options;
+  const p = makePhpIdentifier(themeSlug);
 
-                            if ( $logo_url ) {
-                                echo '<img src="' . esc_url( $logo_url ) . '" alt="' . esc_attr( get_bloginfo( 'name' ) ) . '" class="site-logo">';
-                            } else {
-                                echo '<span class="site-title">' . esc_html( get_bloginfo( 'name' ) ) . '</span>';
-                            }
-                        }
-                        ?>
-                    </a>
+  return `<?php
+/**
+ * Navigation helpers
+ *
+ * Rebuilds the static site's nav structure from page type, which activation
+ * stores on every page as ${p}_page_type.
+ *
+ * @package ${themeSlug}
+ */
 
-                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#primary-navigation" aria-controls="primary-navigation" aria-expanded="false" aria-label="<?php esc_attr_e( 'Toggle navigation', '${themeSlug}' ); ?>">
-                        <span class="navbar-toggler-icon"></span>
-                    </button>
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
 
-                    <div class="collapse navbar-collapse" id="primary-navigation">
-                        <?php
-                        wp_nav_menu( array(
-                            'theme_location' => 'primary',
-                            'container'      => false,
-                            'menu_class'     => 'navbar-nav ms-auto',
-                            'fallback_cb'    => '${funcPrefix}_fallback_menu',
-                            'depth'          => 2,
-                        ) );
-                        ?>
-
-                        <?php
-                        $settings = get_option( '${funcPrefix}_global_settings', array() );
-                        $phone = isset( $settings['phone'] ) ? $settings['phone'] : '';
-                        if ( $phone ) :
-                        ?>
-                            <a href="tel:<?php echo esc_attr( str_replace( array( ' ', '-', '(', ')' ), '', $phone ) ); ?>" class="btn btn-primary ms-lg-3 header-cta">
-                                <span class="phone-icon">&#9742;</span>
-                                <?php echo esc_html( $phone ); ?>
-                            </a>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </nav>
-        </header>
-        <?php
-    }
-    ?>
-
-<?php
-function ${funcPrefix}_fallback_menu() {
-    echo '<ul class="navbar-nav ms-auto">';
-    echo '<li class="nav-item"><a class="nav-link" href="' . esc_url( home_url( '/' ) ) . '">' . esc_html__( 'Home', '${themeSlug}' ) . '</a></li>';
-    
-    $pages = get_pages( array(
-        'sort_column' => 'menu_order',
-        'number'      => 5,
+/**
+ * Pages of a given type, in menu order.
+ */
+function ${p}_pages_of_type( $type ) {
+    $pages = get_posts( array(
+        'post_type'      => 'page',
+        'post_status'    => 'publish',
+        'numberposts'    => -1,
+        'orderby'        => 'menu_order',
+        'order'          => 'ASC',
+        'meta_key'       => '${p}_page_type',
+        'meta_value'     => $type,
+        'suppress_filters' => false,
     ) );
 
-    foreach ( $pages as $page ) {
-        if ( $page->ID === (int) get_option( 'page_on_front' ) ) {
-            continue;
+    return is_array( $pages ) ? $pages : array();
+}
+
+/**
+ * Logo, honouring a Customizer custom logo when one is set.
+ */
+function ${p}_the_logo() {
+    $name = get_bloginfo( 'name' );
+    $business = ${p}_get_setting( 'business_name' );
+    $alt = $business ? $business : $name;
+
+    $width  = ${p}_get_setting( 'logo_width', 150 );
+    $height = ${p}_get_setting( 'logo_height', 100 );
+
+    if ( has_custom_logo() ) {
+        $id  = get_theme_mod( 'custom_logo' );
+        $url = wp_get_attachment_image_url( $id, 'full' );
+        if ( $url ) {
+            printf(
+                '<img src="%s" alt="%s" title="%s" width="%s" height="%s" class="me-2">',
+                esc_url( $url ), esc_attr( $alt ), esc_attr( $alt ),
+                esc_attr( $width ), esc_attr( $height )
+            );
+            return;
         }
-        echo '<li class="nav-item"><a class="nav-link" href="' . esc_url( get_permalink( $page->ID ) ) . '">' . esc_html( $page->post_title ) . '</a></li>';
     }
 
-    echo '</ul>';
+    $logo = ${p}_get_setting( 'logo' );
+    if ( $logo ) {
+        printf(
+            '<img src="%s" alt="%s" title="%s" width="%s" height="%s" class="me-2">',
+            esc_url( ${p}_image_url( $logo ) ), esc_attr( $alt ), esc_attr( $alt ),
+            esc_attr( $width ), esc_attr( $height )
+        );
+        return;
+    }
+
+    echo '<span class="site-title">' . esc_html( $alt ) . '</span>';
 }
+
+/**
+ * City label for a location page, e.g. "Round Rock, TX" -> "ROUND ROCK".
+ */
+function ${p}_location_label( $post_id, $fallback_title ) {
+    $city = get_post_meta( $post_id, '${p}_page_city', true );
+    if ( ! $city ) {
+        $parts = explode( ',', $fallback_title );
+        $city = trim( $parts[0] );
+    }
+    return strtoupper( $city );
+}
+
+/**
+ * Entry point used by header.php.
+ *
+ * If the client has built a menu and assigned it to the Primary location,
+ * that wins — rendered through the Bootstrap walker so it still matches the
+ * theme. Otherwise the automatic page-type nav below is used, so a freshly
+ * installed site has a correct menu without anyone touching it.
+ */
+function ${p}_the_nav_menu() {
+    if ( has_nav_menu( 'primary' ) && class_exists( '${p}_Nav_Walker' ) ) {
+        echo '<div class="collapse navbar-collapse container-nav-menu" id="navbarNav">';
+        wp_nav_menu( array(
+            'theme_location' => 'primary',
+            'container'      => false,
+            'menu_class'     => 'navbar-nav ms-auto',
+            'depth'          => 2,
+            'walker'         => new ${p}_Nav_Walker(),
+        ) );
+        echo '</div>';
+        return;
+    }
+
+    ${p}_the_nav_menu_auto();
+}
+
+/**
+ * The automatic nav, matching the static build's structure exactly.
+ */
+function ${p}_the_nav_menu_auto() {
+    $current  = is_singular() ? get_the_ID() : 0;
+    $services = ${p}_pages_of_type( 'service' );
+    $locations = ${p}_pages_of_type( 'location' );
+
+    $is_front = is_front_page() || is_home();
+    ?>
+    <div class="collapse navbar-collapse container-nav-menu" id="navbarNav">
+      <ul class="navbar-nav ms-auto">
+
+        <li class="nav-item">
+          <a class="nav-link <?php echo $is_front ? 'active' : ''; ?>"
+             href="<?php echo esc_url( home_url( '/' ) ); ?>">
+            <?php esc_html_e( 'ABOUT US', '${themeSlug}' ); ?>
+          </a>
+        </li>
+
+        <?php
+        // First service sits outside the dropdown, as in the static build
+        if ( ! empty( $services ) ) :
+            $first = array_shift( $services );
+        ?>
+          <li class="nav-item">
+            <a class="nav-link <?php echo ( $current === $first->ID ) ? 'active' : ''; ?>"
+               href="<?php echo esc_url( get_permalink( $first->ID ) ); ?>">
+              <?php echo esc_html( strtoupper( $first->post_title ) ); ?>
+            </a>
+          </li>
+        <?php endif; ?>
+
+        <?php if ( ! empty( $services ) ) : ?>
+          <li class="nav-item dropdown services-dropdown-option">
+            <a class="nav-link dropdown-toggle" href="#" id="servicesDropdown" role="button"
+               data-bs-toggle="dropdown" aria-expanded="false">
+              <?php esc_html_e( 'SERVICES', '${themeSlug}' ); ?>
+            </a>
+            <ul class="dropdown-menu">
+              <?php foreach ( $services as $svc ) : ?>
+                <li class="nav-item">
+                  <a class="dropdown-item nav-link <?php echo ( $current === $svc->ID ) ? 'active' : ''; ?>"
+                     href="<?php echo esc_url( get_permalink( $svc->ID ) ); ?>">
+                    <?php echo esc_html( strtoupper( $svc->post_title ) ); ?>
+                  </a>
+                </li>
+              <?php endforeach; ?>
+            </ul>
+          </li>
+        <?php endif; ?>
+
+        <?php if ( ! empty( $locations ) ) : ?>
+          <li class="nav-item dropdown locations-dropdown-option">
+            <a class="nav-link dropdown-toggle" href="#" id="locationsDropdown" role="button"
+               data-bs-toggle="dropdown" aria-expanded="false">
+              <?php esc_html_e( 'LOCATIONS', '${themeSlug}' ); ?>
+            </a>
+            <ul class="dropdown-menu">
+              <?php foreach ( $locations as $loc ) : ?>
+                <li class="nav-item">
+                  <a class="nav-link dropdown-item <?php echo ( $current === $loc->ID ) ? 'active' : ''; ?>"
+                     href="<?php echo esc_url( get_permalink( $loc->ID ) ); ?>">
+                    <?php echo esc_html( ${p}_location_label( $loc->ID, $loc->post_title ) ); ?>
+                  </a>
+                </li>
+              <?php endforeach; ?>
+            </ul>
+          </li>
+        <?php endif; ?>
+
+      </ul>
+    </div>
+    <?php
+}
+
+
+/**
+ * Bootstrap 5 walker.
+ *
+ * WordPress's default markup has none of the classes Bootstrap needs, so a
+ * client-built menu would render unstyled without this. It emits:
+ *
+ *   top level          <li class="nav-item"><a class="nav-link">
+ *   top level w/ kids  <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
+ *   submenu            <ul class="dropdown-menu">
+ *   submenu item       <li class="nav-item"><a class="dropdown-item nav-link">
+ *
+ * A parent titled "Services" also gets services-dropdown-option (and the same
+ * for "Locations"), matching the class names in the generated stylesheet.
+ */
+if ( class_exists( 'Walker_Nav_Menu' ) ) :
+
+class ${p}_Nav_Walker extends Walker_Nav_Menu {
+
+    public function start_lvl( &$output, $depth = 0, $args = null ) {
+        $output .= '<ul class="dropdown-menu">';
+    }
+
+    public function end_lvl( &$output, $depth = 0, $args = null ) {
+        $output .= '</ul>';
+    }
+
+    public function start_el( &$output, $item, $depth = 0, $args = null, $id = 0 ) {
+        $classes = empty( $item->classes ) ? array() : (array) $item->classes;
+
+        $has_children = in_array( 'menu-item-has-children', $classes, true );
+        $is_active = in_array( 'current-menu-item', $classes, true )
+                  || in_array( 'current-menu-ancestor', $classes, true )
+                  || in_array( 'current_page_item', $classes, true );
+
+        $slug = sanitize_title( $item->title );
+
+        // <li>
+        $li = array( 'nav-item' );
+        if ( 0 === $depth && $has_children ) {
+            $li[] = 'dropdown';
+            if ( $slug ) {
+                $li[] = $slug . '-dropdown-option';
+            }
+        }
+
+        // Carry through classes from the menu editor's "CSS Classes" field and
+        // from plugins, so menu extensions keep working.
+        //
+        // Dropped:
+        //   menu-item-type-*, menu-item-object-*, menu-item-<id>
+        //     WordPress bookkeeping; nothing styles it, it only adds noise.
+        //   menu-item-has-children
+        //     the generated stylesheets give this padding-bottom: 20px above
+        //     992px, which would change dropdown spacing. Bootstrap's own
+        //     .dropdown class already provides the positioning it needs.
+        $carried = array_filter( $classes, function ( $class ) {
+            if ( ! is_string( $class ) || $class === '' ) {
+                return false;
+            }
+            if ( $class === 'menu-item-has-children' ) {
+                return false;
+            }
+            return ! preg_match( '/^menu-item-(type|object|[0-9])/', $class );
+        } );
+
+        $li = array_values( array_unique( array_merge( $li, $carried ) ) );
+
+        // <a>
+        $a = array();
+        if ( 0 === $depth ) {
+            $a[] = 'nav-link';
+            if ( $has_children ) {
+                $a[] = 'dropdown-toggle';
+            }
+        } else {
+            $a[] = 'dropdown-item';
+            $a[] = 'nav-link';
+        }
+        if ( $is_active ) {
+            $a[] = 'active';
+        }
+
+        $atts = ' href="' . esc_url( $item->url ) . '"';
+        if ( 0 === $depth && $has_children ) {
+            $atts .= ' id="' . esc_attr( $slug . 'Dropdown' ) . '"';
+            $atts .= ' role="button" data-bs-toggle="dropdown" aria-expanded="false"';
+        }
+        if ( ! empty( $item->target ) ) {
+            $atts .= ' target="' . esc_attr( $item->target ) . '"';
+        }
+        if ( ! empty( $item->xfn ) ) {
+            $atts .= ' rel="' . esc_attr( $item->xfn ) . '"';
+        }
+
+        $output .= '<li class="' . esc_attr( implode( ' ', $li ) ) . '">';
+        $output .= '<a class="' . esc_attr( implode( ' ', $a ) ) . '"' . $atts . '>';
+        $output .= esc_html( strtoupper( $item->title ) );
+        $output .= '</a>';
+    }
+
+    public function end_el( &$output, $item, $depth = 0, $args = null ) {
+        $output .= '</li>';
+    }
+}
+
+endif;
 `;
 }
 
 module.exports = {
   generateHeaderPhp,
+  generateNavHelpersPhp,
 };

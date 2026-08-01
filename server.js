@@ -8,6 +8,9 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const distDir = path.join(__dirname, 'dist');
 
+// Deletes generated sites / zips older than the TTL so the disk can't fill up
+const { startCleanupScheduler } = require('./utils/cleanupScheduler');
+
 
 
 // === Route Imports ===
@@ -82,6 +85,10 @@ app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
 
 
+
+
+// ===== BACKGROUND JOBS =====
+startCleanupScheduler();
 
 
 app.listen(PORT, () => console.log(`🚀 Server listening on http://localhost:${PORT}`));

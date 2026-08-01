@@ -1,11 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
-const { resolveThemeCss } = require('./helpers');
+const { writePageAssets } = require('./buildAssets');
+const { buildSocialLinks } = require('./buildSocialLinks');
+const CM = require('./contentModel');
 const { buildNavMenu } = require('./buildNavMenu');
 const { normalizeDomain}  = require('./normalizeDomain');
 
-const isDev = process.env.NODE_ENV !== 'production';
 const basePath = '';
 
 
@@ -40,11 +41,8 @@ const buildPrivacyPolicyPage = function (
         .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
         .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
         .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
+        .replace(/{{SOCIAL_LINKS}}/g, buildSocialLinks(globalValues))
         .replace(/{{EMAIL}}/g, globalValues.email)
-        .replace(/{{FACEBOOK_URL}}/g, globalValues.facebookUrl)
-        .replace(/{{TWITTER_URL}}/g, globalValues.twitterUrl)
-        .replace(/{{PINTEREST_URL}}/g, globalValues.pinterestUrl)
-        .replace(/{{YOUTUBE_URL}}/g, globalValues.youtubeUrl)
         .replace('</head>', `<link rel="stylesheet" href="./css/bootstrap.min.css">
                             <link rel="stylesheet" href="./css/privacy-policy.css"></head>`)
         .replace('</body>', `<script src="./js/bootstrap.bundle.min.js"></script>
@@ -53,39 +51,30 @@ const buildPrivacyPolicyPage = function (
 
         fs.writeFileSync(path.join(distDir, `privacy-policy.html`), privacyPolicy);
 
-        // === Auto-create privacy-policy.css if it doesn't exist 
-        const cssFilePath = path.join(__dirname, '../', 'src/css', `privacy-policy.css`);
+        // === Stylesheet + Webpack entry stub, inside this user's folder
+        writePageAssets({
+            distDir,
+            cssDir,
+            entryName: 'privacy-policy',
+            cssName: 'privacy-policy',
+            styleKey: globalValues.styleKey
+        });
 
-        // Chosen theme key from the form (default 'style')
-        const chosenKey = (globalValues?.styleKey || 'style');
+        // === Semantic model for the WordPress exporter ===
+        // The policy text only exists in the template, so pull it into the
+        // model here. Without this the exported theme had blank legal pages.
+        return CM.legalPage({
+            slug: 'privacy-policy',
+            title: 'Privacy Policy',
+            menuOrder: 9998,
+            meta: {
+                title: `Privacy Policy | ${globalValues.businessName}`,
+                description: `Privacy Policy for ${globalValues.businessName}.`,
+            },
+            sections: CM.sectionsFromLegalHtml(privacyPolicy),
+        });
 
-        // Create index.css in src/css for webpack use
-        // Source: selected theme
-        const srcCss = resolveThemeCss(chosenKey);
-        fs.copyFileSync(srcCss, cssFilePath);
-        
-        
-        // Copy generated privacy-policy.css to dist/css for dev use
-        fs.copyFileSync(
-        path.join(__dirname, '../', `src/css/privacy-policy.css`),
-        path.join(cssDir, `privacy-policy.css`) // result = dist/css/privacy-policy.css
-        );
-
-
-        // === Create JS stub ( for prod, needed for Webpack build)
-        const jsFilePath = path.join(__dirname, '../src/js', `privacy-policy.js`);
-        const jsContent = `
-        // Auto-generated JS stub for privacy-policy.js
-        import '../css/bootstrap.min.css';
-        import '../css/privacy-policy.css';
-        import './bootstrap.bundle.min.js';
-        // Add your JS logic for privacy-policy.js here
-        `;
-
-        if (!fs.existsSync(jsFilePath)) {
-            // Create js file.js in src/js for webpack use
-            fs.writeFileSync(jsFilePath, jsContent);
-        } 
+ 
 
     }
 

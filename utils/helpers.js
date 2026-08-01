@@ -24,49 +24,48 @@ function cleanDirectory(dirPath) {
 }
 
 
-// 2. Utility to Clean JS/CSS & Ensure Dist Structure ===
-function cleanDevFolders({
-  srcJsDir,
-  srcCssDir,
+// 2. Utility to Reset a Single User's Build Folder ===
+//
+// IMPORTANT: this used to also delete files from the shared src/js and
+// src/css folders. That made concurrent generations unsafe: one user's
+// request would delete another user's Webpack entry stubs mid-build.
+//
+// src/ is now treated as a READ-ONLY template source. Everything a build
+// writes lives under the user's own dist folder, so resetting one user
+// can never affect another.
+function resetUserDirs({
   distDir,
   assetsDir,
   cssDir,
   jsDir,
+  entryDir,
   tempUploadDir
 }) {
-  const keepJs = ['bootstrap.bundle.min.js'];
-  const keepCss = ['style.css', 'bootstrap.min.css'];
+  // Wipe this user's previous build entirely (distDir contains the others)
+  cleanDirectory(distDir);
 
-  // Clean src/js/ but keep bootstrap.bundle.min.js 
-  fs.readdirSync(srcJsDir).forEach(file => {
-    if (file.endsWith('.js') && !keepJs.includes(file)) {
-      fs.unlinkSync(path.join(srcJsDir, file));
-  
+  // Recreate the folder structure
+  [tempUploadDir, distDir, assetsDir, cssDir, jsDir, entryDir].forEach(dir => {
+    if (dir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  });
+}
+
+
+// 2.05 Recursive directory copy (used by the production build step)
+// Implemented manually rather than via fs.cp so this works on Node < 16.7
+function copyDirRecursive(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(srcPath, destPath);
     }
-  });
-
-  // Clean src/css/ but keep theme files and bootstrap.min.css
-  const themesDir = path.join(srcCssDir, 'themes');
-
-  fs.readdirSync(srcCssDir, { withFileTypes: true }).forEach(entry => {
-    // Skip the themes directory entirely
-    if (entry.isDirectory() && entry.name === 'themes') return;
-
-    if (entry.isFile() && entry.name.endsWith('.css') && entry.name !== 'bootstrap.min.css') {
-      fs.unlinkSync(path.join(srcCssDir, entry.name));
-    }
-  });
-
-
-
-  // Clean dist subdirectories
-  [distDir, assetsDir, cssDir, jsDir].forEach(cleanDirectory);
-
-  // Ensure folders exist
-  [tempUploadDir, distDir, assetsDir, cssDir, jsDir].forEach(dir => {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  });
-
+  }
 }
 
   // 2.1 Cleand temp upload files
@@ -240,11 +239,16 @@ function validateAndNormalizeLocationPages(rawList, toggleValue) {
     // File/URL slug e.g., "austin-tx"
     const slug = `${cityRaw} ${state}`;
 
-    if (seen.has(slug)) {
+    // Compare case-insensitively. "Austin, TX" and "austin, tx" both slugify
+    // to austin-tx, so treating them as distinct produced two location pages
+    // writing to the same file and sharing one interlink key.
+    const dedupeKey = slug.toLowerCase().replace(/\s+/g, ' ').trim();
+
+    if (seen.has(dedupeKey)) {
       fields.push({ name:`global[locationPages][${i}]`, message:'Duplicate location' });
       return;
     }
-    seen.add(slug);
+    seen.add(dedupeKey);
 
     locations.push({ cityForSchema, state, display, slug });
   });
@@ -270,37 +274,51 @@ function resolveThemeCss(styleKey) {
   );
 }
 
-// 10  ======= CREDIT CHECKER =======
-async function checkCredits(user, pagesData, costPerPage = 1) {
-  let pagesCount;
+// 10  ======= CREDITS =======
+//
+// Checking and charging are deliberately separate.
+//
+// The old checkCredits() deducted inside the check, which meant
+// /api/check-credits spent a user's balance without generating anything,
+// nothing was refunded when a build failed, and POSTing straight to
+// /generate skipped billing entirely.
+//
+// Now: count -> check (read only) -> generate -> charge on success.
 
-  if (Array.isArray(pagesData)) {
-    pagesCount = pagesData.length;
-  } else if (typeof pagesData === 'object' && pagesData !== null) {
-    pagesCount = Object.keys(pagesData).length;
-  } else {
-    pagesCount = 1;
-  }
+function countPages(pagesData) {
+  if (Array.isArray(pagesData)) return pagesData.length;
+  if (pagesData && typeof pagesData === 'object') return Object.keys(pagesData).length;
+  return 0;
+}
 
+/**
+ * Read-only affordability check. Never mutates the user.
+ */
+function checkCredits(user, pagesData, costPerPage = 1) {
+  const pagesCount = countPages(pagesData);
   const totalCost = pagesCount * costPerPage;
-
-  if (user.credits < totalCost) {
-    return {
-      ok: false,
-      pagesCount,
-      totalCost
-    };
-  }
-
-  user.credits -= totalCost;
-  await user.save();
+  const available = Number(user?.credits || 0);
 
   return {
-    ok: true,
+    ok: pagesCount > 0 && available >= totalCost,
     pagesCount,
-    totalCost
+    totalCost,
+    available,
   };
 }
+
+/**
+ * Deduct credits. Call only after the work has actually succeeded.
+ */
+async function chargeCredits(user, totalCost) {
+  const cost = Number(totalCost || 0);
+  if (!user || cost <= 0) return user ? user.credits : 0;
+
+  user.credits = Math.max(0, Number(user.credits || 0) - cost);
+  await user.save();
+  return user.credits;
+}
+
 
 // 11 ======= YouTube Video Iframe for About Us Page =======
 function buildYouTubeEmbedHtml(videoUrl, businessName, location) {
@@ -340,9 +358,12 @@ function buildYouTubeEmbedHtml(videoUrl, businessName, location) {
 module.exports = {
   truthy,
   escapeAttr,
+  countPages,
   checkCredits,
+  chargeCredits,
   cleanDirectory,
-  cleanDevFolders,
+  resetUserDirs,
+  copyDirRecursive,
   resolveThemeCss,
   jsonValidationError,
   validateGlobalFields,

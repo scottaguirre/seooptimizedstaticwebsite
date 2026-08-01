@@ -6,320 +6,203 @@ const fs = require('fs');
 const archiver = require('archiver');
 const requireAuth = require('../middleware/requireAuth');
 
-// Import the new modular builder
-const { buildWordPressTheme } = require('../utils/wpThemeBuilder');
+const { buildWordPressThemeFromModel } = require('../utils/wpThemeBuilder/buildFromModel');
+const { cleanDirectory } = require('../utils/helpers');
 
-const baseDistDir = path.join(__dirname, '../dist');
+const projectRoot = path.join(__dirname, '..');
+const baseDistDir = path.join(projectRoot, 'dist');
 
-/**
- * Helper to zip a directory
- */
+// Themes are built OUTSIDE dist/ for two reasons:
+//   1. dist/ is served statically, so a theme inside it would be public
+//   2. /production copies dist/user_<id>, so a theme in there would end up
+//      inside the static site's ZIP
+const wpWorkRoot = path.join(projectRoot, 'builds', 'wp');
+const wpZipRoot = path.join(projectRoot, 'builds', 'zips');
+
+const THEME_SLUG = 'local-business-theme';
+
+const inFlight = new Set();
+
 function zipDirectory(sourceDir, outPath) {
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(outPath);
     const archive = archiver('zip', { zlib: { level: 9 } });
 
-    output.on('close', () => resolve());
-    archive.on('error', err => reject(err));
+    output.on('close', resolve);
+    archive.on('error', reject);
 
     archive.pipe(output);
-    
-    // Get the theme folder name (last part of the path)
-    const themeFolderName = path.basename(sourceDir);
-    
-    // Add the directory with the theme folder as root
-    archive.directory(sourceDir, themeFolderName);
+    archive.directory(sourceDir, path.basename(sourceDir));
     archive.finalize();
   });
 }
 
-/**
- * Get user-specific directories
- */
-function getUserDirs(userId) {
-  const safeId = String(userId);
-  const distDir = path.join(baseDistDir, `user_${safeId}`);
-  return { distDir };
+function page({ title, heading, body, actions, status = 200 }) {
+  return { status, html: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>${title}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+</head>
+<body class="bg-light">
+  <div class="container py-5" style="max-width: 800px;">
+    <div class="card shadow-lg"><div class="card-body p-5">
+      <h1 class="h3 mb-3">${heading}</h1>
+      ${body}
+      <div class="d-grid gap-3 mt-4">${actions}</div>
+    </div></div>
+  </div>
+</body>
+</html>` };
 }
+
+function send(res, spec) {
+  return res.status(spec.status).send(spec.html);
+}
+
 
 /**
  * GET /export-wp-theme
- * Build WordPress theme from static site and create ZIP
+ * Build a WordPress theme from the generated content model.
  */
 router.get('/export-wp-theme', requireAuth, async (req, res) => {
+  const userId = req.user._id.toString();
+  const distDir = path.join(baseDistDir, `user_${userId}`);
+  const workDir = path.join(wpWorkRoot, `user_${userId}`);
+  const zipPath = path.join(wpZipRoot, `user_${userId}_wp-theme.zip`);
+
+  if (!fs.existsSync(distDir)) {
+    return send(res, page({
+      status: 400,
+      title: 'No Site Found',
+      heading: '❌ No site found',
+      body: '<p>Generate a website first, then convert it to WordPress.</p>',
+      actions: '<a href="/" class="btn btn-primary">Go to Generator</a>',
+    }));
+  }
+
+  if (!fs.existsSync(path.join(distDir, '_src', 'content.json'))) {
+    return send(res, page({
+      status: 400,
+      title: 'Regenerate Required',
+      heading: '⚠️ Please regenerate your site',
+      body: `<p>This site was built before the WordPress exporter was updated,
+             so it has no content model. Regenerating takes a moment and produces
+             a far better WordPress theme — every field properly named and editable.</p>`,
+      actions: '<a href="/" class="btn btn-primary">Back to Generator</a>',
+    }));
+  }
+
+  if (inFlight.has(userId)) {
+    return send(res, page({
+      status: 429,
+      title: 'Build In Progress',
+      heading: '⏳ Already building',
+      body: '<p>A WordPress export is already running for your account.</p>',
+      actions: '<a href="/" class="btn btn-primary">Back to Generator</a>',
+    }));
+  }
+
+  inFlight.add(userId);
+
   try {
-    const userId = req.user._id.toString();
-    const userDistDir = path.join(baseDistDir, `user_${userId}`);
+    fs.mkdirSync(wpWorkRoot, { recursive: true });
+    fs.mkdirSync(wpZipRoot, { recursive: true });
 
-    // Check if user has a static site generated
-    if (!fs.existsSync(userDistDir)) {
-      return res.status(400).send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="UTF-8" />
-          <title>No Static Site Found</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-        </head>
-        <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-          <div class="container" style="max-width: 700px;">
-            <div class="card shadow p-4">
-              <h1 class="h4 mb-3 text-danger">❌ No Static Site Found</h1>
-              <p>You need to generate a static website first before converting it to WordPress.</p>
-              <a href="/" class="btn btn-primary">Go to Generator</a>
-            </div>
-          </div>
-        </body>
-        </html>
-      `);
-    }
+    // Fresh build every time
+    cleanDirectory(workDir);
+    fs.mkdirSync(workDir, { recursive: true });
 
-    // Check for index.html
-    const indexHtmlPath = path.join(userDistDir, 'index.html');
-    if (!fs.existsSync(indexHtmlPath)) {
-      return res.status(400).send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="UTF-8" />
-          <title>Invalid Static Site</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-        </head>
-        <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-          <div class="container" style="max-width: 700px;">
-            <div class="card shadow p-4">
-              <h1 class="h4 mb-3 text-danger">❌ Invalid Static Site</h1>
-              <p>Your static site is missing index.html. Please regenerate your website.</p>
-              <a href="/" class="btn btn-primary">Go to Generator</a>
-            </div>
-          </div>
-        </body>
-        </html>
-      `);
-    }
+    const businessName = req.user.businessName || '';
 
-    console.log('🚀 Starting WordPress theme build for user:', userId);
-
-    // Get user info from the request (you might want to pull this from your DB)
-    const businessName = req.user.businessName || 'Local Business';
-    const location = req.user.location || '';
-
-    // Theme configuration
-    const themeOptions = {
-      themeSlug: 'local-business-theme',
+    const { themeDir, summary } = await buildWordPressThemeFromModel(distDir, {
+      themeSlug: THEME_SLUG,
       themeName: businessName ? `${businessName} Theme` : 'Local Business Theme',
       themeAuthor: 'Static Website Generator',
       themeVersion: '1.0.0',
-      
-      // Optional: Pass any additional global settings
-      globalSettings: {
-        business_name: businessName,
-        location: location,
-        // Add more if you have them available
-      },
-    };
+      outputRoot: workDir,
+    });
 
-    // Build the WordPress theme using the modular builder
-    const { themeSlug, themeDir, summary } = await buildWordPressTheme(
-      userDistDir,
-      themeOptions
-    );
-
-    console.log('✅ Theme built successfully');
-    console.log('   Pages:', summary.pages);
-    console.log('   Content fields:', summary.contentFields);
-    console.log('   Global settings:', summary.globalSettings);
-
-    // Create ZIP path
-    const themeFolderName = path.basename(themeDir);
-    const zipPath = path.join(baseDistDir, `user_${userId}_${themeFolderName}.zip`);
-
-    // Remove old ZIP if it exists
     if (fs.existsSync(zipPath)) {
       fs.unlinkSync(zipPath);
     }
-
-    console.log('📦 Creating ZIP file...');
-
-    // Create ZIP
     await zipDirectory(themeDir, zipPath);
 
-    console.log('✅ ZIP created successfully');
+    // The ZIP is the deliverable; drop the working copy
+    cleanDirectory(workDir);
 
-    // Send success page with download button
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <title>WordPress Theme Ready</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-        <style>
-          .stat-card {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-          }
-          .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #0d6efd;
-          }
-          .stat-label {
-            font-size: 0.875rem;
-            color: #6c757d;
-            text-transform: uppercase;
-          }
-        </style>
-      </head>
-      <body class="bg-light">
-        <div class="container py-5" style="max-width: 800px;">
-          <div class="card shadow-lg">
-            <div class="card-body p-5">
-              <div class="text-center mb-4">
-                <div class="display-1 mb-3">✅</div>
-                <h1 class="h3 mb-2">WordPress Theme Ready!</h1>
-                <p class="text-muted">Your static website has been successfully converted</p>
-              </div>
+    const stat = fs.statSync(zipPath);
+    const sizeMb = (stat.size / 1024 / 1024).toFixed(1);
 
-              <div class="row mb-4">
-                <div class="col-md-4">
-                  <div class="stat-card text-center">
-                    <div class="stat-number">${summary.pages}</div>
-                    <div class="stat-label">Pages Created</div>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="stat-card text-center">
-                    <div class="stat-number">${summary.contentFields}</div>
-                    <div class="stat-label">Editable Fields</div>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="stat-card text-center">
-                    <div class="stat-number">${summary.globalSettings}</div>
-                    <div class="stat-label">Global Settings</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="alert alert-info mb-4">
-                <strong>📋 What's included:</strong>
-                <ul class="mb-0 mt-2">
-                  <li>All pages with editable content</li>
-                  <li>Navigation menu (automatically created)</li>
-                  <li>Admin interface for editing all content</li>
-                  <li>Theme settings page for global options</li>
-                  <li>All CSS, JavaScript, and images</li>
-                </ul>
-              </div>
-
-              <div class="d-grid gap-3">
-                <a href="/download-wp-theme" class="btn btn-primary btn-lg">
-                  📥 Download WordPress Theme (ZIP)
-                </a>
-                <a href="/" class="btn btn-outline-secondary">
-                  ← Back to Generator
-                </a>
-              </div>
-
-              <hr class="my-4">
-
-              <div class="small text-muted">
-                <strong>Installation Instructions:</strong>
-                <ol class="mt-2 mb-0">
-                  <li>Download the ZIP file above</li>
-                  <li>Go to your WordPress admin → Appearance → Themes</li>
-                  <li>Click "Add New" → "Upload Theme"</li>
-                  <li>Upload the ZIP file and activate</li>
-                  <li>Your content will be automatically imported!</li>
-                </ol>
-              </div>
-            </div>
-          </div>
+    return send(res, page({
+      title: 'WordPress Theme Ready',
+      heading: '✅ WordPress theme ready',
+      body: `
+        <div class="row text-center my-4">
+          <div class="col-md-4"><div class="display-6">${summary.pages}</div>
+            <div class="text-muted small text-uppercase">Pages</div></div>
+          <div class="col-md-4"><div class="display-6">${summary.contentFields}</div>
+            <div class="text-muted small text-uppercase">Editable text fields</div></div>
+          <div class="col-md-4"><div class="display-6">${summary.images}</div>
+            <div class="text-muted small text-uppercase">Replaceable images</div></div>
         </div>
-      </body>
-      </html>
-    `);
+        <div class="alert alert-info">
+          <strong>What your client can edit:</strong>
+          <ul class="mb-0 mt-2">
+            <li>Any heading or paragraph, with links and highlighting</li>
+            <li>Every image, from the WordPress media library</li>
+            <li>Business name, phone, email and social links in one place</li>
+            <li>Extra sections added to the bottom of any page</li>
+          </ul>
+        </div>
+        <p class="text-muted small mb-0">ZIP size: ${sizeMb} MB</p>`,
+      actions: `
+        <a href="/download-wp-theme" class="btn btn-primary btn-lg">📥 Download WordPress Theme</a>
+        <a href="/" class="btn btn-outline-secondary">← Back to Generator</a>`,
+    }));
 
   } catch (err) {
     console.error('❌ Error during /export-wp-theme:', err);
-    
-    res.status(500).send(`
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <title>Error Building Theme</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-      </head>
-      <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-        <div class="container" style="max-width: 700px;">
-          <div class="card shadow p-4">
-            <h1 class="h4 mb-3 text-danger">❌ Error Building WordPress Theme</h1>
-            <p class="text-muted mb-3">Something went wrong during the conversion process.</p>
-            <div class="alert alert-danger">
-              <strong>Error:</strong> ${err.message}
-            </div>
-            <a href="/" class="btn btn-primary">Back to Generator</a>
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
+    try { cleanDirectory(workDir); } catch (_) {}
+
+    return send(res, page({
+      status: 500,
+      title: 'Export Failed',
+      heading: '❌ Could not build the theme',
+      body: `<div class="alert alert-danger"><strong>Error:</strong> ${err.message}</div>`,
+      actions: '<a href="/" class="btn btn-primary">Back to Generator</a>',
+    }));
+  } finally {
+    inFlight.delete(userId);
   }
 });
 
+
 /**
  * GET /download-wp-theme
- * Download the generated WordPress theme ZIP
  */
 router.get('/download-wp-theme', requireAuth, (req, res) => {
   const userId = req.user._id.toString();
-  const themeFolderName = 'local-business-theme';
-  const zipPath = path.join(baseDistDir, `user_${userId}_${themeFolderName}.zip`);
+  const zipPath = path.join(wpZipRoot, `user_${userId}_wp-theme.zip`);
 
   if (!fs.existsSync(zipPath)) {
-    return res.status(404).send(`
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <title>Theme Not Found</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-      </head>
-      <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-        <div class="container" style="max-width: 700px;">
-          <div class="card shadow p-4">
-            <h1 class="h4 mb-3 text-warning">⚠️ Theme Not Found</h1>
-            <p>No WordPress theme ZIP found. Please export the theme again.</p>
-            <a href="/export-wp-theme" class="btn btn-primary">Export WordPress Theme</a>
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
+    return send(res, page({
+      status: 404,
+      title: 'Theme Not Found',
+      heading: '⚠️ Theme not found',
+      body: '<p>Your download may have expired, or the theme has not been exported yet.</p>',
+      actions: `
+        <a href="/export-wp-theme" class="btn btn-primary">Export WordPress Theme</a>
+        <a href="/" class="btn btn-outline-secondary">← Back to Generator</a>`,
+    }));
   }
 
-  const zipFileName = 'local-business-theme.zip';
-
-  res.download(zipPath, zipFileName, err => {
+  res.download(zipPath, 'wordpress-theme.zip', err => {
     if (err) {
-      console.error(`Error sending ${zipFileName}:`, err);
-      return;
+      console.error(`Error sending WP theme zip for user ${userId}:`, err);
     }
-    
-    // Optional: Delete ZIP after successful download to save space
-    console.log(`✅ ZIP downloaded by user ${userId}`);
-    
-    // Uncomment to auto-delete after download:
-    // fs.unlink(zipPath, () => {});
   });
 });
 

@@ -54,6 +54,14 @@
 
   
   // Create hidden inputs for each entry in a { name: value } map
+  // Fields owned by wizard state rather than by the main form.
+  //
+  // snapshotFormValues() captures every input in the form, including hidden
+  // mirrors injected on a previous pass. Re-injecting those alongside the
+  // authoritative value produced two inputs with the same name — and the
+  // stale one could win, which is how picking style5 generated style.css.
+  const STATE_OWNED_FIELDS = ['global[styleKey]', 'global[logoType]'];
+
   function injectHiddenSnapshot(form, snapshot, cssClass = 'js-hidden-mainform', filterFn) {
     // wipe any previous mirrors
     form.querySelectorAll('.' + cssClass).forEach(n => n.remove());
@@ -162,7 +170,7 @@
           <div class="col-12">
             <select class="form-select" id="businessType" required>
               <option value="">Choose...</option>
-              ${['Plumbing', 'Fencing', 'Junk Removal', 'Electrician','Concrete Contractor','Roofing','HVAC','Landscaping','Law Firm', "Web Design"]
+              ${['Plumbing', 'Fencing', 'Painter', 'Paving', 'Swimming Pool Contractor', 'Junk Removal', 'Appliance Repair', 'Water Damage Restoration', 'Tree Removal','Electrician', 'Coding', 'Concrete Contractor', 'French Drain Installation', 'Roofing','HVAC', 'Air Conditioning','Landscaping','Law Firm', "Web Design"]
                 .map(bt => `<option ${state.businessType===bt?'selected':''}>${bt}</option>`).join('')}
             </select>
             <div class="form-text">You can adjust this later.</div>
@@ -217,6 +225,10 @@
             <input class="form-check-input" type="radio" name="logoTypeStep" id="logoTypeRect" value="rect" ${state.logoType==='rect'?'checked':''}>
             <label class="form-check-label" for="logoTypeRect">Rectangular (recommended 260×200 px)</label>
           </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="logoTypeStep" id="logoTypeWide" value="wide" ${state.logoType==='wide'?'checked':''}>
+            <label class="form-check-label" for="logoTypeWide">Wide (recommended 500×200 px)</label>
+          </div>
         </div>
 
         <div id="logoSquareWrap" class="mb-3">
@@ -227,6 +239,11 @@
         <div id="logoRectWrap" class="mb-3">
           <input type="file" id="logoRect" class="form-control" accept="image/*">
           <div class="form-text" id="logoRectHint"></div>
+        </div>
+
+        <div id="logoWideWrap" class="mb-3">
+          <input type="file" id="logoWide" class="form-control" accept="image/*">
+          <div class="form-text" id="logoWideHint"></div>
         </div>
 
         <div id="logoPreview" class="mt-3" style="display:none;">
@@ -240,22 +257,32 @@
     const radios = container.querySelectorAll('input[name="logoTypeStep"]');
     radios.forEach(r => r.addEventListener('change', () => applyLogoTypeForStep(container, r.value)));
 
+    // Wrapper + file input for each logo shape, so adding a shape means
+    // adding one entry rather than another branch.
+    const LOGO_SHAPES = {
+      square: { wrap: '#logoSquareWrap', input: '#logoSquare' },
+      rect:   { wrap: '#logoRectWrap',   input: '#logoRect'   },
+      wide:   { wrap: '#logoWideWrap',   input: '#logoWide'   },
+    };
+
     function applyLogoTypeForStep(container, type) {
+      if (!LOGO_SHAPES[type]) type = 'square';
       state.logoType = type;
-      const squareWrap  = container.querySelector('#logoSquareWrap');
-      const rectWrap    = container.querySelector('#logoRectWrap');
-      const isSquare = type === 'square';
-      if (squareWrap) squareWrap.style.display = isSquare ? '' : 'none';
-      if (rectWrap)   rectWrap.style.display   = isSquare ? 'none' : '';
-      container.querySelector('#logoSquare')?.classList.remove('is-invalid');
-      container.querySelector('#logoRect')?.classList.remove('is-invalid');
+
+      Object.entries(LOGO_SHAPES).forEach(([shape, sel]) => {
+        const wrap = container.querySelector(sel.wrap);
+        if (wrap) wrap.style.display = shape === type ? '' : 'none';
+        container.querySelector(sel.input)?.classList.remove('is-invalid');
+      });
     }
     applyLogoTypeForStep(container, state.logoType);
 
     const squareInput = container.querySelector('#logoSquare');
     const rectInput   = container.querySelector('#logoRect');
+    const wideInput   = container.querySelector('#logoWide');
     const squareHint  = container.querySelector('#logoSquareHint');
     const rectHint    = container.querySelector('#logoRectHint');
+    const wideHint    = container.querySelector('#logoWideHint');
     const previewWrap = container.querySelector('#logoPreview');
     const previewImg  = container.querySelector('#logoImgPreview');
     const previewName = container.querySelector('#logoFileName');
@@ -307,12 +334,30 @@
       } else { rectHint && (rectHint.textContent = ''); }
     });
 
+        wideInput?.addEventListener('change', e => {
+      const f = e.target.files?.[0];
+      if (f) {
+        state.logoType = 'wide';
+        state.logoFile = f;
+        if (state.logoPreviewURL) URL.revokeObjectURL(state.logoPreviewURL);
+        state.logoPreviewURL = URL.createObjectURL(f);
+        previewWrap.style.display = 'block';
+        previewImg.src = state.logoPreviewURL;
+        previewName.textContent = f.name || '(selected)';
+        //advisoryImageNote(f, 260, 200, wideHint);
+        rectInput.classList.remove('is-invalid');
+        squareInput?.classList.remove('is-invalid');
+      } else { wideHint && (wideHint.textContent = ''); }
+    });
+
     renderNav(container, {
       showBack: true,
       nextText: 'Continue',
       onBack: () => go(0),
       onNext: () => {
-        const activeEl = state.logoType === 'square' ? squareInput : rectInput;
+        const activeEl = state.logoType === 'square' ? squareInput
+                       : state.logoType === 'wide'   ? wideInput
+                       : rectInput;
         const file = activeEl?.files?.[0];
         if (!file) {
           activeEl?.classList.add('is-invalid');
@@ -329,17 +374,84 @@
   // -----------------------------
   // Step 2: Main Form Theme/Design
   // -----------------------------
+  // Duplicate detection
+  // -----------------------------
+  // Compares case-insensitively and ignores surrounding/repeated whitespace,
+  // because "Austin, TX" and "austin,  tx" both end up as the same slug and
+  // would otherwise generate two pages writing to one file.
+  function normaliseForCompare(value) {
+    return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  function findDuplicates(inputs) {
+    const seen = new Map();      // normalised -> first input seen
+    const dupes = [];            // inputs that repeat an earlier value
+    const labels = new Set();
+
+    inputs.forEach(input => {
+      const key = normaliseForCompare(input.value);
+      if (!key) return;
+      if (seen.has(key)) {
+        dupes.push(input);
+        labels.add(input.value.trim());
+        if (!seen.get(key).classList.contains('is-invalid')) {
+          dupes.push(seen.get(key));   // highlight the original too
+        }
+      } else {
+        seen.set(key, input);
+      }
+    });
+
+    return { dupes, labels: [...labels] };
+  }
+
+  // -----------------------------
+  // Context badges
+  // -----------------------------
+  // Shown on every step after the main form so the user can see what they are
+  // building without going back. Values come from the step-3 snapshot, since
+  // the main form fields are not in the DOM on later steps.
+  function snapshotValue(key) {
+    const snap = state.mainFormSnapshot;
+    if (!snap) return '';
+    const v = snap[`global[${key}]`];
+    return (v === undefined || v === null) ? '' : String(v).trim();
+  }
+
+  function contextBadges(extra = []) {
+    const businessName = snapshotValue('businessName');
+    const location     = snapshotValue('location');
+
+    // Deliberately just these four. Logo filename and domain added noise
+    // without helping anyone decide what to type next; the review step
+    // shows the full picture.
+    const badges = [];
+    if (businessName) badges.push(['text-bg-light text-dark', `Business: ${businessName}`]);
+    if (state.businessType) badges.push(['text-bg-primary', `Type: ${state.businessType}`]);
+    if (location) badges.push(['text-bg-success', `Location: ${location}`]);
+    badges.push(['text-bg-info', `Theme: ${state.styleKey}.css`]);
+
+    extra.forEach(b => badges.push(b));
+
+    return badges
+      .map(([cls, text]) => `<span class="badge ${cls}">${escapeHtml(text)}</span>`)
+      .join('');
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  // -----------------------------
   function renderMainForm() {
     container.innerHTML = '';
 
     const header = el('div', { class: 'd-flex align-items-center justify-content-between mb-3' });
     header.innerHTML = `
       <h4 class="m-0">1. Global Information</h4>
-      <div class="d-flex flex-wrap gap-2">
-        <span class="badge text-bg-primary">Business Type: ${state.businessType}</span>
-        <span class="badge text-bg-secondary">Logo: ${state.logoFile ? (state.logoFile.name || 'selected') : '—'}</span>
-        <span class="badge text-bg-info">Theme: ${state.styleKey}.css</span>
-      </div>
+      <div class="d-flex flex-wrap gap-2">${contextBadges()}</div>
     `;
     container.appendChild(header);
 
@@ -618,9 +730,15 @@
   function renderPagesAndLocationsStep() {
     container.innerHTML = '';
 
+    const header = el('div', { class: 'mb-3' });
+    header.innerHTML = `
+      <h4 class="mb-2">Service Pages</h4>
+      <div class="d-flex flex-wrap gap-2">${contextBadges()}</div>
+    `;
+    container.appendChild(header);
+
     // ===== SERVICE PAGES =====
     const svcWrap = el('div', { class: 'mb-4' });
-    svcWrap.appendChild(el('h4', { class: 'mb-3' }, 'Service Pages'));
     const pagesList = el('div', { id: 'pagesList' });
     svcWrap.appendChild(pagesList);
 
@@ -693,7 +811,7 @@
     const footer = el('div', { class: 'd-flex gap-2 mt-4' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
     const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px;' }, 'Start Over');
-    const submitBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Create Website');
+    const submitBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Review →');
     footer.append(backBtn, resetBtn, submitBtn);
     container.appendChild(footer);
 
@@ -717,6 +835,17 @@
       // capture values
       const pi = container.querySelectorAll('#pagesList input[type="text"]');
       const pagesVals = [...pi].map(i => i.value.trim()).filter(Boolean);
+
+      // Duplicate service pages would overwrite each other's HTML file
+      const pageDupes = findDuplicates([...pi]);
+      if (pageDupes.dupes.length) {
+        [...pi].forEach(i => i.classList.remove('is-invalid'));
+        pageDupes.dupes.forEach(i => i.classList.add('is-invalid'));
+        pageDupes.dupes[0]?.focus();
+        showAlert(container, `Duplicate service page: ${pageDupes.labels.join(', ')}. Each page needs a different name.`);
+        return false;
+      }
+
       if (pagesVals.length === 0) {
         pi[0]?.classList.add('is-invalid');
         pi[0]?.focus();
@@ -726,6 +855,19 @@
       const addLoc = !!locToggle.checked;
       const li = container.querySelectorAll('#locationsList input[name="global[locationPages][]"]');
       const locVals = addLoc ? [...li].map(i => i.value.trim()).filter(Boolean) : [];
+
+      // Duplicate cities would produce two location pages with one filename
+      if (addLoc) {
+        const locDupes = findDuplicates([...li]);
+        if (locDupes.dupes.length) {
+          [...li].forEach(i => i.classList.remove('is-invalid'));
+          locDupes.dupes.forEach(i => i.classList.add('is-invalid'));
+          locDupes.dupes[0]?.focus();
+          showAlert(container, `Duplicate location: ${locDupes.labels.join(', ')}. Each location needs a different city.`);
+          return false;
+        }
+      }
+
       if (addLoc && locVals.length === 0) {
         li[0]?.classList.add('is-invalid');
         li[0]?.focus();
@@ -788,6 +930,7 @@
         state.mainFormSnapshot,
         'js-hidden-mainform',
         (name) => {
+          if (STATE_OWNED_FIELDS.includes(name)) return false;
           if (is24 && name.startsWith('global[hours][')) return false;
           return true;
         }
@@ -805,7 +948,18 @@
         form.appendChild(logoTypeHidden);
       }
 
-      logoTypeHidden.value = state.logoType; // "square" or "rect"
+      logoTypeHidden.value = state.logoType; // "square" | "rect" | "wide"
+
+      // === Inject styleKey here too ===
+      // The submit handler also sets this, but injecting it now means the
+      // review step reflects exactly what will be posted.
+      form.querySelectorAll('input[name="global[styleKey]"]').forEach(n => n.remove());
+      const styleKeyEarly = document.createElement('input');
+      styleKeyEarly.type = 'hidden';
+      styleKeyEarly.name = 'global[styleKey]';
+      styleKeyEarly.classList.add('js-hidden-mirror');
+      styleKeyEarly.value = state.styleKey;
+      form.appendChild(styleKeyEarly);
 
 
 
@@ -817,13 +971,10 @@
 
 
 
-      // Submiting Form
-      // fire a real submit event so spinner.js runs
-      if (typeof form.requestSubmit === 'function') {
-        form.requestSubmit();
-      } else {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      }
+      // Hidden fields are now in place. Show the review step rather than
+      // submitting straight away — generating costs credits, so this is the
+      // last chance to catch a typo.
+      go(5);
     });
 
     container.addEventListener('input', (ev) => {
@@ -836,6 +987,8 @@
 
   function renderDesignStep() {
     container.innerHTML = '';
+
+    // No badge row here: the review step already summarises everything.
     const h = el('h3', {}, 'Design & Theme');
     const desc = el('p', {}, 'Pick a design. You can preview each one.');
     container.append(h, desc);
@@ -909,13 +1062,161 @@
   // -----------------------------
   // Stepper driver
   // -----------------------------
+
+  // -----------------------------
+  // Step 6: Review before generating
+  // -----------------------------
+  // Generation costs credits and takes a minute, so this is the last chance
+  // to catch a typo. Every group links back to the step that owns it.
+  const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+
+  function reviewRow(label, value, opts = {}) {
+    const shown = (value === undefined || value === null || String(value).trim() === '')
+      ? '<span class="text-warning">— not set —</span>'
+      : escapeHtml(String(value));
+    return `
+      <div class="d-flex justify-content-between gap-3 py-1 border-bottom border-secondary-subtle">
+        <span class="text-white-50 flex-shrink-0">${escapeHtml(label)}</span>
+        <span class="text-white text-end${opts.strong ? ' fw-bold' : ''}"
+              style="min-width:0;overflow-wrap:anywhere;word-break:break-word;">${shown}</span>
+      </div>`;
+  }
+
+  function reviewCard(title, bodyHtml, editStep) {
+    return `
+      <div class="col-12">
+        <div class="border rounded p-3 h-100 text-white" style="background:#0b3f7a33;">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="m-0">${escapeHtml(title)}</h5>
+            <button type="button" class="btn btn-sm btn-outline-light js-review-edit" data-step="${editStep}">Edit</button>
+          </div>
+          ${bodyHtml}
+        </div>
+      </div>`;
+  }
+
+  function hoursSummary() {
+    const is24 = String(snapshotValue('is24Hours')).toLowerCase();
+    if (is24 === 'true' || is24 === 'on' || is24 === '1') {
+      return reviewRow('Hours', 'Open 24 hours');
+    }
+
+    const snap = state.mainFormSnapshot || {};
+    const rows = DAYS.map(day => {
+      const closed = snap[`global[hours][${day}][closed]`];
+      const isClosed = closed === true || closed === 'true' || closed === 'on' || closed === '1';
+      if (isClosed) return reviewRow(day[0].toUpperCase() + day.slice(1), 'Closed');
+      const open  = snap[`global[hours][${day}][open]`]  || '';
+      const close = snap[`global[hours][${day}][close]`] || '';
+      return reviewRow(day[0].toUpperCase() + day.slice(1), open && close ? `${open} – ${close}` : '');
+    });
+    return rows.join('');
+  }
+
+  function socialSummary() {
+    const socials = [
+      ['Facebook','facebookUrl'], ['Instagram','instagramUrl'], ['Twitter/X','twitterUrl'],
+      ['LinkedIn','linkedinUrl'], ['YouTube','youtubeUrl'], ['Pinterest','pinterestUrl'],
+    ];
+    const set = socials.filter(([, key]) => snapshotValue(key));
+    if (!set.length) {
+      return '<p class="text-white-50 m-0">No social links added.</p>';
+    }
+    return set.map(([label, key]) => reviewRow(label, snapshotValue(key))).join('');
+  }
+
+  function listSummary(items, emptyText) {
+    if (!items.length) return `<p class="text-white-50 m-0">${escapeHtml(emptyText)}</p>`;
+    return '<ol class="mb-0 ps-3 text-white">' +
+      items.map(i => `<li>${escapeHtml(i)}</li>`).join('') +
+      '</ol>';
+  }
+
+  function renderReviewStep() {
+    container.innerHTML = '';
+
+    const pages = state.pages || [];
+    const locations = state.addLocations ? (state.locations || []) : [];
+    const credits = pages.length;
+
+    const header = el('div', { class: 'mb-3' });
+    header.innerHTML = `
+      <h3 class="mb-2">Review &amp; Generate</h3>
+      <p class="text-white-50 mb-0">
+        Check everything below before generating. Generating uses
+        <strong>${credits}</strong> credit${credits === 1 ? '' : 's'} —
+        one per service page.
+      </p>
+    `;
+    container.appendChild(header);
+
+    const grid = el('div', { class: 'row g-3' });
+    grid.innerHTML = [
+      reviewCard('Business', [
+        reviewRow('Name', snapshotValue('businessName'), { strong: true }),
+        reviewRow('Type', state.businessType),
+        reviewRow('Domain', snapshotValue('domain')),
+        reviewRow('Location', snapshotValue('location')),
+        reviewRow('Address', snapshotValue('address')),
+      ].join(''), 3),
+
+      reviewCard('Contact', [
+        reviewRow('Phone', snapshotValue('phone')),
+        reviewRow('Email', snapshotValue('email')),
+        reviewRow('Map CID', snapshotValue('googleMapCid')),
+        reviewRow('Intro video', snapshotValue('youtubeVideoUrl')),
+      ].join(''), 3),
+
+      reviewCard('Hours', hoursSummary(), 3),
+      reviewCard('Social links', socialSummary(), 3),
+
+      reviewCard('Design', [
+        reviewRow('Theme', `${state.styleKey}.css`),
+        reviewRow('Logo shape', state.logoType),
+        reviewRow('Logo file', state.logoFile ? (state.logoFile.name || 'selected') : ''),
+      ].join('') + (state.logoPreviewURL
+        ? `<img src="${state.logoPreviewURL}" alt="Logo preview" class="mt-2" style="max-height:80px;max-width:200px;background:#fff;padding:4px;border-radius:4px;">`
+        : ''), 2),
+
+      // Pages last: they are what the credit cost is based on, so they sit
+      // closest to the Generate button.
+      reviewCard(`Service pages (${pages.length})`,
+        listSummary(pages, 'No service pages added.'), 4),
+
+      reviewCard(`Location pages (${locations.length})`,
+        listSummary(locations, state.addLocations ? 'No locations added.' : 'Location pages are turned off.'), 4),
+    ].join('');
+    container.appendChild(grid);
+
+    // Edit buttons jump back to the owning step
+    grid.querySelectorAll('.js-review-edit').forEach(btn => {
+      btn.addEventListener('click', () => go(Number(btn.dataset.step)));
+    });
+
+    renderNav(container, {
+      showBack: true,
+      backText: 'Back',
+      nextText: `Generate Website (${credits} credit${credits === 1 ? '' : 's'})`,
+      onBack: () => go(4),
+      onNext: () => {
+        // Hidden fields were injected on the previous step, so this only
+        // needs to fire the submit that spinner.js listens for.
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else {
+          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+      }
+    });
+  }
+
   const steps = [
     renderBusinessTypeStep,     // 0
     renderLogoStep,             // 1
     renderDesignStep,           // 2
     renderMainForm,             // 3
-    renderPagesAndLocationsStep // 4
-    
+    renderPagesAndLocationsStep, // 4
+    renderReviewStep             // 5
   ];
   let current = 0;
   function go(index) {
@@ -1007,10 +1308,11 @@
       // Guard: must have a logo
       if (!state.logoFile) {
         e.preventDefault();
+        e.stopImmediatePropagation(); // stop spinner.js submitting anyway
         go(1);
-        const activeEl = state.logoType === 'square'
-          ? container.querySelector('#logoSquare')
-          : container.querySelector('#logoRect');
+        const activeEl = state.logoType === 'square' ? container.querySelector('#logoSquare')
+                       : state.logoType === 'wide'   ? container.querySelector('#logoWide')
+                       : container.querySelector('#logoRect');
         activeEl?.classList.add('is-invalid');
         activeEl?.focus();
         showAlert(container, 'Please choose a logo to continue.');
@@ -1018,22 +1320,50 @@
       }
     
       // ---- DOM-FIRST VALUES (avoid stale state) ----
+      //
+      // On the review step the pages/locations inputs are no longer rendered —
+      // container was cleared — so only the injected hidden mirrors remain.
+      // Reading just the visible inputs made this guard think there were zero
+      // service pages and refuse to submit.
+      const readValues = (visibleSelector, hiddenSelector, fallback) => {
+        const visible = [...form.querySelectorAll(visibleSelector)]
+          .map(i => i.value.trim()).filter(Boolean);
+        if (visible.length) return visible;
+
+        const hidden = [...form.querySelectorAll(hiddenSelector)]
+          .map(i => i.value.trim()).filter(Boolean);
+        if (hidden.length) return hidden;
+
+        return (fallback || []).map(v => String(v).trim()).filter(Boolean);
+      };
+
       const pageInputsDom = form.querySelectorAll(
         '#pagesList input[name^="pages"][name$="[filename]"]:not([type="hidden"])'
       );
-      const pagesVals = [...pageInputsDom].map(i => i.value.trim()).filter(Boolean);
-    
+      const pagesVals = readValues(
+        '#pagesList input[name^="pages"][name$="[filename]"]:not([type="hidden"])',
+        'input[type="hidden"][name^="pages"][name$="[filename]"]',
+        state.pages
+      );
+
       const hasLocToggle = !!form.querySelector('#addLocations');
       const addLoc = hasLocToggle ? form.querySelector('#addLocations').checked : !!state.addLocations;
-    
+
       const locInputsDom = form.querySelectorAll(
         '#locationsList input[name="global[locationPages][]"]:not([type="hidden"])'
       );
-      const locVals = addLoc ? [...locInputsDom].map(i => i.value.trim()).filter(Boolean) : [];
+      const locVals = addLoc
+        ? readValues(
+            '#locationsList input[name="global[locationPages][]"]:not([type="hidden"])',
+            'input[type="hidden"][name="global[locationPages][]"]',
+            state.locations
+          )
+        : [];
     
       // Guard: must have ≥1 service page
       if (pagesVals.length === 0) {
         e.preventDefault();
+        e.stopImmediatePropagation(); // stop spinner.js submitting anyway
         go(4);
         // highlight first page input if it's on screen
         pageInputsDom[0]?.classList.add('is-invalid');
@@ -1041,10 +1371,39 @@
         showAlert(container, 'Please add at least one service page.');
         return;
       }
+
+      // Guard: no duplicate service pages or locations. Two entries that
+      // slugify the same would write to one file and overwrite each other.
+      const submitPageDupes = findDuplicates([...pageInputsDom]);
+      if (submitPageDupes.dupes.length) {
+        e.preventDefault();
+        e.stopImmediatePropagation(); // stop spinner.js submitting anyway
+        go(4);
+        [...pageInputsDom].forEach(i => i.classList.remove('is-invalid'));
+        submitPageDupes.dupes.forEach(i => i.classList.add('is-invalid'));
+        submitPageDupes.dupes[0]?.focus();
+        showAlert(container, `Duplicate service page: ${submitPageDupes.labels.join(', ')}. Each page needs a different name.`);
+        return;
+      }
+
+      if (addLoc) {
+        const submitLocDupes = findDuplicates([...locInputsDom]);
+        if (submitLocDupes.dupes.length) {
+          e.preventDefault();
+          e.stopImmediatePropagation(); // stop spinner.js submitting anyway
+          go(4);
+          [...locInputsDom].forEach(i => i.classList.remove('is-invalid'));
+          submitLocDupes.dupes.forEach(i => i.classList.add('is-invalid'));
+          submitLocDupes.dupes[0]?.focus();
+          showAlert(container, `Duplicate location: ${submitLocDupes.labels.join(', ')}. Each location needs a different city.`);
+          return;
+        }
+      }
     
       // Guard: if locations are ON, must have ≥1 location
       if (addLoc && locVals.length === 0) {
         e.preventDefault();
+        e.stopImmediatePropagation(); // stop spinner.js submitting anyway
         go(4);
         // highlight first location input if it's on screen
         locInputsDom[0]?.classList.add('is-invalid');
@@ -1074,30 +1433,27 @@
 
       // === Inject logoType hidden field (safety for Enter/other submits) ===
        
-      let logoTypeHidden = form.querySelector('input[name="global[logoType]"]');
-      if (!logoTypeHidden) {
-        logoTypeHidden = document.createElement('input');
-        logoTypeHidden.type = 'hidden';
-        logoTypeHidden.name = 'global[logoType]';
-        // so startOver() will clean it
-        logoTypeHidden.classList.add('js-hidden-mirror', 'js-hidden-logo-shape');
-        form.appendChild(logoTypeHidden);
-      }
-      logoTypeHidden.value = state.logoType; // "square" or "rect"
+      // Same treatment as styleKey: one authoritative value, no stale mirrors
+      form.querySelectorAll('input[name="global[logoType]"]').forEach(n => n.remove());
+      const logoTypeHidden = document.createElement('input');
+      logoTypeHidden.type = 'hidden';
+      logoTypeHidden.name = 'global[logoType]';
+      logoTypeHidden.classList.add('js-hidden-mirror', 'js-hidden-logo-shape');
+      logoTypeHidden.value = state.logoType; // "square" | "rect" | "wide"
+      form.appendChild(logoTypeHidden);
 
 
 
       // === Inject styleKey hidden field (ensures backend gets the chosen theme) ===
-      let styleKeyHidden = form.querySelector('input[name="global[styleKey]"]');
-      if (!styleKeyHidden) {
-        styleKeyHidden = document.createElement('input');
-        styleKeyHidden.type = 'hidden';
-        styleKeyHidden.name = 'global[styleKey]';
-        // so startOver() cleans it with the rest
-        styleKeyHidden.classList.add('js-hidden-mirror');
-        form.appendChild(styleKeyHidden);
-      }
+      // Remove every existing styleKey input (design-step radios or a stale
+      // mirror) so exactly one value is submitted.
+      form.querySelectorAll('input[name="global[styleKey]"]').forEach(n => n.remove());
+      const styleKeyHidden = document.createElement('input');
+      styleKeyHidden.type = 'hidden';
+      styleKeyHidden.name = 'global[styleKey]';
+      styleKeyHidden.classList.add('js-hidden-mirror');
       styleKeyHidden.value = state.styleKey;
+      form.appendChild(styleKeyHidden);
 
 
 
@@ -1138,7 +1494,11 @@
         form,
         state.mainFormSnapshot,
         'js-hidden-mainform',
-        (name) => (is24 && name.startsWith('global[hours][')) ? false : true
+        (name) => {
+          if (STATE_OWNED_FIELDS.includes(name)) return false;
+          if (is24 && name.startsWith('global[hours][')) return false;
+          return true;
+        }
       );
     });   
     go(0);

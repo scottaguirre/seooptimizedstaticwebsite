@@ -3,15 +3,20 @@ function createPagesPrompt({ globalValues, page, keywords}) {
     const { businessName, location, businessType } = globalValues;
     
     const categoryMap = {
-      'plumbing' : 'plumbing',
-      'electrician' : 'electrical services',
+      'plumbing': 'plumbing',
+      'electrician': 'electrical services',
       'roofing': 'roofing',
       'concrete contractor': 'concrete services',
       'hvac': 'hvac',
+      'air conditioning': 'air conditioning',
       'landscaping': 'landscaping',
-      'law lirm': 'lemon law lawyer',
-      'fencing':  'Fencing',
-      'junk removal': 'junk removal'
+      'law firm': 'lemon law firm',
+      'fencing':   'fencing',
+      'junk removal': 'junk removal',
+      'tree removal':     'tree removal',
+      'paving':          'paving',
+      'swimming pool contractor': 'swimming pool contractor',
+      'water damage restoration': 'water damage restoration'
     };
   
     const category = categoryMap[businessType.toLowerCase()] || businessType;
