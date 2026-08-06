@@ -19,7 +19,11 @@ const crypto = require('crypto');
 
 const ENDPOINT = 'https://api.valueserp.com/search';
 const MAX_QUESTIONS = 6;
-const REQUEST_TIMEOUT_MS = 15000;
+// ValueSERP normally answers in a few seconds, but it scrapes a live SERP,
+// so a slow upstream can push well past that. 15s was too tight and produced
+// timeouts on both queries; 45s with one retry is far more forgiving.
+const REQUEST_TIMEOUT_MS = 45000;
+const RETRY_ATTEMPTS = 2;
 
 // Optional Mongo cache. Loaded lazily so this module works without it.
 let PaaCache = null;
@@ -53,35 +57,51 @@ function questionKey(question) {
  * fail a site generation.
  */
 async function fetchOne(query, { apiKey, location, device, gl, hl, googleDomain }) {
-  try {
-    const { data } = await axios.get(ENDPOINT, {
-      params: {
-        api_key: apiKey,
-        q: query,
-        location,
-        device,
-        gl,
-        hl,
-        google_domain: googleDomain,
-        // include_ai_overview_paa deliberately omitted — see header note
-      },
-      timeout: REQUEST_TIMEOUT_MS,
-    });
+  for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+    try {
+      const { data } = await axios.get(ENDPOINT, {
+        params: {
+          api_key: apiKey,
+          q: query,
+          location,
+          device,
+          gl,
+          hl,
+          google_domain: googleDomain,
+          // include_ai_overview_paa deliberately omitted — see header note
+        },
+        timeout: REQUEST_TIMEOUT_MS,
+      });
 
-    const questions = (data && Array.isArray(data.related_questions))
-      ? data.related_questions.map(r => String(r && r.question || '').trim()).filter(Boolean)
-      : [];
+      const questions = (data && Array.isArray(data.related_questions))
+        ? data.related_questions.map(r => String(r && r.question || '').trim()).filter(Boolean)
+        : [];
 
-    console.log(`   PAA "${query}" → ${questions.length} question(s)`);
-    return questions;
+      console.log(`   PAA "${query}" → ${questions.length} question(s)`);
+      return questions;
 
-  } catch (err) {
-    const detail = err.response
-      ? `${err.response.status} ${JSON.stringify(err.response.data || {}).slice(0, 120)}`
-      : err.message;
-    console.warn(`   ⚠️ PAA query failed for "${query}": ${detail}`);
-    return [];
+    } catch (err) {
+      const isLast = attempt === RETRY_ATTEMPTS;
+
+      // A 4xx means the request itself is wrong (bad key, bad params) — no
+      // point retrying, and each attempt may still cost a credit.
+      const status = err.response && err.response.status;
+      const worthRetrying = !status || status >= 500;
+
+      const detail = err.response
+        ? `${status} ${JSON.stringify(err.response.data || {}).slice(0, 120)}`
+        : err.message;
+
+      if (!worthRetrying || isLast) {
+        console.warn(`   ⚠️ PAA query failed for "${query}": ${detail}`);
+        return [];
+      }
+
+      console.warn(`   ⚠️ PAA attempt ${attempt} failed for "${query}" (${detail}) — retrying`);
+    }
   }
+
+  return [];
 }
 
 /**
@@ -140,14 +160,17 @@ async function fetchPeopleAlsoAsk({
   }
 
   // ---- fetch ----
+  // Both queries run at once. Google returns ~4 questions per query and we
+  // want 6, so the second call is effectively always needed — running them
+  // sequentially just doubled the wait for no saving.
+  const results = await Promise.all(
+    queries.map(query => fetchOne(query, { apiKey, location, device, gl, hl, googleDomain }))
+  );
+
   const seen = new Set();
   const merged = [];
 
-  for (const query of queries) {
-    if (merged.length >= MAX_QUESTIONS) break;
-
-    const questions = await fetchOne(query, { apiKey, location, device, gl, hl, googleDomain });
-
+  for (const questions of results) {
     for (const question of questions) {
       const qk = questionKey(question);
       if (!qk || seen.has(qk)) continue;
@@ -155,6 +178,7 @@ async function fetchPeopleAlsoAsk({
       merged.push(question);
       if (merged.length >= MAX_QUESTIONS) break;
     }
+    if (merged.length >= MAX_QUESTIONS) break;
   }
 
   console.log(`   PAA total after merge: ${merged.length} question(s)`);

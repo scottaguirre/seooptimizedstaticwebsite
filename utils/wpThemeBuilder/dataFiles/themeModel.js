@@ -77,6 +77,30 @@ function normaliseSection(section) {
 
   if (section.headingTag) out.heading_tag = section.headingTag;
 
+  if (section.badges && (section.badges.award || section.badges.licensed)) {
+    // Append the badge roles so the meta box renders a media picker for each.
+    if (section.badges.award) out.image_roles.push('award-badge');
+    if (section.badges.licensed) out.image_roles.push('licensed-badge');
+
+    out.badges = {
+      award: String(section.badges.award || ''),
+      award_alt: String(section.badges.awardAlt || ''),
+      licensed: String(section.badges.licensed || ''),
+      licensed_alt: String(section.badges.licensedAlt || ''),
+    };
+  }
+
+  if (Array.isArray(section.pricing) && section.pricing.length) {
+    out.pricing = section.pricing.map(r => ({
+      name: String(r.name || ''),
+      low: Number(r.low) || 0,
+      high: Number(r.high) || 0,
+      unit: String(r.unit || ''),
+      note: String(r.note || ''),
+    }));
+  }
+  if (section.notice) out.notice = String(section.notice);
+
   if (Array.isArray(section.faqs) && section.faqs.length) {
     out.faqs = section.faqs.map(f => ({
       question: String(f.question || ''),

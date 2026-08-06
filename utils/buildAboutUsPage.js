@@ -7,11 +7,39 @@ const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectIndexInterlinks } = require('./injectIndexInterlinks'); 
 const { generateAboutUsContent } = require('./generateAboutUsContent');
 const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
-const { escapeAttr, buildYouTubeEmbedHtml } = require('./helpers');
+const { escapeAttr, buildAboutMediaHtml } = require('./helpers');
 const { writePageAssets } = require('./buildAssets');
 const { buildSocialLinks } = require('./buildSocialLinks');
 const CM = require('./contentModel');
 const { buildFaqSection, buildFaqSchemaTag } = require('./buildFaqSection');
+const { buildServiceCards } = require('./buildServiceCards');
+const { buildPricingTable } = require('./buildPricingTable');
+const { copyBadgeImages, buildBadgesHtml } = require('./copyBadgeImages');
+
+/**
+ * The trust points under Section 1's opening paragraph.
+ *
+ * Rendered as a real <ul> rather than inside a <p>: a list nested in a
+ * paragraph is invalid HTML and browsers repair it unpredictably. Returns ''
+ * when the model gives us nothing, so the page simply shows two paragraphs.
+ */
+function buildTrustList(points = []) {
+  const items = (points || [])
+    .map(p => String(p || '').trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (!items.length) return '';
+
+  const rows = items.map(point => `
+              <li>${String(point)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')}</li>`).join('');
+
+  return `<ul class="trust-points">${rows}
+            </ul>`;
+}
 
 
 const basePath = '';
@@ -40,7 +68,9 @@ const  buildAboutUsPage =  async function (
             jsonLdString,
             indexInterlinks,
             pages,
-            faqs = []
+            faqs = [],
+            serviceCards = [],
+            pricing = []
 
     ){  
         const categoryMap = {
@@ -85,7 +115,10 @@ const  buildAboutUsPage =  async function (
         const pageImageDirs = {
                 aboutHero: path.join(predefinedImagesDir, businessType, `aboutUs/hero`),
                 aboutSection2: path.join(predefinedImagesDir, businessType, `aboutUs/section2`),
-                aboutSection4: path.join(predefinedImagesDir, businessType, `aboutUs/section4`)    
+                aboutSection4: path.join(predefinedImagesDir, businessType, `aboutUs/section4`),
+                // Fallback image for the location section, shown when the
+                // user has not supplied a YouTube URL.
+                aboutSection8: path.join(predefinedImagesDir, businessType, `aboutUs/section8`)
             };
 
         
@@ -111,6 +144,9 @@ const  buildAboutUsPage =  async function (
             copyPageImage(pageImageDirs.aboutSection4, seoPrefix, 'section4-1.webp', 'section4Img1', distDir);
             copyPageImage(pageImageDirs.aboutSection4, seoPrefix, 'section4-2.webp', 'section4Img2', distDir);
 
+            // === Copy section8 image (video fallback)
+            copyPageImage(pageImageDirs.aboutSection8, seoPrefix, 'section8-1.webp', 'section8Img1', distDir);
+
             
             
             //Generate content for About Us page
@@ -130,23 +166,35 @@ const  buildAboutUsPage =  async function (
             // Alt text for images
             const altTexts = buildAltText(globalValues, 'aboutIndex');
 
+            // Hero trust badges. About Us only — the other page types don't
+            // use them. Returns empty strings if the files are missing, and
+            // buildBadgesHtml() then renders nothing at all.
+            const badges = copyBadgeImages(distDir, globalValues);
+
 
             // ✅ Build & inject Services / Locations menus (and remove wrappers if empty)
             const context = 'aboutus';
             aboutus = buildNavMenu(aboutus, globalValues, pages, basePath, slugify(globalValues.location), globalValues.location, context);
  
 
-            const aboutVideoHtml = buildYouTubeEmbedHtml(
-                globalValues.youtubeVideoUrl,
-                globalValues.businessName,
-                globalValues.location
-              );
+            // Video if the user supplied a URL, otherwise the section8 image.
+            const aboutMediaHtml = buildAboutMediaHtml({
+                videoUrl: globalValues.youtubeVideoUrl,
+                businessName: globalValues.businessName,
+                location: globalValues.location,
+                // Same path convention as the other About Us images: they are
+                // copied to assets/<seoPrefix>-<field>.webp by copyPageImage.
+                image: `assets/${seoPrefix}-section8Img1.webp`,
+                imageAlt: `${altTexts['section8-1'] || altTexts['section2-1'] || ''} ${nearMeTerm}`.trim(),
+            });
               
               
             aboutus = aboutus
                 .replace(/{{JSON_LD_SCHEMA}}/g, jsonLdString)
                 .replace(/{{FAQ_SCHEMA}}/g, buildFaqSchemaTag(faqs))
                 .replace(/{{FAQ_SECTION}}/g, buildFaqSection(faqs))
+                .replace(/{{SERVICE_CARDS}}/g, buildServiceCards(serviceCards))
+                .replace(/{{PRICING_TABLE}}/g, buildPricingTable(pricing))
                 .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
                 .replace(/{{LOGO_PATH}}/g, globalValues.logo)
                 .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location}. ${nearMeTerm}`)
@@ -181,6 +229,8 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{SECTION1_H2}}/g, sectionsWithLinks.section1.heading.toUpperCase())
                 .replace(/{{SECTION1_H3}}/g, sectionsWithLinks.section1.subheading)
                 .replace(/{{SECTION1_P1}}/g, sectionsWithLinks.section1.paragraphs[0])
+                .replace(/{{SECTION1_LIST}}/g, buildTrustList(sectionsWithLinks.section1.trustPoints))
+                .replace(/{{HERO_BADGES}}/g, buildBadgesHtml(badges))
                 .replace(/{{SECTION1_P2}}/g, sectionsWithLinks.section1.paragraphs[1])
                 .replace(/{{SECTION2_H2}}/g, sectionsWithLinks.section2.heading.toUpperCase())
                 .replace(/{{SECTION2_P1}}/g, sectionsWithLinks.section2.paragraphs[0])
@@ -212,7 +262,7 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{PHONE_DISPLAY}}/g, globalValues.phone)
                 .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
                 .replace(/{{SOCIAL_LINKS}}/g, buildSocialLinks(globalValues))
-                .replace(/{{ABOUT_VIDEO}}/g, aboutVideoHtml)  
+                .replace(/{{ABOUT_MEDIA}}/g, aboutMediaHtml)
                 .replace('</head>', `<link rel="stylesheet" href="./css/bootstrap.min.css">
                                     <link rel="stylesheet" href="./css/index.css"></head>`)
                 .replace('</body>', `<script src="./js/bootstrap.bundle.min.js"></script>
@@ -220,13 +270,13 @@ const  buildAboutUsPage =  async function (
                           </body>`);
 
             
-                // If there's no video HTML, remove the entire YouTube container
-                if (!aboutVideoHtml) {
-                    aboutus = aboutus.replace(
-                    /<div class="container about-video-section[^>]*>[\s\S]*?<\/div>\s*/i,
-                    ''
-                    );
-                }
+                // NOTE: an earlier version stripped a hard-coded
+                // <div class="container about-video-section"> here when no
+                // video was supplied. That wrapper no longer exists in the
+                // template — {{ABOUT_MEDIA}} sits directly inside the column
+                // and buildAboutMediaHtml() decides what goes in it — so the
+                // regex matched nothing and referenced a variable that had
+                // been renamed, throwing on every build.
   
             
             
@@ -305,7 +355,7 @@ const  buildAboutUsPage =  async function (
             const heroAlt = `${altTexts['hero-mobile']} ${nearMeTerm}`.trim();
 
             const modelSections = [
-                CM.heroSection({
+                Object.assign(CM.heroSection({
                     h1: globalValues.businessName.toUpperCase(),
                     tagline: globalValues.location,
                     imageList: CM.heroImages({
@@ -314,12 +364,28 @@ const  buildAboutUsPage =  async function (
                         heroDesktop: `assets/${seoPrefix}-heroDesktop.webp`,
                         heroLarge:   `assets/${seoPrefix}-heroLarge.webp`,
                     }, heroAlt, heroAlt),
+                }), {
+                    // Carried separately from the responsive hero images:
+                    // these are fixed badges, not size variants.
+                    badges: {
+                        award: badges.awardBadge,
+                        awardAlt: badges.awardBadgeAlt,
+                        licensed: badges.licensedBadge,
+                        licensedAlt: badges.licensedBadgeAlt,
+                    },
                 }),
-                CM.section({
-                    key: 'section1', label: 'Who We Are',
-                    type: CM.SECTION_TYPES.TEXT,
-                    source: sectionsWithLinks.section1 || {},
-                }),
+                Object.assign(
+                    CM.section({
+                        key: 'section1', label: 'Who We Are',
+                        type: CM.SECTION_TYPES.TEXT,
+                        source: sectionsWithLinks.section1 || {},
+                    }),
+                    // Carried through so the WordPress admin can edit each
+                    // trust point rather than losing them on export.
+                    Array.isArray(sectionsWithLinks.section1?.trustPoints)
+                        ? { trustPoints: sectionsWithLinks.section1.trustPoints.slice(0, 6) }
+                        : {}
+                ),
                 CM.section({
                     key: 'section2', label: 'What Makes Us Stand Out',
                     type: CM.SECTION_TYPES.TEXT_IMAGES,
@@ -352,10 +418,22 @@ const  buildAboutUsPage =  async function (
                 }));
             }
 
+            // TEXT_IMAGES rather than TEXT: this section carries the
+            // video-or-image media slot alongside its paragraphs, so the
+            // WordPress renderer can fall back to the image the same way.
             modelSections.push(CM.section({
                 key: 'section4', label: 'Our Service Area',
-                type: CM.SECTION_TYPES.TEXT,
+                type: CM.SECTION_TYPES.TEXT_IMAGES,
                 source: sectionsWithLinks.section4 || {},
+                imageList: [
+                    CM.image({
+                        role: 'section8-img1',
+                        src: `assets/${seoPrefix}-section8Img1.webp`,
+                        alt: `${altTexts['section8-1'] || altTexts['section2-1'] || ''} ${nearMeTerm}`.trim(),
+                        width: 400, height: 600,
+                    }),
+                ],
+                extra: { videoUrl: globalValues.youtubeVideoUrl || '' },
             }));
 
             if (globalValues.youtubeVideoUrl) {
@@ -365,6 +443,13 @@ const  buildAboutUsPage =  async function (
                     heading: '', paragraphs: [], images: [],
                     videoUrl: globalValues.youtubeVideoUrl,
                 });
+            }
+
+            const pricingModelSection = CM.pricingSection(pricing, {
+                notice: require('./buildPricingTable').DEFAULT_NOTICE,
+            });
+            if (pricingModelSection) {
+                modelSections.push(pricingModelSection);
             }
 
             const faqModelSection = CM.faqSection(faqs);

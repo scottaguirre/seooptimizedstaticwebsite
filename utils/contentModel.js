@@ -37,6 +37,7 @@ const SECTION_TYPES = {
   VIDEO: 'video',
   FORM: 'form',
   FAQ: 'faq',
+  PRICING: 'pricing',
   NAP_MAP: 'nap-map',
 };
 
@@ -217,6 +218,33 @@ function faqSection(faqs = [], label = 'FAQ') {
 }
 
 /**
+ * Pricing section. Rows are stored individually so the WordPress admin can
+ * expose one labelled field per service, letting an owner replace generated
+ * estimates with their real figures.
+ */
+function pricingSection(rows = [], opts = {}) {
+  const items = (rows || []).filter(r => r && r.name && r.low && r.high);
+  if (!items.length) return null;
+
+  return {
+    key: 'pricing',
+    label: 'Pricing',
+    type: SECTION_TYPES.PRICING,
+    heading: opts.heading || 'Typical Service Pricing',
+    paragraphs: [],
+    images: [],
+    notice: opts.notice || '',
+    pricing: items.map(r => ({
+      name: String(r.name).trim(),
+      low: Number(r.low),
+      high: Number(r.high),
+      unit: String(r.unit || 'per job').trim(),
+      note: String(r.note || '').trim(),
+    })),
+  };
+}
+
+/**
  * Turn a legal page's rendered template into model sections.
  *
  * The privacy / terms / accessibility templates are boilerplate: one
@@ -356,6 +384,7 @@ module.exports = {
   legalPage,
   sectionsFromLegalHtml,
   faqSection,
+  pricingSection,
   writeModel,
   readModel,
 };

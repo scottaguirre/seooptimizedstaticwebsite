@@ -94,7 +94,9 @@ const buildLocationPages = async function (
 
 
     // Page content + alts
-    const sections = await generateLocationPagesContent(globalForLoc, pagesInterlinks);
+    // Pass the index so each location page gets a different angle — without
+    // it every page opens on the same topic and reads as templated.
+    const sections = await generateLocationPagesContent(globalForLoc, pagesInterlinks, Number(index));
     const altTexts = buildAltText(globalForLoc, Number(index));
 
     //console.log(`from buildLocationPages ${sections.section1.paragraphs[0]}`);
@@ -164,6 +166,11 @@ const buildLocationPages = async function (
       .replace(/{{SECTION4_H2}}/g, sectionsWithLinks.section4.heading.toUpperCase())
       .replace(/{{SECTION4_P1}}/g, sectionsWithLinks.section4.paragraphs[0])
       .replace(/{{SECTION4_P2}}/g, sectionsWithLinks.section4.paragraphs[1])
+      // Section 5 is text-only. Fall back to empty strings rather than
+      // "undefined" if the model returns four sections instead of five.
+      .replace(/{{SECTION5_H2}}/g, (sectionsWithLinks.section5?.heading || '').toUpperCase())
+      .replace(/{{SECTION5_P1}}/g, sectionsWithLinks.section5?.paragraphs?.[0] || '')
+      .replace(/{{SECTION5_P2}}/g, sectionsWithLinks.section5?.paragraphs?.[1] || '')
       .replace(/{{LOCATION_AREA}}/g, globalForLoc.location)
       .replace(/{{ADDRESS}}/g, locationPage.display.toUpperCase())
       .replace(/{{EMAIL}}/g, globalForLoc.email)
@@ -261,6 +268,11 @@ const buildLocationPages = async function (
             CM.image({ role:'section4-img2', src:uploadedImages[index]?.section4Img2,
                        alt:`${altTexts['section4-2']} - ${altSuffix}`, width:600, height:400 }),
           ],
+        }),
+        CM.section({
+          key: 'section5', label: 'Service Area',
+          type: CM.SECTION_TYPES.TEXT,
+          source: sectionsWithLinks.section5 || {},
         }),
         {
           key: 'napMap', label: 'Contact Details & Map',

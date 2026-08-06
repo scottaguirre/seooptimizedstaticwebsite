@@ -131,6 +131,8 @@ function ${p}_meta_styles() {
 function ${p}_role_label( $role ) {
     $map = array(
         'hero'          => __( 'Hero image', '${themeSlug}' ),
+        'award-badge'   => __( 'Award badge', '${themeSlug}' ),
+        'licensed-badge' => __( 'Licensed badge', '${themeSlug}' ),
         'hero-mobile'   => __( 'Hero image (mobile)', '${themeSlug}' ),
         'hero-tablet'   => __( 'Hero image (tablet)', '${themeSlug}' ),
         'hero-desktop'  => __( 'Hero image (desktop)', '${themeSlug}' ),
@@ -220,6 +222,36 @@ function ${p}_render_content_meta_box( $post ) {
 
         echo '<div class="' . esc_attr( '${p}-sec' ) . '">';
         echo '<h3>' . esc_html( $label ) . '</h3>';
+
+        if ( $type === 'pricing' ) {
+            ${p}_text_field( $post->ID, $key, 'heading', __( 'Heading', '${themeSlug}' ) );
+
+            echo '<p class="description">' .
+                 esc_html__( 'These prices were generated as typical estimates. Replace them with your real figures.', '${themeSlug}' ) .
+                 '</p>';
+
+            $price_count = (int) get_post_meta( $post->ID, '${p}_s_' . $key . '_price_count', true );
+            for ( $i = 0; $i < $price_count; $i++ ) {
+                echo '<div style="border-left:3px solid #2271b1;padding-left:12px;margin-bottom:14px;">';
+                ${p}_text_field( $post->ID, $key, 'price_name_' . $i,
+                    sprintf( __( 'Service %d', '${themeSlug}' ), $i + 1 ) );
+
+                echo '<div style="display:flex;gap:10px;">';
+                ${p}_text_field( $post->ID, $key, 'price_low_' . $i,  __( 'Low ($)', '${themeSlug}' ) );
+                ${p}_text_field( $post->ID, $key, 'price_high_' . $i, __( 'High ($)', '${themeSlug}' ) );
+                ${p}_text_field( $post->ID, $key, 'price_unit_' . $i, __( 'Charged', '${themeSlug}' ) );
+                echo '</div>';
+
+                ${p}_text_field( $post->ID, $key, 'price_note_' . $i,
+                    __( 'What moves the price', '${themeSlug}' ) );
+                echo '</div>';
+            }
+
+            ${p}_text_field( $post->ID, $key, 'notice', __( 'Estimate notice', '${themeSlug}' ) );
+
+            echo '</div>';
+            continue;
+        }
 
         if ( $type === 'faq' ) {
             ${p}_text_field( $post->ID, $key, 'heading', __( 'Heading', '${themeSlug}' ) );
@@ -703,6 +735,23 @@ function ${p}_save_meta( $post_id ) {
             if ( isset( $_POST[ $name ] ) ) {
                 update_post_meta( $post_id, $name, wp_kses_post( wp_unslash( $_POST[ $name ] ) ) );
             }
+        }
+
+        // Pricing rows
+        $price_count = (int) get_post_meta( $post_id, $base . 'price_count', true );
+        for ( $i = 0; $i < $price_count; $i++ ) {
+            foreach ( array( 'price_name_', 'price_low_', 'price_high_', 'price_unit_', 'price_note_' ) as $field ) {
+                $meta_key = $base . $field . $i;
+                if ( isset( $_POST[ $meta_key ] ) ) {
+                    update_post_meta( $post_id, $meta_key,
+                        sanitize_text_field( wp_unslash( $_POST[ $meta_key ] ) ) );
+                }
+            }
+        }
+
+        if ( isset( $_POST[ $base . 'notice' ] ) ) {
+            update_post_meta( $post_id, $base . 'notice',
+                sanitize_textarea_field( wp_unslash( $_POST[ $base . 'notice' ] ) ) );
         }
 
         // FAQ pairs

@@ -8,6 +8,7 @@
 // answers.
 
 const { OpenAI } = require('openai');
+const { getFixedFaqQuestions, getFixedFaqFallbacks } = require('./fixedFaqQuestions');
 const openai = new OpenAI();
 
 const MIN_WORDS = 40;
@@ -46,7 +47,17 @@ Return ONLY a JSON array, one object per question, in the same order:
  *          A failed FAQ must never fail a site generation.
  */
 async function generateFaqAnswers({ questions, businessName, businessType, location }) {
-  const list = (questions || []).map(q => String(q || '').trim()).filter(Boolean);
+  // Two fixed questions always lead: how do I start, and how fast can you
+  // move. Their wording is chosen by business type — "respond to an urgent
+  // issue" suits a plumber and not a law firm.
+  const fixed = getFixedFaqQuestions({ businessName, businessType });
+
+  const paa = (questions || []).map(q => String(q || '').trim()).filter(Boolean);
+
+  // Answering all of them in ONE request lets the model see the full set and
+  // avoid repeating itself between, say, the fixed response-time question and
+  // a PAA question about the same thing.
+  const list = [...fixed, ...paa];
   if (!list.length) return [];
 
   try {
@@ -85,12 +96,35 @@ async function generateFaqAnswers({ questions, businessName, businessType, locat
       })
       .filter(item => item.answer);
 
-    console.log(`   FAQ answers generated: ${faqs.length}/${list.length}`);
-    return faqs;
+    // The section promises eight questions, so make sure the fixed two are
+    // present even if the model dropped or reworded one of them.
+    const fallbacks = getFixedFaqFallbacks({ businessName, businessType, location });
+
+    fixed.forEach((question, i) => {
+      const found = faqs.find(f => f.question.toLowerCase().trim() === question.toLowerCase().trim());
+      if (!found) {
+        faqs.splice(i, 0, { question, answer: fallbacks[i] });
+        console.warn(`   ⚠️ Model dropped a fixed FAQ question — using the written fallback`);
+      }
+    });
+
+    // Keep the fixed pair first regardless of the order the model returned
+    const ordered = [
+      ...fixed.map(q => faqs.find(f => f.question.toLowerCase().trim() === q.toLowerCase().trim())).filter(Boolean),
+      ...faqs.filter(f => !fixed.some(q => q.toLowerCase().trim() === f.question.toLowerCase().trim())),
+    ];
+
+    console.log(`   FAQ answers generated: ${ordered.length} (${fixed.length} fixed + ${ordered.length - fixed.length} from PAA)`);
+    return ordered;
 
   } catch (err) {
     console.warn('   ⚠️ Could not generate FAQ answers:', err.message);
-    return [];
+
+    // Fall back to the two fixed questions with their written answers. A
+    // short FAQ is better than none, and these two are the ones visitors
+    // most often want answered.
+    const fallbacks = getFixedFaqFallbacks({ businessName, businessType, location });
+    return fixed.map((question, i) => ({ question, answer: fallbacks[i] }));
   }
 }
 

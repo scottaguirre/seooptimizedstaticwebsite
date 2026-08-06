@@ -31,6 +31,8 @@ const {
 const { buildSocialLinks } = require('../utils/buildSocialLinks');
 const { fetchPeopleAlsoAsk } = require('../utils/fetchPeopleAlsoAsk');
 const { generateFaqAnswers } = require('../utils/generateFaqAnswers');
+const { generateServiceCards } = require('../utils/buildServiceCards');
+const { generatePricing } = require('../utils/buildPricingTable');
 const { buildSitemap } = require('../utils/buildSitemap');
 
 const CM = require('../utils/contentModel');
@@ -580,6 +582,25 @@ router.post('/generate', upload.any(), async (req, res) => {
       : [];
 
 
+    // Six service cards for the home page. These sit under the existing
+    // Services paragraphs rather than replacing them.
+    console.log('🧩 Generating service cards...');
+    const serviceCards = await generateServiceCards({
+      businessType: globalValues.businessType,
+      businessName: globalValues.businessName,
+      location: globalValues.location,
+    });
+
+
+    // Typical price ranges. Framed as estimates for the area, not as the
+    // business's own price list — the figures are generated, not supplied.
+    console.log('💲 Generating pricing table...');
+    const pricing = await generatePricing({
+      businessType: globalValues.businessType,
+      location: globalValues.location,
+    });
+
+
     // Create about-us.html, & save in dist
     const aboutPage = await buildAboutUsPage(
             distDir,
@@ -588,7 +609,9 @@ router.post('/generate', upload.any(), async (req, res) => {
             globalValues.jsonLdString,
             indexInterlinks,
             pages,
-            faqs
+            faqs,
+            serviceCards,
+            pricing
     );
 
 
@@ -682,11 +705,11 @@ router.post('/generate', upload.any(), async (req, res) => {
           <style>
             body { background:#082d5b; color:#fff; }
             .wrap { max-width: 720px; margin: 0 auto; padding: 80px 20px; text-align:center; }
-            .actions { display:flex;  gap:18px; margin-top:40px; }
+            .actions { display:flex; gap:14px; margin-top:40px; }
             .actions .btn { padding: 14px 20px; font-size: 18px; }
             #overlay {
               position: fixed; inset: 0; background: rgba(0,0,0,.8);
-              display: none; flex-direction: column; align-items: center;
+              display: none; align-items: center;
               justify-content: center; z-index: 9999; color:#fff;
             }
             #overlay.show { display: flex; }

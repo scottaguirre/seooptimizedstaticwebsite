@@ -338,19 +338,41 @@ function buildYouTubeEmbedHtml(videoUrl, businessName, location) {
 
   const title = `Intro video for ${businessName || ''} in ${location || ''}`.trim();
 
+  // Just the embed — the surrounding column now lives in the template,
+  // because a fallback image occupies it when there is no video.
+  //
+  // The .ratio wrapper matters: a bare <iframe> with no width or height
+  // falls back to the browser default of 300x150px, which is what made the
+  // video look tiny before.
   return `
-    <div class="ratio ratio-16x9 about-video-wrapper">
-      <iframe
-        src="${embedUrl}"
-        title="${escapeAttr(title)}"
-        loading="lazy"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-        referrerpolicy="strict-origin-when-cross-origin"
-        allowfullscreen
-      >
-      </iframe>
-    </div>
-  `.trim();
+        <div class="ratio ratio-16x9 about-video-wrapper">
+          <iframe
+            src="${embedUrl}"
+            title="${escapeAttr(title)}"
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allowfullscreen></iframe>
+        </div>`;
+}
+
+/**
+ * The media for the location section: the YouTube embed when a URL was
+ * given, otherwise the fallback image.
+ *
+ * Deliberately ONE decision in ONE place. Rendering both placeholders and
+ * blanking one leaves two slots in the template whose relationship is not
+ * visible in the markup — easy to break later.
+ */
+function buildAboutMediaHtml({ videoUrl, businessName, location, image, imageAlt, imageTitle }) {
+  const embed = buildYouTubeEmbedHtml(videoUrl, businessName, location);
+  if (embed) return embed;
+
+  if (!image) return '';
+
+  return `
+        <img class="img-fluid" loading="lazy" src="${image}" width="400" height="600"
+             alt="${escapeAttr(imageAlt || '')}" title="${escapeAttr(imageTitle || imageAlt || '')}">`;
 }
 
 
@@ -369,6 +391,7 @@ module.exports = {
   validateGlobalFields,
   moveOrCopyThenDelete,
   buildYouTubeEmbedHtml,
+  buildAboutMediaHtml,
   validateEachPageInputs,
   validateAndNormalizeLocationPages
 };

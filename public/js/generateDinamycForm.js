@@ -60,7 +60,11 @@
   // mirrors injected on a previous pass. Re-injecting those alongside the
   // authoritative value produced two inputs with the same name — and the
   // stale one could win, which is how picking style5 generated style.css.
-  const STATE_OWNED_FIELDS = ['global[styleKey]', 'global[logoType]'];
+  const STATE_OWNED_FIELDS = [
+    'global[styleKey]',
+    'global[logoType]',
+    'global[businessType]',
+  ];
 
   function injectHiddenSnapshot(form, snapshot, cssClass = 'js-hidden-mainform', filterFn) {
     // wipe any previous mirrors
@@ -373,6 +377,17 @@
 
   // -----------------------------
   // Step 2: Main Form Theme/Design
+  // THEMES already carries a human label ("Design 1"); use it rather than
+  // showing the internal filename.
+  function logoShapeLabel(key) {
+    return ({ square: 'Square', rect: 'Rectangular', wide: 'Wide' })[key] || key || '';
+  }
+
+  function themeLabel(key) {
+    const theme = THEMES.find(t => t.key === key);
+    return theme ? theme.label : key;
+  }
+
   // -----------------------------
   // Duplicate detection
   // -----------------------------
@@ -429,7 +444,7 @@
     if (businessName) badges.push(['text-bg-light text-dark', `Business: ${businessName}`]);
     if (state.businessType) badges.push(['text-bg-primary', `Type: ${state.businessType}`]);
     if (location) badges.push(['text-bg-success', `Location: ${location}`]);
-    badges.push(['text-bg-info', `Theme: ${state.styleKey}.css`]);
+    badges.push(['text-bg-info', themeLabel(state.styleKey)]);
 
     extra.forEach(b => badges.push(b));
 
@@ -954,6 +969,15 @@
       // The submit handler also sets this, but injecting it now means the
       // review step reflects exactly what will be posted.
       form.querySelectorAll('input[name="global[styleKey]"]').forEach(n => n.remove());
+      // Business type too, so the review step reflects what will be posted
+      form.querySelectorAll('input[name="global[businessType]"]').forEach(n => n.remove());
+      const businessTypeEarly = document.createElement('input');
+      businessTypeEarly.type = 'hidden';
+      businessTypeEarly.name = 'global[businessType]';
+      businessTypeEarly.classList.add('js-hidden-mirror');
+      businessTypeEarly.value = state.businessType;
+      form.appendChild(businessTypeEarly);
+
       const styleKeyEarly = document.createElement('input');
       styleKeyEarly.type = 'hidden';
       styleKeyEarly.name = 'global[styleKey]';
@@ -1074,21 +1098,43 @@
     const shown = (value === undefined || value === null || String(value).trim() === '')
       ? '<span class="text-warning">— not set —</span>'
       : escapeHtml(String(value));
+
+    // A card's Edit button goes to one step, but a card can hold fields from
+    // several. Business Type is chosen on step 1 while the rest of the
+    // Business card comes from step 3, so that row carries its own link.
+    // Kept for rows whose owning step differs from their card's.
+    const editLink = (opts.editStep === undefined)
+      ? ''
+      : ` <button type="button" class="btn btn-link btn-sm p-0 ms-2 align-baseline js-review-edit text-white"
+                 data-step="${opts.editStep}">change</button>`;
+
     return `
-      <div class="d-flex justify-content-between gap-3 py-1 border-bottom border-secondary-subtle">
-        <span class="text-white-50 flex-shrink-0">${escapeHtml(label)}</span>
+      <div class="d-flex justify-content-between gap-3 py-1"
+           style="border-bottom:1px solid rgba(255,255,255,.35);">
+        <span class="flex-shrink-0" style="color:rgba(255,255,255,.85);">${escapeHtml(label)}</span>
         <span class="text-white text-end${opts.strong ? ' fw-bold' : ''}"
-              style="min-width:0;overflow-wrap:anywhere;word-break:break-word;">${shown}</span>
+              style="min-width:0;overflow-wrap:anywhere;word-break:break-word;">${shown}${editLink}</span>
       </div>`;
   }
+
+  // Card colours. Kept as constants so they can be changed in one place
+  // rather than hunting through the markup.
+  // #17801a rather than a brighter green: white body text on it clears
+  // WCAG AA (5.07:1), where #1a8a1a came in just under at 4.47:1.
+  const CARD_BG = '#105612';       // green card background
+  const CARD_BORDER = '#0d5c10';   // slightly darker edge
+  const EDIT_BG = '#082d5b';       // Edit button, matching the site header
 
   function reviewCard(title, bodyHtml, editStep) {
     return `
       <div class="col-12">
-        <div class="border rounded p-3 h-100 text-white" style="background:#0b3f7a33;">
+        <div class="rounded p-3 h-100 text-white"
+             style="background:${CARD_BG};border:2px solid ${CARD_BORDER};">
           <div class="d-flex justify-content-between align-items-center mb-2">
             <h5 class="m-0">${escapeHtml(title)}</h5>
-            <button type="button" class="btn btn-sm btn-outline-light js-review-edit" data-step="${editStep}">Edit</button>
+            <button type="button" class="btn btn-sm js-review-edit text-white"
+                    data-step="${editStep}"
+                    style="background:${EDIT_BG};border:1px solid rgba(255,255,255,.35);">Edit</button>
           </div>
           ${bodyHtml}
         </div>
@@ -1151,10 +1197,29 @@
     container.appendChild(header);
 
     const grid = el('div', { class: 'row g-3' });
+
+    // Cards follow the wizard's own order, so reviewing walks back through
+    // the same sequence the user just completed:
+    //   0 business type -> 1 logo -> 2 design -> 3 details -> 4 pages
     grid.innerHTML = [
-      reviewCard('Business', [
+      reviewCard('Business Type', [
+        reviewRow('Category', state.businessType, { strong: true }),
+      ].join(''), 0),
+
+      reviewCard('Logo', [
+        reviewRow('Shape', logoShapeLabel(state.logoType)),
+        reviewRow('File', state.logoFile ? (state.logoFile.name || 'selected') : ''),
+      ].join('') + (state.logoPreviewURL
+        ? `<img src="${state.logoPreviewURL}" alt="Logo preview" class="mt-3"
+               style="max-height:80px;max-width:200px;background:#fff;padding:6px;border-radius:6px;">`
+        : ''), 1),
+
+      reviewCard('Design', [
+        reviewRow('Selected', themeLabel(state.styleKey), { strong: true }),
+      ].join(''), 2),
+
+      reviewCard('Business Details', [
         reviewRow('Name', snapshotValue('businessName'), { strong: true }),
-        reviewRow('Type', state.businessType),
         reviewRow('Domain', snapshotValue('domain')),
         reviewRow('Location', snapshotValue('location')),
         reviewRow('Address', snapshotValue('address')),
@@ -1168,15 +1233,8 @@
       ].join(''), 3),
 
       reviewCard('Hours', hoursSummary(), 3),
-      reviewCard('Social links', socialSummary(), 3),
 
-      reviewCard('Design', [
-        reviewRow('Theme', `${state.styleKey}.css`),
-        reviewRow('Logo shape', state.logoType),
-        reviewRow('Logo file', state.logoFile ? (state.logoFile.name || 'selected') : ''),
-      ].join('') + (state.logoPreviewURL
-        ? `<img src="${state.logoPreviewURL}" alt="Logo preview" class="mt-2" style="max-height:80px;max-width:200px;background:#fff;padding:4px;border-radius:4px;">`
-        : ''), 2),
+      reviewCard('Social links', socialSummary(), 3),
 
       // Pages last: they are what the credit cost is based on, so they sit
       // closest to the Generate button.
@@ -1445,6 +1503,19 @@
 
 
       // === Inject styleKey hidden field (ensures backend gets the chosen theme) ===
+      // Business type is chosen on step 1 but rendered as a hidden input
+      // inside the main form, so the step-3 snapshot captures it. Going back
+      // to change it left the snapshot holding the OLD value, which then
+      // re-injected itself at submit — the review card showed the new type
+      // while the generated site used the old one.
+      form.querySelectorAll('input[name="global[businessType]"]').forEach(n => n.remove());
+      const businessTypeHidden = document.createElement('input');
+      businessTypeHidden.type = 'hidden';
+      businessTypeHidden.name = 'global[businessType]';
+      businessTypeHidden.classList.add('js-hidden-mirror');
+      businessTypeHidden.value = state.businessType;
+      form.appendChild(businessTypeHidden);
+
       // Remove every existing styleKey input (design-step radios or a stale
       // mirror) so exactly one value is submitted.
       form.querySelectorAll('input[name="global[styleKey]"]').forEach(n => n.remove());

@@ -289,6 +289,41 @@ function ${p}_hero_from_attachment( $attachment_id, $post_id, $key, $class ) {
     echo '</picture>';
 }
 
+/**
+ * Hero trust badges. About Us only.
+ *
+ * Renders nothing when neither image is set, so the markup stays clean on
+ * pages and sites without them.
+ */
+function ${p}_hero_badges( $post_id, $key ) {
+    $award    = ${p}_image( $post_id, $key, 'award-badge' );
+    $licensed = ${p}_image( $post_id, $key, 'licensed-badge' );
+
+    if ( empty( $award['url'] ) && empty( $licensed['url'] ) ) {
+        return;
+    }
+
+    echo '<div class="badges">';
+
+    if ( ! empty( $award['url'] ) ) {
+        printf(
+            '<img class="award" src="%s" alt="%s" loading="lazy">',
+            esc_url( $award['url'] ),
+            esc_attr( $award['alt'] )
+        );
+    }
+
+    if ( ! empty( $licensed['url'] ) ) {
+        printf(
+            '<img class="licensed" src="%s" alt="%s" loading="lazy">',
+            esc_url( $licensed['url'] ),
+            esc_attr( $licensed['alt'] )
+        );
+    }
+
+    echo '</div>';
+}
+
 function ${p}_render_hero( $post_id, $s ) {
     $key     = $s['key'];
     $h1      = ${p}_field( $post_id, $key, 'heading' );
@@ -298,6 +333,7 @@ function ${p}_render_hero( $post_id, $s ) {
       <div class="row align-items-center justify-content-center">
         <div class="col-lg-6 order-lg-2 hero-img-wrap">
           <?php ${p}_hero_picture( $post_id, $key ); ?>
+          <?php ${p}_hero_badges( $post_id, $key ); ?>
         </div>
         <div class="col-lg-6 order-lg-1 text-hero">
           <h1 class="display-4 text-primary"><?php echo esc_html( $h1 ); ?></h1>
@@ -310,6 +346,7 @@ function ${p}_render_hero( $post_id, $s ) {
     <div class="container-fluid hero-container-for-style-and-style3-992px hero-container-for-style4">
       <div class="style-4-image-wrap">
         <?php ${p}_hero_picture( $post_id, $key ); ?>
+        <?php ${p}_hero_badges( $post_id, $key ); ?>
       </div>
       <div class="text-hero-for-style-and-style3 text-hero-for-style4">
         <h1 class="display-4 text-primary"><?php echo esc_html( $h1 ); ?></h1>
@@ -371,11 +408,26 @@ function ${p}_render_text_images( $post_id, $s, $index ) {
     $key     = $s['key'];
     $heading = ${p}_field( $post_id, $key, 'heading' );
     $roles   = isset( $s['image_roles'] ) && is_array( $s['image_roles'] ) ? $s['image_roles'] : array();
+
+    // A video URL on this section replaces its image entirely — never both.
+    // Matches buildAboutMediaHtml() on the static side.
+    $video_url = ${p}_field( $post_id, $key, 'video_url' );
+    if ( $video_url !== '' ) {
+        $roles = array();
+    }
     $class   = ! empty( $s['css_class'] ) ? $s['css_class'] : 'section-' . $index;
     $rowclass = ! empty( $s['row_class'] ) ? $s['row_class'] : 'row-first-section-2-img';
     ?>
     <section class="bg-secondary-subtle text-two-images-section <?php echo esc_attr( $class ); ?>">
       <div class="container section-padding">
+        <?php if ( $video_url !== '' ) : ?>
+        <div class="row">
+          <div class="col-12">
+            <?php ${p}_render_video_embed( $video_url ); ?>
+          </div>
+        </div>
+        <?php endif; ?>
+
         <?php if ( ! empty( $roles ) ) : ?>
         <div class="row <?php echo esc_attr( $rowclass ); ?>">
           <?php
@@ -401,6 +453,31 @@ function ${p}_render_text_images( $post_id, $s, $index ) {
         </div>
       </div>
     </section>
+    <?php
+}
+
+/**
+ * The YouTube embed markup, shared by the standalone video section and by
+ * any text-images section that has a video URL.
+ */
+function ${p}_render_video_embed( $url ) {
+    if ( empty( $url ) ) {
+        return;
+    }
+
+    $embed = $url;
+    if ( preg_match( '#(?:youtu\\.be/|v=|embed/|shorts/)([A-Za-z0-9_-]{6,})#', $url, $m ) ) {
+        $embed = 'https://www.youtube.com/embed/' . $m[1];
+    }
+    ?>
+    <div class="ratio ratio-16x9 about-video-wrapper">
+      <iframe src="<?php echo esc_url( $embed ); ?>"
+              title="<?php echo esc_attr( sprintf( __( 'Intro video for %s', '${themeSlug}' ), ${p}_get_setting( 'business_name' ) ) ); ?>"
+              loading="lazy"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen></iframe>
+    </div>
     <?php
 }
 
@@ -462,6 +539,121 @@ function ${p}_render_form( $post_id, $s ) {
             <span class="btn-text"><?php esc_html_e( 'Send Message', '${themeSlug}' ); ?></span>
           </button>
         </form>
+      </div>
+    </section>
+    <?php
+}
+
+/**
+ * Pricing rows, read back from the numbered meta fields.
+ */
+function ${p}_pricing_rows( $post_id, $key ) {
+    $count = (int) get_post_meta( $post_id, ${p}_key( $key, 'price_count' ), true );
+    $rows = array();
+
+    for ( $i = 0; $i < $count; $i++ ) {
+        $name = ${p}_field( $post_id, $key, 'price_name_' . $i );
+        $low  = ${p}_field( $post_id, $key, 'price_low_' . $i );
+        $high = ${p}_field( $post_id, $key, 'price_high_' . $i );
+
+        // Skip anything unusable rather than rendering an empty or
+        // inverted range on a live page.
+        if ( $name === '' || $low === '' || $high === '' ) {
+            continue;
+        }
+        if ( ! is_numeric( $low ) || ! is_numeric( $high ) || (float) $high <= (float) $low ) {
+            continue;
+        }
+
+        $rows[] = array(
+            'name' => $name,
+            'low'  => (float) $low,
+            'high' => (float) $high,
+            'unit' => ${p}_field( $post_id, $key, 'price_unit_' . $i ),
+            'note' => ${p}_field( $post_id, $key, 'price_note_' . $i ),
+        );
+    }
+
+    return $rows;
+}
+
+function ${p}_money( $value ) {
+    return '$' . number_format( (float) $value, 0 );
+}
+
+/**
+ * Typical pricing table.
+ *
+ * The figures are estimates generated for the business rather than supplied
+ * by it, so the notice below the table is not optional decoration — it is
+ * what keeps the section honest. It is editable, but always rendered.
+ */
+function ${p}_render_pricing( $post_id, $s ) {
+    $key  = $s['key'];
+    $rows = ${p}_pricing_rows( $post_id, $key );
+    if ( empty( $rows ) ) {
+        return;
+    }
+
+    $heading = ${p}_field( $post_id, $key, 'heading' );
+    if ( $heading === '' ) {
+        $heading = __( 'Typical Service Pricing', '${themeSlug}' );
+    }
+
+    $notice = ${p}_field( $post_id, $key, 'notice' );
+    if ( $notice === '' ) {
+        $notice = __( 'The figures above are typical ranges for this area and are provided for planning purposes only. Final cost varies with the size of the job, the materials selected, access and site conditions, and current supply prices. Contact us for a free, no-obligation quote for your property.', '${themeSlug}' );
+    }
+    ?>
+    <section class="pricing-section">
+      <div class="container section-padding">
+        <div class="row">
+          <!-- Narrower and centred; matches the static build -->
+          <div class="col-lg-8 mx-auto">
+            <h2><?php echo esc_html( $heading ); ?></h2>
+
+            <div class="table-responsive">
+              <table class="pricing-table">
+                <caption class="visually-hidden">
+                  <?php esc_html_e( 'Typical price ranges for commonly requested services', '${themeSlug}' ); ?>
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col"><?php esc_html_e( 'Service', '${themeSlug}' ); ?></th>
+                    <th scope="col"><?php esc_html_e( 'Typical Range', '${themeSlug}' ); ?></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php foreach ( $rows as $row ) : ?>
+                    <tr>
+                      <th scope="row" class="pricing-service">
+                        <?php echo esc_html( $row['name'] ); ?>
+                        <?php if ( $row['note'] !== '' ) : ?>
+                          <span class="pricing-note"><?php echo esc_html( $row['note'] ); ?></span>
+                        <?php endif; ?>
+                      </th>
+                      <td class="pricing-range">
+                        <span class="pricing-amount">
+                          <?php echo esc_html( ${p}_money( $row['low'] ) ); ?>
+                          &ndash;
+                          <?php echo esc_html( ${p}_money( $row['high'] ) ); ?>
+                        </span>
+                        <?php if ( $row['unit'] !== '' ) : ?>
+                          <span class="pricing-unit"><?php echo esc_html( $row['unit'] ); ?></span>
+                        <?php endif; ?>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+
+            <p class="pricing-disclaimer">
+              <strong><?php esc_html_e( 'Estimates only.', '${themeSlug}' ); ?></strong>
+              <?php echo esc_html( $notice ); ?>
+            </p>
+          </div>
+        </div>
       </div>
     </section>
     <?php
@@ -831,6 +1023,10 @@ function ${p}_section_is_empty( $post_id, $s ) {
         return empty( ${p}_faq_items( $post_id, $s['key'] ) );
     }
 
+    if ( $s['type'] === 'pricing' ) {
+        return empty( ${p}_pricing_rows( $post_id, $s['key'] ) );
+    }
+
     if ( ${p}_field( $post_id, $s['key'], 'heading' ) !== '' ) {
         return false;
     }
@@ -1148,6 +1344,10 @@ function ${p}_render_sections( $post_id ) {
 
             case 'video':
                 ${p}_render_video( $post_id, $s );
+                break;
+
+            case 'pricing':
+                ${p}_render_pricing( $post_id, $s );
                 break;
 
             case 'faq':

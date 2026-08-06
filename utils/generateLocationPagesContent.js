@@ -4,17 +4,24 @@ const { createLocationPagesPrompt } = require('./createLocationPagesPrompt');
 const { OpenAI } = require('openai');
 const openai = new OpenAI();
 
-async function generateLocationPagesContent(globalForLoc, pagesInterlinks, attempt = 1) {
-  
+async function generateLocationPagesContent(globalForLoc, pagesInterlinks, locationIndex = 0, attempt = 1) {
+
   const prompt = createLocationPagesPrompt({
     globalForLoc,
-    keywords: pagesInterlinks
+    keywords: pagesInterlinks,
+    locationIndex
   });
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.7
+    // Raised from 0.7. Location pages share almost all of their input, so a
+    // lower temperature pushed every page towards the same phrasing — which
+    // is what Search Console was flagging as duplicate content.
+    temperature: 0.9,
+    // Penalise reuse of the same words and openings across the response.
+    frequency_penalty: 0.3,
+    presence_penalty: 0.3
   });
 
   const raw = response.choices[0].message.content;
@@ -46,7 +53,7 @@ async function generateLocationPagesContent(globalForLoc, pagesInterlinks, attem
 
     // Save failed output for debugging
     const logDir = path.join(__dirname, '../logs');
-    const logPath = path.join(logDir, 'about-us-failed.json');
+    const logPath = path.join(logDir, 'location-page-failed.json');
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 
     fs.writeFileSync(
@@ -65,8 +72,11 @@ async function generateLocationPagesContent(globalForLoc, pagesInterlinks, attem
 
     // Retry once if first attempt fails
     if (attempt < 2) {
-      console.log('🔁 Retrying Pages content generation...: generatePagesContent.js');
-      return await generateLocationPagesContent(globalValues, attempt + 1);
+      console.log('🔁 Retrying location page content generation...');
+      // Was: generateLocationPagesContent(globalValues, attempt + 1)
+      // `globalValues` does not exist here, so the retry threw a
+      // ReferenceError instead of retrying.
+      return await generateLocationPagesContent(globalForLoc, pagesInterlinks, locationIndex, attempt + 1);
     }
 
     return {};

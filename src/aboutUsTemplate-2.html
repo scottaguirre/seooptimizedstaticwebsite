@@ -74,7 +74,6 @@
         <img class="hero-img img-fluid" src="{{HERO_IMG_MOBILE}}" width="600" height="350"
              alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}" fetchpriority="high">
       </picture>
-      {{HERO_BADGES}}
     </div>
     <div class="col-lg-6 order-lg-1 text-hero">
       <h1 class="display-4 text-primary">{{BUSINESS_NAME}}</h1>
@@ -94,8 +93,6 @@
         <img class="hero-img img-fluid" src="{{HERO_IMG_MOBILE}}" width="600" height="350"
              alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}" fetchpriority="high">
       </picture>
-      {{HERO_BADGES}}
-
   </div>
   
   <div class="text-hero-for-style-and-style3 text-hero-for-style4">
@@ -118,7 +115,6 @@
             <h2>{{SECTION1_H2}}</h2>
             <h3>{{SECTION1_H3}}</h3>
             <p>{{SECTION1_P1}}</p>
-            {{SECTION1_LIST}}
             <p>{{SECTION1_P2}}</p>
         </div>
     </div>
@@ -139,7 +135,6 @@
     <div class="row">
         <div class="col-lg-10">
             <h2>{{SECTION2_H2}}</h2>
-            <div class="line-divider"></div>
             <p>{{SECTION2_P1}}</p>
             <p>{{SECTION2_P2}}</p>
         </div>
@@ -168,7 +163,6 @@
     <div class="row">
         <div class="col-lg-10">
             <h2>{{SECTION3_H2}}</h2>
-            <div class="line-divider"></div>
             <p>{{SECTION3_P1}}</p>
             <p>{{SECTION3_P2}}</p>
         </div>
@@ -184,7 +178,6 @@
     <div class="row">
       <div class=" col-lg-10">
         <h2>{{NEAR_ME_H2}}</h2>
-        <div class="line-divider"></div>
         <p>{{NEAR_ME_P1}}</p>
         <p>{{NEAR_ME_P2}}</p>
       </div> 
@@ -192,37 +185,27 @@
   </div>
 </section>
 
-<!-- Pricing: typical ranges, clearly marked as estimates -->
-{{PRICING_TABLE}}
-
-
-<!-- FAQ Section: questions from Google's "People Also Ask" -->
-{{FAQ_SECTION}}
-
-
 
 <!-- Fifth Section: Location -->
 <section class="section-5">
   <div class="container section-padding">
-    <!-- align-items-center keeps the video vertically centred against the
-         text. The video column is emitted by buildYouTubeEmbedHtml(), so when
-         no video URL is given nothing renders and the text simply sits alone. -->
-    <div class="row align-items-center">
-      <div class="col-md-7 div-text-padding-bottom">
+    <div class="row">
+      <div class=" col-lg-10 div-text-padding-bottom">
         <h2>{{SECTION4_H2}}</h2>
-        <div class="line-divider"></div>
         <p>{{SECTION4_P1}}</p>
         <p>{{SECTION4_P2}}</p>
+      </div> 
+       <!-- Optional YouTube video section -->
+      <div class="container about-video-section py-5">
+        {{ABOUT_VIDEO}}
       </div>
-      <div class="col-md-5">
-        {{ABOUT_MEDIA}}
-      </div>
-      
     </div>
   </div>
 </section>
 
 
+<!-- FAQ Section: questions from Google's "People Also Ask" -->
+{{FAQ_SECTION}}
 
 
 <!-- Seventh Section: Form -->

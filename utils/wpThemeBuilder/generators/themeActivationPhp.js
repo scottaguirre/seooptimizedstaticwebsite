@@ -86,6 +86,35 @@ function ${p}_import_section( $post_id, $section ) {
         ) );
     }
 
+    // Hero trust badges. Stored with the same img_<role> naming as the other
+    // images so the media picker in the meta box handles them unchanged.
+    if ( isset( $section['badges'] ) && is_array( $section['badges'] ) ) {
+        $badges = $section['badges'];
+
+        update_post_meta( $post_id, $base . 'img_award-badge', isset( $badges['award'] ) ? $badges['award'] : '' );
+        update_post_meta( $post_id, $base . 'img_award-badge_alt', isset( $badges['award_alt'] ) ? $badges['award_alt'] : '' );
+        update_post_meta( $post_id, $base . 'img_licensed-badge', isset( $badges['licensed'] ) ? $badges['licensed'] : '' );
+        update_post_meta( $post_id, $base . 'img_licensed-badge_alt', isset( $badges['licensed_alt'] ) ? $badges['licensed_alt'] : '' );
+    }
+
+    // Pricing rows, numbered so each service gets its own editable fields.
+    // An owner can then replace generated estimates with real figures.
+    if ( isset( $section['pricing'] ) && is_array( $section['pricing'] ) ) {
+        $rows = array_values( $section['pricing'] );
+        update_post_meta( $post_id, $base . 'price_count', count( $rows ) );
+        foreach ( $rows as $i => $row ) {
+            update_post_meta( $post_id, $base . 'price_name_' . $i, isset( $row['name'] ) ? $row['name'] : '' );
+            update_post_meta( $post_id, $base . 'price_low_' . $i,  isset( $row['low'] ) ? $row['low'] : '' );
+            update_post_meta( $post_id, $base . 'price_high_' . $i, isset( $row['high'] ) ? $row['high'] : '' );
+            update_post_meta( $post_id, $base . 'price_unit_' . $i, isset( $row['unit'] ) ? $row['unit'] : '' );
+            update_post_meta( $post_id, $base . 'price_note_' . $i, isset( $row['note'] ) ? $row['note'] : '' );
+        }
+    }
+
+    if ( isset( $section['notice'] ) ) {
+        update_post_meta( $post_id, $base . 'notice', $section['notice'] );
+    }
+
     // FAQ pairs, numbered so each gets its own editable field
     if ( isset( $section['faqs'] ) && is_array( $section['faqs'] ) ) {
         $faqs = array_values( $section['faqs'] );

@@ -20,11 +20,13 @@
 
 a.nav-link:hover, .menu-item a:hover {
     color: green;
+    background: none;
 }
 
 
 a.nav-link.active, .current-menu-item a {
-    color: lightgreen !important;
+    color: #3ebe3e !important;
+    background: none;
 }
 
 a.nav-link.active:hover, .current-menu-item a:hover {
@@ -32,13 +34,22 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 .dropdown-menu, .sub-menu {
+    border: 0.5px solid #b2b2b269;
     background: #082d5b;
 }
 
 .dropdown-menu .nav-item, .sub-menu .menu-item {
-    border-bottom: solid gray 2px;
+    border-bottom: solid gray 1px;
     padding-left: 10px;
 }
+
+.dropdown-menu li:only-child, .sub-menu li:only-child  {
+    border-bottom: none
+  }
+
+  .dropdown-menu li:last-of-type, .sub-menu li:last-of-type  {
+    border-bottom: none;
+  }
 
 .dropdown-item {
     padding: 8px;
@@ -57,8 +68,6 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     display: none;
 }
 
-
-
 .hero-container-for-style-and-style3-992px {
     width:100%;
     max-width: 100% !important;
@@ -68,7 +77,9 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     margin:0 auto;
 }
 
-
+.style-4-image-wrap {
+    position: relative;
+}
 
 .text-hero-for-style-and-style3 {
     width: 100%;
@@ -78,10 +89,10 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     text-align: left;
     padding:0;
     color:white;
-    background-image: linear-gradient(100deg, rgba(10, 33, 178, 0.41) 25%, rgba(14, 43, 237, 0.11) 57%, rgba(12, 59, 201, 0.08) 75%, rgba(14, 43, 237, 0) 100%) !important;
+    background-image: linear-gradient(100deg, rgba(10, 33, 178, 0.60) 35%, rgba(14, 43, 237, 0.11) 57%, rgba(12, 59, 201, 0.08) 85%, rgba(14, 43, 237, 0) 100%) !important;
 }
 
-.text-hero-for-style-and-style3 h1{
+.text-hero-for-style-and-style3 h1 {
     color:white !important;
     font-weight: bold;
     width: 55%;
@@ -104,9 +115,19 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     left: 30px;
     width: 130px;
     margin-bottom: 10px;
-    border-bottom: white 2px solid;
+    border-bottom: #53d353 2px solid;
+    background-color: #53d353;
 }
 
+.badges {
+    position: absolute;
+    left: 8%;
+    bottom: 5%;
+}
+
+.award, .licensed {
+    width: 15%;  
+}
 
 .btn-container {
     padding: 25px;
@@ -134,13 +155,6 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 
-.section-1 a, .section-2 a, .section-3 a, .section-4 a {
-   
-    color:#ff3f34;
-}
-
-
-
 .section-padding {
     padding-top:60px;
     padding-bottom:60px;
@@ -150,7 +164,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 
 
 .section-padding h2 {
-    padding-bottom:20px;
+    padding-bottom: 0px;
     font-size: 28px;
     line-height: 1.5;
 
@@ -182,13 +196,15 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     margin-bottom: 40px;
 }
 
-.col-md-6 img {
+.col-md-6 img, .col-md-5 img {
     box-shadow: 10px 10px 5px #aaa;
     border-radius: 10px;
 }
 
 .nearme {
     border-bottom: 1px solid black;
+    background: #082d5b;
+    color: white;
 }
 
 .google-map iframe {
@@ -457,12 +473,22 @@ footer a {
     }
 
     .text-hero-for-style-and-style3 h1 {
-        padding-top: 20%;
+        padding-top: 10%;
        
     }
 
     .text-hero-for-style-and-style3 .line-divider {
         width: 200px;
+    }
+
+    .badges {
+        position: absolute;
+        left: 8%;
+        bottom: 5%;
+    }
+    
+    .award, .licensed {
+        width: 15%;  
     }
     
 }
@@ -484,6 +510,11 @@ footer a {
         padding-top: 40px;
         padding-bottom: 40px;
     }
+
+    .badges { 
+        bottom: 15%;
+        left: 9%;
+    } 
     
 }
 
@@ -503,6 +534,11 @@ footer a {
     .img-1-div {
         margin-bottom: auto;
     }
+
+    .badges { 
+        bottom: 12%;
+
+    } 
 
 }
 
@@ -566,11 +602,13 @@ footer a {
     .dropdown .dropdown-menu li a, .sub-menu .menu-item a {
         white-space: normal;
     }   
+
+    .badges {
+        bottom: 25%;
+    }
     
 }
   
-
-
     /* 1250 */
 @media (min-width: 1250px) {    
 
@@ -578,10 +616,10 @@ footer a {
         display: none;
     }
 
-    .hero-img-large {
+    .hero-img {
         display: block;
         min-width: 100%;
-        max-width: 110%;
+        max-width: 100%;
     }
 
     .text-hero-for-style-and-style3 h1 {
@@ -598,6 +636,10 @@ footer a {
     .text-hero-for-style-and-style3 .line-divider {
         width: 20%;
     }
+
+    .badges { 
+        bottom: 18%;
+    } 
 
 }
 
@@ -626,12 +668,16 @@ footer a {
    ========================================================================== */
 
    .faq-section {
-    --faq-bar-bg:        rgba(0, 0, 0, .04);
-    --faq-bar-bg-hover:  rgba(0, 0, 0, .07);
-    --faq-bar-bg-open:   rgba(0, 0, 0, .07);
+    --faq-bar-bg:        green;
+    --faq-bar-bg-hover:  #082d5b;
+    --faq-bar-bg-open:   #082d5b;
     --faq-accent:        currentColor;   /* +/x icon */
     --faq-gap:           10px;
     --faq-radius:        6px;
+}
+
+.faq-section {
+    background: #e2e3e5;
 }
 
 /* Strip Bootstrap's card chrome so the bars sit on the page cleanly */
@@ -653,7 +699,7 @@ footer a {
 
 .faq-section .accordion-button {
     background: var(--faq-bar-bg);
-    color: inherit;
+    color: white;
     font-size: 17px;
     line-height: 1.4;
     font-weight: 500;
@@ -670,7 +716,7 @@ footer a {
 
 .faq-section .accordion-button:not(.collapsed) {
     background: var(--faq-bar-bg-open);
-    color: inherit;
+    color: white;
     box-shadow: none;
     border-bottom-left-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
@@ -690,8 +736,10 @@ footer a {
     display: none;
 }
 
+
 .faq-section .accordion-button::before {
     content: "";
+    color: black;
     position: absolute;
     left: 18px;
     top: 50%;
@@ -707,20 +755,26 @@ footer a {
     transition: transform .25s ease;
 }
 
+.faq-section .accordion-button:hover::before {
+    color: white;
+}
+
 /* open: rotate the plus into a cross */
 .faq-section .accordion-button:not(.collapsed)::before {
     transform: rotate(45deg);
+    color:white;
 }
 
 /* ---- the answer ---- */
 
 .faq-section .accordion-body {
-    background: var(--faq-bar-bg);
+    background: var(--faq-bar-bg-open);
     padding: 4px 18px 18px 46px;
     border-radius: 0 0 var(--faq-radius) var(--faq-radius);
 }
 
 .faq-section .accordion-body p {
+    color: white;
     margin-bottom: 0;
 }
 
@@ -732,3 +786,449 @@ footer a {
         margin-bottom: var(--faq-gap);
     }
 }
+
+/* ==========================================================================
+   Service cards (home page)
+   --------------------------------------------------------------------------
+   Append to each theme you want them on:
+     src/css/themes/style.css ... style5.css
+
+   Like the FAQ block, this inherits rather than hardcoding, so one snippet
+   works across all five themes:
+
+     - the icon uses currentColor, so it takes the theme's text colour
+     - the card tint is a translucent black, reading as a subtle shade of
+       whatever sits behind it
+     - the title inherits body colour and the section's own heading styles
+
+   To tune one theme, override the variables:
+
+     .service-cards { --card-icon: #ff3f34; --card-bg: rgba(0,0,0,.05); }
+   ========================================================================== */
+
+   .service-cards {
+    --card-bg:        #082d5b;
+    --card-bg-hover:  rgba(0, 0, 0, .07);
+    --card-icon:      green;
+    --card-radius:    10px;
+
+    margin-top: 40px;
+}
+
+.service-card {
+    background: var(--card-bg);
+    border-radius: var(--card-radius);
+    padding: 26px 22px;
+    height: 100%;
+    transition: transform .2s ease, background-color .2s ease;
+}
+
+/* Lift on hover, but only where hovering is a real interaction */
+@media (hover: hover) {
+    .service-card:hover {
+        background: var(--card-bg-hover);
+        transform: translateY(-3px);
+    }
+}
+
+
+.service-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 16px;
+    border-radius: 50%;
+    background: var(--card-icon);
+    color: white;
+}
+
+.service-card-title {
+    color: white;
+    font-size: 20px;
+    line-height: 1.3;
+    margin: 0 0 8px;
+    padding: 0;              /* the section's h2/h3 padding would be too much here */
+}
+
+.service-card-text {
+    color: white;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    opacity: .85;
+}
+
+.service-card:hover .service-card-title,
+.service-card:hover .service-card-text  {
+    color: black;
+}
+
+
+/* The cards sit inside .section-padding, which styles headings and text for
+   full-width prose. Reset the bits that don't suit a small card. */
+.section-padding .service-card-title,
+.section-padding .service-card-text {
+    padding-bottom: 0;
+}
+
+
+/* ==========================================================================
+   Pricing table
+   --------------------------------------------------------------------------
+   Append to each theme you want it on:
+     src/css/themes/style.css ... style5.css
+
+   Inherits rather than hardcoding, so one snippet suits all five themes:
+     - text uses the theme's body colour
+     - row tint is a translucent black, reading as a shade of whatever
+       background sits behind it
+     - the price uses currentColor at a heavier weight
+
+   To tune one theme:
+     .pricing-section { --price-accent: #ff3f34; }
+   ========================================================================== */
+
+   .pricing-section {
+    --price-row-bg:     rgba(0, 0, 0, .03);
+    --price-row-alt:    rgba(0, 0, 0, .06);
+    --price-border:     rgba(0, 0, 0, .10);
+    --price-accent:     currentColor;
+}
+
+.pricing-table {
+    width: 100%;
+    margin: 28px 0 0;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.pricing-table thead th {
+    text-align: left;
+    font-size: 14px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    opacity: .7;
+    padding: 0 16px 12px;
+    border-bottom: 2px solid var(--price-border);
+}
+
+.pricing-table thead th:last-child {
+    text-align: right;
+}
+
+.pricing-table tbody tr:nth-child(odd) {
+    background: var(--price-row-bg);
+}
+
+.pricing-table tbody tr:nth-child(even) {
+    background: var(--price-row-alt);
+}
+
+.pricing-table tbody th,
+.pricing-table tbody td {
+    padding: 16px;
+    vertical-align: middle;
+    border-bottom: 1px solid var(--price-border);
+}
+
+/* Service name + the short qualifier underneath it */
+.pricing-service {
+    font-weight: 600;
+    font-size: 17px;
+    text-align: left;
+}
+
+.pricing-note {
+    display: block;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.4;
+    opacity: .7;
+    margin-top: 4px;
+}
+
+/* The range, and how it's charged */
+.pricing-range {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.pricing-amount {
+    display: block;
+    font-weight: 700;
+    font-size: 19px;
+    color: var(--price-accent);
+}
+
+.pricing-unit {
+    display: block;
+    font-size: 13px;
+    opacity: .65;
+    margin-top: 2px;
+}
+
+/* The estimate notice. Understated but not hidden — it needs to be readable,
+   since it's what keeps the figures honest. */
+.pricing-disclaimer {
+    margin-top: 20px;
+    font-size: 14px;
+    line-height: 1.6;
+    opacity: .8;
+    padding: 14px 16px;
+    border-left: 3px solid var(--price-border);
+    background: var(--price-row-bg);
+}
+
+/* Narrow screens: stack each row so the range sits under the service rather
+   than being squeezed against it. */
+@media (max-width: 575.98px) {
+    .pricing-table thead {
+        display: none;
+    }
+
+    .pricing-table tbody tr {
+        display: block;
+        padding: 6px 0;
+    }
+
+    .pricing-table tbody th,
+    .pricing-table tbody td {
+        display: block;
+        border-bottom: 0;
+        padding: 4px 16px;
+        text-align: left;
+    }
+
+    .pricing-table tbody tr {
+        border-bottom: 1px solid var(--price-border);
+    }
+
+    .pricing-range {
+        text-align: left;
+        padding-bottom: 14px !important;
+    }
+
+    .pricing-amount,
+    .pricing-unit {
+        display: inline-block;
+    }
+
+    .pricing-unit {
+        margin-left: 8px;
+    }
+}
+
+/* ==========================================================================
+   Trust points (About Us, Section 1)
+   --------------------------------------------------------------------------
+   Append to each theme you want it on:
+     src/css/themes/style.css ... style5.css
+
+   A white check inside a green circle. The green is deliberately fixed
+   rather than inherited — a verified tick reads as green on every design.
+
+   To tune one theme:
+     .trust-points { --trust-bg: #0d6efd; }
+   ========================================================================== */
+
+   .trust-points {
+    --trust-bg: #17801a;      /* circle */
+    --trust-tick: #ffffff;    /* the check inside it */
+
+    list-style: none;
+    padding: 0;
+    margin: 20px 0 24px;
+
+    /* Two columns on wider screens; one on mobile. Six points then read as
+       3 + 3 rather than a long vertical run. */
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px 28px;
+}
+
+@media (min-width: 576px) {
+    .trust-points {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.trust-points li {
+    position: relative;
+    padding-left: 40px;
+    line-height: 1.5;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+/* Green circle. Drawn in CSS rather than as an icon: no extra request, and
+   it scales with the text. Unlike the rest of the theme components this does
+   NOT inherit the theme colour — a verified tick reads as green everywhere.
+   Override --trust-bg on a theme if you want it to match instead. */
+.trust-points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    margin-top: -13px;
+    border-radius: 50%;
+    background: var(--trust-bg);
+}
+
+/* The tick itself: two borders rotated into a check, sitting on the circle. */
+.trust-points li::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    width: 10px;
+    height: 5px;
+    margin-top: -4px;
+    border-left: 2px solid var(--trust-tick);
+    border-bottom: 2px solid var(--trust-tick);
+    transform: rotate(-45deg);
+}
+
+/* ==========================================================================
+   About Us intro video
+   --------------------------------------------------------------------------
+   Append to each theme:
+     src/css/themes/style.css ... style5.css
+
+   The markup uses Bootstrap's .ratio helper, but .ratio is not in the
+   PurgeCSS safelist in webpack.config.js or postcss.config.cjs. It should
+   survive because PurgeCSS scans the generated HTML — but if it ever does
+   not, a bare <iframe> falls back to the browser default of 300x150px, which
+   is exactly the "tiny video" problem this fixes.
+
+   These rules make the sizing self-contained, so the video renders correctly
+   whether or not Bootstrap's .ratio classes make it through the build.
+   ========================================================================== */
+
+   .about-video-wrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 8px;
+}
+
+.about-video-wrapper iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+/* Stacked below the text under 768px, so give it room to breathe */
+@media (max-width: 767.98px) {
+    .about-video-section {
+        margin-top: 24px;
+    }
+}
+
+/* ==========================================================================
+   Brush-stroke divider
+   --------------------------------------------------------------------------
+   Append to each theme:
+     src/css/themes/style.css ... style5.css
+
+   Restyles the existing .line-divider elements — the ones already sitting
+   under the H1 in the hero and under the H2 in section 1. No template or
+   builder changes needed.
+
+   HOW IT WORKS
+   The SVG is used as a CSS *mask*, not as a background image. That matters:
+   a background image bakes its colour into the SVG, so it could not follow
+   the theme. As a mask, the SVG only defines the SHAPE and background-color
+   fills it — so the stroke takes currentColor and matches its heading on
+   every design.
+
+   To tune one theme:
+     .line-divider { --divider-color: #ff3f34; }
+   ========================================================================== */
+
+   .line-divider {
+    --divider-color: currentColor;
+    --divider-width: 250px;
+    --divider-height: 25px;
+
+    /* Reset whatever the straight-line version set */
+    border: 0;
+    background-image: none;
+
+    width: var(--divider-width);
+    height: var(--divider-height);
+    margin: 14px 0 18px;
+
+    /* The colour: the mask below decides which parts of this show through */
+    background-color: var(--divider-color);
+
+    -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/><path d='M222,9 C226,8 230,10 233,9 L233,13 C230,14 226,12 222,13 Z'/><path d='M239,10 C241,9 243,11 245,10 L245,13 C243,14 241,12 239,13 Z'/></svg>");
+            mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/><path d='M222,9 C226,8 230,10 233,9 L233,13 C230,14 226,12 222,13 Z'/><path d='M239,10 C241,9 243,11 245,10 L245,13 C243,14 241,12 239,13 Z'/></svg>");
+
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+            mask-size: 100% 100%;
+}
+
+/* The hero divider sits on a photo, so it needs to be white regardless of
+   the theme's text colour. */
+
+.line-divider {
+    color: green;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.text-hero.line-divider
+ {
+    --divider-color: #53d353;
+}
+
+/* Centred headings want a centred stroke */
+.text-center .line-divider,
+.text-center > .line-divider {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+@media (max-width: 575.98px) {
+    .line-divider {
+        --divider-width: 190px;
+        --divider-height: 25px;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   OPTIONAL: use the same stroke under every section H2
+   --------------------------------------------------------------------------
+   The templates only place .line-divider in two spots. To put a stroke under
+   every section heading without touching the markup, uncomment this.
+   -------------------------------------------------------------------------- */
+
+/*
+.section-padding h2::after {
+    content: "";
+    display: block;
+    width: 190px;
+    height: 15px;
+    margin: 12px 0 4px;
+    background-color: currentColor;
+    -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/></svg>");
+            mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/></svg>");
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+            mask-size: 100% 100%;
+}
+*/
+

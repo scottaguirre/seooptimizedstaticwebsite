@@ -52,8 +52,54 @@ function page({ title, heading, body, actions, status = 200 }) {
       <h1 class="h3 mb-3">${heading}</h1>
       ${body}
       <div class="d-grid gap-3 mt-4">${actions}</div>
+      <div id="siteAlert" class="alert alert-danger mt-3 d-none" role="alert"></div>
     </div></div>
   </div>
+
+  <div id="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;
+       flex-direction:column;align-items:center;justify-content:center;z-index:9999;color:#fff;">
+    <div class="spinner-border text-light" role="status" style="width:4rem;height:4rem;">
+      <span class="visually-hidden">Working...</span>
+    </div>
+    <p class="mt-3 fs-5" id="overlayText">Optimizing your website... please wait</p>
+    <p class="text-white-50">This can take up to a minute.</p>
+  </div>
+
+  <script>
+    (function () {
+      const btn = document.getElementById('dlStatic');
+      if (!btn) return;
+
+      const overlay     = document.getElementById('overlay');
+      const overlayText = document.getElementById('overlayText');
+      const alertBox    = document.getElementById('siteAlert');
+
+      btn.addEventListener('click', async () => {
+        alertBox.classList.add('d-none');
+        btn.disabled = true;
+        overlay.style.display = 'flex';
+
+        try {
+          const res = await fetch('/production', { headers: { 'Accept': 'text/html' } });
+          if (!res.ok) throw new Error('The build failed. Please try again.');
+
+          overlayText.textContent = 'Starting your download...';
+          window.location.href = '/download-zip';
+
+          setTimeout(() => {
+            overlay.style.display = 'none';
+            btn.disabled = false;
+          }, 3000);
+
+        } catch (err) {
+          overlay.style.display = 'none';
+          btn.disabled = false;
+          alertBox.textContent = err.message || 'Something went wrong.';
+          alertBox.classList.remove('d-none');
+        }
+      });
+    })();
+  </script>
 </body>
 </html>` };
 }
@@ -160,6 +206,8 @@ router.get('/export-wp-theme', requireAuth, async (req, res) => {
         <p class="text-muted small mb-0">ZIP size: ${sizeMb} MB</p>`,
       actions: `
         <a href="/download-wp-theme" class="btn btn-primary btn-lg">📥 Download WordPress Theme</a>
+        <button type="button" id="dlStatic" class="btn btn-outline-primary">Download HTML Site</button>
+        <a href="/dashboard" class="btn btn-outline-secondary">My Dashboard</a>
         <a href="/" class="btn btn-outline-secondary">← Back to Generator</a>`,
     }));
 
