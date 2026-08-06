@@ -1121,8 +1121,8 @@
   // rather than hunting through the markup.
   // #17801a rather than a brighter green: white body text on it clears
   // WCAG AA (5.07:1), where #1a8a1a came in just under at 4.47:1.
-  const CARD_BG = '#105612';       // green card background
-  const CARD_BORDER = '#0d5c10';   // slightly darker edge
+  const CARD_BG = '#378239';       // green card background
+  const CARD_BORDER = '#378239';   // slightly darker edge
   const EDIT_BG = '#082d5b';       // Edit button, matching the site header
 
   function reviewCard(title, bodyHtml, editStep) {

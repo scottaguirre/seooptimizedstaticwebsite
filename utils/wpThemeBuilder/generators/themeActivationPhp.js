@@ -236,7 +236,7 @@ function ${p}_import_page( $page ) {
  *
  * Re-running clears existing items first, so activation stays idempotent.
  */
-function ${p}_build_menu( $front_page_id, $services, $locations ) {
+function ${p}_build_menu( $front_page_id, $services, $locations, $contact = null ) {
     $menu_name = __( 'Primary Menu', '${themeSlug}' );
     $menu = wp_get_nav_menu_object( $menu_name );
 
@@ -310,7 +310,12 @@ function ${p}_build_menu( $front_page_id, $services, $locations ) {
         }
     }
 
-    // 5. Assign to the theme's Primary location
+    // 5. Contact, last
+    if ( $contact ) {
+        $add_page( $contact['id'], $contact['title'] );
+    }
+
+    // 6. Assign to the theme's Primary location
     $locations_mod = get_theme_mod( 'nav_menu_locations' );
     if ( ! is_array( $locations_mod ) ) {
         $locations_mod = array();
@@ -341,6 +346,7 @@ function ${p}_activate() {
     $front_page_id = 0;
     $services  = array();
     $locations = array();
+    $contact   = null;
 
     foreach ( $model['pages'] as $page ) {
         $post_id = ${p}_import_page( $page );
@@ -359,6 +365,11 @@ function ${p}_activate() {
             $services[] = array(
                 'id'    => $post_id,
                 'title' => isset( $page['title'] ) ? $page['title'] : '',
+            );
+        } elseif ( $type === 'contact' ) {
+            $contact = array(
+                'id'    => $post_id,
+                'title' => __( 'Contact', '${themeSlug}' ),
             );
         } elseif ( $type === 'location' ) {
             // Locations show the city only, as on the static site
@@ -380,7 +391,7 @@ function ${p}_activate() {
     }
 
     // 4. Menu, mirroring the static site's structure
-    ${p}_build_menu( $front_page_id, $services, $locations );
+    ${p}_build_menu( $front_page_id, $services, $locations, $contact );
 
     // 5. Pretty permalinks
     flush_rewrite_rules();

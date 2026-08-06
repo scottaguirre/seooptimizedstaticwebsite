@@ -15,6 +15,7 @@ const { buildFaqSection, buildFaqSchemaTag } = require('./buildFaqSection');
 const { buildServiceCards } = require('./buildServiceCards');
 const { buildPricingTable } = require('./buildPricingTable');
 const { copyBadgeImages, buildBadgesHtml } = require('./copyBadgeImages');
+const { copyPageImage, buildContactFormHtml } = require('./pageParts');
 
 /**
  * The trust points under Section 1's opening paragraph.
@@ -47,18 +48,8 @@ const basePath = '';
 
 const predefinedImagesDir = path.join(__dirname, '../src/predefined-images');
 
-function copyPageImage (srcDir, seoPrefix, filename, field, distDir) {
-  const src = path.join(srcDir, filename);
-  if (fs.existsSync(src)) {
-    const newFilename = `${seoPrefix}-${field}.webp`;
-
-    const assetsDir = path.join(distDir, 'assets');
-    fs.mkdirSync(assetsDir, { recursive: true });
-    
-    const dest = path.join(assetsDir, newFilename);
-    fs.copyFileSync(src, dest);
-  }
-};
+// copyPageImage and the contact form markup now live in ./pageParts so the
+// contact page can use the same ones. Two copies of the form would drift.
 
     
 const  buildAboutUsPage =  async function (
@@ -293,42 +284,13 @@ const  buildAboutUsPage =  async function (
 
             
             // === OPTIONAL Contact Form injection (replaces {{FORM}}) ===
-            const hasEmail = !!(globalValues.email && /\S+@\S+/.test(globalValues.email.trim()));
+            // The markup lives in ./pageParts so the contact page uses the
+            // identical form. buildContactFormHtml returns '' when there is
+            // no valid email, so the section is dropped rather than posting
+            // nowhere.
             const showAboutForm = normalizeBool(globalValues.showAboutForm);
-
-            // We’ll reuse the exact form markup from the template you previously had,
-            // but now we inject it only when email is present.
-            // If you prefer, you can put this string in a separate partial and fs.readFileSync it.
-            const contactFormHtml = `
-            <section class="form-container">
-            <div class="bg-secondary-subtle">
-                <form class="contact-form" id="contactForm" action="mailto:${globalValues.email}" method="POST" enctype="text/plain">
-                    <h2>Get In Touch</h2>
-                    <div class="form-group">
-                        <label for="name">Full Name</label>
-                        <input type="text" id="name" name="name" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="email">Email Address</label>
-                        <input type="email" id="email" name="email" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="message">Message</label>
-                        <textarea id="message" name="message" rows="5" required></textarea>
-                    </div>
-                    <button type="submit" class="submit-btn">
-                        <span class="btn-text">Send Message</span>
-                        <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
-                            xmlns="http://www.w3.org/2000/svg">
-                            <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </button>
-                </form>
-            </div>
-            </section>
-            `;
-
+            const contactFormHtml = buildContactFormHtml(globalValues);
+            const hasEmail = !!contactFormHtml;
 
             // Replace the placeholder with the form only if BOTH are true
             if (hasEmail && showAboutForm) {

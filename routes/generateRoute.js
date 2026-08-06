@@ -34,6 +34,8 @@ const { generateFaqAnswers } = require('../utils/generateFaqAnswers');
 const { generateServiceCards } = require('../utils/buildServiceCards');
 const { generatePricing } = require('../utils/buildPricingTable');
 const { buildSitemap } = require('../utils/buildSitemap');
+const { buildContactPage } = require('../utils/buildContactPage');
+const { buildContactFormHtml } = require('../utils/pageParts');
 
 const CM = require('../utils/contentModel');
 
@@ -647,6 +649,17 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
 
+    // Create contact.html — hero, AI intro, the same form the home page
+    // uses, then the shared NAP/map block.
+    const contactPage = await buildContactPage(
+            distDir,
+            cssDir,
+            globalValues,
+            pages,
+            buildContactFormHtml(globalValues)
+    );
+
+
     // Create location pages
     const locationModelPages = await buildLocationPages(
             distDir,
@@ -670,6 +683,7 @@ router.post('/generate', upload.any(), async (req, res) => {
     // Order matters: front page first, then services, then locations, then legal.
     contentModel.pages.unshift(...(aboutPage ? [aboutPage] : []));
     CM.addPages(contentModel, locationModelPages);
+    if (contactPage) CM.addPage(contentModel, contactPage);
     // The legal builders return their content. Fall back to a bare record if
     // one of them skipped work because the file already existed.
     CM.addPages(contentModel, [
@@ -705,11 +719,11 @@ router.post('/generate', upload.any(), async (req, res) => {
           <style>
             body { background:#082d5b; color:#fff; }
             .wrap { max-width: 720px; margin: 0 auto; padding: 80px 20px; text-align:center; }
-            .actions { display:flex; gap:14px; margin-top:40px; }
+            .actions { display:flex; flex-direction:column; gap:14px; margin-top:40px; }
             .actions .btn { padding: 14px 20px; font-size: 18px; }
             #overlay {
               position: fixed; inset: 0; background: rgba(0,0,0,.8);
-              display: none; align-items: center;
+              display: none; flex-direction: column; align-items: center;
               justify-content: center; z-index: 9999; color:#fff;
             }
             #overlay.show { display: flex; }
@@ -732,7 +746,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
               <a href="/export-wp-theme" id="wpBtn" class="btn btn-success btn-lg">Convert to WordPress</a>
 
-              <a href="/" class="btn btn-warning">Start Over</a>
+              <a href="/" class="btn btn-outline-light">Go Back</a>
             </div>
 
             <div id="alert" class="alert alert-danger mt-4 d-none" role="alert"></div>

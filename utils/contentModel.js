@@ -46,6 +46,7 @@ const PAGE_TYPES = {
   SERVICE: 'service',
   LOCATION: 'location',
   LEGAL: 'legal',
+  CONTACT: 'contact',
 };
 
 
