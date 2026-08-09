@@ -85,9 +85,34 @@ function ${funcPrefix}_handle_contact_form() {
     $email_body .= "Sent on: " . current_time( 'F j, Y \\a\\t g:i a' );
 
     // Email headers
+    //
+    // The From address must match the SMTP account's domain, or the receiving
+    // server fails SPF and files the message as spam. Prefer the configured
+    // SMTP From, then the business email, and only fall back to the WordPress
+    // admin address — which is often on a different domain entirely, and was
+    // being used unconditionally here before.
+    //
+    // An explicit From header also OVERRIDES whatever phpmailer_init sets, so
+    // getting this wrong silently defeats the SMTP settings.
+    $from_email = ${funcPrefix}_get_setting( 'smtp_from', '' );
+
+    if ( ! is_email( $from_email ) ) {
+        $from_email = ${funcPrefix}_get_setting( 'email', '' );
+    }
+    if ( ! is_email( $from_email ) ) {
+        $from_email = get_option( 'admin_email' );
+    }
+
+    $from_name = ${funcPrefix}_get_setting( 'smtp_from_name', '' );
+    if ( $from_name === '' ) {
+        $from_name = ${funcPrefix}_get_setting( 'business_name', get_bloginfo( 'name' ) );
+    }
+
     $headers = array(
         'Content-Type: text/plain; charset=UTF-8',
-        'From: ' . get_bloginfo( 'name' ) . ' <' . get_option( 'admin_email' ) . '>',
+        'From: ' . $from_name . ' <' . $from_email . '>',
+        // Reply-To carries the visitor's address, so hitting reply in the
+        // mail client answers them rather than the website.
         'Reply-To: ' . $name . ' <' . $email . '>'
     );
 

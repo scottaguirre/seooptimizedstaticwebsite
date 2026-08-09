@@ -77,6 +77,17 @@ function normaliseSection(section) {
 
   if (section.headingTag) out.heading_tag = section.headingTag;
 
+  if (Array.isArray(section.cards) && section.cards.length) {
+    out.cards = section.cards.map(c => ({
+      name: String(c.name || ''),
+      line: String(c.line || ''),
+    }));
+  }
+
+  if (Array.isArray(section.trustPoints) && section.trustPoints.length) {
+    out.trust_points = section.trustPoints.map(t => String(t || '')).filter(Boolean);
+  }
+
   if (section.badges && (section.badges.award || section.badges.licensed)) {
     // Append the badge roles so the meta box renders a media picker for each.
     if (section.badges.award) out.image_roles.push('award-badge');

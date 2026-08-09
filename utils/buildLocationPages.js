@@ -9,6 +9,7 @@ const { escapeAttr } = require("./helpers");
 const { writePageAssets } = require('./buildAssets');
 const { buildSocialLinks } = require('./buildSocialLinks');
 const CM = require('./contentModel');
+const { stripUnusedHero } = require('./stripUnusedHero');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
@@ -205,6 +206,9 @@ const buildLocationPages = async function (
     </body>`);
 
     // Write page
+    // Drop the unused hero block (see utils/stripUnusedHero.js)
+    template = stripUnusedHero(template, globalForLoc.styleKey);
+
     fs.writeFileSync(path.join(distDir, `location-${locationSlug}.html`), template);
 
     // === Stylesheet + Webpack entry stub, inside this user's folder

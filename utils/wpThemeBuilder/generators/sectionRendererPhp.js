@@ -13,8 +13,14 @@
 
 const { makePhpIdentifier } = require('../wpHelpers/phpHelpers');
 
+const { HERO_LAYOUT } = require('../../stripUnusedHero');
+
 function generateSectionRendererPhp(options = {}) {
-  const { themeSlug = 'local-business-theme' } = options;
+  const { themeSlug = 'local-business-theme', styleKey = '' } = options;
+
+  // Which hero block this theme shows. Unmapped styles get 'both', matching
+  // the static build's behaviour for an unknown theme.
+  const heroLayout = HERO_LAYOUT[String(styleKey).trim()] || 'both';
   const p = makePhpIdentifier(themeSlug);
 
   return `<?php
@@ -328,7 +334,14 @@ function ${p}_render_hero( $post_id, $s ) {
     $key     = $s['key'];
     $h1      = ${p}_field( $post_id, $key, 'heading' );
     $tagline = ${p}_field( $post_id, $key, 'subheading' );
+
+    // Only one hero block is rendered — the one this design displays. The
+    // theme was built for a single style, so the choice is baked in at build
+    // time rather than decided here. See utils/stripUnusedHero.js; this
+    // constant is written to match.
+    $layout = '${heroLayout}';
     ?>
+    <?php if ( $layout !== 'overlay' ) : ?>
     <div class="container-fluid hero-container">
       <div class="row align-items-center justify-content-center">
         <div class="col-lg-6 order-lg-2 hero-img-wrap">
@@ -342,7 +355,9 @@ function ${p}_render_hero( $post_id, $s ) {
         </div>
       </div>
     </div>
+    <?php endif; ?>
 
+    <?php if ( $layout !== 'standard' ) : ?>
     <div class="container-fluid hero-container-for-style-and-style3-992px hero-container-for-style4">
       <div class="style-4-image-wrap">
         <?php ${p}_hero_picture( $post_id, $key ); ?>
@@ -354,6 +369,7 @@ function ${p}_render_hero( $post_id, $s ) {
         <h2 class="lead"><?php echo esc_html( $tagline ); ?></h2>
       </div>
     </div>
+    <?php endif; ?>
     <?php
 }
 
@@ -376,6 +392,40 @@ function ${p}_render_cta_button( $position_class ) {
     <?php
 }
 
+/**
+ * The ticked trust list under Section 1's opening paragraph.
+ *
+ * A real <ul> outside the <p> tags — a list nested inside a paragraph is
+ * invalid HTML and browsers repair it unpredictably. Matches the markup
+ * buildTrustList() produces on the static side, so the same CSS applies.
+ */
+function ${p}_trust_points( $post_id, $key ) {
+    $count = (int) get_post_meta( $post_id, ${p}_key( $key, 'trust_count' ), true );
+    $points = array();
+
+    for ( $i = 0; $i < $count; $i++ ) {
+        $point = ${p}_field( $post_id, $key, 'trust_' . $i );
+        if ( $point !== '' ) {
+            $points[] = $point;
+        }
+    }
+
+    return $points;
+}
+
+function ${p}_render_trust_points( $post_id, $key ) {
+    $points = ${p}_trust_points( $post_id, $key );
+    if ( empty( $points ) ) {
+        return;
+    }
+
+    echo '<ul class="trust-points">';
+    foreach ( $points as $point ) {
+        echo '<li>' . esc_html( $point ) . '</li>';
+    }
+    echo '</ul>';
+}
+
 function ${p}_render_text( $post_id, $s, $index ) {
     $key        = $s['key'];
     $heading    = ${p}_field( $post_id, $key, 'heading' );
@@ -396,7 +446,29 @@ function ${p}_render_text( $post_id, $s, $index ) {
               <<?php echo $tag; ?>><?php echo esc_html( $heading ); ?></<?php echo $tag; ?>>
             <?php endif; ?>
             <?php if ( $subheading ) : ?><h3><?php echo esc_html( $subheading ); ?></h3><?php endif; ?>
-            <?php ${p}_echo_paragraphs( $post_id, $key ); ?>
+
+            <?php
+            // Trust points sit between the opening paragraph and the second
+            // one, as they do on the static page. Sections without them just
+            // print their paragraphs in the usual way.
+            $trust = ${p}_trust_points( $post_id, $key );
+
+            if ( ! empty( $trust ) ) {
+                $paragraphs = ${p}_paragraphs( $post_id, $key );
+
+                if ( isset( $paragraphs[0] ) ) {
+                    echo '<p>' . wp_kses_post( $paragraphs[0] ) . '</p>';
+                }
+
+                ${p}_render_trust_points( $post_id, $key );
+
+                foreach ( array_slice( $paragraphs, 1 ) as $paragraph ) {
+                    echo '<p>' . wp_kses_post( $paragraph ) . '</p>';
+                }
+            } else {
+                ${p}_echo_paragraphs( $post_id, $key );
+            }
+            ?>
           </div>
         </div>
       </div>
@@ -421,8 +493,15 @@ function ${p}_render_text_images( $post_id, $s, $index ) {
     <section class="bg-secondary-subtle text-two-images-section <?php echo esc_attr( $class ); ?>">
       <div class="container section-padding">
         <?php if ( $video_url !== '' ) : ?>
-        <div class="row">
-          <div class="col-12">
+        <!-- Text and video side by side, matching the static build's
+             col-md-7 / col-md-5 split rather than stacking full width. -->
+        <div class="row align-items-center">
+          <div class="col-md-7 div-text-padding-bottom">
+            <?php if ( $heading ) : ?><h2><?php echo esc_html( $heading ); ?></h2><?php endif; ?>
+            <div class="line-divider"></div>
+            <?php ${p}_echo_paragraphs( $post_id, $key ); ?>
+          </div>
+          <div class="col-md-5">
             <?php ${p}_render_video_embed( $video_url ); ?>
           </div>
         </div>
@@ -445,12 +524,14 @@ function ${p}_render_text_images( $post_id, $s, $index ) {
           ?>
         </div>
         <?php endif; ?>
+        <?php if ( $video_url === '' ) : ?>
         <div class="row">
           <div class="col-lg-10">
             <?php if ( $heading ) : ?><h2><?php echo esc_html( $heading ); ?></h2><?php endif; ?>
             <?php ${p}_echo_paragraphs( $post_id, $key ); ?>
           </div>
         </div>
+        <?php endif; ?>
       </div>
     </section>
     <?php
@@ -541,6 +622,71 @@ function ${p}_render_form( $post_id, $s ) {
         </form>
       </div>
     </section>
+    <?php
+}
+
+/**
+ * The six service cards. Markup and icons mirror buildServiceCards() on the
+ * static side so the same CSS applies.
+ *
+ * Icons are inline SVG using currentColor — no icon font, no extra request.
+ */
+function ${p}_service_card_icons() {
+    return array(
+        '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
+        '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/>',
+        '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+        '<path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.7l5.4-.8L12 4z"/>',
+        '<circle cx="12" cy="9" r="5"/><path d="M8.5 13.5L7 21l5-2.5L17 21l-1.5-7.5"/>',
+        '<path d="M7 21V10l4.5-7 .8.4a2 2 0 011 2.3L12.5 9H19a2 2 0 012 2.3l-1.2 7A2 2 0 0117.8 20H7z"/><path d="M7 10H4v11h3"/>',
+    );
+}
+
+function ${p}_service_cards( $post_id, $key ) {
+    $count = (int) get_post_meta( $post_id, ${p}_key( $key, 'card_count' ), true );
+    $cards = array();
+
+    for ( $i = 0; $i < $count; $i++ ) {
+        $name = ${p}_field( $post_id, $key, 'card_name_' . $i );
+        if ( $name === '' ) {
+            continue;
+        }
+        $cards[] = array(
+            'name' => $name,
+            'line' => ${p}_field( $post_id, $key, 'card_line_' . $i ),
+        );
+    }
+
+    return $cards;
+}
+
+function ${p}_render_service_cards( $post_id, $s ) {
+    $cards = ${p}_service_cards( $post_id, $s['key'] );
+    if ( empty( $cards ) ) {
+        return;
+    }
+
+    $icons = ${p}_service_card_icons();
+    ?>
+    <div class="row g-4 service-cards">
+      <?php foreach ( $cards as $i => $card ) : ?>
+        <div class="col-md-6 col-lg-4">
+          <div class="service-card h-100">
+            <span class="service-card-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32"
+                   fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round"><?php
+                     echo $icons[ $i % count( $icons ) ]; // phpcs:ignore — static markup
+                   ?></svg>
+            </span>
+            <h3 class="service-card-title"><?php echo esc_html( $card['name'] ); ?></h3>
+            <?php if ( $card['line'] !== '' ) : ?>
+              <p class="service-card-text"><?php echo esc_html( $card['line'] ); ?></p>
+            <?php endif; ?>
+          </div>
+        </div>
+      <?php endforeach; ?>
+    </div>
     <?php
 }
 
@@ -1027,6 +1173,10 @@ function ${p}_section_is_empty( $post_id, $s ) {
         return empty( ${p}_pricing_rows( $post_id, $s['key'] ) );
     }
 
+    if ( $s['type'] === 'service-cards' ) {
+        return empty( ${p}_service_cards( $post_id, $s['key'] ) );
+    }
+
     if ( ${p}_field( $post_id, $s['key'], 'heading' ) !== '' ) {
         return false;
     }
@@ -1344,6 +1494,10 @@ function ${p}_render_sections( $post_id ) {
 
             case 'video':
                 ${p}_render_video( $post_id, $s );
+                break;
+
+            case 'service-cards':
+                ${p}_render_service_cards( $post_id, $s );
                 break;
 
             case 'pricing':

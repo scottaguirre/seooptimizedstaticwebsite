@@ -86,6 +86,26 @@ function ${p}_import_section( $post_id, $section ) {
         ) );
     }
 
+    // Service cards — name + one line each, numbered so both are editable.
+    if ( isset( $section['cards'] ) && is_array( $section['cards'] ) ) {
+        $cards = array_values( $section['cards'] );
+        update_post_meta( $post_id, $base . 'card_count', count( $cards ) );
+        foreach ( $cards as $i => $card ) {
+            update_post_meta( $post_id, $base . 'card_name_' . $i, isset( $card['name'] ) ? $card['name'] : '' );
+            update_post_meta( $post_id, $base . 'card_line_' . $i, isset( $card['line'] ) ? $card['line'] : '' );
+        }
+    }
+
+    // Trust points — the ticked list under the opening paragraph. Numbered so
+    // the admin can expose one field per point rather than a single textarea.
+    if ( isset( $section['trust_points'] ) && is_array( $section['trust_points'] ) ) {
+        $points = array_values( $section['trust_points'] );
+        update_post_meta( $post_id, $base . 'trust_count', count( $points ) );
+        foreach ( $points as $i => $point ) {
+            update_post_meta( $post_id, $base . 'trust_' . $i, $point );
+        }
+    }
+
     // Hero trust badges. Stored with the same img_<role> naming as the other
     // images so the media picker in the meta box handles them unchanged.
     if ( isset( $section['badges'] ) && is_array( $section['badges'] ) ) {

@@ -34,6 +34,7 @@ const { generateFaqAnswers } = require('../utils/generateFaqAnswers');
 const { generateServiceCards } = require('../utils/buildServiceCards');
 const { generatePricing } = require('../utils/buildPricingTable');
 const { buildSitemap } = require('../utils/buildSitemap');
+const { stripUnusedHero } = require('../utils/stripUnusedHero');
 const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
 
@@ -256,6 +257,10 @@ router.post('/generate', upload.any(), async (req, res) => {
     const globalValues = {
 
       showAboutForm,
+      // Owner name is opt-in; when opted in, the name itself is optional and
+      // the model invents one if left blank.
+      includeOwner: global.includeOwner,
+      ownerName: (global.ownerName || '').trim(),
       wantsLocationPages,    // true/false
       locationPages: locations,
       hours: global.hours || {},
@@ -479,6 +484,9 @@ router.post('/generate', upload.any(), async (req, res) => {
 
       // Create file.html from template
       const htmlName = `${filename}-${locationSlug}`;
+      // Drop the unused hero block (see utils/stripUnusedHero.js)
+      template = stripUnusedHero(template, globalValues.styleKey);
+
       fs.writeFileSync(path.join(distDir, `${htmlName}.html`), template);
 
 

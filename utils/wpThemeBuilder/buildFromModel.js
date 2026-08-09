@@ -119,7 +119,7 @@ async function buildWordPressThemeFromModel(distDir, options = {}) {
 
   await writeFile(
     path.join(incDir, 'section-renderer.php'),
-    generateSectionRendererPhp({ themeSlug })
+    generateSectionRendererPhp({ themeSlug, styleKey: model.global && model.global.styleKey })
   );
 
   await writeFile(

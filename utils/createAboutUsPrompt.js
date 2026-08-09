@@ -25,6 +25,32 @@ function createAboutUsPrompt({ globalValues, keywords}) {
   // overstates. Computed from the current year so it never goes stale.
   const currentYear = new Date().getFullYear();
   const establishedYear = currentYear - 10;
+
+  // Owner name: off, a real name the user typed, or on with nothing typed
+  // (in which case the model invents one).
+  const includeOwner = ['true', 'on', '1', true].includes(globalValues.includeOwner);
+  const providedOwner = String(globalValues.ownerName || '').trim();
+
+  // The word "owner" is required explicitly: left to itself the model writes
+  // "led by Marcus Delgado", which reads as a manager rather than the person
+  // who owns the business.
+  const ownerRule = `Refer to this person as the OWNER — for example
+    "owner Marcus Delgado" or "owned by Marcus Delgado". Do NOT write "led by",
+    "headed by", "founded by", or "under the direction of".`;
+
+  const ownerInstruction = !includeOwner
+    ? `Do NOT name an owner or founder. Open instead on what the company does
+    and who it serves, then say it has served the area since ${establishedYear}.`
+    : providedOwner
+      ? `Name the owner — ${providedOwner} — and say the company has served the
+    area since ${establishedYear}. ${ownerRule}`
+      : `Name the owner and say the company has served the area since
+    ${establishedYear}. Invent a natural-sounding owner name that suits
+    ${location} — first and last name, nothing unusual. ${ownerRule}`;
+
+  // Always true given platform vetting; the 24-hour claim comes from the
+  // wizard, so it is only asserted when the user ticked it.
+  const is24Hours = ['true', 'on', '1', true].includes(globalValues.is24Hours);
   const typeOfCompany = category === 'Lemon Law Lawyer' ? '' : 'company';
 
   const includeNearMe = String(useNearMe) === 'true';
@@ -64,20 +90,27 @@ Use these section headings in order:
 
     PARAGRAPH 1 — keep it to two or three sentences. Start with exactly this phrase:
     ${businessName} is a local ${category} company serving ${location}.
-    Then introduce the owner by name and say the company has served the area
-    since ${establishedYear}. Invent a natural-sounding owner name that suits
-    ${location} — first and last name, nothing unusual.
+    ${ownerInstruction}
 
-    TRUST POINTS — also return a "trustPoints" array for this section with
-    exactly 6 short entries, 3 to 6 words each, no full stops. Draw them from:
+    TRUST POINTS — also return a "trustPoints" array for this section.
+
+    Return exactly 8. The list renders as a two-column grid, so 8 keeps it
+    even at 4 + 4.
+
+    These must appear FIRST, worded exactly as given:
+${is24Hours ? '      "Open 24 hours, 7 days a week"\n' : ''}      "Visa, Mastercard and most major cards accepted"
+
+    Then add ${is24Hours ? '6' : '7'} more, 3 to 6 words each, no full stops, drawn from:
       licensed, insured and bonded
-      accredited
+      accredited by local authorities
       5-star rated by local customers
       same-day service available
       free onsite estimates
       workmanship warranty
       flexible scheduling
-    Write them as benefits, not a bare copy of the list above.
+      upfront pricing, no hidden fees
+      family owned and operated
+    Write those as benefits, not a bare copy of the list above.
 
     PARAGRAPH 2 — must naturally cover ALL of the following:
       that the business is family owned and operated
@@ -85,9 +118,9 @@ Use these section headings in order:
       over 10 years serving ${location}
       follow-up support after the work is finished
     Include this word: ${rawKeywords[0]}
-    Do not write it as a list. Three  to four flowing sentences.
+    Do not write it as a list. Two or three flowing sentences.
 
-2. 'Why you should hire ${businessName}?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
+2. 'What Makes Us Stand Out?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
 
 3. '${businessType} Services We Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
 In the second paragraph of this section include this word ${rawKeywords[2]}.

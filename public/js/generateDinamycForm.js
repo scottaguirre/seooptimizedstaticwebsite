@@ -92,11 +92,22 @@
 
 
   // Snapshot / restore non-file inputs in the main form
+  // Hidden mirrors are copies of the main form injected before submit. They
+  // stay in the DOM, and because they are appended AFTER the visible fields,
+  // walking every input let a stale mirror overwrite a value the user had
+  // just changed — which is why editing the business name or the 24-hour
+  // toggle appeared to have no effect on the review step.
+  function isMirror(el) {
+    return !!el.closest('.js-hidden-mainform, .js-hidden-mirror')
+        || el.classList.contains('js-hidden-mirror');
+  }
+
   function snapshotFormValues(root) {
     const data = {};
     root.querySelectorAll('input, select, textarea').forEach((el) => {
       if (!el.name) return;
       if (el.type === 'file') return;
+      if (isMirror(el)) return;   // never let a stale copy win
       if (el.type === 'checkbox') data[el.name] = el.checked;
       else if (el.type === 'radio') { if (el.checked) data[el.name] = el.value; }
       else data[el.name] = el.value;
@@ -109,6 +120,7 @@
       if (!el.name) return;
       if (!(el.name in data)) return;
       if (el.type === 'file') return;
+      if (isMirror(el)) return;   // mirrors are rebuilt on submit, not restored
       if (el.type === 'checkbox') el.checked = !!data[el.name];
       else if (el.type === 'radio') el.checked = (el.value === data[el.name]);
       else el.value = data[el.name];
@@ -494,6 +506,24 @@
           <input type="text" name="global[address]" class="form-control" required />
         </div>
 
+        <!-- Owner / founder name -->
+        <div class="mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="includeOwner" name="global[includeOwner]">
+            <label class="form-check-label" for="includeOwner">
+              Include an owner or founder name on the About page
+            </label>
+          </div>
+
+          <div id="ownerNameWrap" class="mt-2" style="display:none;">
+            <input type="text" name="global[ownerName]" class="form-control"
+                   placeholder="e.g. Marcus Delgado">
+            <div class="form-text">
+              Leave blank and we'll create a name that suits the area.
+            </div>
+          </div>
+        </div>
+
         <!-- Main Location-->
         <div class="mb-3">
           <label class="form-label">Main Location</label>
@@ -632,11 +662,28 @@
     container.appendChild(footer);
     resetBtn.addEventListener('click', startOver);
 
+    // Drop any mirrors left over from a previous pass through the wizard.
+    // They are rebuilt from state when the user moves forward again.
+    form.querySelectorAll('.js-hidden-mainform, .js-hidden-mirror').forEach(n => n.remove());
+
     // Restore any previously typed main-form values
     restoreFormValues(form, state.mainFormSnapshot);
 
     // Hours hookup (from hoursOfOperation.js)
     if (window.attachHours) window.attachHours();
+
+    // Owner name field: only shown when the box is ticked. Runs after
+    // restoreFormValues so a previously ticked box reopens with its value.
+    const ownerToggle = container.querySelector('#includeOwner');
+    const ownerWrap   = container.querySelector('#ownerNameWrap');
+
+    if (ownerToggle && ownerWrap) {
+      const syncOwner = () => {
+        ownerWrap.style.display = ownerToggle.checked ? '' : 'none';
+      };
+      syncOwner();
+      ownerToggle.addEventListener('change', syncOwner);
+    }
 
     // Remove red outline when user fixes input (text/time/checkbox)
     container.addEventListener('input', (ev) => {
@@ -1119,7 +1166,7 @@
 
   // Card colours. Kept as constants so they can be changed in one place
   // rather than hunting through the markup.
-  // #17801a rather than a brighter green: white body text on it clears
+  // #378239 rather than a brighter green: white body text on it clears
   // WCAG AA (5.07:1), where #1a8a1a came in just under at 4.47:1.
   const CARD_BG = '#378239';       // green card background
   const CARD_BORDER = '#378239';   // slightly darker edge
@@ -1139,6 +1186,19 @@
           ${bodyHtml}
         </div>
       </div>`;
+  }
+
+  // The owner row reads differently in three cases: not included, included
+  // with a name, included and left to the AI.
+  function ownerSummary() {
+    const snap = state.mainFormSnapshot || {};
+    const include = snap['global[includeOwner]'];
+    const on = include === true || include === 'true' || include === 'on' || include === '1';
+
+    if (!on) return 'Not included';
+
+    const name = snapshotValue('ownerName');
+    return name || 'We\'ll create one';
   }
 
   function hoursSummary() {
@@ -1223,6 +1283,7 @@
         reviewRow('Domain', snapshotValue('domain')),
         reviewRow('Location', snapshotValue('location')),
         reviewRow('Address', snapshotValue('address')),
+        reviewRow('Owner name', ownerSummary()),
       ].join(''), 3),
 
       reviewCard('Contact', [

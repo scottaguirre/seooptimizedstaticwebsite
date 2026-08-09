@@ -223,6 +223,18 @@ function ${p}_render_content_meta_box( $post ) {
         echo '<div class="' . esc_attr( '${p}-sec' ) . '">';
         echo '<h3>' . esc_html( $label ) . '</h3>';
 
+        if ( $type === 'service-cards' ) {
+            $card_count = (int) get_post_meta( $post->ID, '${p}_s_' . $key . '_card_count', true );
+            for ( $i = 0; $i < $card_count; $i++ ) {
+                ${p}_text_field( $post->ID, $key, 'card_name_' . $i,
+                    sprintf( __( 'Card %d — service', '${themeSlug}' ), $i + 1 ) );
+                ${p}_text_field( $post->ID, $key, 'card_line_' . $i,
+                    sprintf( __( 'Card %d — description', '${themeSlug}' ), $i + 1 ) );
+            }
+            echo '</div>';
+            continue;
+        }
+
         if ( $type === 'pricing' ) {
             ${p}_text_field( $post->ID, $key, 'heading', __( 'Heading', '${themeSlug}' ) );
 
@@ -284,6 +296,14 @@ function ${p}_render_content_meta_box( $post ) {
                 $type === 'hero' ? __( 'Tagline', '${themeSlug}' ) : __( 'Subheading', '${themeSlug}' ) );
         }
 
+        // Trust points — the ticked list. One field each so a client can
+        // reword them without touching the surrounding prose.
+        $trust_count = (int) get_post_meta( $post->ID, '${p}_s_' . $key . '_trust_count', true );
+        for ( $i = 0; $i < $trust_count; $i++ ) {
+            ${p}_text_field( $post->ID, $key, 'trust_' . $i,
+                sprintf( __( 'Trust point %d', '${themeSlug}' ), $i + 1 ) );
+        }
+
         // Paragraphs, each in its own rich-text editor.
         // On an unsaved page there is no stored count yet, so fall back to
         // the skeleton's — otherwise no editors would render at all.
@@ -298,6 +318,14 @@ function ${p}_render_content_meta_box( $post ) {
                 'p_' . $i,
                 sprintf( __( 'Paragraph %d', '${themeSlug}' ), $i + 1 )
             );
+        }
+
+        // Video URL. A text-images section with a video shows the video in
+        // place of its images, so this is where a client changes or removes
+        // it. Only offered on sections that actually support one.
+        if ( $type === 'text-images' ) {
+            ${p}_text_field( $post->ID, $key, 'video_url',
+                __( 'Video URL (leave blank to show the image instead)', '${themeSlug}' ) );
         }
 
         // Images
@@ -764,6 +792,28 @@ function ${p}_save_meta( $post_id ) {
             }
             if ( isset( $_POST[ $ak ] ) ) {
                 update_post_meta( $post_id, $ak, wp_kses_post( wp_unslash( $_POST[ $ak ] ) ) );
+            }
+        }
+
+        // Service cards
+        $card_count = (int) get_post_meta( $post_id, $base . 'card_count', true );
+        for ( $i = 0; $i < $card_count; $i++ ) {
+            foreach ( array( 'card_name_', 'card_line_' ) as $field ) {
+                $card_key = $base . $field . $i;
+                if ( isset( $_POST[ $card_key ] ) ) {
+                    update_post_meta( $post_id, $card_key,
+                        sanitize_text_field( wp_unslash( $_POST[ $card_key ] ) ) );
+                }
+            }
+        }
+
+        // Trust points
+        $trust_count = (int) get_post_meta( $post_id, $base . 'trust_count', true );
+        for ( $i = 0; $i < $trust_count; $i++ ) {
+            $trust_key = $base . 'trust_' . $i;
+            if ( isset( $_POST[ $trust_key ] ) ) {
+                update_post_meta( $post_id, $trust_key,
+                    sanitize_text_field( wp_unslash( $_POST[ $trust_key ] ) ) );
             }
         }
 

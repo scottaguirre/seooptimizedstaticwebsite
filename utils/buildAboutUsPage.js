@@ -11,6 +11,7 @@ const { escapeAttr, buildAboutMediaHtml } = require('./helpers');
 const { writePageAssets } = require('./buildAssets');
 const { buildSocialLinks } = require('./buildSocialLinks');
 const CM = require('./contentModel');
+const { stripUnusedHero } = require('./stripUnusedHero');
 const { buildFaqSection, buildFaqSchemaTag } = require('./buildFaqSection');
 const { buildServiceCards } = require('./buildServiceCards');
 const { buildPricingTable } = require('./buildPricingTable');
@@ -28,7 +29,7 @@ function buildTrustList(points = []) {
   const items = (points || [])
     .map(p => String(p || '').trim())
     .filter(Boolean)
-    .slice(0, 6);
+    .slice(0, 8);
 
   if (!items.length) return '';
 
@@ -302,6 +303,10 @@ const  buildAboutUsPage =  async function (
 
           
             // Write the About Us Page file (index.html)
+            // Remove whichever hero block this design does not display, so
+            // the page ships one hero and one <h1> instead of two.
+            aboutus = stripUnusedHero(aboutus, globalValues.styleKey);
+
             fs.writeFileSync(path.join(distDir, `index.html`), aboutus);
 
             // === Stylesheet + Webpack entry stub, inside this user's folder
@@ -345,7 +350,7 @@ const  buildAboutUsPage =  async function (
                     // Carried through so the WordPress admin can edit each
                     // trust point rather than losing them on export.
                     Array.isArray(sectionsWithLinks.section1?.trustPoints)
-                        ? { trustPoints: sectionsWithLinks.section1.trustPoints.slice(0, 6) }
+                        ? { trustPoints: sectionsWithLinks.section1.trustPoints.slice(0, 8) }
                         : {}
                 ),
                 CM.section({
@@ -380,9 +385,47 @@ const  buildAboutUsPage =  async function (
                 }));
             }
 
-            // TEXT_IMAGES rather than TEXT: this section carries the
-            // video-or-image media slot alongside its paragraphs, so the
-            // WordPress renderer can fall back to the image the same way.
+
+            // NOTE: no standalone video section here.
+            //
+            // The video lives on section4 (the location section) as its
+            // video_url, where it replaces the fallback image. Pushing it
+            // again as its own section rendered the embed TWICE in WordPress
+            // — once inside the location section and once after it.
+
+            // Service cards sit directly after section3 on the static page
+            // ({{SERVICE_CARDS}} is inside that section), so insert them there
+            // rather than appending — pushing left them after the location
+            // section in WordPress, in a different order to the static site.
+            const serviceCardsSection = CM.serviceCardsSection(serviceCards);
+            if (serviceCardsSection) {
+                const afterServices = modelSections.findIndex(sec => sec.key === 'section3');
+                if (afterServices >= 0) {
+                    modelSections.splice(afterServices + 1, 0, serviceCardsSection);
+                } else {
+                    modelSections.push(serviceCardsSection);
+                }
+            }
+
+            const pricingModelSection = CM.pricingSection(pricing, {
+                notice: require('./buildPricingTable').DEFAULT_NOTICE,
+            });
+            if (pricingModelSection) {
+                modelSections.push(pricingModelSection);
+            }
+
+            const faqModelSection = CM.faqSection(faqs);
+            if (faqModelSection) {
+                modelSections.push(faqModelSection);
+            }
+
+            // The location section sits AFTER the FAQ on the page, not before
+            // pricing. Pushing it earlier put it above the pricing table in
+            // WordPress while the static site had it below the FAQ.
+            //
+            // TEXT_IMAGES rather than TEXT: it carries the video-or-image
+            // media slot alongside its paragraphs, so the WordPress renderer
+            // falls back to the image the same way the static build does.
             modelSections.push(CM.section({
                 key: 'section4', label: 'Our Service Area',
                 type: CM.SECTION_TYPES.TEXT_IMAGES,
@@ -397,27 +440,6 @@ const  buildAboutUsPage =  async function (
                 ],
                 extra: { videoUrl: globalValues.youtubeVideoUrl || '' },
             }));
-
-            if (globalValues.youtubeVideoUrl) {
-                modelSections.push({
-                    key: 'video', label: 'Intro Video',
-                    type: CM.SECTION_TYPES.VIDEO,
-                    heading: '', paragraphs: [], images: [],
-                    videoUrl: globalValues.youtubeVideoUrl,
-                });
-            }
-
-            const pricingModelSection = CM.pricingSection(pricing, {
-                notice: require('./buildPricingTable').DEFAULT_NOTICE,
-            });
-            if (pricingModelSection) {
-                modelSections.push(pricingModelSection);
-            }
-
-            const faqModelSection = CM.faqSection(faqs);
-            if (faqModelSection) {
-                modelSections.push(faqModelSection);
-            }
 
             if (globalValues.showAboutForm) {
                 modelSections.push({

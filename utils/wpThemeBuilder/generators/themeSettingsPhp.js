@@ -18,6 +18,9 @@ function generateThemeSettingsPhp(options = {}) {
   } = options;
 
   const funcPrefix = makePhpIdentifier(themeSlug);
+  // Upper-case prefix for the optional wp-config.php constant, so a client
+  // can keep the SMTP password out of the database.
+  const constPrefix = funcPrefix.toUpperCase();
 
   return `<?php
 /**
@@ -67,6 +70,49 @@ function ${funcPrefix}_render_settings_page() {
             // Save settings
             ${funcPrefix}_save_settings();
             add_settings_error( '${funcPrefix}_messages', '${funcPrefix}_success', __( 'Settings saved successfully.', '${themeSlug}' ), 'updated' );
+        }
+    }
+
+    // Test send. Separate nonce from the settings form so it cannot be
+    // triggered by saving, and reports the real SMTP error rather than a
+    // generic failure — that error message is what makes it debuggable.
+    if ( isset( $_POST['${funcPrefix}_do_smtp_test'] ) ) {
+        if ( ! isset( $_POST['${funcPrefix}_smtp_test_nonce'] ) ||
+             ! wp_verify_nonce( $_POST['${funcPrefix}_smtp_test_nonce'], '${funcPrefix}_smtp_test' ) ) {
+            add_settings_error( '${funcPrefix}_messages', '${funcPrefix}_error', __( 'Security check failed.', '${themeSlug}' ), 'error' );
+        } else {
+            $to = isset( $_POST['${funcPrefix}_test_to'] )
+                ? sanitize_email( wp_unslash( $_POST['${funcPrefix}_test_to'] ) )
+                : get_option( 'admin_email' );
+
+            if ( ! is_email( $to ) ) {
+                add_settings_error( '${funcPrefix}_messages', '${funcPrefix}_error', __( 'Enter a valid email address to test.', '${themeSlug}' ), 'error' );
+            } else {
+                delete_transient( '${funcPrefix}_last_mail_error' );
+
+                $sent = wp_mail(
+                    $to,
+                    __( 'Test email from your website', '${themeSlug}' ),
+                    __( 'If you are reading this, your contact form emails will be delivered correctly.', '${themeSlug}' )
+                );
+
+                if ( $sent ) {
+                    add_settings_error(
+                        '${funcPrefix}_messages', '${funcPrefix}_sent',
+                        sprintf( __( 'Test email sent to %s. Check the inbox, and the spam folder.', '${themeSlug}' ), $to ),
+                        'updated'
+                    );
+                } else {
+                    $why = get_transient( '${funcPrefix}_last_mail_error' );
+                    add_settings_error(
+                        '${funcPrefix}_messages', '${funcPrefix}_error',
+                        $why
+                            ? sprintf( __( 'Could not send: %s', '${themeSlug}' ), $why )
+                            : __( 'Could not send the test email. Check the SMTP settings above.', '${themeSlug}' ),
+                        'error'
+                    );
+                }
+            }
         }
     }
 
@@ -277,8 +323,109 @@ function ${funcPrefix}_render_settings_page() {
                 </table>
             </div>
 
+            <h2><?php esc_html_e( 'Email Delivery (SMTP)', '${themeSlug}' ); ?></h2>
+            <p class="description">
+                <?php esc_html_e( 'WordPress sends mail through the server by default, which many hosts block or mark as spam. Entering your mailbox details here sends contact form emails from your own domain, so they arrive reliably.', '${themeSlug}' ); ?>
+            </p>
+            <p class="description">
+                <?php esc_html_e( 'Leave the host blank to keep using the WordPress default.', '${themeSlug}' ); ?>
+            </p>
+
+            <table class="form-table" role="presentation">
+                <tr>
+                    <th scope="row"><label for="smtp_host"><?php esc_html_e( 'SMTP Host', '${themeSlug}' ); ?></label></th>
+                    <td>
+                        <input type="text" id="smtp_host" name="smtp_host" class="regular-text"
+                            placeholder="mail.yourdomain.com"
+                            value="<?php echo esc_attr( isset( $settings['smtp_host'] ) ? $settings['smtp_host'] : '' ); ?>" />
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="smtp_port"><?php esc_html_e( 'Port', '${themeSlug}' ); ?></label></th>
+                    <td>
+                        <input type="number" id="smtp_port" name="smtp_port" class="small-text"
+                            placeholder="587"
+                            value="<?php echo esc_attr( isset( $settings['smtp_port'] ) ? $settings['smtp_port'] : '' ); ?>" />
+                        <p class="description"><?php esc_html_e( 'Usually 587 for TLS or 465 for SSL.', '${themeSlug}' ); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="smtp_secure"><?php esc_html_e( 'Encryption', '${themeSlug}' ); ?></label></th>
+                    <td>
+                        <?php $secure = isset( $settings['smtp_secure'] ) ? $settings['smtp_secure'] : 'tls'; ?>
+                        <select id="smtp_secure" name="smtp_secure">
+                            <option value="tls" <?php selected( $secure, 'tls' ); ?>>TLS</option>
+                            <option value="ssl" <?php selected( $secure, 'ssl' ); ?>>SSL</option>
+                            <option value="none" <?php selected( $secure, 'none' ); ?>><?php esc_html_e( 'None', '${themeSlug}' ); ?></option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="smtp_user"><?php esc_html_e( 'Username', '${themeSlug}' ); ?></label></th>
+                    <td>
+                        <input type="text" id="smtp_user" name="smtp_user" class="regular-text"
+                            autocomplete="off"
+                            value="<?php echo esc_attr( isset( $settings['smtp_user'] ) ? $settings['smtp_user'] : '' ); ?>" />
+                        <p class="description"><?php esc_html_e( 'Usually the full email address.', '${themeSlug}' ); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="smtp_pass"><?php esc_html_e( 'Password', '${themeSlug}' ); ?></label></th>
+                    <td>
+                        <?php if ( defined( '${constPrefix}_SMTP_PASS' ) ) : ?>
+                            <p><strong><?php esc_html_e( 'Set in wp-config.php', '${themeSlug}' ); ?></strong></p>
+                            <p class="description"><?php esc_html_e( 'The password is read from wp-config.php and is not stored in the database. This is the safer option.', '${themeSlug}' ); ?></p>
+                        <?php else : ?>
+                            <input type="password" id="smtp_pass" name="smtp_pass" class="regular-text"
+                                autocomplete="new-password"
+                                value="<?php echo esc_attr( isset( $settings['smtp_pass'] ) ? $settings['smtp_pass'] : '' ); ?>" />
+                            <p class="description">
+                                <?php esc_html_e( 'Stored in the database. To keep it out of the database instead, add this line to wp-config.php:', '${themeSlug}' ); ?>
+                                <code>define( '${constPrefix}_SMTP_PASS', 'your-password' );</code>
+                            </p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="smtp_from"><?php esc_html_e( 'From Address', '${themeSlug}' ); ?></label></th>
+                    <td>
+                        <input type="email" id="smtp_from" name="smtp_from" class="regular-text"
+                            value="<?php echo esc_attr( isset( $settings['smtp_from'] ) ? $settings['smtp_from'] : '' ); ?>" />
+                        <p class="description">
+                            <?php esc_html_e( 'Must be on the same domain as the SMTP account, or the message will be treated as spam.', '${themeSlug}' ); ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="smtp_from_name"><?php esc_html_e( 'From Name', '${themeSlug}' ); ?></label></th>
+                    <td>
+                        <input type="text" id="smtp_from_name" name="smtp_from_name" class="regular-text"
+                            value="<?php echo esc_attr( isset( $settings['smtp_from_name'] ) ? $settings['smtp_from_name'] : '' ); ?>" />
+                    </td>
+                </tr>
+            </table>
+
             <?php submit_button( __( 'Save Settings', '${themeSlug}' ), 'primary', '${funcPrefix}_save_settings' ); ?>
         </form>
+
+        <!-- Test send, in its own form so it cannot be triggered by saving.
+             Without this a client fills in six fields and has no idea whether
+             they work until an enquiry goes missing. -->
+        <div class="${funcPrefix}-settings-section">
+            <h2><?php esc_html_e( 'Test Email Delivery', '${themeSlug}' ); ?></h2>
+            <p class="description">
+                <?php esc_html_e( 'Save your settings first, then send a test message to check they work.', '${themeSlug}' ); ?>
+            </p>
+            <form method="post" action="">
+                <?php wp_nonce_field( '${funcPrefix}_smtp_test', '${funcPrefix}_smtp_test_nonce' ); ?>
+                <input type="email" name="${funcPrefix}_test_to" class="regular-text"
+                       placeholder="<?php echo esc_attr( get_option( 'admin_email' ) ); ?>"
+                       value="<?php echo esc_attr( get_option( 'admin_email' ) ); ?>" />
+                <button type="submit" name="${funcPrefix}_do_smtp_test" class="button button-secondary">
+                    <?php esc_html_e( 'Send test email', '${themeSlug}' ); ?>
+                </button>
+            </form>
+        </div>
 
         <!-- Re-import, kept in its own form so it can't be triggered by
              saving settings -->
@@ -305,6 +452,14 @@ function ${funcPrefix}_render_settings_page() {
  * Save settings from form submission
  */
 function ${funcPrefix}_save_settings() {
+    // The password input is not rendered when the wp-config constant is set,
+    // so read what is stored before rebuilding — otherwise saving any other
+    // setting would silently wipe it.
+    $existing = get_option( '${funcPrefix}_global_settings', array() );
+    if ( ! is_array( $existing ) ) {
+        $existing = array();
+    }
+
     $settings = array(
         // Business info
         'business_name' => isset( $_POST['business_name'] ) ? sanitize_text_field( $_POST['business_name'] ) : '',
@@ -315,6 +470,19 @@ function ${funcPrefix}_save_settings() {
         'phone'         => isset( $_POST['phone'] ) ? sanitize_text_field( $_POST['phone'] ) : '',
         'email'         => isset( $_POST['email'] ) ? sanitize_email( $_POST['email'] ) : '',
         'contact_email' => isset( $_POST['contact_email'] ) ? sanitize_email( $_POST['contact_email'] ) : '',
+
+        // SMTP. The password field is absent from the form when the
+        // wp-config.php constant is set, so keep whatever was there rather
+        // than blanking it.
+        'smtp_host'      => isset( $_POST['smtp_host'] ) ? sanitize_text_field( $_POST['smtp_host'] ) : '',
+        'smtp_port'      => isset( $_POST['smtp_port'] ) ? absint( $_POST['smtp_port'] ) : '',
+        'smtp_secure'    => isset( $_POST['smtp_secure'] ) ? sanitize_key( $_POST['smtp_secure'] ) : 'tls',
+        'smtp_user'      => isset( $_POST['smtp_user'] ) ? sanitize_text_field( $_POST['smtp_user'] ) : '',
+        'smtp_pass'      => isset( $_POST['smtp_pass'] )
+                                ? $_POST['smtp_pass'] // phpcs:ignore — a password must not be altered
+                                : ( isset( $existing['smtp_pass'] ) ? $existing['smtp_pass'] : '' ),
+        'smtp_from'      => isset( $_POST['smtp_from'] ) ? sanitize_email( $_POST['smtp_from'] ) : '',
+        'smtp_from_name' => isset( $_POST['smtp_from_name'] ) ? sanitize_text_field( $_POST['smtp_from_name'] ) : '',
         'address'       => isset( $_POST['address'] ) ? sanitize_textarea_field( $_POST['address'] ) : '',
 
         // Social media

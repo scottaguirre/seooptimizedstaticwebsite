@@ -38,6 +38,7 @@ const SECTION_TYPES = {
   FORM: 'form',
   FAQ: 'faq',
   PRICING: 'pricing',
+  SERVICE_CARDS: 'service-cards',
   NAP_MAP: 'nap-map',
 };
 
@@ -219,6 +220,28 @@ function faqSection(faqs = [], label = 'FAQ') {
 }
 
 /**
+ * The six service cards under the Services paragraphs. Stored as name/line
+ * pairs so each card is editable in WordPress.
+ */
+function serviceCardsSection(cards = []) {
+  const items = (cards || []).filter(c => c && c.name);
+  if (!items.length) return null;
+
+  return {
+    key: 'serviceCards',
+    label: 'Service Cards',
+    type: SECTION_TYPES.SERVICE_CARDS,
+    heading: '',
+    paragraphs: [],
+    images: [],
+    cards: items.map(c => ({
+      name: String(c.name).trim(),
+      line: String(c.line || '').trim(),
+    })),
+  };
+}
+
+/**
  * Pricing section. Rows are stored individually so the WordPress admin can
  * expose one labelled field per service, letting an owner replace generated
  * estimates with their real figures.
@@ -386,6 +409,7 @@ module.exports = {
   sectionsFromLegalHtml,
   faqSection,
   pricingSection,
+  serviceCardsSection,
   writeModel,
   readModel,
 };
