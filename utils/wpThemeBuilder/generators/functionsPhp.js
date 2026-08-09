@@ -178,6 +178,34 @@ function ${funcPrefix}_display_logo() {
  * Enqueue styles and scripts
  */
 /**
+ * Cache-busting version for a theme asset.
+ *
+ * Assets were previously enqueued with a hardcoded '1.0.0'. Since the URL
+ * never changed between theme exports, browsers, LiteSpeed and any CDN were
+ * entitled to keep serving the old file — which is why an updated theme
+ * could still show the previous CSS.
+ *
+ * The file's modification time changes on every export, so the URL changes
+ * with it and caches fetch the new copy. Falls back to the theme version if
+ * the file cannot be read.
+ *
+ * @param string $relative e.g. 'css/index.css'
+ */
+function ${funcPrefix}_asset_version( $relative ) {
+    $path = get_template_directory() . '/' . ltrim( $relative, '/' );
+
+    if ( file_exists( $path ) ) {
+        $mtime = filemtime( $path );
+        if ( $mtime ) {
+            return (string) $mtime;
+        }
+    }
+
+    $theme = wp_get_theme();
+    return $theme->get( 'Version' ) ? $theme->get( 'Version' ) : '1.0.0';
+}
+
+/**
  * True when the page being viewed contains a contact form section.
  *
  * Reads the section model rather than matching on page type, so it stays
@@ -259,7 +287,7 @@ function ${funcPrefix}_enqueue_assets() {
         '${themeSlug}-page',
         $theme_uri . '/css/' . $page_css . '.css',
         array( '${themeSlug}-bootstrap' ),
-        '1.0.0'
+        ${funcPrefix}_asset_version( 'css/' . $page_css . '.css' )
     );
 ${bootstrapJsCode}
 
@@ -277,7 +305,7 @@ ${bootstrapJsCode}
             '${themeSlug}-contact-form',
             $theme_uri . '/js/contact-form-handler.js',
             array(),
-            '1.0.0',
+            ${funcPrefix}_asset_version( 'js/contact-form-handler.js' ),
             true
         );
     }
