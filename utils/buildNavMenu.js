@@ -34,6 +34,13 @@ const buildNavMenu = function (template, globalValues, pages, basePath, mainLoca
   const pagesArr = toArray(pages);
   const currentSlug = slugify(filename || '');
 
+  // A one-page design sample has no service, location, contact or legal
+  // pages. The menu still shows every item — the point is showing a business
+  // owner what their site would look like — but each link returns to the
+  // sample rather than 404ing.
+  const isSample = globalValues.siteMode === 'sample';
+  const href = (realHref) => (isSample ? './' : realHref);
+
   const isAbout    = context === 'aboutus';
   const isContact  = context === 'contact';
   const isService  = context === 'services';
@@ -53,23 +60,23 @@ const buildNavMenu = function (template, globalValues, pages, basePath, mainLoca
     // straight to it.
     const only = pagesArr[0];
     const slug = slugify(only.filename || '');
-    const href = `${basePath}${slug}-${mainLocationSlug}.html`;
+    const linkHref = href(`${basePath}${slug}-${mainLocationSlug}.html`);
     const active = isService && slug === currentSlug ? 'active' : '';
 
     items += `
                                 <li class="nav-item">
-                                  <a class="nav-link ${active}" href="${href}">${escapeHtml(String(only.filename || '').toUpperCase())}</a>
+                                  <a class="nav-link ${active}" href="${linkHref}">${escapeHtml(String(only.filename || '').toUpperCase())}</a>
                                 </li>`;
 
   } else if (pagesArr.length > 1) {
     const links = pagesArr.map(page => {
       const slug = slugify(page.filename || '');
-      const href = `${basePath}${slug}-${mainLocationSlug}.html`;
+      const linkHref = href(`${basePath}${slug}-${mainLocationSlug}.html`);
       const active = isService && slug === currentSlug ? 'active' : '';
 
       return `
                                       <li class="nav-item">
-                                        <a class="dropdown-item nav-link ${active}" href="${href}">${escapeHtml(String(page.filename || '').toUpperCase())}</a>
+                                        <a class="dropdown-item nav-link ${active}" href="${linkHref}">${escapeHtml(String(page.filename || '').toUpperCase())}</a>
                                       </li>`;
     }).join('');
 
@@ -91,7 +98,7 @@ const buildNavMenu = function (template, globalValues, pages, basePath, mainLoca
   if (globalValues.wantsLocationPages && locationPages.length) {
     const links = locationPages.map(loc => {
       const locSlug = slugify(loc.slug || loc.display || '');
-      const href = `${basePath}location-${locSlug}.html`;
+      const linkHref = href(`${basePath}location-${locSlug}.html`);
       const active = isLocation && locSlug === currentSlug ? 'active' : '';
 
       // Show the city only: "Round Rock", not "Round Rock, TX"
@@ -101,7 +108,7 @@ const buildNavMenu = function (template, globalValues, pages, basePath, mainLoca
 
       return `
                                       <li class="nav-item">
-                                        <a class="nav-link dropdown-item ${active}" href="${href}">${escapeHtml(String(label).toUpperCase())}</a>
+                                        <a class="nav-link dropdown-item ${active}" href="${linkHref}">${escapeHtml(String(label).toUpperCase())}</a>
                                       </li>`;
     }).join('');
 
@@ -120,7 +127,7 @@ const buildNavMenu = function (template, globalValues, pages, basePath, mainLoca
 
   items += `
                                 <li class="nav-item">
-                                  <a class="nav-link ${isContact ? 'active' : ''}" href="${basePath}contact.html">CONTACT</a>
+                                  <a class="nav-link ${isContact ? 'active' : ''}" href="${href(`${basePath}contact.html`)}">CONTACT</a>
                                 </li>`;
 
   const containerMenu = `<div class="collapse navbar-collapse container-nav-menu" id="navbarNav">

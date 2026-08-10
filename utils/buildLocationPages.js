@@ -10,6 +10,7 @@ const { writePageAssets } = require('./buildAssets');
 const { buildSocialLinks } = require('./buildSocialLinks');
 const CM = require('./contentModel');
 const { stripUnusedHero } = require('./stripUnusedHero');
+const { fillLegalLinks } = require('./legalLinks');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { getHoursTimeText } = require('./formatDaysAndHoursForDisplay');
@@ -207,6 +208,7 @@ const buildLocationPages = async function (
 
     // Write page
     // Drop the unused hero block (see utils/stripUnusedHero.js)
+    template = fillLegalLinks(template, globalForLoc);
     template = stripUnusedHero(template, globalForLoc.styleKey);
 
     fs.writeFileSync(path.join(distDir, `location-${locationSlug}.html`), template);

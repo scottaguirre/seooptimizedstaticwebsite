@@ -64,6 +64,7 @@
     'global[styleKey]',
     'global[logoType]',
     'global[businessType]',
+    'global[siteMode]',
   ];
 
   function injectHiddenSnapshot(form, snapshot, cssClass = 'js-hidden-mainform', filterFn) {
@@ -130,7 +131,22 @@
   // -----------------------------
   // State
   // -----------------------------
+  // Named so inserting a step never means renumbering call sites by hand.
+  const STEP = {
+    MODE:   0,
+    TYPE:   1,
+    LOGO:   2,
+    DESIGN: 3,
+    MAIN:   4,
+    PAGES:  5,
+    REVIEW: 6,
+  };
+
   const state = {
+    // 'lead' = the full optimised site. 'sample' = a one-page design sample
+    // for showing a prospective client, with no service, location or legal
+    // pages and no pricing or FAQ section.
+    siteMode: 'lead',
     styleKey: 'style',
     businessType: '',
     logoType: 'square',     // 'square' | 'rect'
@@ -173,7 +189,47 @@
   }
 
   // -----------------------------
-  // Step 0: Business Type
+  // Step 0: What are we building?
+  // -----------------------------
+  function renderSiteModeStep() {
+    container.innerHTML = '';
+
+    const card = el('div', { class: 'card p-4' });
+    card.innerHTML = `
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'lead' ? 'border-success border-3' : 'border-secondary'}"
+               data-mode="lead" style="cursor:pointer;">
+            <h4 class="m-0">Lead Generation</h4>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'sample' ? 'border-success border-3' : 'border-secondary'}"
+               data-mode="sample" style="cursor:pointer;">
+            <h4 class="m-0">One-Page Design Sample</h4>
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+
+    card.querySelectorAll('.mode-card').forEach(box => {
+      box.addEventListener('click', () => {
+        state.siteMode = box.dataset.mode;
+        renderSiteModeStep();   // repaint so the chosen card is highlighted
+      });
+    });
+
+    renderNav(container, {
+      showBack: false,
+      nextText: 'Next',
+      onNext: () => go(STEP.TYPE),
+    });
+  }
+
+  // -----------------------------
+  // Step 1: Business Type
   // -----------------------------
   function renderBusinessTypeStep() {
     container.innerHTML = '';
@@ -200,7 +256,11 @@
     select.addEventListener('change', () => select.classList.remove('is-invalid'));
 
     renderNav(container, {
-      showBack: false,
+      // Back to the mode step: this is no longer the first screen, so the
+      // user needs a way to change their mind about what they are building.
+      showBack: true,
+      backText: 'Back',
+      onBack: () => go(STEP.MODE),
       nextText: 'Next',
       onNext: () => {
         const val = (select.value || '').trim();
@@ -211,7 +271,7 @@
           return;
         }
         state.businessType = val;
-        go(1);
+        go(STEP.LOGO);
       }
     });
   }
@@ -369,7 +429,7 @@
     renderNav(container, {
       showBack: true,
       nextText: 'Continue',
-      onBack: () => go(0),
+      onBack: () => go(STEP.TYPE),
       onNext: () => {
         const activeEl = state.logoType === 'square' ? squareInput
                        : state.logoType === 'wide'   ? wideInput
@@ -382,7 +442,7 @@
           return;
         }
         state.logoFile = file;
-        go(2);
+        go(STEP.DESIGN);
       }
     });
   }
@@ -506,8 +566,9 @@
           <input type="text" name="global[address]" class="form-control" required />
         </div>
 
-        <!-- Owner / founder name -->
-        <div class="mb-3">
+        <!-- Owner / founder name. A design sample is not a real business
+             page, so an invented owner would be noise. -->
+        <div class="mb-3" ${state.siteMode === 'sample' ? 'style="display:none;"' : ''}>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="includeOwner" name="global[includeOwner]">
             <label class="form-check-label" for="includeOwner">
@@ -545,8 +606,9 @@
         </div>
 
 
-         <!-- Google Map CID -->
-        <div class="mb-3 mt-3">
+         <!-- Google Map CID. Feeds the LocalBusiness schema, so it has no
+              purpose in a design sample. -->
+        <div class="mb-3 mt-3" ${state.siteMode === 'sample' ? 'style="display:none;"' : ''}>
           <label class="form-label" for="googleMapCid">Google Map CID</label>
         <input type="text"
                 id="googleMapCid"
@@ -569,9 +631,11 @@
 
         <hr>
 
-        <!-- Near Me -->
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" id="useNearMe" name="global[useNearMe]" value="true" checked>
+        <!-- Near Me. Hidden for design samples, and unchecked so the
+             near-me section is not generated at all. -->
+        <div class="form-check" ${state.siteMode === 'sample' ? 'style="display:none;"' : ''}>
+          <input class="form-check-input" type="checkbox" id="useNearMe" name="global[useNearMe]" value="true"
+                 ${state.siteMode === 'sample' ? '' : 'checked'}>
           <label class="form-check-label" for="useNearMe">
             Check to optimize About Us page with "Near Me" term
           </label>
@@ -695,7 +759,7 @@
 
     backBtn.addEventListener('click', () => {
       state.mainFormSnapshot = snapshotFormValues(form);
-      go(2);
+      go(STEP.DESIGN);
     });
 
     nextBtn.addEventListener('click', () => {
@@ -780,7 +844,7 @@
 
       // All good — snapshot and move on
       state.mainFormSnapshot = snapshotFormValues(form);
-      go(4);
+      go(STEP.PAGES);
     });
   }
 
@@ -890,7 +954,7 @@
       const li = container.querySelectorAll('#locationsList input[name="global[locationPages][]"]');
       state.addLocations = !!locToggle.checked;
       state.locations = state.addLocations ? [...li].map(i => i.value.trim()).filter(Boolean) : [];
-      go(3);
+      go(STEP.MAIN);
     });
 
     submitBtn.addEventListener('click', () => {
@@ -943,7 +1007,7 @@
       // ensure logo mirrored to backend field name="global[logo]"
       if (!state.logoFile) {
         showAlert(container, 'Please choose a logo to continue.');
-        go(1);
+        go(STEP.LOGO);
         return;
       }
       // ===== ensure logo mirrored to backend field name="global[logo]" =====
@@ -1016,6 +1080,16 @@
       // The submit handler also sets this, but injecting it now means the
       // review step reflects exactly what will be posted.
       form.querySelectorAll('input[name="global[styleKey]"]').forEach(n => n.remove());
+      // Site mode: lead generation or design sample. Decides what the server
+      // builds, so it travels with the other state-owned fields.
+      form.querySelectorAll('input[name="global[siteMode]"]').forEach(n => n.remove());
+      const siteModeEarly = document.createElement('input');
+      siteModeEarly.type = 'hidden';
+      siteModeEarly.name = 'global[siteMode]';
+      siteModeEarly.classList.add('js-hidden-mirror');
+      siteModeEarly.value = state.siteMode;
+      form.appendChild(siteModeEarly);
+
       // Business type too, so the review step reflects what will be posted
       form.querySelectorAll('input[name="global[businessType]"]').forEach(n => n.remove());
       const businessTypeEarly = document.createElement('input');
@@ -1045,7 +1119,7 @@
       // Hidden fields are now in place. Show the review step rather than
       // submitting straight away — generating costs credits, so this is the
       // last chance to catch a typo.
-      go(5);
+      go(STEP.REVIEW);
     });
 
     container.addEventListener('input', (ev) => {
@@ -1088,12 +1162,12 @@
       showBack: true,
       backText: 'Back',
       nextText: 'Next',
-      onBack: () => { go(1); },
+      onBack: () => { go(STEP.LOGO); },
       onNext: () => {
         // update state from currently checked radio
         const picked = container.querySelector('input[name="global[styleKey]"]:checked');
         state.styleKey = picked ? picked.value : state.styleKey;
-        go(3); // go to Main Form step
+        go(STEP.MAIN); // go to Main Form step
       }
     });
   }
@@ -1166,10 +1240,10 @@
 
   // Card colours. Kept as constants so they can be changed in one place
   // rather than hunting through the markup.
-  // #378239 rather than a brighter green: white body text on it clears
+  // #17801a rather than a brighter green: white body text on it clears
   // WCAG AA (5.07:1), where #1a8a1a came in just under at 4.47:1.
   const CARD_BG = '#378239';       // green card background
-  const CARD_BORDER = '#378239';   // slightly darker edge
+  const CARD_BORDER = '#2a6b2c';   // slightly darker edge
   const EDIT_BG = '#082d5b';       // Edit button, matching the site header
 
   function reviewCard(title, bodyHtml, editStep) {
@@ -1262,9 +1336,15 @@
     // the same sequence the user just completed:
     //   0 business type -> 1 logo -> 2 design -> 3 details -> 4 pages
     grid.innerHTML = [
+      reviewCard('What we are building', [
+        reviewRow('Type',
+          state.siteMode === 'sample' ? 'Design Sample (one page)' : 'Lead Generation Website',
+          { strong: true, editStep: STEP.MODE }),
+      ].join(''), STEP.MODE),
+
       reviewCard('Business Type', [
         reviewRow('Category', state.businessType, { strong: true }),
-      ].join(''), 0),
+      ].join(''), STEP.TYPE),
 
       reviewCard('Logo', [
         reviewRow('Shape', logoShapeLabel(state.logoType)),
@@ -1272,38 +1352,38 @@
       ].join('') + (state.logoPreviewURL
         ? `<img src="${state.logoPreviewURL}" alt="Logo preview" class="mt-3"
                style="max-height:80px;max-width:200px;background:#fff;padding:6px;border-radius:6px;">`
-        : ''), 1),
+        : ''), STEP.LOGO),
 
       reviewCard('Design', [
         reviewRow('Selected', themeLabel(state.styleKey), { strong: true }),
-      ].join(''), 2),
+      ].join(''), STEP.DESIGN),
 
       reviewCard('Business Details', [
         reviewRow('Name', snapshotValue('businessName'), { strong: true }),
         reviewRow('Domain', snapshotValue('domain')),
         reviewRow('Location', snapshotValue('location')),
         reviewRow('Address', snapshotValue('address')),
-        reviewRow('Owner name', ownerSummary()),
-      ].join(''), 3),
+        ...(state.siteMode === 'sample' ? [] : [reviewRow('Owner name', ownerSummary())]),
+      ].join(''), STEP.MAIN),
 
       reviewCard('Contact', [
         reviewRow('Phone', snapshotValue('phone')),
         reviewRow('Email', snapshotValue('email')),
         reviewRow('Map CID', snapshotValue('googleMapCid')),
         reviewRow('Intro video', snapshotValue('youtubeVideoUrl')),
-      ].join(''), 3),
+      ].join(''), STEP.MAIN),
 
-      reviewCard('Hours', hoursSummary(), 3),
+      reviewCard('Hours', hoursSummary(), STEP.MAIN),
 
-      reviewCard('Social links', socialSummary(), 3),
+      reviewCard('Social links', socialSummary(), STEP.MAIN),
 
       // Pages last: they are what the credit cost is based on, so they sit
       // closest to the Generate button.
       reviewCard(`Service pages (${pages.length})`,
-        listSummary(pages, 'No service pages added.'), 4),
+        listSummary(pages, 'No service pages added.'), STEP.PAGES),
 
       reviewCard(`Location pages (${locations.length})`,
-        listSummary(locations, state.addLocations ? 'No locations added.' : 'Location pages are turned off.'), 4),
+        listSummary(locations, state.addLocations ? 'No locations added.' : 'Location pages are turned off.'), STEP.PAGES),
     ].join('');
     container.appendChild(grid);
 
@@ -1316,7 +1396,7 @@
       showBack: true,
       backText: 'Back',
       nextText: `Generate Website (${credits} credit${credits === 1 ? '' : 's'})`,
-      onBack: () => go(4),
+      onBack: () => go(STEP.PAGES),
       onNext: () => {
         // Hidden fields were injected on the previous step, so this only
         // needs to fire the submit that spinner.js listens for.
@@ -1330,12 +1410,13 @@
   }
 
   const steps = [
-    renderBusinessTypeStep,     // 0
-    renderLogoStep,             // 1
-    renderDesignStep,           // 2
-    renderMainForm,             // 3
-    renderPagesAndLocationsStep, // 4
-    renderReviewStep             // 5
+    renderSiteModeStep,          // 0  lead generation or design sample
+    renderBusinessTypeStep,      // 1
+    renderLogoStep,              // 2
+    renderDesignStep,            // 3
+    renderMainForm,              // 4
+    renderPagesAndLocationsStep, // 5
+    renderReviewStep             // 6
   ];
   let current = 0;
   function go(index) {
@@ -1393,6 +1474,7 @@
   } catch {}
 
   // 5) Reset wizard “brain” (your in-memory state)
+  state.siteMode          = 'lead';
   state.businessType      = '';
   state.mainFormSnapshot  = null;  // wipes hours, near-me, CID, etc.
   state.pages             = [];
@@ -1402,7 +1484,7 @@
 
 
   // 6) Jump back to the first step (Business Type)
-  go(0);
+  go(STEP.MODE);
 }
 
 
@@ -1428,7 +1510,7 @@
       if (!state.logoFile) {
         e.preventDefault();
         e.stopImmediatePropagation(); // stop spinner.js submitting anyway
-        go(1);
+        go(STEP.LOGO);
         const activeEl = state.logoType === 'square' ? container.querySelector('#logoSquare')
                        : state.logoType === 'wide'   ? container.querySelector('#logoWide')
                        : container.querySelector('#logoRect');
@@ -1483,7 +1565,7 @@
       if (pagesVals.length === 0) {
         e.preventDefault();
         e.stopImmediatePropagation(); // stop spinner.js submitting anyway
-        go(4);
+        go(STEP.PAGES);
         // highlight first page input if it's on screen
         pageInputsDom[0]?.classList.add('is-invalid');
         pageInputsDom[0]?.focus();
@@ -1497,7 +1579,7 @@
       if (submitPageDupes.dupes.length) {
         e.preventDefault();
         e.stopImmediatePropagation(); // stop spinner.js submitting anyway
-        go(4);
+        go(STEP.PAGES);
         [...pageInputsDom].forEach(i => i.classList.remove('is-invalid'));
         submitPageDupes.dupes.forEach(i => i.classList.add('is-invalid'));
         submitPageDupes.dupes[0]?.focus();
@@ -1510,7 +1592,7 @@
         if (submitLocDupes.dupes.length) {
           e.preventDefault();
           e.stopImmediatePropagation(); // stop spinner.js submitting anyway
-          go(4);
+          go(STEP.PAGES);
           [...locInputsDom].forEach(i => i.classList.remove('is-invalid'));
           submitLocDupes.dupes.forEach(i => i.classList.add('is-invalid'));
           submitLocDupes.dupes[0]?.focus();
@@ -1523,7 +1605,7 @@
       if (addLoc && locVals.length === 0) {
         e.preventDefault();
         e.stopImmediatePropagation(); // stop spinner.js submitting anyway
-        go(4);
+        go(STEP.PAGES);
         // highlight first location input if it's on screen
         locInputsDom[0]?.classList.add('is-invalid');
         locInputsDom[0]?.focus();
@@ -1564,6 +1646,14 @@
 
 
       // === Inject styleKey hidden field (ensures backend gets the chosen theme) ===
+      form.querySelectorAll('input[name="global[siteMode]"]').forEach(n => n.remove());
+      const siteModeHidden = document.createElement('input');
+      siteModeHidden.type = 'hidden';
+      siteModeHidden.name = 'global[siteMode]';
+      siteModeHidden.classList.add('js-hidden-mirror');
+      siteModeHidden.value = state.siteMode;
+      form.appendChild(siteModeHidden);
+
       // Business type is chosen on step 1 but rendered as a hidden input
       // inside the main form, so the step-3 snapshot captures it. Going back
       // to change it left the snapshot holding the OLD value, which then
@@ -1633,6 +1723,6 @@
         }
       );
     });   
-    go(0);
+    go(STEP.MODE);
   });
 })();

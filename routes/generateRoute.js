@@ -35,6 +35,7 @@ const { generateServiceCards } = require('../utils/buildServiceCards');
 const { generatePricing } = require('../utils/buildPricingTable');
 const { buildSitemap } = require('../utils/buildSitemap');
 const { stripUnusedHero } = require('../utils/stripUnusedHero');
+const { fillLegalLinks } = require('../utils/legalLinks');
 const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
 
@@ -157,6 +158,15 @@ router.post('/generate', upload.any(), async (req, res) => {
 
     // Affordability check. Nothing is deducted yet — that happens only if
     // the build succeeds, so a failure never costs the user credits.
+    // A design sample is one page shown to a prospective client. It skips
+    // the service, location and legal pages, the pricing table, the FAQ and
+    // the sitemap — everything that only matters for a published site.
+    //
+    // Read from the request rather than globalValues, which is not built
+    // until later in this handler.
+    const isSample =
+      (req.body.global?.siteMode ?? req.body['global[siteMode]']) === 'sample';
+
     const credit = checkCredits(req.user, pages);
     if (!credit.ok) {
       return res.status(402).json({
@@ -259,6 +269,10 @@ router.post('/generate', upload.any(), async (req, res) => {
       showAboutForm,
       // Owner name is opt-in; when opted in, the name itself is optional and
       // the model invents one if left blank.
+      // 'lead' (full site) or 'sample' (one-page design sample). Anything
+      // unrecognised falls back to a full build, so a malformed request can
+      // never silently produce a stripped-down site.
+      siteMode: global.siteMode === 'sample' ? 'sample' : 'lead',
       includeOwner: global.includeOwner,
       ownerName: (global.ownerName || '').trim(),
       wantsLocationPages,    // true/false
@@ -342,7 +356,7 @@ router.post('/generate', upload.any(), async (req, res) => {
     // =========================================================
     // 4. MAIN LOOP — one HTML page per submitted service page
     // =========================================================
-    for (const [index, page] of Object.entries(pages)) {
+    for (const [index, page] of Object.entries(isSample ? {} : pages)) {
       const filename = slugify(page.filename);
       const templatePath = path.join(__dirname, '../src/template.html');
       let template = fs.readFileSync(templatePath, 'utf-8');
@@ -485,6 +499,7 @@ router.post('/generate', upload.any(), async (req, res) => {
       // Create file.html from template
       const htmlName = `${filename}-${locationSlug}`;
       // Drop the unused hero block (see utils/stripUnusedHero.js)
+      template = fillLegalLinks(template, globalValues);
       template = stripUnusedHero(template, globalValues.styleKey);
 
       fs.writeFileSync(path.join(distDir, `${htmlName}.html`), template);
@@ -573,8 +588,8 @@ router.post('/generate', upload.any(), async (req, res) => {
     // Home page only. Two ValueSERP queries are merged to reach six questions,
     // cached for 30 days so regenerating costs nothing. Any failure here leaves
     // faqs empty and the page builds without the section.
-    console.log('❓ Fetching People Also Ask questions...');
-    const paaQuestions = await fetchPeopleAlsoAsk({
+    console.log(isSample ? '❓ Skipping FAQ (design sample)' : '❓ Fetching People Also Ask questions...');
+    const paaQuestions = isSample ? [] : await fetchPeopleAlsoAsk({
       keyword: globalValues.useNearMe === 'true'
         ? `${globalValues.businessType} near me`
         : globalValues.businessType,
@@ -604,8 +619,8 @@ router.post('/generate', upload.any(), async (req, res) => {
 
     // Typical price ranges. Framed as estimates for the area, not as the
     // business's own price list — the figures are generated, not supplied.
-    console.log('💲 Generating pricing table...');
-    const pricing = await generatePricing({
+    console.log(isSample ? '💲 Skipping pricing (design sample)' : '💲 Generating pricing table...');
+    const pricing = isSample ? [] : await generatePricing({
       businessType: globalValues.businessType,
       location: globalValues.location,
     });
@@ -628,7 +643,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
     // Create privacy-policy.html, & save in dist
-    const privacyPage = buildPrivacyPolicyPage(
+    const privacyPage = isSample ? null : buildPrivacyPolicyPage(
             distDir,
             cssDir,
             globalValues,
@@ -638,7 +653,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
     // Create terms-of-use.html, & save in dist
-    const termsPage = buildTermsOfUsePage(
+    const termsPage = isSample ? null : buildTermsOfUsePage(
             distDir,
             cssDir,
             globalValues,
@@ -648,7 +663,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
     // Create accessibility.html, & save in dist
-    const accessibilityPage = buildAccessibilityPage(
+    const accessibilityPage = isSample ? null : buildAccessibilityPage(
             distDir,
             cssDir,
             globalValues,
@@ -659,7 +674,8 @@ router.post('/generate', upload.any(), async (req, res) => {
 
     // Create contact.html — hero, AI intro, the same form the home page
     // uses, then the shared NAP/map block.
-    const contactPage = await buildContactPage(
+    // The Contact link points back to the sample, so no contact page.
+    const contactPage = isSample ? null : await buildContactPage(
             distDir,
             cssDir,
             globalValues,
@@ -669,7 +685,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
 
     // Create location pages
-    const locationModelPages = await buildLocationPages(
+    const locationModelPages = isSample ? [] : await buildLocationPages(
             distDir,
             cssDir,
             globalValues,
@@ -684,7 +700,9 @@ router.post('/generate', upload.any(), async (req, res) => {
     // === sitemap.xml + robots.txt ===
     // Written after every page exists, so the URL list is derived from what
     // was actually generated rather than from what we intended to generate.
-    buildSitemap(distDir, globalValues);
+    if (!isSample) {
+      buildSitemap(distDir, globalValues);
+    }
 
 
     // === Assemble and persist the semantic model ===
@@ -695,9 +713,14 @@ router.post('/generate', upload.any(), async (req, res) => {
     // The legal builders return their content. Fall back to a bare record if
     // one of them skipped work because the file already existed.
     CM.addPages(contentModel, [
-      privacyPage       || CM.legalPage({ slug: 'privacy-policy', title: 'Privacy Policy', menuOrder: 9998 }),
-      termsPage         || CM.legalPage({ slug: 'terms-of-use',   title: 'Terms of Use',   menuOrder: 9999 }),
-      accessibilityPage || CM.legalPage({ slug: 'accessibility',  title: 'Accessibility',  menuOrder: 10000 }),
+      // A sample has no legal pages at all, so the usual fallback record
+      // must not run — it would put pages in the model that were never
+      // written to disk.
+      ...(isSample ? [] : [
+        privacyPage       || CM.legalPage({ slug: 'privacy-policy', title: 'Privacy Policy', menuOrder: 9998 }),
+        termsPage         || CM.legalPage({ slug: 'terms-of-use',   title: 'Terms of Use',   menuOrder: 9999 }),
+        accessibilityPage || CM.legalPage({ slug: 'accessibility',  title: 'Accessibility',  menuOrder: 10000 }),
+      ]),
     ]);
 
     CM.writeModel(distDir, contentModel);
@@ -727,7 +750,7 @@ router.post('/generate', upload.any(), async (req, res) => {
           <style>
             body { background:#082d5b; color:#fff; }
             .wrap { max-width: 720px; margin: 0 auto; padding: 80px 20px; text-align:center; }
-            .actions { display:flex; flex-direction:column; gap:14px; margin-top:40px; }
+            .actions { display:flex; flex-wrap:wrap; justify-content:center; gap:14px; margin-top:40px; }
             .actions .btn { padding: 14px 20px; font-size: 18px; }
             #overlay {
               position: fixed; inset: 0; background: rgba(0,0,0,.8);
@@ -754,7 +777,7 @@ router.post('/generate', upload.any(), async (req, res) => {
 
               <a href="/export-wp-theme" id="wpBtn" class="btn btn-success btn-lg">Convert to WordPress</a>
 
-              <a href="/" class="btn btn-outline-light">Go Back</a>
+              <a href="/" class="btn btn-warning btn-lg">Start Over</a>
             </div>
 
             <div id="alert" class="alert alert-danger mt-4 d-none" role="alert"></div>

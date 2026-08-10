@@ -163,6 +163,31 @@ router.get('/export-wp-theme', requireAuth, async (req, res) => {
 
     const businessName = req.user.businessName || '';
 
+    // A design sample is a one-page mock with links that all return to
+    // itself. Exporting it as a WordPress theme would produce a site whose
+    // menu goes nowhere, so refuse rather than ship something broken.
+    let siteMode = 'lead';
+    try {
+      const modelJson = JSON.parse(
+        fs.readFileSync(path.join(distDir, '_src', 'content.json'), 'utf8')
+      );
+      siteMode = modelJson?.global?.siteMode || 'lead';
+    } catch (err) {
+      // Unreadable model: fall through and let the build report the problem
+    }
+
+    if (siteMode === 'sample') {
+      return send(res, page({
+        status: 400,
+        title: 'Not available for samples',
+        heading: 'WordPress export is not available for design samples',
+        body: '<p class="lead">A design sample is a single page for showing a client. Generate a Lead Generation website to export a WordPress theme.</p>',
+        actions: `
+          <a href="/" class="btn btn-primary btn-lg">Back to Generator</a>
+          <a href="/dashboard" class="btn btn-outline-secondary">My Dashboard</a>`,
+      }));
+    }
+
     const { themeDir, summary } = await buildWordPressThemeFromModel(distDir, {
       themeSlug: THEME_SLUG,
       themeName: businessName ? `${businessName} Theme` : 'Local Business Theme',

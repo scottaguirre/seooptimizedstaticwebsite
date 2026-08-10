@@ -18,6 +18,7 @@ const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { writePageAssets } = require('./buildAssets');
 const { buildSocialLinks } = require('./buildSocialLinks');
 const { buildNavMenu } = require('./buildNavMenu');
+const { fillLegalLinks } = require('./legalLinks');
 const { buildAltText } = require('./buildAltText');
 const { generateContactContent } = require('./generateContactContent');
 const { copyPageImage } = require('./pageParts');
@@ -129,6 +130,8 @@ const buildContactPage = async function (
   contact = contact.replace('</body>', `
     <script src="./js/bootstrap.bundle.min.js"></script>
   </body>`);
+
+  contact = fillLegalLinks(contact, globalValues);
 
   fs.writeFileSync(contactPath, contact);
 

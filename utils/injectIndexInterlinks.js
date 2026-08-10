@@ -37,7 +37,11 @@ function injectIndexInterlinks(globalValues, pages, indexInterlinks, sections) {
     
           const escapedText = baseAnchorText.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
           const regex = new RegExp(`(^|\\s)(${escapedText})(?=\\s|\\.|,|$)`, 'i');
-          const href = `${normalizedSlug}-${slugify(globalValues.location)}.html`;
+          // A design sample has no service pages, so interlinks return to
+          // the sample rather than pointing at files that were never built.
+          const href = globalValues.siteMode === 'sample'
+            ? './'
+            : `${normalizedSlug}-${slugify(globalValues.location)}.html`;
   
           if (regex.test(paragraph)) {
             paragraph = paragraph.replace(

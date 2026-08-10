@@ -141,6 +141,8 @@ function createModel(globalValues = {}) {
     global: {
       businessName: globalValues.businessName || '',
       businessType: globalValues.businessType || '',
+      // 'lead' or 'sample' — the WordPress exporter refuses samples.
+      siteMode: globalValues.siteMode === 'sample' ? 'sample' : 'lead',
       location: globalValues.location || '',
 
       phone: globalValues.phone || '',

@@ -12,6 +12,7 @@ const { writePageAssets } = require('./buildAssets');
 const { buildSocialLinks } = require('./buildSocialLinks');
 const CM = require('./contentModel');
 const { stripUnusedHero } = require('./stripUnusedHero');
+const { fillLegalLinks } = require('./legalLinks');
 const { buildFaqSection, buildFaqSchemaTag } = require('./buildFaqSection');
 const { buildServiceCards } = require('./buildServiceCards');
 const { buildPricingTable } = require('./buildPricingTable');
@@ -305,6 +306,7 @@ const  buildAboutUsPage =  async function (
             // Write the About Us Page file (index.html)
             // Remove whichever hero block this design does not display, so
             // the page ships one hero and one <h1> instead of two.
+            aboutus = fillLegalLinks(aboutus, globalValues);
             aboutus = stripUnusedHero(aboutus, globalValues.styleKey);
 
             fs.writeFileSync(path.join(distDir, `index.html`), aboutus);
