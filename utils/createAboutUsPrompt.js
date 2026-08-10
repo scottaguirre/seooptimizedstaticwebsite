@@ -120,12 +120,12 @@ ${is24Hours ? '      "Open 24 hours, 7 days a week"\n' : ''}      "Visa, Masterc
     Include this word: ${rawKeywords[0]}
     Do not write it as a list. Two or three flowing sentences.
 
-2. 'What Makes Us Stand Out?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
+2. 'Why Should You Hire ${businessName}?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
 
-3. '${businessType} Services We Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
+3. 'What ${businessType} Services Does ${businessName} Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
 In the second paragraph of this section include this word ${rawKeywords[2]}.
 
-4. Talk about ${location}.
+4. About ${location}.
 Please include the 7 closest zip codes to the main location ${location} and 5 landmarks of ${location}.
 In the second paragraph of this section  include this word ${rawKeywords[3]}.
 
