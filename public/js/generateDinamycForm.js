@@ -200,14 +200,14 @@
         <div class="col-md-6">
           <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'lead' ? 'border-success border-3' : 'border-secondary'}"
                data-mode="lead" style="cursor:pointer;">
-            <h4 class="m-0">Lead Generation</h4>
+            <h4 class="m-0">Optimized to Rank Fast</h4>
           </div>
         </div>
 
         <div class="col-md-6">
           <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'sample' ? 'border-success border-3' : 'border-secondary'}"
                data-mode="sample" style="cursor:pointer;">
-            <h4 class="m-0">One-Page Design Sample</h4>
+            <h4 class="m-0">One-Page Design</h4>
           </div>
         </div>
       </div>

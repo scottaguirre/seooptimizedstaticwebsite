@@ -829,7 +829,11 @@ router.post('/generate', upload.any(), async (req, res) => {
                 Download HTML Site
               </button>
 
-              <a href="/export-wp-theme" id="wpBtn" class="btn btn-success btn-lg">Convert to WordPress</a>
+              <!-- A form, not a link: /export-wp-theme is now POST so another
+                   site cannot trigger a theme build in a logged-in browser. -->
+              <form action="/export-wp-theme" method="POST" class="d-inline">
+                <button type="submit" id="wpBtn" class="btn btn-success btn-lg">Convert to WordPress</button>
+              </form>
 
               <a href="/" class="btn btn-warning btn-lg">Start Over</a>
             </div>
@@ -874,7 +878,12 @@ router.post('/generate', upload.any(), async (req, res) => {
                 try {
                   // Build first. /production copies the generated site,
                   // optimises the copy with Webpack and zips it.
-                  const res = await fetch('/production', { headers: { 'Accept': 'text/html' } });
+                  // POST: /production performs an expensive build, so it must not be
+                  // reachable by a cross-site GET.
+                  const res = await fetch('/production', {
+                    method: 'POST',
+                    headers: { 'Accept': 'text/html' },
+                  });
 
                   if (!res.ok) {
                     throw new Error('The build failed. Please try again.');

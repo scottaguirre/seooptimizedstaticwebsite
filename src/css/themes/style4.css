@@ -1,10 +1,9 @@
 
 /* Your custom styles below */
 
-#headerColor{
+#headerColor {
     width:100%;
-    margin:0;
-    
+    margin:0;  
 }
 
 
@@ -16,26 +15,26 @@
     background-color: white; 
 } 
 
-.nav-link {
+.nav-link, .menu-item a  {
     color:black;
     font-size: 16px;
     font-weight: 600;
     background: none !important;
 }
 
-a.nav-link:hover {
+a.nav-link:hover, .menu-item a:hover {
     color:#be1010;
 }
 
 
-a.nav-link.active {
+a.nav-link.active, .current-menu-item a {
     color: white!important;
     padding:7px;
     background: #c10a0a !important;
     border-radius: 20px;
 }
 
-a.nav-link.active:hover {
+a.nav-link.active:hover, .current-menu-item a:hover {
     color:#1a1a1a !important;
 }
 
@@ -44,16 +43,24 @@ a.nav-link.active:hover {
     padding-left:12px;
 }
 
-.dropdown-menu {
+.dropdown-menu, .sub-menu  {
     background: white;
 }
 
-.dropdown-menu .nav-item {
+.dropdown-menu .nav-item, .sub-menu .menu-item {
     border-bottom: solid gray 2px;
     padding-left: 10px;
 }
 
-.dropdown-menu .nav-item a:hover {
+.dropdown-menu li:only-child, .sub-menu li:only-child  {
+    border-bottom: none
+}
+
+.dropdown-menu li:last-of-type, .sub-menu li:last-of-type  {
+    border-bottom: none;
+}
+
+.dropdown-menu .nav-item a:hover, .sub-menu .menu-item a:hover {
     background: white;
 }
 
@@ -203,6 +210,20 @@ a.nav-link.active:hover {
     border-bottom: #1a1a1a 2px solid;
 }
 
+.badges {
+    position: absolute;
+    left: 8%;
+    bottom: 5%;
+}
+
+img.award, img.licensed {
+    width: 15%;  
+    border: none;
+    box-shadow: none;
+    border-top-right-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
 
 .first-button-container {
     padding: 25px;
@@ -340,6 +361,11 @@ a.nav-link.active:hover {
     border-bottom-left-radius: 0px;
     border-bottom-right-radius: 50px;
     
+}
+
+.col-md-5 img {
+    border-top-right-radius: 0px;
+    border-top-left-radius: 50px;
 }
 
 
@@ -652,6 +678,16 @@ footer a {
         width: 200px;
         margin: 15px auto;
     }
+
+    .badges {
+        position: absolute;
+        left: 8%;
+        bottom: 5%;
+    }
+    
+    .award, .licensed {
+        width: 15%;  
+    }
     
   }
 
@@ -734,6 +770,7 @@ footer a {
     .text-hero-for-style4 h2 {
         font-size: 3rem;
     }
+
 
 }
   
@@ -923,5 +960,352 @@ footer a {
 @media (max-width: 991.98px) {
     .faq-section .col-lg-6:not(:last-child) {
         margin-bottom: var(--faq-gap);
+    }
+}
+
+
+/* ==========================================================================
+   Service cards (home page)
+   --------------------------------------------------------------------------
+   Append to each theme you want them on:
+     src/css/themes/style.css ... style5.css
+
+   Like the FAQ block, this inherits rather than hardcoding, so one snippet
+   works across all five themes:
+
+     - the icon uses currentColor, so it takes the theme's text colour
+     - the card tint is a translucent black, reading as a subtle shade of
+       whatever sits behind it
+     - the title inherits body colour and the section's own heading styles
+
+   To tune one theme, override the variables:
+
+     .service-cards { --card-icon: #ff3f34; --card-bg: rgba(0,0,0,.05); }
+   ========================================================================== */
+
+   .service-cards {
+    --card-bg:        #082d5b;
+    --card-bg-hover:  rgba(0, 0, 0, .07);
+    --card-icon:      #c10a0a;
+    --card-radius:    10px;
+
+    margin-top: 40px;
+}
+
+.service-card {
+    text-align: center; 
+    border-radius: var(--card-radius);
+    padding: 26px 22px;
+    height: 100%;
+    transition: transform .2s ease, background-color .2s ease;
+}
+
+/* Lift on hover, but only where hovering is a real interaction */
+@media (hover: hover) {
+    .service-card:hover {
+        background: var(--card-bg-hover);
+        transform: translateY(-3px);
+    }
+}
+
+
+.service-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 16px;
+    border-radius: 50%;
+    background: var(--card-icon);
+    color: white;
+}
+
+.service-card-title {
+    color: black;
+    font-size: 20px;
+    line-height: 1.3;
+    margin: 0 0 8px;
+    padding: 0;              /* the section's h2/h3 padding would be too much here */
+}
+
+.service-card-text {
+    color: rgb(101, 90, 90);
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    opacity: .90;
+}
+
+.service-card:hover .service-card-title,
+.service-card:hover .service-card-text  {
+    color: black;
+}
+
+
+/* The cards sit inside .section-padding, which styles headings and text for
+   full-width prose. Reset the bits that don't suit a small card. */
+.section-padding .service-card-title,
+.section-padding .service-card-text {
+    padding-bottom: 0;
+}
+
+
+/* ==========================================================================
+   Pricing table
+   --------------------------------------------------------------------------
+   Append to each theme you want it on:
+     src/css/themes/style.css ... style5.css
+
+   Inherits rather than hardcoding, so one snippet suits all five themes:
+     - text uses the theme's body colour
+     - row tint is a translucent black, reading as a shade of whatever
+       background sits behind it
+     - the price uses currentColor at a heavier weight
+
+   To tune one theme:
+     .pricing-section { --price-accent: #ff3f34; }
+   ========================================================================== */
+
+   .pricing-section {
+    --price-row-bg:     rgba(0, 0, 0, .03);
+    --price-row-alt:    rgba(0, 0, 0, .06);
+    --price-border:     rgba(0, 0, 0, .10);
+    --price-accent:     currentColor;
+}
+
+.pricing-table {
+    width: 100%;
+    margin: 28px 0 0;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.pricing-table thead th {
+    text-align: left;
+    font-size: 14px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    opacity: .7;
+    padding: 0 16px 12px;
+    border-bottom: 2px solid var(--price-border);
+}
+
+.pricing-table thead th:last-child {
+    text-align: right;
+}
+
+.pricing-table tbody tr:nth-child(odd) {
+    background: var(--price-row-bg);
+}
+
+.pricing-table tbody tr:nth-child(even) {
+    background: var(--price-row-alt);
+}
+
+.pricing-table tbody th,
+.pricing-table tbody td {
+    padding: 16px;
+    vertical-align: middle;
+    border-bottom: 1px solid var(--price-border);
+}
+
+/* Service name + the short qualifier underneath it */
+.pricing-service {
+    font-weight: 600;
+    font-size: 17px;
+    text-align: left;
+}
+
+.pricing-note {
+    display: block;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.4;
+    opacity: .7;
+    margin-top: 4px;
+}
+
+/* The range, and how it's charged */
+.pricing-range {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.pricing-amount {
+    display: block;
+    font-weight: 700;
+    font-size: 19px;
+    color: var(--price-accent);
+}
+
+.pricing-unit {
+    display: block;
+    font-size: 13px;
+    opacity: .65;
+    margin-top: 2px;
+}
+
+/* The estimate notice. Understated but not hidden — it needs to be readable,
+   since it's what keeps the figures honest. */
+.pricing-disclaimer {
+    margin-top: 20px;
+    font-size: 14px;
+    line-height: 1.6;
+    opacity: .8;
+    padding: 14px 16px;
+    border-left: 3px solid var(--price-border);
+    background: var(--price-row-bg);
+}
+
+/* Narrow screens: stack each row so the range sits under the service rather
+   than being squeezed against it. */
+@media (max-width: 575.98px) {
+    .pricing-table thead {
+        display: none;
+    }
+
+    .pricing-table tbody tr {
+        display: block;
+        padding: 6px 0;
+    }
+
+    .pricing-table tbody th,
+    .pricing-table tbody td {
+        display: block;
+        border-bottom: 0;
+        padding: 4px 16px;
+        text-align: left;
+    }
+
+    .pricing-table tbody tr {
+        border-bottom: 1px solid var(--price-border);
+    }
+
+    .pricing-range {
+        text-align: left;
+        padding-bottom: 14px !important;
+    }
+
+    .pricing-amount,
+    .pricing-unit {
+        display: inline-block;
+    }
+
+    .pricing-unit {
+        margin-left: 8px;
+    }
+}
+
+/* ==========================================================================
+   Trust points (About Us, Section 1)
+   --------------------------------------------------------------------------
+   Append to each theme you want it on:
+     src/css/themes/style.css ... style5.css
+
+   A white check inside a green circle. The green is deliberately fixed
+   rather than inherited — a verified tick reads as green on every design.
+
+   To tune one theme:
+     .trust-points { --trust-bg: #0d6efd; }
+   ========================================================================== */
+
+   .trust-points {
+    --trust-bg: #c10a0a;      /* circle */
+    --trust-tick: #ffffff;    /* the check inside it */
+
+    list-style: none;
+    padding: 0;
+    margin: 20px 0 24px;
+
+    /* Two columns on wider screens; one on mobile. Six points then read as
+       3 + 3 rather than a long vertical run. */
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px 28px;
+}
+
+@media (min-width: 576px) {
+    .trust-points {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.trust-points li {
+    position: relative;
+    padding-left: 40px;
+    line-height: 1.5;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+/* Green circle. Drawn in CSS rather than as an icon: no extra request, and
+   it scales with the text. Unlike the rest of the theme components this does
+   NOT inherit the theme colour — a verified tick reads as green everywhere.
+   Override --trust-bg on a theme if you want it to match instead. */
+.trust-points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 30px;
+    height: 30px;
+    margin-top: -15px;
+    border-radius: 15%;
+    background: var(--trust-bg);
+}
+
+/* The tick itself: two borders rotated into a check, sitting on the circle. */
+.trust-points li::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    width: 12px;
+    height: 5px;
+    margin-top: -4px;
+    border-left: 2px solid var(--trust-tick);
+    border-bottom: 2px solid var(--trust-tick);
+    transform: rotate(-45deg);
+}
+
+/* ==========================================================================
+   About Us intro video
+   --------------------------------------------------------------------------
+   Append to each theme:
+     src/css/themes/style.css ... style5.css
+
+   The markup uses Bootstrap's .ratio helper, but .ratio is not in the
+   PurgeCSS safelist in webpack.config.js or postcss.config.cjs. It should
+   survive because PurgeCSS scans the generated HTML — but if it ever does
+   not, a bare <iframe> falls back to the browser default of 300x150px, which
+   is exactly the "tiny video" problem this fixes.
+
+   These rules make the sizing self-contained, so the video renders correctly
+   whether or not Bootstrap's .ratio classes make it through the build.
+   ========================================================================== */
+
+   .about-video-wrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 8px;
+}
+
+.about-video-wrapper iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+/* Stacked below the text under 768px, so give it room to breathe */
+@media (max-width: 767.98px) {
+    .about-video-section {
+        margin-top: 24px;
     }
 }

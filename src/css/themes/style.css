@@ -47,9 +47,9 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     border-bottom: none
   }
 
-  .dropdown-menu li:last-of-type, .sub-menu li:last-of-type  {
+.dropdown-menu li:last-of-type, .sub-menu li:last-of-type  {
     border-bottom: none;
-  }
+}
 
 .dropdown-item {
     padding: 8px;

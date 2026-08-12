@@ -80,7 +80,12 @@ function page({ title, heading, body, actions, status = 200 }) {
         overlay.style.display = 'flex';
 
         try {
-          const res = await fetch('/production', { headers: { 'Accept': 'text/html' } });
+          // POST: /production performs an expensive build, so it must not be
+                  // reachable by a cross-site GET.
+                  const res = await fetch('/production', {
+                    method: 'POST',
+                    headers: { 'Accept': 'text/html' },
+                  });
           if (!res.ok) throw new Error('The build failed. Please try again.');
 
           overlayText.textContent = 'Starting your download...';
@@ -113,7 +118,9 @@ function send(res, spec) {
  * GET /export-wp-theme
  * Build a WordPress theme from the generated content model.
  */
-router.get('/export-wp-theme', requireAuth, async (req, res) => {
+// POST for the same reason as /production: building a theme is expensive and
+// must not be triggerable from another site.
+router.post('/export-wp-theme', requireAuth, async (req, res) => {
   const userId = req.user._id.toString();
   const distDir = path.join(baseDistDir, `user_${userId}`);
   const workDir = path.join(wpWorkRoot, `user_${userId}`);
@@ -267,7 +274,9 @@ router.get('/download-wp-theme', requireAuth, (req, res) => {
       heading: '⚠️ Theme not found',
       body: '<p>Your download may have expired, or the theme has not been exported yet.</p>',
       actions: `
-        <a href="/export-wp-theme" class="btn btn-primary">Export WordPress Theme</a>
+        <form action="/export-wp-theme" method="POST" class="d-inline">
+          <button type="submit" class="btn btn-primary">Export WordPress Theme</button>
+        </form>
         <a href="/" class="btn btn-outline-secondary">← Back to Generator</a>`,
     }));
   }

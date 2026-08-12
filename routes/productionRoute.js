@@ -1,184 +1,89 @@
 const express = require('express');
 const router = express.Router();
-const path = require('path');
-const { exec } = require('child_process');
-const { zip } = require('zip-a-folder');
-const fs = require('fs');
 
-// === Custom Utility Functions ===
-const { replaceInProd } = require('../utils/replaceInProd');
-const { removeScriptAndLinkTags } = require('../utils/removeScriptAndLinkTags');
-const { cleanDirectory, copyDirRecursive } = require('../utils/helpers');
-
-const projectRoot = path.join(__dirname, '..');
-const baseDistDir = path.join(projectRoot, 'dist');
-
-// Build artifacts live OUTSIDE dist/ because server.js serves dist/ statically.
-// Keeping zips out of the static tree stops anyone downloading another
-// user's site by guessing their id.
-const buildsRoot = path.join(projectRoot, 'builds');
-const workRoot = path.join(buildsRoot, 'work');
-const zipRoot = path.join(buildsRoot, 'zips');
-
-// Guard against a user double-clicking "Run Production" and having two
-// builds write into the same work folder at once.
-// NOTE: this is per-process only. It is not a substitute for the global
-// build queue we still want before real traffic.
-const inFlight = new Set();
-
-function getPaths(userId) {
-  const safeId = String(userId);
-  return {
-    sourceDir: path.join(baseDistDir, `user_${safeId}`),
-    workDir: path.join(workRoot, `user_${safeId}`),
-    zipPath: path.join(zipRoot, `user_${safeId}.zip`),
-  };
-}
-
-// After Webpack runs, the only css/js the HTML references are the
-// content-hashed bundles. The originals we copied in for the preview
-// are now dead weight, so drop them from the zip.
-const HASHED = /\.[a-f0-9]{8,}\.(css|js)$/i;
-
-function pruneUnhashedAssets(workDir) {
-  ['css', 'js'].forEach(sub => {
-    const dir = path.join(workDir, sub);
-    if (!fs.existsSync(dir)) return;
-
-    fs.readdirSync(dir, { withFileTypes: true }).forEach(entry => {
-      if (!entry.isFile()) return;
-      if (HASHED.test(entry.name)) return; // keep the Webpack output
-      fs.unlinkSync(path.join(dir, entry.name));
-    });
-  });
-}
-
-function sendError(res, status, message) {
-  return res.status(status).send(`<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Production Build Failed</title>
-    <link rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
-  </head>
-  <body class="bg-dark text-light d-flex align-items-center justify-content-center"
-        style="min-height:100vh;">
-    <div class="container text-center" style="max-width:700px;">
-      <h1 class="mb-4">❌ Production build failed</h1>
-      <p class="lead mb-4">${message}</p>
-      <a href="/" class="btn btn-outline-light btn-lg">Back to Generator</a>
-    </div>
-  </body>
-</html>`);
-}
-
+const { runProductionBuild } = require('../utils/runProductionBuild');
 
 // PRODUCTION route.
 //
-// This step no longer modifies the generated site. It:
-//   1) copies dist/user_<id>/  ->  builds/work/user_<id>/
-//   2) cleans + Webpack-optimises the COPY
-//   3) zips the copy into builds/zips/user_<id>.zip
-//   4) deletes the working copy
+// The build itself lives in utils/runProductionBuild.js so /download-zip can
+// run it too — a user shouldn't have to know that "Run Production" exists
+// before "Download" will work.
 //
-// Because the source is untouched, the preview link keeps working and
-// this route can be re-run as many times as the user likes.
-router.get('/production', async (req, res) => {
-  const userId = req.user._id.toString();
-  const { sourceDir, workDir, zipPath } = getPaths(userId);
+// The build is non-destructive: it copies dist/user_<id>/, optimises the copy
+// and zips that, so the preview link keeps working and it can be re-run.
 
-  if (!fs.existsSync(sourceDir)) {
-    return sendError(res, 400, 'No generated site found for this user. Please run Generate first.');
-  }
-
-  if (inFlight.has(userId)) {
-    return sendError(res, 429, 'A production build is already running for your account. Please wait for it to finish.');
-  }
-
-  inFlight.add(userId);
-
-  try {
-    // Ensure the build folders exist
-    fs.mkdirSync(workRoot, { recursive: true });
-    fs.mkdirSync(zipRoot, { recursive: true });
-
-    // 1) Fresh copy every run, so repeated builds are idempotent
-    cleanDirectory(workDir);
-    copyDirRecursive(sourceDir, workDir);
-
-    // 2) Prepare the COPY for production
-    try {
-      replaceInProd(workDir);           // replace "dist/" -> "" in href/src
-      removeScriptAndLinkTags(workDir); // strip dev-only <script>/<link> tags
-    } catch (err) {
-      console.error('Error while preparing HTML for production:', err);
-      return sendError(res, 500, 'Error preparing HTML for production. Check server logs.');
-    }
-
-    // 3) Run Webpack against the copy.
-    // BUILD_DIR is an absolute path, so the build folder does not have to
-    // live inside dist/.
-    await new Promise((resolve, reject) => {
-      exec(
-        'npm run build:webpack',
-        {
-          cwd: projectRoot,
-          env: { ...process.env, NODE_ENV: 'production', BUILD_DIR: workDir },
-          maxBuffer: 1024 * 1024 * 10,
-        },
-        (error, stdout, stderr) => {
-          if (stdout) console.log(stdout);
-          if (stderr) console.error(stderr);
-          if (error) return reject(error);
-          resolve();
-        }
-      );
-    });
-
-    // 4) Strip build-only files so they never reach the user
-    cleanDirectory(path.join(workDir, '_src'));
-    pruneUnhashedAssets(workDir);
-
-    // 5) Zip the optimised copy
-    if (fs.existsSync(zipPath)) {
-      fs.unlinkSync(zipPath);
-    }
-    await zip(workDir, zipPath);
-    console.log(`✅ Zipped user site to: ${zipPath}`);
-
-    // 6) Drop the working copy — the zip is the deliverable
-    cleanDirectory(workDir);
-
-    return res.send(`<!DOCTYPE html>
+function page({ title, heading, body, actions, status = 200 }) {
+  return { status, html: `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Production Build Complete</title>
-    <link rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
+    <title>${title}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
   </head>
-  <body class="bg-dark text-light d-flex align-items-center justify-content-center"
-        style="min-height:100vh;">
-    <div class="container text-center">
-      <h1 class="mb-4">✅ Your static website is ready!</h1>
-      <p class="lead mb-4">
-        Webpack has optimized your pages and your ZIP file is ready.
-      </p>
-      <a href="/download-zip" class="btn btn-success btn-lg me-2">Download Website ZIP</a>
-      <a href="/" class="btn btn-outline-light btn-lg">Back to Generator</a>
+  <body class="bg-dark text-light d-flex align-items-center justify-content-center" style="min-height:100vh;">
+    <div class="container text-center" style="max-width:700px;">
+      <h1 class="mb-4">${heading}</h1>
+      ${body}
+      <div class="mt-4">${actions}</div>
     </div>
   </body>
-</html>`);
+</html>` };
+}
 
-  } catch (err) {
-    console.error('Production build failed:', err);
-    // Don't leave a half-built folder behind
-    try { cleanDirectory(workDir); } catch (_) {}
-    return sendError(res, 500, 'Webpack production build failed. Check server logs.');
-  } finally {
-    inFlight.delete(userId);
+function send(res, spec) {
+  return res.status(spec.status).send(spec.html);
+}
+
+// POST, not GET.
+//
+// A GET with side effects can be triggered from any other website — an
+// <img src="https://yourapp.com/production"> on a hostile page would make a
+// logged-in user's browser start a build. The session cookie is sameSite:lax,
+// which blocks cross-site POSTs but still sends cookies on cross-site GETs,
+// so the method is what closes this.
+router.post('/production', async (req, res) => {
+  const userId = req.user._id.toString();
+  const result = await runProductionBuild(userId);
+
+  if (result.ok) {
+    return send(res, page({
+      title: 'Production Build Complete',
+      heading: '✅ Your static website is ready!',
+      body: '<p class="lead">Webpack has optimized your pages and your ZIP file is ready.</p>',
+      actions: `
+        <a href="/download-zip" class="btn btn-success btn-lg me-2">Download Website ZIP</a>
+        <a href="/" class="btn btn-outline-light btn-lg">Back to Generator</a>`,
+    }));
   }
+
+  const messages = {
+    'no-site': {
+      status: 400,
+      heading: '❌ No generated site found',
+      body: '<p class="lead">Please generate your website first.</p>',
+    },
+    'in-progress': {
+      status: 429,
+      heading: '⏳ Already building',
+      body: '<p class="lead">A production build is already running for your account. Please wait for it to finish.</p>',
+    },
+    'build-failed': {
+      status: 500,
+      heading: '❌ Production build failed',
+      body: '<p class="lead">Something went wrong during the build. Check the server logs.</p>',
+    },
+  };
+
+  const spec = messages[result.reason] || messages['build-failed'];
+
+  return send(res, page({
+    title: 'Production Build',
+    heading: spec.heading,
+    body: spec.body,
+    status: spec.status,
+    actions: '<a href="/" class="btn btn-primary btn-lg">Back to Generator</a>',
+  }));
 });
 
 module.exports = router;
