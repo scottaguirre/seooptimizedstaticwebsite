@@ -15,6 +15,7 @@
 // we write our own with GPT. That flag alone turned a 1-credit request into 6.
 
 const axios = require('axios');
+const { log } = require('./logger');
 const crypto = require('crypto');
 
 const ENDPOINT = 'https://api.valueserp.com/search';
@@ -94,6 +95,12 @@ async function fetchOne(query, { apiKey, location, device, gl, hl, googleDomain 
 
       if (!worthRetrying || isLast) {
         console.warn(`   ⚠️ PAA query failed for "${query}": ${detail}`);
+        log.external('valueserp', 'failed', {
+          query,
+          status: status || null,
+          detail,
+          attempts: attempt,
+        });
         return [];
       }
 

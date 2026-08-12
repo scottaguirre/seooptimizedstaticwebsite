@@ -10,14 +10,21 @@
     <div class="row justify-content-center">
       <div class="col-md-4">
         <h2 class="mb-4 text-center">Log In</h2>
+
+        <!-- Filled by the route; empty on a normal visit -->
+        {{ALERT}}
+
         <form action="/login" method="POST">
           <div class="mb-3">
             <label class="form-label">Email</label>
-            <input name="email" type="email" class="form-control" required>
+            <input name="email" type="email" class="form-control"
+                   value="{{EMAIL}}" autocomplete="username" required autofocus>
           </div>
           <div class="mb-3">
             <label class="form-label">Password</label>
-            <input name="password" type="password" class="form-control" required>
+            <!-- Never repopulated: the password is what they need to retype. -->
+            <input name="password" type="password" class="form-control"
+                   autocomplete="current-password" required>
           </div>
           <button type="submit" class="btn btn-primary w-100">Log In</button>
           <div class="mt-3">

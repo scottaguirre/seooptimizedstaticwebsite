@@ -7,11 +7,13 @@ const bcrypt = require('bcrypt');
 const User = require('../models/User');
 const requireAuth = require('../middleware/requireAuth');
 const { getCurrentSite } = require('../utils/currentSite');
+const { log } = require('../utils/logger');
+const { renderAuthPage } = require('../utils/renderAuthPage');
 
 
 // GET /signup – show signup form
 router.get('/signup', (req, res) => {
-  res.sendFile(path.join(__dirname, '../src/views/signup.html'));
+  res.send(renderAuthPage('signup'));
 });
 
 
@@ -19,15 +21,27 @@ router.get('/signup', (req, res) => {
 // POST /signup – create user
 router.post('/signup', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { password } = req.body;
+
+    // Cast to a string: req.body.email could be an object such as
+    // { "$ne": null }, which Mongo would treat as a query operator and match
+    // an arbitrary user. This is the NoSQL equivalent of SQL injection.
+    const email = String(req.body.email || '').trim().toLowerCase();
 
     if (!email || !password) {
-      return res.status(400).send('Email and password are required');
+      return res.status(400).send(renderAuthPage('signup', {
+        error: 'Please enter both your email and a password.',
+        email,
+      }));
     }
 
     const existing = await User.findOne({ email });
     if (existing) {
-      return res.status(400).send('Email is already registered');
+      return res.status(400).send(renderAuthPage('signup', {
+        error: 'That email address already has an account.',
+        email,
+        action: '<div class="mt-2"><a href="/login" class="alert-link">Log in instead</a></div>',
+      }));
     }
 
     const hashed = await bcrypt.hash(password, 10);
@@ -69,42 +83,101 @@ router.post('/signup', async (req, res) => {
 
 // GET /login – show login form
 router.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, '../src/views/login.html'));
+  // Rendered rather than sent as a file: the template now carries {{ALERT}}
+  // and {{EMAIL}} placeholders which would otherwise show up literally.
+  res.send(renderAuthPage('login'));
 });
 
 
 // POST /login – authenticate user
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { password } = req.body;
+
+    // Cast to a string: req.body.email could be an object such as
+    // { "$ne": null }, which Mongo would treat as a query operator and match
+    // an arbitrary user. This is the NoSQL equivalent of SQL injection.
+    const email = String(req.body.email || '').trim().toLowerCase();
 
     if (!email || !password) {
-      return res.status(400).send('Email and password are required');
+      return res.status(400).send(renderAuthPage('login', {
+        error: 'Please enter both your email and password.',
+        email,
+      }));
     }
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).send('Invalid email or password');
+      // Logged separately from a wrong password so repeated attempts against
+      // addresses that do not exist stand out as enumeration.
+      log.security('auth.login.unknownEmail', { requestId: req.id, ip: req.ip });
+      // Deliberately the same message as a wrong password: saying "no account
+      // with that email" tells an attacker which addresses exist. The logs
+      // above distinguish the two; the page does not.
+      return res.status(400).send(renderAuthPage('login', {
+        error: 'Invalid email or password.',
+        email,
+      }));
     }
 
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) {
-      return res.status(400).send('Invalid email or password');
+      log.security('auth.login.wrongPassword', {
+        requestId: req.id,
+        userId: String(user._id),
+        ip: req.ip,
+      });
+      return res.status(400).send(renderAuthPage('login', {
+        error: 'Invalid email or password.',
+        email,
+      }));
     }
 
     // 🔹 Block login if not verified
     if (!user.verified) {
-      return res.send(`
-        <h2>Email not verified</h2>
-        <p>Please verify your email before logging in.</p>
-        <p>If you didn't receive the email, contact support or ask for a new verification link.</p>
-        <a href="/login">Back to login</a>
-      `);
+      log.security('auth.login.unverified', {
+        requestId: req.id,
+        userId: String(user._id),
+      });
+
+      return res.send(renderAuthPage('login', {
+        notice: 'Please verify your email address before logging in. Check your inbox for the verification link.',
+        email,
+        action: '<div class="mt-2"><a href="/resend-verification" class="alert-link">Send it again</a></div>',
+      }));
     }
 
     // 🔹 OK, verified → log in
-    req.session.userId = user._id;
-    res.redirect('/');
+    //
+    // Regenerate the session id first. Without this, an attacker who can set
+    // a victim's session cookie before login (session fixation) keeps a valid
+    // session afterwards — they knew the id all along, and it never changed.
+    req.session.regenerate((err) => {
+      if (err) {
+        console.error('Session regeneration failed:', err);
+        return res.status(500).send('Something went wrong. Please try again.');
+      }
+
+      req.session.userId = user._id;
+      // Cached on the session so requireOwnDist and the rate limiters do not
+      // hit the database on every request.
+      req.session.role = user.role;
+
+      // Wait for the store to persist before redirecting, or the next request
+      // can arrive before the session exists.
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          console.error('Session save failed:', saveErr);
+          return res.status(500).send('Something went wrong. Please try again.');
+        }
+        log.info('auth.login.success', {
+          requestId: req.id,
+          userId: String(user._id),
+          role: user.role,
+        });
+        res.redirect('/');
+      });
+    });
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).send('Error logging in');
@@ -124,13 +197,28 @@ router.post('/logout', (req, res) => {
       console.error('Logout error:', err);
       return res.status(500).send('Error logging out');
     }
-    res.clearCookie('connect.sid'); // optional, but nice
+
+    // The options MUST match how the cookie was set, or the browser keeps it.
+    //
+    // Previously this was clearCookie('connect.sid') with no options, so the
+    // cookie survived logout. The browser then sent that dead session id on
+    // the next login; the store had destroyed it, so Express issued a new
+    // session and the login landed in one the response did not reference —
+    // which is why logging in appeared to fail the first time and work the
+    // second.
+    res.clearCookie('connect.sid', {
+      path: '/',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+    });
+
     res.redirect('/login');
   });
 });
 
 
-// GET /dashboard - simple logged-in dashboard
+// GET /dashboard - logged-in dashboard
 router.get('/dashboard', requireAuth, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId).lean();
@@ -138,28 +226,26 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       return res.redirect('/login');
     }
 
-    // The download/convert buttons otherwise live on one page only — the one
-    // shown right after generating. This gives them a permanent home.
+    // The download and convert buttons otherwise live on one page only — the
+    // one shown right after generating. Pressing Go Back, converting to
+    // WordPress, closing the tab or returning tomorrow all lose them, and the
+    // only way back would be to regenerate and spend credits again.
     const site = getCurrentSite(req.session.userId);
 
     const siteCard = site ? `
       <div class="card bg-secondary-subtle text-dark mb-4">
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-            <div>
-              <h5 class="card-title mb-1">
-                ${site.businessName ? site.businessName : 'Your current website'}
-              </h5>
-              <p class="card-subtitle text-muted mb-0">
-                ${site.location ? site.location + ' &middot; ' : ''}
-                ${site.pageCount} page${site.pageCount === 1 ? '' : 's'}
-                &middot; generated ${site.generatedAgo}
-              </p>
-            </div>
-          </div>
+          <h5 class="card-title mb-1">
+            ${site.businessName ? site.businessName : 'Your current website'}
+          </h5>
+          <p class="card-subtitle text-muted mb-0">
+            ${site.location ? site.location + ' &middot; ' : ''}
+            ${site.pageCount} page${site.pageCount === 1 ? '' : 's'}
+            &middot; generated ${site.generatedAgo}
+          </p>
 
           <div class="d-flex flex-wrap gap-2 mt-3">
-            <a href="${site.previewUrl}" target="_blank" rel="noopener"
+            <a href="${site.previewUrl}/" target="_blank" rel="noopener"
                class="btn btn-outline-dark">Preview</a>
 
             <button type="button" id="dlStatic" class="btn btn-primary">
@@ -208,7 +294,11 @@ router.get('/dashboard', requireAuth, async (req, res) => {
 
           ${siteCard}
 
-          <div class="card bg-dark border-secondary mb-4">
+          <!-- text-white is required: Bootstrap 5.3's .card sets
+               color: var(--bs-body-color), which is dark, and that overrides
+               the text-white inherited from <body>. Without it the contents
+               are dark text on a dark card — present, but invisible. -->
+          <div class="card bg-dark border-secondary text-white mb-4">
             <div class="card-body">
               <p class="mb-1"><strong>Email:</strong> ${user.email}</p>
               <p class="mb-1"><strong>Role:</strong> ${user.role}</p>
@@ -218,7 +308,6 @@ router.get('/dashboard', requireAuth, async (req, res) => {
 
           <div class="d-flex gap-2">
             <a href="/" class="btn btn-primary">Go to Generator</a>
-            <a href="/buy-credits" class="btn btn-warning">Buy Credits</a>
             <form action="/logout" method="POST" class="m-0">
               <button type="submit" class="btn btn-danger">Logout</button>
             </form>
@@ -312,7 +401,9 @@ router.get('/api/me', requireAuth, async (req, res) => {
 // GET /verify?token=...
 router.get('/verify', async (req, res) => {
   try {
-    const { token } = req.query;
+    // Cast: ?token[$ne]=null arrives as an object and would match the first
+    // unverified account in the collection.
+    const token = String(req.query.token || '').trim();
 
     if (!token) {
       return res.status(400).send('Invalid verification link (missing token).');

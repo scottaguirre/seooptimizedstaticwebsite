@@ -8,9 +8,6 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const distDir = path.join(__dirname, 'dist');
 
-// Deletes generated sites / zips older than the TTL so the disk can't fill up
-const { startCleanupScheduler } = require('./utils/cleanupScheduler');
-
 
 
 // === Route Imports ===
@@ -19,6 +16,17 @@ const authRoute = require('./routes/authRoute');
 const adminRoute = require('./routes/adminRoute');
 const creditsRoute = require('./routes/creditsRoute');
 const requireAuth = require('./middleware/requireAuth');
+const { requireOwnDist } = require('./middleware/requireOwnDist');
+const helmet = require('helmet');
+const { log } = require('./utils/logger');
+const { requestId } = require('./middleware/requestId');
+const mongoSanitize = require('express-mongo-sanitize');
+const {
+  authLimiter,
+  emailLimiter,
+  generateLimiter,
+  generalLimiter,
+} = require('./middleware/rateLimits');
 const generateRoute = require('./routes/generateRoute');
 const productionRoute = require('./routes/productionRoute');
 const downloadZipRoute = require('./routes/downloadZipRoute');
@@ -46,7 +54,6 @@ const PORT = 3000;
 
 // ===== STATIC FILES =====
 app.use(express.static('public'));
-app.use('/dist', express.static(distDir));
 
 
 // ===== BODY PARSERS =====
@@ -55,6 +62,22 @@ app.use(express.json());
 
 
 // ===== Express Session Middleware
+// A predictable session secret means anyone can forge a session cookie and
+// log in as any user. Failing to boot is far better than running insecurely
+// because an environment variable was forgotten.
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  console.error('FATAL: SESSION_SECRET is not set. Refusing to start in production.');
+  process.exit(1);
+}
+
+// Behind Hostinger, nginx or any proxy, req.ip is the proxy without this —
+// so every visitor would share one rate-limit bucket, and `secure` cookies
+// would never be sent.
+app.set('trust proxy', 1);
+
+// Before anything that might log, so every entry can be correlated.
+app.use(requestId);
+
 app.use(session({
     secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
     resave: false,
@@ -64,9 +87,92 @@ app.use(session({
 }),
     cookie: {
         maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-        httpOnly: true
+        httpOnly: true,                  // JavaScript cannot read it
+        // HTTPS only in production. Left off in development so the cookie
+        // still works over plain http on localhost.
+        secure: process.env.NODE_ENV === 'production',
+        // Blocks the cookie on cross-site POSTs, which stops the most common
+        // form of CSRF. 'lax' rather than 'strict' so following a link into
+        // the app keeps the user logged in.
+        sameSite: 'lax'
     }
 }));
+
+
+// ===== SECURITY HEADERS =====
+//
+// helmet sets the standard set: X-Frame-Options, X-Content-Type-Options,
+// Referrer-Policy, HSTS and so on.
+//
+// The Content-Security-Policy is written explicitly rather than taking the
+// default, because the default blocks inline styles and scripts — which this
+// app uses on its own generated pages — and the jsDelivr CDN that serves
+// Bootstrap. A CSP that breaks the app gets switched off, so it is better to
+// state exactly what is allowed.
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+
+      // 'unsafe-inline' is needed for the inline <script> on the generation
+      // success page and the wizard's inline handlers. Worth removing later
+      // by moving those to files and adding a nonce; noted, not urgent.
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      fontSrc: ["'self'", 'data:', 'https://cdn.jsdelivr.net'],
+      connectSrc: ["'self'"],
+
+      // Generated previews embed YouTube and Google Maps
+      frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.google.com', 'https://maps.google.com'],
+
+      objectSrc: ["'none'"],          // no Flash/Java applets
+      baseUri: ["'self'"],            // stop <base> hijacking relative URLs
+      formAction: ["'self'"],         // forms cannot post to another origin
+      frameAncestors: ["'self'"],     // clickjacking protection
+    },
+  },
+
+  // Generated site previews load images and iframes from other origins;
+  // the strict default would block them.
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+
+  // Tell browsers to use HTTPS for a year. Only meaningful over HTTPS, and
+  // only enabled in production so local development still works.
+  hsts: process.env.NODE_ENV === 'production'
+    ? { maxAge: 31536000, includeSubDomains: true, preload: false }
+    : false,
+}));
+
+
+// /dist holds every user's generated site. Without a guard, anyone who knew
+// a user id could read another customer's work before it was published.
+//
+// MUST come after app.use(session(...)): mounted earlier, req.session is
+// undefined and the guard rejects everyone, including the owner.
+app.use('/dist', requireOwnDist, express.static(distDir));
+
+
+// Strip Mongo operators from anything the user sends. The individual routes
+// already cast their inputs, but this catches any field added later that
+// someone forgets to cast — defence in depth rather than the only defence.
+app.use(mongoSanitize({
+  replaceWith: '_',
+  onSanitize: ({ key }) => {
+    console.warn(`⚠️ Stripped a Mongo operator from request field: ${key}`);
+  },
+}));
+
+
+// ===== RATE LIMITS =====
+// Auth is limited by IP (no user yet); generation by user, so an office
+// behind a single IP is not throttled collectively.
+app.use(generalLimiter);
+app.use(['/login', '/signup'], authLimiter);
+app.use(['/verify', '/resend-verification', '/forgot-password', '/reset-password'], emailLimiter);
+app.use(['/generate'], generateLimiter);
 
 
 // ===== AUTH UNPROTECTED ROUTES FIRST =====
@@ -87,8 +193,73 @@ app.use('/', requireAuth, exportWpThemeRoute);
 
 
 
-// ===== BACKGROUND JOBS =====
-startCleanupScheduler();
+// ===== ERROR HANDLING =====
+//
+// Must come after the routes. Two jobs: turn upload rejections into a message
+// the user can act on, and make sure nothing else leaks a stack trace to the
+// browser — stack traces disclose file paths, dependency versions and code
+// structure, all useful to an attacker.
+app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  // Multer rejections: the user picked a file that is too large or the wrong
+  // type, and telling them exactly that is helpful, not a disclosure.
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      error: 'That image is too large. Please upload a file under 5 MB.',
+      fields: [],
+    });
+  }
+
+  if (err && (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_FIELD_COUNT')) {
+    return res.status(413).json({ error: 'Too many files or fields in that request.', fields: [] });
+  }
+
+  if (err && /Unsupported file (type|extension)/.test(err.message || '')) {
+    return res.status(400).json({ error: err.message, fields: [] });
+  }
+
+  // Everything else: record the detail, tell the user nothing useful to
+  // attack. The request id is shown to the user so a support conversation can
+  // start from "what was the reference?" rather than a guessed timestamp.
+  log.error('request.unhandled', err, {
+    requestId: req.id,
+    method: req.method,
+    path: req.path,
+    userId: req.session?.userId,
+  });
+
+  const wantsJson = req.accepts(['html', 'json']) === 'json'
+                 || req.xhr
+                 || (req.headers['content-type'] || '').includes('multipart/form-data');
+
+  if (wantsJson) {
+    return res.status(500).json({
+      error: 'Something went wrong. Please try again.',
+      reference: req.id,
+      fields: [],
+    });
+  }
+
+  res.status(500).send(
+    `Something went wrong. Please try again. (Reference: ${req.id})`
+  );
+});
 
 
-app.listen(PORT, () => console.log(`🚀 Server listening on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Server listening on http://localhost:${PORT}`);
+  log.info('server.started', { port: PORT, env: process.env.NODE_ENV || 'development' });
+});
+
+// A rejected promise nobody caught would otherwise vanish silently and, in
+// newer Node versions, can terminate the process.
+process.on('unhandledRejection', (reason) => {
+  log.error('process.unhandledRejection', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  log.error('process.uncaughtException', err);
+});

@@ -35,6 +35,7 @@ const { generateServiceCards } = require('../utils/buildServiceCards');
 const { generatePricing } = require('../utils/buildPricingTable');
 const { buildSitemap } = require('../utils/buildSitemap');
 const { stripUnusedHero } = require('../utils/stripUnusedHero');
+const { log } = require('../utils/logger');
 const { fillLegalLinks } = require('../utils/legalLinks');
 const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
@@ -58,7 +59,48 @@ const baseDistDir = path.join(__dirname, '../dist');
 
 
 // === Multer Setup
-const upload = multer({ dest: tempUploadDir });
+// Uploads are logos and favicons — small images, nothing else.
+//
+// Previously there was no size limit and no type check. Two consequences:
+// a single request could fill the disk, and a file named .png containing PHP
+// would be copied into a generated WordPress theme, where the server might
+// execute it. The extension check matters as much as the MIME type, because
+// the MIME type is supplied by the client and can simply be lied about.
+const ALLOWED_IMAGE_MIME = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/svg+xml',
+  'image/x-icon',
+  'image/vnd.microsoft.icon',
+]);
+
+const ALLOWED_IMAGE_EXT = new Set([
+  '.png', '.jpg', '.jpeg', '.webp', '.svg', '.ico',
+]);
+
+const upload = multer({
+  dest: tempUploadDir,
+  limits: {
+    fileSize: 5 * 1024 * 1024,  // 5 MB — a logo is far smaller
+    files: 4,                   // logo, favicon, and room to spare
+    fields: 200,                // the wizard posts a lot of fields
+    fieldSize: 100 * 1024,      // 100 KB per field
+  },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+
+    if (!ALLOWED_IMAGE_MIME.has(file.mimetype)) {
+      return cb(new Error(`Unsupported file type: ${file.mimetype}. Please upload a PNG, JPG, WebP, SVG or ICO.`));
+    }
+
+    if (!ALLOWED_IMAGE_EXT.has(ext)) {
+      return cb(new Error(`Unsupported file extension: ${ext || '(none)'}. Please upload a PNG, JPG, WebP, SVG or ICO.`));
+    }
+
+    cb(null, true);
+  },
+});
 
 
 // One generation per user at a time.
@@ -166,6 +208,14 @@ router.post('/generate', upload.any(), async (req, res) => {
     // until later in this handler.
     const isSample =
       (req.body.global?.siteMode ?? req.body['global[siteMode]']) === 'sample';
+
+    const startedAt = Date.now();
+    log.generation('generation.started', {
+      requestId: req.id,
+      userId: String(req.user._id),
+      siteMode: isSample ? 'sample' : 'lead',
+      servicePages: Object.keys(pages || {}).length,
+    });
 
     const credit = checkCredits(req.user, pages);
     if (!credit.ok) {
@@ -768,7 +818,11 @@ router.post('/generate', upload.any(), async (req, res) => {
             </p>
 
             <div class="actions">
-              <a href="./dist/user_${userId}" target="_blank" rel="noopener"
+              <!-- Absolute, not "./dist/...". This page is served from
+                   /generate, so a relative link resolves to
+                   /generate/dist/user_<id> — which express.static never
+                   serves. -->
+              <a href="/dist/user_${userId}/" target="_blank" rel="noopener"
                  class="btn btn-light btn-lg">Click to Preview Website</a>
 
               <button type="button" id="downloadBtn" class="btn btn-primary btn-lg">

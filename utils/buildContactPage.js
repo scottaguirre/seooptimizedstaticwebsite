@@ -6,6 +6,11 @@
 // through the same {{FORM}} placeholder and the same NAP markup. Nothing is
 // duplicated: change the form once and both pages follow.
 //
+// When the user opts out of the contact form, formHtml arrives empty. In that
+// case the whole <section id="contact-form-section"> wrapper is stripped from
+// the HTML and the FORM entry is left out of the semantic model, so neither the
+// static page nor the WordPress export carries an empty form block.
+//
 // The hero is the only image on this page.
 
 const fs = require('fs');
@@ -39,6 +44,9 @@ const buildContactPage = async function (
   }
 
   let contact = fs.readFileSync(path.join(__dirname, '../src/contactTemplate.html'), 'utf-8');
+
+  // Did the user opt in to the contact form?
+  const hasForm = Boolean((formHtml || '').trim());
 
   const businessType = slugify(globalValues.businessType || '');
   const seoPrefix = `${slugify(globalValues.businessName)}-${slugify(globalValues.location)}-contact`;
@@ -114,6 +122,14 @@ const buildContactPage = async function (
     .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
     .replace(/{{SOCIAL_LINKS}}/g, buildSocialLinks(globalValues));
 
+  // Remove the form section (and its comment) when no form was selected,
+  // so the page isn't left with an empty <section></section>.
+  if (!hasForm) {
+    contact = contact
+      .replace(/<section id="contact-form-section">[\s\S]*?<\/section>\s*/i, '')
+      .replace(/<!--\s*Contact form:[\s\S]*?-->\s*/i, '');
+  }
+
   // Remove the email line and its rule when no email was given
   if (!(globalValues.email || '').trim()) {
     contact = contact.replace(
@@ -174,11 +190,14 @@ const buildContactPage = async function (
         type: CM.SECTION_TYPES.TEXT,
         source: { heading: intro.heading, paragraphs: intro.paragraphs },
       }),
-      {
-        key: 'form', label: 'Contact Form',
-        type: CM.SECTION_TYPES.FORM,
-        heading: '', paragraphs: [], images: [],
-      },
+      // Only exported when the user opted in to the form
+      ...(hasForm
+        ? [{
+            key: 'form', label: 'Contact Form',
+            type: CM.SECTION_TYPES.FORM,
+            heading: '', paragraphs: [], images: [],
+          }]
+        : []),
       {
         key: 'napMap', label: 'Contact Details & Map',
         type: CM.SECTION_TYPES.NAP_MAP,

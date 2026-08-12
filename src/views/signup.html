@@ -10,10 +10,12 @@
     <div class="row justify-content-center">
       <div class="col-md-4">
         <h2 class="mb-4 text-center">Create Account</h2>
+        {{ALERT}}
+
         <form action="/signup" method="POST">
           <div class="mb-3">
             <label class="form-label">Email</label>
-            <input name="email" type="email" class="form-control" required>
+            <input name="email" type="email" class="form-control" value="{{EMAIL}}" autocomplete="email" required>
           </div>
           <div class="mb-3">
             <label class="form-label">Password</label>

@@ -254,7 +254,11 @@ router.get('/admin', requireAdmin, async (req, res) => {
 // POST /admin/users - create a user manually
 router.post('/admin/users', requireAdmin, async (req, res) => {
   try {
-    const { email, password, role, credits, verified } = req.body;
+    const { password, role, credits, verified } = req.body;
+
+    // Cast to a string: an object such as { "$ne": null } would otherwise be
+    // treated by Mongo as a query operator rather than a value.
+    const email = String(req.body.email || '').trim().toLowerCase();
 
     if (!email || !password) {
       return res.status(400).send('Email and password are required');

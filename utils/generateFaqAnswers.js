@@ -8,6 +8,7 @@
 // answers.
 
 const { OpenAI } = require('openai');
+const { log } = require('./logger');
 const { getFixedFaqQuestions, getFixedFaqFallbacks } = require('./fixedFaqQuestions');
 const openai = new OpenAI();
 
@@ -119,6 +120,10 @@ async function generateFaqAnswers({ questions, businessName, businessType, locat
 
   } catch (err) {
     console.warn('   ⚠️ Could not generate FAQ answers:', err.message);
+    log.external('openai', 'faqAnswersFailed', {
+      message: err.message,
+      status: err.status || err.response?.status || null,
+    });
 
     // Fall back to the two fixed questions with their written answers. A
     // short FAQ is better than none, and these two are the ones visitors
