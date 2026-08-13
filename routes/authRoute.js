@@ -252,9 +252,11 @@ router.get('/dashboard', requireAuth, async (req, res) => {
               Download HTML Site
             </button>
 
-            <a href="/export-wp-theme" id="dlWp" class="btn btn-success">
-              Convert to WordPress
-            </a>
+            <form action="/export-wp-theme" method="POST" class="d-inline">
+              <button type="submit" id="dlWp" class="btn btn-success">
+                Convert to WordPress
+              </button>
+            </form>
           </div>
 
           <p class="text-muted small mb-0 mt-3">
@@ -308,6 +310,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
 
           <div class="d-flex gap-2">
             <a href="/" class="btn btn-primary">Go to Generator</a>
+            <a href="/buy-credits" class="btn btn-warning">Buy Credits</a>
             <form action="/logout" method="POST" class="m-0">
               <button type="submit" class="btn btn-danger">Logout</button>
             </form>
@@ -345,7 +348,12 @@ router.get('/dashboard', requireAuth, async (req, res) => {
                 overlay.classList.add('show');
 
                 try {
-                  const res = await fetch('/production', { headers: { 'Accept': 'text/html' } });
+                  // POST: /production performs an expensive build, so it must not be
+                  // reachable by a cross-site GET.
+                  const res = await fetch('/production', {
+                    method: 'POST',
+                    headers: { 'Accept': 'text/html' },
+                  });
                   if (!res.ok) throw new Error('The build failed. Please try again.');
 
                   overlayText.textContent = 'Starting your download...';

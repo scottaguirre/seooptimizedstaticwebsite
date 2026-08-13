@@ -57,6 +57,15 @@ app.use(express.static('public'));
 
 
 // ===== BODY PARSERS =====
+// The Stripe webhook needs the RAW body: Stripe signs the exact bytes, and
+// once express.json() has parsed them the signature can never be verified —
+// every webhook would fail and nobody who paid would get their credits.
+//
+// Only the body parsing goes here. The billing ROUTER is mounted further
+// down, after the session middleware, because its other routes use
+// requireAuth and req.session does not exist yet at this point.
+app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }));
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
@@ -117,19 +126,31 @@ app.use(helmet({
       // 'unsafe-inline' is needed for the inline <script> on the generation
       // success page and the wizard's inline handlers. Worth removing later
       // by moving those to files and adding a nonce; noted, not urgent.
-      scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net', 'https://js.stripe.com'],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
 
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
       fontSrc: ["'self'", 'data:', 'https://cdn.jsdelivr.net'],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", 'https://api.stripe.com'],
 
       // Generated previews embed YouTube and Google Maps
-      frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.google.com', 'https://maps.google.com'],
+      frameSrc: [
+        "'self'",
+        'https://www.youtube.com',
+        'https://www.google.com',
+        'https://maps.google.com',
+        // 3-D Secure challenges are shown in a Stripe-hosted iframe
+        'https://checkout.stripe.com',
+        'https://js.stripe.com',
+        'https://hooks.stripe.com',
+      ],
 
       objectSrc: ["'none'"],          // no Flash/Java applets
       baseUri: ["'self'"],            // stop <base> hijacking relative URLs
-      formAction: ["'self'"],         // forms cannot post to another origin
+      // Stripe Checkout is a redirect to Stripe's own domain, so it must be
+      // allowed here. With 'self' alone the browser silently refuses the
+      // redirect and the user just stays on the page — no error, no payment.
+      formAction: ["'self'", 'https://checkout.stripe.com'],
       frameAncestors: ["'self'"],     // clickjacking protection
     },
   },
@@ -173,6 +194,12 @@ app.use(generalLimiter);
 app.use(['/login', '/signup'], authLimiter);
 app.use(['/verify', '/resend-verification', '/forgot-password', '/reset-password'], emailLimiter);
 app.use(['/generate'], generateLimiter);
+
+
+// Billing: /buy-credits, /api/checkout, /api/stripe-webhook.
+// After the session middleware — requireAuth needs req.session.
+const billingRoute = require('./routes/billingRoute');
+app.use('/', billingRoute);
 
 
 // ===== AUTH UNPROTECTED ROUTES FIRST =====
