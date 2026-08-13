@@ -83,16 +83,26 @@ async function generateContactContent({ businessName, businessType, location, ph
   const fallback = fallbackContent({ businessName, businessType, location, phone });
 
   try {
-    const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{
-        role: 'user',
-        content: buildContactPrompt({ businessName, businessType, location, phone }),
-      }],
-      temperature: 0.7,
-    });
+    // Same two fixes as generateFaqAnswers: build the prompt, and go through
+    // getOpenAI() — there is no bare `openai` in this file, because the
+    // client is created lazily so a missing API key does not kill the server
+    // at boot.
+    const prompt = buildContactPrompt({ businessName, businessType, location, phone });
 
-    const raw = response.choices[0].message.content;
+    const response = await getOpenAI().responses.create({
+      model: "gpt-5.6-terra",
+      input: prompt,
+      reasoning: {
+          effort: "low"
+      },
+      text: {
+          verbosity: "medium"
+      }
+  });
+  
+  console.log("generateContactContent usage:", response.usage);
+  
+  const raw = response.output_text.trim();
 
     const cleaned = raw
       .replace(/```json|```/g, '')

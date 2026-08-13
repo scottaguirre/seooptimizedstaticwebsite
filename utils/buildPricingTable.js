@@ -12,15 +12,10 @@
 // In WordPress every row is editable, so an owner can replace the estimates
 // with their real figures.
 
-const { OpenAI } = require('openai');
-
-// Created on first use: constructing OpenAI without a key throws, which would
-// take the server down at boot rather than skipping one section.
-let openaiClient = null;
-function getOpenAI() {
-  if (!openaiClient) openaiClient = new OpenAI();
-  return openaiClient;
-}
+// The shared lazy client, rather than a fourth private copy of the same
+// helper. Created on first use: constructing OpenAI without a key throws,
+// which would stop the server booting instead of skipping one section.
+const { getOpenAI } = require('./openaiClient');
 
 const ROW_COUNT = 6;
 
@@ -96,13 +91,26 @@ async function generatePricing({ businessType, location }) {
   if (!businessType) return [];
 
   try {
-    const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: buildPrompt({ businessType, location }) }],
-      temperature: 0.5,   // lower than prose: we want plausible numbers, not creative ones
+    // buildPrompt() has to actually run and be assigned. Passing
+    // `input: prompt` without this line throws "prompt is not defined" and
+    // the pricing table is silently skipped.
+    const prompt = buildPrompt({ businessType, location });
+
+    // responses.create, NOT chat.completions.create: `input`, `reasoning` and
+    // `text` belong to the Responses API. The chat endpoint expects
+    // `messages` and returns choices[] with no output_text.
+    const response = await getOpenAI().responses.create({
+      model: 'gpt-5.6-terra',
+      input: prompt,
+      // 'none' rather than 'low': these are plausible price ranges, not
+      // reasoning problems, and reasoning tokens are billed as output.
+      reasoning: { effort: 'none' },
+      text: { verbosity: 'medium' },
     });
 
-    const raw = response.choices[0].message.content;
+    console.log('buildPricingTable usage:', response.usage);
+
+    const raw = response.output_text.trim();
 
     const cleaned = raw
       .replace(/```json|```/g, '')

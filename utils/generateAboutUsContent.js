@@ -1,8 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { createAboutUsPrompt } = require('./createAboutUsPrompt');
-const { OpenAI } = require('openai');
-const openai = new OpenAI();
+const { getOpenAI } = require('./openaiClient');
 
 async function generateAboutUsContent(globalValues, indexInterlinks, attempt = 1) {
   /* console.log('🧠 Backlink/pages slugs passed for content generation: generateAboutUsContent.js', indexInterlinks);
@@ -18,13 +17,22 @@ async function generateAboutUsContent(globalValues, indexInterlinks, attempt = 1
     keywords: indexInterlinks
   });
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.7
-  });
+  const response = await getOpenAI().responses.create({
+    model: "gpt-5.6-terra",
+    input: prompt,
+    reasoning: {
+        effort: "low"
+    },
+    text: {
+        verbosity: "medium"
+    }
+});
 
-  const raw = response.choices[0].message.content;
+console.log("generateAboutuscontent usage:", response.usage);
+
+const raw = response.output_text;
+
+
 
   // Clean formatting
   const cleaned = raw

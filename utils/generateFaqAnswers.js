@@ -10,10 +10,18 @@
 const { OpenAI } = require('openai');
 const { log } = require('./logger');
 const { getFixedFaqQuestions, getFixedFaqFallbacks } = require('./fixedFaqQuestions');
-const openai = new OpenAI();
 
-const MIN_WORDS = 40;
-const MAX_WORDS = 60;
+// Created on first use, not at module load. Constructing OpenAI without a key
+// throws, which would take the whole server down at boot rather than skipping
+// one optional section.
+let openaiClient = null;
+function getOpenAI() {
+  if (!openaiClient) openaiClient = new OpenAI();
+  return openaiClient;
+}
+
+const MIN_WORDS = 70;
+const MAX_WORDS = 90;
 
 function buildPrompt({ questions, businessName, businessType, location }) {
   const list = questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
@@ -62,13 +70,30 @@ async function generateFaqAnswers({ questions, businessName, businessType, locat
   if (!list.length) return [];
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: buildPrompt({ questions: list, businessName, businessType, location }) }],
-      temperature: 0.7,
+    // buildPrompt() has to run — `input: prompt` referenced a variable that
+    // was never created, so every call threw "prompt is not defined" and the
+    // FAQ silently fell back to the two fixed questions.
+    const prompt = buildPrompt({
+      questions: list,
+      businessName,
+      businessType,
+      location,
     });
 
-    const raw = response.choices[0].message.content;
+    const response = await getOpenAI().responses.create({
+      model: "gpt-5.6-terra",
+      input: prompt,
+      reasoning: {
+          effort: "low"
+      },
+      text: {
+          verbosity: "medium"
+      }
+  });
+  
+  console.log("generateFAQAnswers usage:", response.usage);
+  
+  const raw = response.output_text.trim();
 
     const cleaned = raw
       .replace(/```json|```/g, '')

@@ -1,4 +1,4 @@
-const openai = require('./openaiClient');
+const { getOpenAI } = require('./openaiClient');
 
 
 // === Generate Review for Schema ===
@@ -7,13 +7,22 @@ async function generateReview(businessName) {
   Keep it under 30 words. Include a realistic reviewer name (first and last).
   Format as: Reviewer Name: "Review text here".`;
   
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: prompt }],
-    });
-  
-    const line = response.choices[0].message.content.trim();
-    const [name, reviewText] = line.split(/:(.+)/);
+     const response = await getOpenAI().responses.create({
+          model: "gpt-5.6-terra",
+          input: prompt,
+          reasoning: {
+              effort: "low"
+          },
+          text: {
+              verbosity: "medium"
+          }
+      });
+      
+      console.log("generateReview usage:", response.usage);
+      
+      const raw = response.output_text.trim();
+
+      const [name, reviewText] = raw.split(/:(.+)/);
   
     return [{
       "@type": "Review",

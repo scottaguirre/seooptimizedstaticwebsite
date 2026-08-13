@@ -1,8 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { createPagesPrompt } = require('./createPagesPrompt');
-const { OpenAI } = require('openai');
-const openai = new OpenAI();
+const { getOpenAI } = require('./openaiClient'); 
 
 async function generatePagesContent(globalValues, page, pagesInterlinks, attempt = 1) {
   
@@ -12,13 +11,20 @@ async function generatePagesContent(globalValues, page, pagesInterlinks, attempt
     keywords: pagesInterlinks
   });
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.7
-  });
-
-  const raw = response.choices[0].message.content;
+   const response = await getOpenAI().responses.create({
+        model: "gpt-5.6-terra",
+        input: prompt,
+        reasoning: {
+            effort: "low"
+        },
+        text: {
+            verbosity: "medium"
+        }
+    });
+    
+    console.log("generatePagesContent usage:", response.usage);
+    
+    const raw = response.output_text.trim();
 
   // Clean formatting
   const cleaned = raw

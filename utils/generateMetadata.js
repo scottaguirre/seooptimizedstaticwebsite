@@ -1,5 +1,4 @@
-
-const openai = require('./openaiClient');
+const { getOpenAI } = require('./openaiClient'); 
 
 
 // === Generate <title> and <meta description> tags ===
@@ -15,14 +14,24 @@ async function generateMetadata(businessName, keyword, location, formatCityState
   <title>...</title>
   <meta name="description" content="...">`;
   
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: prompt }],
-    });
-  
-    const content = response.choices[0].message.content;
-    const titleMatch = content.match(/<title>(.*?)<\/title>/i);
-    const descMatch = content.match(/<meta\s+name="description"\s+content="(.*?)"\s*\/>/i);
+     const response = await getOpenAI().responses.create({
+          model: "gpt-5.6-terra",
+          input: prompt,
+          reasoning: {
+              effort: "low"
+          },
+          text: {
+              verbosity: "medium"
+          }
+      });
+      
+      console.log("generateMetaData usage:", response.usage);
+      
+      const raw = response.output_text.trim();
+
+    
+    const titleMatch = raw.match(/<title>(.*?)<\/title>/i);
+    const descMatch = raw.match(/<meta\s+name="description"\s+content="(.*?)"\s*\/>/i);
   
     return {
       title: titleMatch ? titleMatch[1] : `${businessName} – ${keyword}`,

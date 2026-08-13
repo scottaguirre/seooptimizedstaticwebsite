@@ -1,4 +1,4 @@
-const openai = require('./openaiClient');
+const { getOpenAI } = require('./openaiClient');
 
 
 // === Generate Services Content ===
@@ -15,12 +15,20 @@ async function generateServicesContent(businessName, keyword) {
                     Make it informative and natural. You can Return the content in html format so I can inject it to a div tag.
                     Please separates paragrahp on a new line.`;
   
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: prompt }],
-    });
+                    const response = await getOpenAI().responses.create({
+                      model: "gpt-5.6-terra",
+                      input: prompt,
+                      reasoning: {
+                          effort: "none"
+                      },
+                      text: {
+                          verbosity: "medium"
+                      }
+                  });
+                  
+                  console.log("generateServicesContent usage:", response.usage);
   
-    return response.choices[0].message.content.trim();
+                 return response.output_text.trim();
   }
 
 

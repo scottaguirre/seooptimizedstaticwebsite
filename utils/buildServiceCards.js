@@ -12,16 +12,10 @@
 // shapes (shield, clock, badge...) so the same set suits a plumber, a tree
 // service or a law firm without implying the wrong trade.
 
-const { OpenAI } = require('openai');
-
-// Created on first use, not at module load. Constructing OpenAI without a key
-// throws, which would take the whole server down at boot rather than just
-// skipping the cards.
-let openaiClient = null;
-function getOpenAI() {
-  if (!openaiClient) openaiClient = new OpenAI();
-  return openaiClient;
-}
+// getOpenAI() builds the client on first use rather than at module load:
+// constructing OpenAI without a key throws, which would stop the server
+// booting instead of just skipping the cards.
+const { getOpenAI } = require('./openaiClient');
 
 const CARD_COUNT = 6;
 
@@ -83,13 +77,25 @@ async function generateServiceCards({ businessType, businessName, location }) {
   if (!businessType) return [];
 
   try {
-    const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: buildPrompt({ businessType, businessName, location }) }],
-      temperature: 0.7,
+    // buildPrompt() has to actually run. `input: prompt` referenced a
+    // variable that was never created, so every call threw "prompt is not
+    // defined" and the cards were silently skipped.
+    const prompt = buildPrompt({ businessType, businessName, location });
+
+    // responses.create, NOT chat.completions.create: `input`, `reasoning` and
+    // `text` are Responses API parameters. The chat endpoint ignores them,
+    // expects `messages`, and returns a differently shaped object with no
+    // output_text — so this would have failed even once the prompt existed.
+    const response = await getOpenAI().responses.create({
+      model: 'gpt-5.6-terra',
+      input: prompt,
+      reasoning: { effort: 'none' },
+      text: { verbosity: 'medium' },
     });
 
-    const raw = response.choices[0].message.content;
+    console.log('buildServiceCards usage:', response.usage);
+
+    const raw = response.output_text.trim();
 
     const cleaned = raw
       .replace(/```json|```/g, '')
