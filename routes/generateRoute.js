@@ -217,7 +217,20 @@ router.post('/generate', upload.any(), async (req, res) => {
       servicePages: Object.keys(pages || {}).length,
     });
 
-    const credit = checkCredits(req.user, pages);
+    // Location pages and the site mode both affect the price now, so they
+    // have to reach checkCredits — previously only service pages counted,
+    // which made locations free and samples free entirely.
+    // Use the VALIDATED list, not the raw input: validateAndNormalizeLocationPages
+    // drops duplicates and blanks, so charging on the raw array would bill for
+    // locations that were never generated.
+    const locationCount = (isSample || !wantsLocationPages)
+      ? 0
+      : (Array.isArray(locations) ? locations.length : 0);
+
+    const credit = checkCredits(req.user, pages, {
+      siteMode: isSample ? 'sample' : 'lead',
+      locationPages: locationCount,
+    });
     if (!credit.ok) {
       return res.status(402).json({
         error: 'Not enough credits.',

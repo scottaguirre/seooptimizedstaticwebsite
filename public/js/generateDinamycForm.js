@@ -132,6 +132,27 @@
   // State
   // -----------------------------
   // Named so inserting a step never means renumbering call sites by hand.
+  // Mirrors utils/pricing.js. The server is authoritative — it is what
+  // actually takes the credits — but the review step has to show the same
+  // number, so any change here needs the same change there.
+  const PRICING = {
+    SAMPLE: 100,
+    LEAD_BASE: 200,
+    SERVICE_PAGE: 100,
+    LOCATION_PAGE: 100,
+  };
+
+  function quoteCredits() {
+    if (state.siteMode === 'sample') return PRICING.SAMPLE;
+
+    const services = state.pages.length;
+    const locs = state.addLocations ? state.locations.length : 0;
+
+    return PRICING.LEAD_BASE
+      + services * PRICING.SERVICE_PAGE
+      + locs * PRICING.LOCATION_PAGE;
+  }
+
   const STEP = {
     MODE:   0,
     TYPE:   1,
@@ -200,14 +221,14 @@
         <div class="col-md-6">
           <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'lead' ? 'border-success border-3' : 'border-secondary'}"
                data-mode="lead" style="cursor:pointer;">
-            <h4 class="m-0">Optimized to Rank Fast</h4>
+            <h4 class="m-0">Lead Generation</h4>
           </div>
         </div>
 
         <div class="col-md-6">
           <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'sample' ? 'border-success border-3' : 'border-secondary'}"
                data-mode="sample" style="cursor:pointer;">
-            <h4 class="m-0">One-Page Design</h4>
+            <h4 class="m-0">One-Page Design Sample</h4>
           </div>
         </div>
       </div>
@@ -1317,15 +1338,16 @@
 
     const pages = state.pages || [];
     const locations = state.addLocations ? (state.locations || []) : [];
-    const credits = pages.length;
+    const credits = quoteCredits();
 
     const header = el('div', { class: 'mb-3' });
     header.innerHTML = `
       <h3 class="mb-2">Review &amp; Generate</h3>
+      <p class="text-white-50 mb-1">
+        Check everything below before generating.
+      </p>
       <p class="text-white-50 mb-0">
-        Check everything below before generating. Generating uses
-        <strong>${credits}</strong> credit${credits === 1 ? '' : 's'} —
-        one per service page.
+        This will use <strong>${credits.toLocaleString()}</strong> credits.
       </p>
     `;
     container.appendChild(header);
@@ -1395,7 +1417,7 @@
     renderNav(container, {
       showBack: true,
       backText: 'Back',
-      nextText: `Generate Website (${credits} credit${credits === 1 ? '' : 's'})`,
+      nextText: `Generate ${state.siteMode === 'sample' ? 'Sample' : 'Website'} (${credits.toLocaleString()} credits)`,
       onBack: () => go(STEP.PAGES),
       onNext: () => {
         // Hidden fields were injected on the previous step, so this only

@@ -285,6 +285,8 @@ function resolveThemeCss(styleKey) {
 //
 // Now: count -> check (read only) -> generate -> charge on success.
 
+const { quote } = require('./pricing');
+
 function countPages(pagesData) {
   if (Array.isArray(pagesData)) return pagesData.length;
   if (pagesData && typeof pagesData === 'object') return Object.keys(pagesData).length;
@@ -293,16 +295,44 @@ function countPages(pagesData) {
 
 /**
  * Read-only affordability check. Never mutates the user.
+ *
+ * Pricing moved to utils/pricing.js so the wizard's displayed total and the
+ * server's charge come from one place — they used to be able to disagree,
+ * and the server's number is the one that takes the credits.
+ *
+ * @param {object} user
+ * @param {object} pagesData        service pages
+ * @param {object} [opts]
+ * @param {string} [opts.siteMode]      'lead' | 'sample'
+ * @param {number} [opts.locationPages] how many location pages
  */
-function checkCredits(user, pagesData, costPerPage = 1) {
+function checkCredits(user, pagesData, opts = {}) {
+  // Back-compat: this used to take a costPerPage number as the third
+  // argument. Anything numeric is ignored rather than silently mispricing.
+  const options = (typeof opts === 'object' && opts !== null) ? opts : {};
+
+  const siteMode = options.siteMode === 'sample' ? 'sample' : 'lead';
   const pagesCount = countPages(pagesData);
-  const totalCost = pagesCount * costPerPage;
+  const locationPages = Math.max(0, Number(options.locationPages) || 0);
+
+  const { total, lines } = quote({
+    siteMode,
+    servicePages: pagesCount,
+    locationPages,
+  });
+
   const available = Number(user?.credits || 0);
 
+  // A sample needs no service pages; a lead-generation site does.
+  const hasEnoughPages = siteMode === 'sample' ? true : pagesCount > 0;
+
   return {
-    ok: pagesCount > 0 && available >= totalCost,
+    ok: hasEnoughPages && available >= total,
+    siteMode,
     pagesCount,
-    totalCost,
+    locationPages,
+    totalCost: total,
+    lines,
     available,
   };
 }

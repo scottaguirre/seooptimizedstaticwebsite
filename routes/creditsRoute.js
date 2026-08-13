@@ -75,9 +75,16 @@ router.post("/api/check-credits", requireAuth, async (req, res) => {
 
     // Read only: this endpoint no longer deducts. Charging happens in
     // /generate, after the build succeeds.
-    const { ok, pagesCount, totalCost, available } = checkCredits(req.user, pages);
+    //
+    // Site mode and location count now affect the price, so the wizard sends
+    // them too — otherwise the review step would quote a total the server
+    // does not charge.
+    const { ok, pagesCount, totalCost, available, lines } = checkCredits(req.user, pages, {
+      siteMode: req.body.siteMode,
+      locationPages: req.body.locationPages,
+    });
 
-    res.json({ ok, pagesCount, totalCost, available });
+    res.json({ ok, pagesCount, totalCost, available, lines });
 
   } catch (err) {
     console.error("check-credits error:", err);
