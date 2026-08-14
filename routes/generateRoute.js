@@ -936,11 +936,25 @@ router.post('/generate', upload.any(), async (req, res) => {
                   // optimises the copy with Webpack and zips it.
                   // POST: /production performs an expensive build, so it must not be
                   // reachable by a cross-site GET.
+                  // The token is baked into the page when it renders — these
+                  // are server-rendered strings, so there is no meta tag to
+                  // read. Without it /production returns 403 and the user
+                  // sees "The build failed", which is misleading: the build
+                  // never started.
                   const res = await fetch('/production', {
                     method: 'POST',
-                    headers: { 'Accept': 'text/html' },
+                    headers: {
+                      'Accept': 'text/html',
+                      'X-CSRF-Token': '${res.locals.csrfToken || ''}',
+                    },
                   });
 
+                  // A 403 is a CSRF rejection, not a build failure. Saying
+                  // "the build failed" would send the user looking for a
+                  // problem with their site.
+                  if (res.status === 403) {
+                    throw new Error('Your session expired. Please refresh the page and try again.');
+                  }
                   if (!res.ok) {
                     throw new Error('The build failed. Please try again.');
                   }

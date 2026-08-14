@@ -38,7 +38,8 @@ const exportWpThemeRoute = require('./routes/exportWpThemeRoute');
 
 // Connecting to Mongo
 mongoose.connect(process.env.MONGO_URI, {
-   
+    useNewUrlParser: true,
+    useUnifiedTopology: true
 }).then(() => {
     console.log('✅ Connected to MongoDB');
 }).catch((err) => {
@@ -131,7 +132,10 @@ app.use(helmet({
 
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
       fontSrc: ["'self'", 'data:', 'https://cdn.jsdelivr.net'],
-      connectSrc: ["'self'", 'https://api.stripe.com'],
+      // jsdelivr is here only so DevTools can fetch Bootstrap's source maps.
+      // Without it the console fills with CSP errors that look alarming and
+      // mean nothing — which makes real errors easy to miss.
+      connectSrc: ["'self'", 'https://api.stripe.com', 'https://cdn.jsdelivr.net'],
 
       // Generated previews embed YouTube and Google Maps
       frameSrc: [
