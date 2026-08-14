@@ -275,6 +275,7 @@ router.get('/download-wp-theme', requireAuth, (req, res) => {
       body: '<p>Your download may have expired, or the theme has not been exported yet.</p>',
       actions: `
         <form action="/export-wp-theme" method="POST" class="d-inline">
+              ${res.locals.csrfField || ''}
           <button type="submit" class="btn btn-primary">Export WordPress Theme</button>
         </form>
         <a href="/" class="btn btn-outline-secondary">← Back to Generator</a>`,

@@ -13,6 +13,7 @@
         {{ALERT}}
 
         <form action="/signup" method="POST">
+          {{CSRF}}
           <div class="mb-3">
             <label class="form-label">Email</label>
             <input name="email" type="email" class="form-control" value="{{EMAIL}}" autocomplete="email" required>

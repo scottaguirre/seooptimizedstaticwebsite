@@ -106,6 +106,7 @@
           <li><hr class="dropdown-divider"></li>
           <li>
             <form action="/logout" method="POST" class="px-3">
+              {{CSRF}}
               <button class="btn btn-danger btn-sm w-100">Logout</button>
             </form>
           </li>
@@ -182,10 +183,6 @@
   <script src="/js/generateDinamycForm.js" defer></script>
   <script src="/js/spinner.js" defer></script>
   <script src="/js/currentUserInfo.js" defer></script> 
-  <!-- checkUserCredits.js removed: it bound a SECOND submit handler that
-       called form.submit() while spinner.js was already POSTing, starting two
-       concurrent generations from one click. Its credit check now lives in
-       spinner.js, which is the single submit handler. -->
   <script src="/js/notEnoughCreditsModal.js" defer></script>
 </body>
 </html>

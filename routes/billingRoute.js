@@ -91,6 +91,7 @@ router.get('/buy-credits', requireAuth, async (req, res) => {
           <p class="display-6 mb-3">${formatPrice(pack.priceCents)}</p>
 
           <form action="/api/checkout" method="POST" class="mt-auto">
+              ${res.locals.csrfField || ''}
             <input type="hidden" name="packId" value="${pack.id}">
             <button type="submit" class="btn btn-primary w-100">Buy</button>
           </form>
@@ -178,7 +179,6 @@ router.post('/api/checkout', requireAuth, async (req, res) => {
       packId: pack.id,
       amountCents: pack.priceCents,
       stripeSessionId: session.id,
-      url: session.url
     });
 
     return res.redirect(303, session.url);

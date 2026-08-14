@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
 const { zip } = require('zip-a-folder');
+const { buildLimiter } = require('./concurrencyLimiter');
 
 const { replaceInProd } = require('./replaceInProd');
 const { removeScriptAndLinkTags } = require('./removeScriptAndLinkTags');
@@ -86,6 +87,22 @@ async function runProductionBuild(userId) {
 
   inFlight.add(id);
 
+  // Webpack is CPU-bound and holds a few hundred MB. Several at once on a
+  // small VPS invites the OOM killer, which takes the whole server with it —
+  // so builds queue globally, not just per user.
+  let releaseSlot = () => {};
+
+  try {
+    releaseSlot = await buildLimiter.acquire({ userId: id });
+  } catch (err) {
+    inFlight.delete(id);
+    return {
+      ok: false,
+      reason: err.code === 'QUEUE_FULL' ? 'too-busy' : 'timed-out',
+      error: err,
+    };
+  }
+
   try {
     fs.mkdirSync(workRoot, { recursive: true });
     fs.mkdirSync(zipRoot, { recursive: true });
@@ -138,6 +155,10 @@ async function runProductionBuild(userId) {
     return { ok: false, reason: 'build-failed', error: err };
 
   } finally {
+    // Both always released, including on failure. Leaking the build slot
+    // would shrink the pool permanently; leaking the per-user lock would
+    // stop that user rebuilding until a restart.
+    releaseSlot();
     inFlight.delete(id);
   }
 }

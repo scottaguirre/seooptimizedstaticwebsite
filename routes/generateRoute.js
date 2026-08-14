@@ -36,6 +36,7 @@ const { generatePricing } = require('../utils/buildPricingTable');
 const { buildSitemap } = require('../utils/buildSitemap');
 const { stripUnusedHero } = require('../utils/stripUnusedHero');
 const { log } = require('../utils/logger');
+const { generationLimiter } = require('../utils/concurrencyLimiter');
 const { fillLegalLinks } = require('../utils/legalLinks');
 const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
@@ -149,6 +150,12 @@ router.post('/generate', upload.any(), async (req, res) => {
 
   const tempFiles = (req.files || []).map(f => f.path);
 
+  // Declared OUT here, not inside the try. `finally` is a separate block, so
+  // a `let` declared inside `try` is not in scope there — releasing the slot
+  // would throw a ReferenceError, get swallowed by the catch around it, and
+  // the slot would leak until the pool was empty and every generation hung.
+  let releaseSlot = () => {};
+
   try {
     const pages = req.body.pages;
     const global = req.body.global;
@@ -243,6 +250,27 @@ router.post('/generate', upload.any(), async (req, res) => {
     }
 
     generating.add(userId);
+
+    // Wait for a global slot. The per-user lock above stops one person
+    // running two generations; this caps the TOTAL across all users, which
+    // is what protects the OpenAI rate limit and the event loop from the
+    // builders' synchronous file I/O.
+    try {
+      releaseSlot = await generationLimiter.acquire({
+        requestId: req.id,
+        userId,
+      });
+    } catch (err) {
+      generating.delete(userId);
+
+      const busy = err.code === 'QUEUE_FULL';
+      return res.status(503).json({
+        error: busy
+          ? 'The generator is busy right now. Please try again in a few minutes.'
+          : 'Your request waited too long to start. Please try again.',
+        fields: [],
+      });
+    }
 
 
     // =========================================================
@@ -793,6 +821,20 @@ router.post('/generate', upload.any(), async (req, res) => {
     const remaining = await chargeCredits(req.user, credit.totalCost);
     console.log(`💳 Charged ${credit.totalCost} credit(s); ${remaining} remaining`);
 
+    // The counterpart to generation.started. Without it there is no record of
+    // how long a build took or what it cost — which is exactly what you want
+    // when a customer says "it was slow" or queries their credit balance.
+    log.generation('generation.completed', {
+      requestId: req.id,
+      userId,
+      siteMode: isSample ? 'sample' : 'lead',
+      durationMs: Date.now() - startedAt,
+      servicePages: Object.keys(pages || {}).length,
+      locationPages: locationCount,
+      creditsCharged: credit.totalCost,
+      creditsRemaining: remaining,
+    });
+
 
     // Register this build so /export-wp can convert THIS exact output
     const buildId = createBuildRecord(distDir, {
@@ -845,6 +887,7 @@ router.post('/generate', upload.any(), async (req, res) => {
               <!-- A form, not a link: /export-wp-theme is now POST so another
                    site cannot trigger a theme build in a logged-in browser. -->
               <form action="/export-wp-theme" method="POST" class="d-inline">
+              ${res.locals.csrfField || ''}
                 <button type="submit" id="wpBtn" class="btn btn-success btn-lg">Convert to WordPress</button>
               </form>
 
@@ -931,6 +974,12 @@ router.post('/generate', upload.any(), async (req, res) => {
     console.error('Error during /generate:', err);
     return jsonValidationError(res, 500, 'Generation failed.');
   } finally {
+    // Always release the global slot, or one failed generation would shrink
+    // the pool permanently until the server restarted.
+    try {
+      releaseSlot();
+    } catch (_) { /* never acquired */ }
+
     // Always release the per-user lock
     try {
       generating.delete(req.user._id.toString());

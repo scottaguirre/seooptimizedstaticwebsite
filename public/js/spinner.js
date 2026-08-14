@@ -187,9 +187,18 @@ window.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
+        // Same token as the /generate call below. Without it this POST is
+        // rejected and the credit pre-check silently never runs — the user
+        // only finds out they cannot afford it after the generation starts.
+        const preCsrf = document
+          .querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
         const pre = await fetch('/api/check-credits', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': preCsrf,
+          },
           body: JSON.stringify({ pages }),
         });
 
@@ -207,7 +216,20 @@ window.addEventListener('DOMContentLoaded', () => {
       }
 
       // 2. The single POST
-      const response = await fetch('/generate', { method: 'POST', body: formData });
+      // The token goes in a HEADER, not a form field.
+      //
+      // /generate posts multipart/form-data, which multer parses — and the
+      // CSRF check runs before multer, so req.body is still empty at that
+      // point and a hidden field would be invisible. A header is readable
+      // either way.
+      const csrfToken = document
+        .querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+      const response = await fetch('/generate', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken },
+        body: formData,
+      });
       const contentType = response.headers.get('content-type') || '';
 
       // JSON always means an error in this app

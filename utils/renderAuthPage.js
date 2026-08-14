@@ -43,7 +43,7 @@ function escapeHtml(str = '') {
  * @param {string} [options.email]    prefills the email field
  * @param {string} [options.action]   optional extra HTML inside the alert
  */
-function renderAuthPage(view, { error, notice, email = '', action = '' } = {}) {
+function renderAuthPage(view, { error, notice, email = '', action = '', csrfField = '' } = {}) {
   let html = loadView(view);
 
   let alert = '';
@@ -66,6 +66,9 @@ function renderAuthPage(view, { error, notice, email = '', action = '' } = {}) {
   }
 
   return html
+    // The token comes from the caller, not from here: this module has no
+    // request and therefore no session to read it from.
+    .replace(/{{CSRF}}/g, csrfField)
     .replace(/{{ALERT}}/g, alert)
     // The email is echoed back into an attribute, so it must be escaped —
     // otherwise a crafted address becomes markup on the page.

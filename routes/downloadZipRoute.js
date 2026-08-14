@@ -56,6 +56,7 @@ router.get('/download-zip', async (req, res) => {
       body: '<p class="lead">Use the Download HTML Site button to build your site first.</p>',
       actions: `
         <form action="/production" method="POST" class="d-inline">
+              ${res.locals.csrfField || ''}
           <button type="submit" class="btn btn-primary btn-lg">Build my site now</button>
         </form>
         <a href="/dashboard" class="btn btn-outline-secondary">My Dashboard</a>`,

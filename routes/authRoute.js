@@ -13,7 +13,7 @@ const { renderAuthPage } = require('../utils/renderAuthPage');
 
 // GET /signup – show signup form
 router.get('/signup', (req, res) => {
-  res.send(renderAuthPage('signup'));
+  res.send(renderAuthPage('signup', { csrfField: res.locals.csrfField }));
 });
 
 
@@ -30,6 +30,7 @@ router.post('/signup', async (req, res) => {
 
     if (!email || !password) {
       return res.status(400).send(renderAuthPage('signup', {
+        csrfField: res.locals.csrfField,
         error: 'Please enter both your email and a password.',
         email,
       }));
@@ -38,6 +39,7 @@ router.post('/signup', async (req, res) => {
     const existing = await User.findOne({ email });
     if (existing) {
       return res.status(400).send(renderAuthPage('signup', {
+        csrfField: res.locals.csrfField,
         error: 'That email address already has an account.',
         email,
         action: '<div class="mt-2"><a href="/login" class="alert-link">Log in instead</a></div>',
@@ -85,7 +87,7 @@ router.post('/signup', async (req, res) => {
 router.get('/login', (req, res) => {
   // Rendered rather than sent as a file: the template now carries {{ALERT}}
   // and {{EMAIL}} placeholders which would otherwise show up literally.
-  res.send(renderAuthPage('login'));
+  res.send(renderAuthPage('login', { csrfField: res.locals.csrfField }));
 });
 
 
@@ -101,6 +103,7 @@ router.post('/login', async (req, res) => {
 
     if (!email || !password) {
       return res.status(400).send(renderAuthPage('login', {
+        csrfField: res.locals.csrfField,
         error: 'Please enter both your email and password.',
         email,
       }));
@@ -115,6 +118,7 @@ router.post('/login', async (req, res) => {
       // with that email" tells an attacker which addresses exist. The logs
       // above distinguish the two; the page does not.
       return res.status(400).send(renderAuthPage('login', {
+        csrfField: res.locals.csrfField,
         error: 'Invalid email or password.',
         email,
       }));
@@ -128,6 +132,7 @@ router.post('/login', async (req, res) => {
         ip: req.ip,
       });
       return res.status(400).send(renderAuthPage('login', {
+        csrfField: res.locals.csrfField,
         error: 'Invalid email or password.',
         email,
       }));
@@ -141,6 +146,7 @@ router.post('/login', async (req, res) => {
       });
 
       return res.send(renderAuthPage('login', {
+        csrfField: res.locals.csrfField,
         notice: 'Please verify your email address before logging in. Check your inbox for the verification link.',
         email,
         action: '<div class="mt-2"><a href="/resend-verification" class="alert-link">Send it again</a></div>',
@@ -253,6 +259,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
             </button>
 
             <form action="/export-wp-theme" method="POST" class="d-inline">
+              ${res.locals.csrfField || ''}
               <button type="submit" id="dlWp" class="btn btn-success">
                 Convert to WordPress
               </button>
@@ -312,6 +319,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
             <a href="/" class="btn btn-primary">Go to Generator</a>
             <a href="/buy-credits" class="btn btn-warning">Buy Credits</a>
             <form action="/logout" method="POST" class="m-0">
+              ${res.locals.csrfField || ''}
               <button type="submit" class="btn btn-danger">Logout</button>
             </form>
           </div>

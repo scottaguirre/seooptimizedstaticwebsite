@@ -20,6 +20,7 @@ const { requireOwnDist } = require('./middleware/requireOwnDist');
 const helmet = require('helmet');
 const { log } = require('./utils/logger');
 const { requestId } = require('./middleware/requestId');
+const { csrfToken, csrfProtect } = require('./middleware/csrf');
 const mongoSanitize = require('express-mongo-sanitize');
 const {
   authLimiter,
@@ -37,8 +38,7 @@ const exportWpThemeRoute = require('./routes/exportWpThemeRoute');
 
 // Connecting to Mongo
 mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
+   
 }).then(() => {
     console.log('✅ Connected to MongoDB');
 }).catch((err) => {
@@ -194,6 +194,17 @@ app.use(generalLimiter);
 app.use(['/login', '/signup'], authLimiter);
 app.use(['/verify', '/resend-verification', '/forgot-password', '/reset-password'], emailLimiter);
 app.use(['/generate'], generateLimiter);
+
+
+// ===== CSRF =====
+//
+// After the session middleware, because the token lives in the session.
+// Before every route, so nothing is left unguarded by accident.
+//
+// The Stripe webhook is exempt: it is a server-to-server POST with no
+// session, authenticated by its signature instead.
+app.use(csrfToken);
+app.use(csrfProtect);
 
 
 // Billing: /buy-credits, /api/checkout, /api/stripe-webhook.

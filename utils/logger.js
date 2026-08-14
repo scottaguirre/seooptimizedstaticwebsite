@@ -54,6 +54,9 @@ const REDACT = [
   '*.token',
   'verificationToken',
   '*.verificationToken',
+  // The USER's session id, not a Stripe checkout session — those are logged
+  // as stripeSessionId, which is not a secret and is exactly what you need
+  // to trace a payment.
   'sessionId',
   'smtp_pass',
   '*.smtp_pass',

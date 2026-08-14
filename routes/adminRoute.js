@@ -43,7 +43,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
       const roleCellHtml = isSuperAdmin
         ? `<span class="text-muted small">Role locked (superadmin)</span>`
         : `
-          <form action="/admin/users/${u._id}/role" method="POST" class="d-inline">
+          <form action="/admin/users/${u._id}/role" method="POST" class="d-inline">${res.locals.csrfField || ''}
             <select name="role" class="form-select form-select-sm d-inline w-auto">
               <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
               <option value="subscriber" ${u.role === 'subscriber' ? 'selected' : ''}>subscriber</option>
@@ -57,7 +57,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
       const actionsCellHtml = isSuperAdmin
         ? `<span class="text-muted small">Superadmin protected</span>`
         : `
-          <form action="/admin/users/${u._id}/verify" method="POST" class="d-inline">
+          <form action="/admin/users/${u._id}/verify" method="POST" class="d-inline">${res.locals.csrfField || ''}
             <button 
               type="submit" 
               class="btn btn-sm ${u.verified ? 'btn-outline-success' : 'btn-success'}"
@@ -71,7 +71,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
             method="POST" 
             class="d-inline ms-1"
             onsubmit="return confirm('Are you sure you want to delete this user?');"
-          >
+          >${res.locals.csrfField || ''}
             <button 
               type="submit" 
               class="btn btn-sm btn-danger"
@@ -105,7 +105,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
 
           <!-- Set Credits -->
           <td>
-            <form action="/admin/users/${u._id}/credits" method="POST" class="d-inline">
+            <form action="/admin/users/${u._id}/credits" method="POST" class="d-inline">${res.locals.csrfField || ''}
               <input 
                 type="number" 
                 name="credits" 
@@ -185,7 +185,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
           <div class="card mb-4 bg-secondary text-white">
             <div class="card-body">
               <h5 class="card-title mb-3">Create User Manually</h5>
-              <form action="/admin/users" method="POST" class="row g-2">
+              <form action="/admin/users" method="POST" class="row g-2">${res.locals.csrfField || ''}
                 <div class="col-md-3 col-sm-6">
                   <label class="form-label">Email</label>
                   <input type="email" name="email" required class="form-control form-control-sm" placeholder="user@example.com" />
