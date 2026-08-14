@@ -6,11 +6,6 @@
 // through the same {{FORM}} placeholder and the same NAP markup. Nothing is
 // duplicated: change the form once and both pages follow.
 //
-// When the user opts out of the contact form, formHtml arrives empty. In that
-// case the whole <section id="contact-form-section"> wrapper is stripped from
-// the HTML and the FORM entry is left out of the semantic model, so neither the
-// static page nor the WordPress export carries an empty form block.
-//
 // The hero is the only image on this page.
 
 const fs = require('fs');
@@ -26,17 +21,43 @@ const { buildNavMenu } = require('./buildNavMenu');
 const { fillLegalLinks } = require('./legalLinks');
 const { buildAltText } = require('./buildAltText');
 const { generateContactContent } = require('./generateContactContent');
+const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { copyPageImage } = require('./pageParts');
 const CM = require('./contentModel');
 
 const basePath = '';
+
+/**
+ * The services list: plain names, not links.
+ *
+ * The nav already links to every service page — repeating those links here
+ * adds nothing for a visitor and dilutes the one link that matters on this
+ * page, which is the business name going home.
+ */
+function buildServicesList(pages = []) {
+  const names = (Array.isArray(pages) ? pages : Object.values(pages || {}))
+    .map(p => String(p && p.filename || '').trim())
+    .filter(Boolean);
+
+  if (!names.length) return '';
+
+  const items = names
+    .map(name => `          <li>${escapeAttr(name)}</li>`)
+    .join('\n');
+
+  return `<h3>Our Services</h3>
+        <ul class="contact-services-list">
+${items}
+        </ul>`;
+}
 
 const buildContactPage = async function (
   distDir,
   cssDir,
   globalValues,
   pages,
-  formHtml = ''
+  formHtml = '',
+  contactInterlinks = []
 ) {
   const contactPath = path.join(distDir, 'contact.html');
   if (fs.existsSync(contactPath)) {
@@ -44,9 +65,6 @@ const buildContactPage = async function (
   }
 
   let contact = fs.readFileSync(path.join(__dirname, '../src/contactTemplate.html'), 'utf-8');
-
-  // Did the user opt in to the contact form?
-  const hasForm = Boolean((formHtml || '').trim());
 
   const businessType = slugify(globalValues.businessType || '');
   const seoPrefix = `${slugify(globalValues.businessName)}-${slugify(globalValues.location)}-contact`;
@@ -81,6 +99,29 @@ const buildContactPage = async function (
     phone: globalValues.phone,
   });
 
+  // Weave the ring targets into the intro copy — the same treatment service
+  // and location pages get. Falls back to the raw intro if the injector
+  // cannot find a natural place, so a failure here never blanks the page.
+  let introSections = { section1: { heading: intro.heading, paragraphs: intro.paragraphs } };
+
+  try {
+    if (contactInterlinks.length) {
+      introSections = injectPagesInterlinks(
+        globalValues,
+        pages,
+        { slug: 'contact' },     // so the injector does not self-link
+        contactInterlinks,
+        introSections,
+        globalValues.location
+      );
+    }
+  } catch (err) {
+    console.warn('   ⚠️ Could not interlink the contact intro:', err.message);
+  }
+
+  const introHeading = introSections.section1?.heading || intro.heading;
+  const introParas = introSections.section1?.paragraphs || intro.paragraphs;
+
   contact = contact
     .replace(/{{JSON_LD_SCHEMA}}/g, globalValues.contactSchema || globalValues.jsonLdString || '')
     .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
@@ -103,9 +144,15 @@ const buildContactPage = async function (
     .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
     .replace(/{{LOCATION}}/g, globalValues.location)
 
-    .replace(/{{CONTACT_H2}}/g, escapeAttr(intro.heading).toUpperCase())
-    .replace(/{{CONTACT_P1}}/g, intro.paragraphs[0] || '')
-    .replace(/{{CONTACT_P2}}/g, intro.paragraphs[1] || '')
+    .replace(/{{CONTACT_DETAILS_H3}}/g, 'Contact Details')
+    .replace(/{{BUSINESS_NAME_TITLE}}/g, escapeAttr(globalValues.businessName || ''))
+    .replace(/{{SERVICES_LIST}}/g, buildServicesList(pages))
+
+    .replace(/{{CONTACT_H2}}/g, escapeAttr(introHeading).toUpperCase())
+    // NOT escaped: the interlinker has inserted <a> tags, and escaping here
+    // would render them as visible markup.
+    .replace(/{{CONTACT_P1}}/g, introParas[0] || '')
+    .replace(/{{CONTACT_P2}}/g, introParas[1] || '')
 
     // The home page's form, unchanged
     .replace(/{{FORM}}/g, formHtml || '')
@@ -121,14 +168,6 @@ const buildContactPage = async function (
 
     .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
     .replace(/{{SOCIAL_LINKS}}/g, buildSocialLinks(globalValues));
-
-  // Remove the form section (and its comment) when no form was selected,
-  // so the page isn't left with an empty <section></section>.
-  if (!hasForm) {
-    contact = contact
-      .replace(/<section id="contact-form-section">[\s\S]*?<\/section>\s*/i, '')
-      .replace(/<!--\s*Contact form:[\s\S]*?-->\s*/i, '');
-  }
 
   // Remove the email line and its rule when no email was given
   if (!(globalValues.email || '').trim()) {
@@ -190,14 +229,13 @@ const buildContactPage = async function (
         type: CM.SECTION_TYPES.TEXT,
         source: { heading: intro.heading, paragraphs: intro.paragraphs },
       }),
-      // Only exported when the user opted in to the form
-      ...(hasForm
-        ? [{
-            key: 'form', label: 'Contact Form',
-            type: CM.SECTION_TYPES.FORM,
-            heading: '', paragraphs: [], images: [],
-          }]
-        : []),
+      // Only modelled when the page actually has one, or the exported
+      // WordPress theme would show a form the downloaded site does not.
+      ...(formHtml ? [{
+        key: 'form', label: 'Contact Form',
+        type: CM.SECTION_TYPES.FORM,
+        heading: '', paragraphs: [], images: [],
+      }] : []),
       {
         key: 'napMap', label: 'Contact Details & Map',
         type: CM.SECTION_TYPES.NAP_MAP,
@@ -205,7 +243,7 @@ const buildContactPage = async function (
         mapEmbed: globalValues.mapEmbed || '',
       },
     ],
-    interlinks: [],
+    interlinks: contactInterlinks || [],
   };
 };
 

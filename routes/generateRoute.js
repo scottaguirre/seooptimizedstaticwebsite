@@ -771,7 +771,14 @@ router.post('/generate', upload.any(), async (req, res) => {
             cssDir,
             globalValues,
             pages,
-            buildContactFormHtml(globalValues)
+            // Respect the wizard checkbox. This was passing the form
+            // unconditionally, so unticking "Include contact form" hid it on
+            // the home page but not here — the setting appeared to do
+            // nothing on the page most likely to have a form.
+            showAboutForm ? buildContactFormHtml(globalValues) : '',
+            // Contact's targets from the ring, so its copy interlinks the
+            // same way every other page does.
+            interlinkMap['contact'] || []
     );
 
 

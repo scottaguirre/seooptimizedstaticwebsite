@@ -120,12 +120,36 @@
         <p>{{CONTACT_P2}}</p>
       </div>
     </div>
+
+    <!-- Name, address and phone repeated here as well as in the NAP block
+         below. A contact page that buries the phone number under a form is
+         asking the visitor to work for it. -->
+    <div class="row mt-4">
+      <div class="col-md-6 contact-details">
+        <h3>{{CONTACT_DETAILS_H3}}</h3>
+        <!-- NOT a link. The interlinker already links the business name in
+             the intro copy above, and two links to the home page within one
+             screenful is one too many. -->
+        <p class="contact-business-name">{{BUSINESS_NAME_TITLE}}</p>
+        <p class="contact-address">{{ADDRESS}}</p>
+        <p class="contact-phone">
+          <a href="{{PHONE_RAW}}">{{PHONE_DISPLAY}}</a>
+        </p>
+      </div>
+
+      <div class="col-md-6 contact-services">
+        {{SERVICES_LIST}}
+      </div>
+    </div>
   </div>
 </section>
 
 
-<!-- Contact form: the same form the home page uses, unchanged. Removed entirely by buildContactPage.js when no form was selected. -->
-<section id="contact-form-section">{{FORM}}</section>
+<!-- Contact form: the same form the home page uses.
+     No <section> wrapper here — buildContactFormHtml() returns its own, and
+     wrapping it produced <section><section>. When the form is switched off
+     in the wizard this placeholder is simply empty. -->
+{{FORM}}
 
 
 <!-- Eigth Section: NAP and Map -->

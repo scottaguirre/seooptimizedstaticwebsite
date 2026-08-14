@@ -1,7 +1,13 @@
 // utils/buildInterlinksMap.js
 const { slugify } = require('./slugify');
 
-async function buildInterlinksMap(pages, locationPages = []) {
+/**
+ * @param {Array}  pages           service pages
+ * @param {Array}  locationPages
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeContact]  put the contact page in the ring
+ */
+async function buildInterlinksMap(pages, locationPages = [], opts = {}) {
   // 1) tag service page slugs (from filename without .html)
   pages.forEach(p => { p.slug = String(p.filename || '').replace(/\.html$/i, ''); });
 
@@ -12,8 +18,17 @@ async function buildInterlinksMap(pages, locationPages = []) {
     ? locationPages.map(l => l?.slug || l?.display || '').filter(Boolean)
     : [];
 
-  // 3) combined ring order: all services, then locations
-  const order = [...serviceSlugs, ...locationSlugs];
+  // 3) combined ring order: all services, then locations, then contact.
+  //
+  // Contact goes last so the pages before it link TO it — nothing did
+  // before except the nav, which every page has anyway. It gets outbound
+  // links like any other page in the ring, so the pattern is uniform.
+  const includeContact = opts.includeContact !== false;
+  const order = [
+    ...serviceSlugs,
+    ...locationSlugs,
+    ...(includeContact ? ['contact'] : []),
+  ];
   const n = order.length;
 
   const interlinkMap = {};
@@ -23,12 +38,19 @@ async function buildInterlinksMap(pages, locationPages = []) {
 
   if (n === 0) return { interlinkMap };
 
-  // 4) every item links to Home + next two (wrap)
+  // 4) every item links to Home + the next two in the ring (wrapping)
+  //
+  // With a small ring, "next two" wraps back round to the page itself —
+  // with two items, page A's second target IS page A. A page linking to
+  // itself is useless to a visitor and a wasted internal link, so filter
+  // the current page out and de-duplicate.
   for (let i = 0; i < n; i++) {
     const curr = order[i];
-    const next1 = order[(i + 1) % n];
-    const next2 = order[(i + 2) % n];
-    interlinkMap[curr] = ['index', ...(next1 === next2 ? [next1] : [next1, next2])];
+
+    const targets = [order[(i + 1) % n], order[(i + 2) % n]]
+      .filter(t => t && t !== curr);
+
+    interlinkMap[curr] = ['index', ...new Set(targets)];
   }
 
   return { interlinkMap };

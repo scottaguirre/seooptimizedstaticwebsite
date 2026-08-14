@@ -37,7 +37,16 @@ function zipDirectory(sourceDir, outPath) {
   });
 }
 
-function page({ title, heading, body, actions, status = 200 }) {
+/**
+ * @param {object} opts
+ * @param {string} [opts.csrfToken]  passed in, NOT read from res.
+ *
+ * This helper is a standalone function with no request in scope. An earlier
+ * version interpolated ${res.locals.csrfToken} here, which threw
+ * "res is not defined" AFTER the theme had already been built — so the
+ * response was never sent and the browser span forever.
+ */
+function page({ title, heading, body, actions, status = 200, csrfToken = '' }) {
   return { status, html: `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -87,17 +96,20 @@ function page({ title, heading, body, actions, status = 200 }) {
                   // read. Without it /production returns 403 and the user
                   // sees "The build failed", which is misleading: the build
                   // never started.
-                  const res = await fetch('/production', {
+                  const buildRes = await fetch('/production', {
                     method: 'POST',
                     headers: {
                       'Accept': 'text/html',
-                      'X-CSRF-Token': '${res.locals.csrfToken || ''}',
+                      'X-CSRF-Token': '${csrfToken}',
                     },
                   });
-          if (res.status === 403) {
+
+                  if (buildRes.status === 403) {
                     throw new Error('Your session expired. Please refresh the page and try again.');
                   }
-                  if (!res.ok) throw new Error('The build failed. Please try again.');
+                  if (!buildRes.ok) {
+                    throw new Error('The build failed. Please try again.');
+                  }
 
           overlayText.textContent = 'Starting your download...';
           window.location.href = '/download-zip';
@@ -139,6 +151,7 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
 
   if (!fs.existsSync(distDir)) {
     return send(res, page({
+      csrfToken: res.locals.csrfToken || '',
       status: 400,
       title: 'No Site Found',
       heading: '❌ No site found',
@@ -149,6 +162,7 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
 
   if (!fs.existsSync(path.join(distDir, '_src', 'content.json'))) {
     return send(res, page({
+      csrfToken: res.locals.csrfToken || '',
       status: 400,
       title: 'Regenerate Required',
       heading: '⚠️ Please regenerate your site',
@@ -161,6 +175,7 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
 
   if (inFlight.has(userId)) {
     return send(res, page({
+      csrfToken: res.locals.csrfToken || '',
       status: 429,
       title: 'Build In Progress',
       heading: '⏳ Already building',
@@ -196,6 +211,7 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
 
     if (siteMode === 'sample') {
       return send(res, page({
+        csrfToken: res.locals.csrfToken || '',
         status: 400,
         title: 'Not available for samples',
         heading: 'WordPress export is not available for design samples',
@@ -226,6 +242,7 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
     const sizeMb = (stat.size / 1024 / 1024).toFixed(1);
 
     return send(res, page({
+      csrfToken: res.locals.csrfToken || '',
       title: 'WordPress Theme Ready',
       heading: '✅ WordPress theme ready',
       body: `
@@ -259,6 +276,7 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
     try { cleanDirectory(workDir); } catch (_) {}
 
     return send(res, page({
+      csrfToken: res.locals.csrfToken || '',
       status: 500,
       title: 'Export Failed',
       heading: '❌ Could not build the theme',
@@ -280,6 +298,7 @@ router.get('/download-wp-theme', requireAuth, (req, res) => {
 
   if (!fs.existsSync(zipPath)) {
     return send(res, page({
+      csrfToken: res.locals.csrfToken || '',
       status: 404,
       title: 'Theme Not Found',
       heading: '⚠️ Theme not found',

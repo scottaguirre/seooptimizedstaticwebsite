@@ -70,6 +70,33 @@ function injectPagesInterlinks(
             break;
           }
 
+          // ----- Special case: contact -----
+          //
+          // Contact is neither a service page nor a location. Without this it
+          // falls through to the location branch below and produces
+          // location-contact.html, which does not exist.
+          if (slug === 'contact') {
+            const contactHref = 'contact.html';
+
+            // Prefer linking a natural phrase already in the copy.
+            const contactRegex = /(^|\s)(contact us|get in touch|contact our team|contact)(?=\s|\.|,|$)/i;
+
+            if (contactRegex.test(paragraph)) {
+              paragraph = paragraph.replace(
+                contactRegex,
+                (match, leadingSpace, matchedText) =>
+                  `${leadingSpace}<a href="${contactHref}">${matchedText}</a>`
+              );
+            } else {
+              paragraph = `${originalParagraph}<p><a href="${contactHref}">Contact us</a> to talk through your project.</p>`;
+            }
+
+            usedSlugs.add(normalizedSlug);
+            usedAnchorTexts.add('contact');
+            totalLinksInjected++;
+            break;
+          }
+
           // ----- Service vs Location detection -----
           const isService = !!pages.find(p => slugify(p.filename).replace(/\.html$/i, '') === normalizedSlug);
           const isSelfService = currentServiceSlug && currentServiceSlug === normalizedSlug;

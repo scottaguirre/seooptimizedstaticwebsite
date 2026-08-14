@@ -163,6 +163,73 @@
     REVIEW: 6,
   };
 
+  /**
+   * The visible number for a step, e.g. "3. Design & Theme".
+   *
+   * Derived from STEP rather than typed into each heading, so inserting a
+   * step renumbers everything automatically. The main form already read
+   * "1. Global Information" — a hardcoded 1 that was wrong the moment the
+   * site-mode step went in front of it.
+   */
+  /**
+   * Full-size preview over a dark backdrop.
+   *
+   * The old Preview button opened the raw image in a new tab, which lost the
+   * user's place in the wizard and looked broken on mobile. This keeps them
+   * where they are.
+   *
+   * Built and destroyed on demand rather than left in the DOM: the wizard
+   * repaints its container constantly, and a persistent overlay would be
+   * wiped out by the next step render.
+   */
+  function openLightbox(src, label) {
+    const existing = document.getElementById('designLightbox');
+    if (existing) existing.remove();
+
+    const box = document.createElement('div');
+    box.id = 'designLightbox';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', `${label} preview`);
+    box.style.cssText = `
+      position:fixed; inset:0; z-index:20000;
+      background:rgba(0,0,0,.88);
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      padding:24px; cursor:zoom-out;
+    `;
+
+    box.innerHTML = `
+      <p class="text-white mb-2">${label}</p>
+      <img src="${src}" alt="${label} preview"
+           style="max-width:min(1100px, 95vw); max-height:82vh; object-fit:contain;
+                  border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,.6);">
+      <p class="text-white-50 small mt-3 mb-0">Click anywhere, or press Escape, to close</p>
+    `;
+
+    const close = () => {
+      box.remove();
+      document.removeEventListener('keydown', onKey);
+      // Restore scrolling — without this the page stays locked after closing.
+      document.body.style.overflow = '';
+    };
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') close();
+    };
+
+    box.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+
+    // Stop the page behind scrolling while the overlay is open.
+    document.body.style.overflow = 'hidden';
+    document.body.appendChild(box);
+  }
+
+  function stepNumber(step) {
+    return step + 1;
+  }
+
   const state = {
     // 'lead' = the full optimised site. 'sample' = a one-page design sample
     // for showing a prospective client, with no service, location or legal
@@ -176,7 +243,7 @@
     mainFormSnapshot: null, // snapshot of main form fields
 
     // Final step data
-    pages: [],            // service pages strings
+    pages: [],            // service pages strings 
     addLocations: true,   // toggle default ON
     locations: []         // array of strings
   };
@@ -212,33 +279,70 @@
   // -----------------------------
   // Step 0: What are we building?
   // -----------------------------
+  /**
+   * The site modes, in display order.
+   *
+   * A list rather than hardcoded markup: two more are planned, and adding
+   * one should mean adding an entry here, not editing the template and
+   * renumbering the labels by hand.
+   */
+  const SITE_MODES = [
+    {
+      value: 'lead',
+      title: 'SEO-Optimized',
+      description: 'Built to rank fast and generate leads without a GBP',
+    },
+    {
+      value: 'sample',
+      title: 'One-Page Design',
+      description: 'Built to pitch clients a new web design',
+    }
+  ];
+
   function renderSiteModeStep() {
     container.innerHTML = '';
 
     const card = el('div', { class: 'card p-4' });
-    card.innerHTML = `
-      <div class="row g-3">
-        <div class="col-md-6">
-          <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'lead' ? 'border-success border-3' : 'border-secondary'}"
-               data-mode="lead" style="cursor:pointer;">
-            <h4 class="m-0">Lead Generation</h4>
-          </div>
-        </div>
 
-        <div class="col-md-6">
-          <div class="mode-card h-100 p-4 rounded border text-center ${state.siteMode === 'sample' ? 'border-success border-3' : 'border-secondary'}"
-               data-mode="sample" style="cursor:pointer;">
-            <h4 class="m-0">One-Page Design Sample</h4>
-          </div>
-        </div>
+    const options = SITE_MODES.map((mode, i) => {
+      const selected = state.siteMode === mode.value;
+
+      return `
+        <div class="col-12">
+          <label class="mode-card d-flex gap-3 p-4 rounded border w-100 mb-0
+                        ${selected ? 'border-success border-3' : 'border-secondary'}"
+                 for="siteMode-${mode.value}" style="cursor:pointer;">
+
+            <div class="form-check mb-0">
+              <input class="form-check-input" type="radio"
+                     name="global[siteMode]" id="siteMode-${mode.value}"
+                     value="${mode.value}" ${selected ? 'checked' : ''}>
+            </div>
+
+            <div>
+              <h4 class="m-0">${i + 1}. ${mode.title}</h4>
+              <p class="mb-0 mt-1 text-white-50">${mode.description}</p>
+            </div>
+          </label>
+        </div>`;
+    }).join('');
+
+    card.innerHTML = `
+      <h4 class="mb-3">${stepNumber(STEP.MODE)}. What are we building?</h4>
+
+      <div class="row g-3">${options}
       </div>
     `;
     container.appendChild(card);
 
-    card.querySelectorAll('.mode-card').forEach(box => {
-      box.addEventListener('click', () => {
-        state.siteMode = box.dataset.mode;
-        renderSiteModeStep();   // repaint so the chosen card is highlighted
+    // Listen to the radios, not the cards. The whole card is a <label>, so
+    // clicking anywhere on it already checks the radio — handling the click
+    // as well would fire twice and fight the browser's own behaviour.
+    card.querySelectorAll('input[name="global[siteMode]"]').forEach(input => {
+      input.addEventListener('change', () => {
+        if (!input.checked) return;
+        state.siteMode = input.value;
+        renderSiteModeStep();   // repaint so the border follows the selection
       });
     });
 
@@ -258,7 +362,7 @@
     const card = el('div', { class: 'card shadow-sm' });
     card.innerHTML = `
       <div class="card-body">
-        <h3 class="card-title mb-3">Choose your Business Type</h3>
+        <h3 class="card-title mb-3">${stepNumber(STEP.TYPE)}. Choose your Business Type</h3>
         <div class="row g-3">
           <div class="col-12">
             <select class="form-select" id="businessType" required>
@@ -305,7 +409,7 @@
 
     const header = el('div', { class: 'd-flex align-items-center justify-content-between mb-3' });
     header.innerHTML = `
-      <h4 class="m-0"><legend class="form-label mb-2">Choose logo shape & upload</legend></h4>
+      <h4 class="m-0"><legend class="form-label mb-2">${stepNumber(STEP.LOGO)}. Choose logo shape &amp; upload</legend></h4>
       <span class="badge text-bg-primary">Business Type: ${state.businessType}</span>
     `;
     container.appendChild(header);
@@ -558,7 +662,7 @@
 
     const header = el('div', { class: 'd-flex align-items-center justify-content-between mb-3' });
     header.innerHTML = `
-      <h4 class="m-0">1. Global Information</h4>
+      <h4 class="m-0">${stepNumber(STEP.MAIN)}. Global Information</h4>
       <div class="d-flex flex-wrap gap-2">${contextBadges()}</div>
     `;
     container.appendChild(header);
@@ -879,7 +983,7 @@
 
     const header = el('div', { class: 'mb-3' });
     header.innerHTML = `
-      <h4 class="mb-2">Service Pages</h4>
+      <h4 class="mb-2">${stepNumber(STEP.PAGES)}. Service Pages</h4>
       <div class="d-flex flex-wrap gap-2">${contextBadges()}</div>
     `;
     container.appendChild(header);
@@ -1155,29 +1259,68 @@
     container.innerHTML = '';
 
     // No badge row here: the review step already summarises everything.
-    const h = el('h3', {}, 'Design & Theme');
+    const h = el('h3', {}, `${stepNumber(STEP.DESIGN)}. Design & Theme`);
     const desc = el('p', {}, 'Pick a design. You can preview each one.');
     container.append(h, desc);
   
     const list = el('div', { class: 'row g-3' });
+
     THEMES.forEach(({ key, label, preview }) => {
-      const col = el('div', { class: 'col-12' });
+      const col = el('div', { class: 'col-md-6 col-lg-4' });
       col.innerHTML = `
-        <div class="border rounded p-3 d-flex align-items-center justify-content-between" style="background:#0b3f7a33;">
+        <div class="border rounded p-3 h-100 ${state.styleKey === key ? 'border-success border-3' : 'border-secondary'}"
+             style="background:#0b3f7a33;">
+
+          <!-- Clicking the thumbnail opens it full size rather than
+               navigating away to the raw image file, which lost the user's
+               place in the wizard. -->
+          <img src="${preview}" alt="${label} preview" loading="lazy"
+               class="img-fluid rounded mb-3 js-design-thumb"
+               data-preview="${preview}" data-label="${label}"
+               style="cursor:zoom-in; width:100%; aspect-ratio:16/10; object-fit:cover; object-position:top;">
+
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="global[styleKey]" id="theme-${key}" value="${key}" ${state.styleKey === key ? 'checked' : ''} required>
-            <label class="form-check-label" for="theme-${key}">
-              ${label}
-            </label>
-          </div>
-          <div class="d-flex gap-2">
-            <a class="btn btn-outline-light btn-sm" href="${preview}" target="_blank" rel="noopener">Preview</a>
+            <input class="form-check-input" type="radio" name="global[styleKey]"
+                   id="theme-${key}" value="${key}"
+                   ${state.styleKey === key ? 'checked' : ''} required>
+            <label class="form-check-label" for="theme-${key}">${label}</label>
           </div>
         </div>
       `;
       list.appendChild(col);
     });
     container.appendChild(list);
+
+    // Clicking anywhere on a card selects that design — a 3px border is a
+    // small target, and the thumbnail is the obvious thing to click.
+    list.querySelectorAll('.border.rounded').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.classList.contains('js-design-thumb')) return;  // that opens the lightbox
+        const input = card.querySelector('input[type="radio"]');
+        if (input && !input.checked) {
+          input.checked = true;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+    });
+
+    // Update state and repaint so the green border follows the selection.
+    // Without this, styleKey is only read when Next is pressed, so the
+    // highlight would stay on whichever design was chosen last time.
+    list.querySelectorAll('input[name="global[styleKey]"]').forEach(input => {
+      input.addEventListener('change', () => {
+        if (!input.checked) return;
+        state.styleKey = input.value;
+        renderDesignStep();
+      });
+    });
+
+    list.querySelectorAll('.js-design-thumb').forEach(img => {
+      img.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openLightbox(img.dataset.preview, img.dataset.label);
+      });
+    });
   
     const nav = renderNav(container, {
       showBack: true,
@@ -1342,7 +1485,7 @@
 
     const header = el('div', { class: 'mb-3' });
     header.innerHTML = `
-      <h3 class="mb-2">Review &amp; Generate</h3>
+      <h3 class="mb-2">${stepNumber(STEP.REVIEW)}. Review &amp; Generate</h3>
       <p class="text-white-50 mb-1">
         Check everything below before generating.
       </p>
@@ -1360,7 +1503,8 @@
     grid.innerHTML = [
       reviewCard('What we are building', [
         reviewRow('Type',
-          state.siteMode === 'sample' ? 'Design Sample (one page)' : 'Lead Generation Website',
+          // From SITE_MODES, so renaming an option updates the review too.
+          (SITE_MODES.find(m => m.value === state.siteMode) || {}).title || state.siteMode,
           { strong: true, editStep: STEP.MODE }),
       ].join(''), STEP.MODE),
 
