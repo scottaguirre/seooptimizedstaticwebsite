@@ -289,8 +289,8 @@
   const SITE_MODES = [
     {
       value: 'lead',
-      title: 'SEO-Optimized',
-      description: 'Built to rank fast and generate leads without a GBP',
+      title: 'Rank Fast',
+      description: 'Built fully SEO-optimized to rank fast and generate leads without a GBP',
     },
     {
       value: 'sample',

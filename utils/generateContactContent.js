@@ -8,6 +8,7 @@
 // need an essay, and padding it out would only dilute the call to action.
 
 const { OpenAI } = require('openai');
+const { parseModelJson } = require('./parseModelJson');
 
 // Created on first use: constructing OpenAI without a key throws, which
 // would take the server down at boot rather than skipping one section.
@@ -110,7 +111,12 @@ async function generateContactContent({ businessName, businessType, location, ph
       .replace(/}[^}]*$/, '}')
       .trim();
 
-    const parsed = JSON.parse(cleaned);
+    // Tolerant parse: the model sometimes emits an unescaped quote inside a
+    // value, which breaks JSON.parse. These sections fail soft, but a repair
+    // means the user gets the content rather than an empty section.
+    const parseResult = parseModelJson(cleaned, { expect: 'object', label: 'contact intro' });
+    if (!parseResult.ok) throw parseResult.error;
+    const parsed = parseResult.data;
 
     const heading = String(parsed.heading || '').trim();
     const paragraphs = Array.isArray(parsed.paragraphs)

@@ -16,6 +16,7 @@
 // constructing OpenAI without a key throws, which would stop the server
 // booting instead of just skipping the cards.
 const { getOpenAI } = require('./openaiClient');
+const { parseModelJson } = require('./parseModelJson');
 
 const CARD_COUNT = 6;
 
@@ -103,7 +104,12 @@ async function generateServiceCards({ businessType, businessName, location }) {
       .replace(/\][^\]]*$/, ']')
       .trim();
 
-    const parsed = JSON.parse(cleaned);
+    // Tolerant parse: the model sometimes emits an unescaped quote inside a
+    // value, which breaks JSON.parse. These sections fail soft, but a repair
+    // means the user gets the content rather than an empty section.
+    const parseResult = parseModelJson(cleaned, { expect: 'array', label: 'service cards' });
+    if (!parseResult.ok) throw parseResult.error;
+    const parsed = parseResult.data;
     if (!Array.isArray(parsed)) throw new Error('Model did not return an array');
 
     const cards = parsed

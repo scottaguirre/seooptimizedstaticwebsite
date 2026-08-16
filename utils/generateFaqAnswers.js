@@ -8,6 +8,7 @@
 // answers.
 
 const { OpenAI } = require('openai');
+const { parseModelJson } = require('./parseModelJson');
 const { log } = require('./logger');
 const { getFixedFaqQuestions, getFixedFaqFallbacks } = require('./fixedFaqQuestions');
 
@@ -101,7 +102,12 @@ async function generateFaqAnswers({ questions, businessName, businessType, locat
       .replace(/\][^\]]*$/, ']')
       .trim();
 
-    const parsed = JSON.parse(cleaned);
+    // Tolerant parse: the model sometimes emits an unescaped quote inside a
+    // value, which breaks JSON.parse. These sections fail soft, but a repair
+    // means the user gets the content rather than an empty section.
+    const parseResult = parseModelJson(cleaned, { expect: 'array', label: 'FAQ answers' });
+    if (!parseResult.ok) throw parseResult.error;
+    const parsed = parseResult.data;
     if (!Array.isArray(parsed)) throw new Error('Model did not return an array');
 
     // Pair answers back to the questions we asked, so a reordered or

@@ -50,6 +50,11 @@ const buildLocationPages = async function (
   // Semantic model for the WordPress exporter
   const modelPages = [];
 
+  // Locations whose content could not be generated. Reported at the end so
+  // a short site is visible in the log rather than discovered later from a
+  // missing link.
+  const skipped = [];
+
 
   for (const [index, locationPage] of locationPages.entries()) {
     let locationSlug = locationPage.slug || locationPage.display || ''; // e.g., "Austin TX"
@@ -99,6 +104,20 @@ const buildLocationPages = async function (
     // Pass the index so each location page gets a different angle — without
     // it every page opens on the same topic and reads as templated.
     const sections = await generateLocationPagesContent(globalForLoc, pagesInterlinks, Number(index));
+
+    // Skip this location rather than taking the whole generation with it.
+    //
+    // The content generator returns null when the model's JSON could not be
+    // parsed after retrying. Previously that produced {}, and the template
+    // fill below dereferenced sections.section1.heading — so one unparseable
+    // location page threw and the user lost their entire site, including the
+    // pages that had already generated successfully.
+    if (!sections || !sections.section1 || !Array.isArray(sections.section1.paragraphs)) {
+      console.warn(`   ⚠️ Skipping location page for ${locationPage.display || locationSlug}: content could not be generated`);
+      skipped.push(locationPage.display || locationSlug);
+      continue;
+    }
+
     const altTexts = buildAltText(globalForLoc, Number(index));
 
     //console.log(`from buildLocationPages ${sections.section1.paragraphs[0]}`);
@@ -291,6 +310,10 @@ const buildLocationPages = async function (
     });
 
 
+  }
+
+  if (skipped.length) {
+    console.warn(`   ⚠️ ${skipped.length} location page(s) skipped: ${skipped.join(', ')}`);
   }
 
   return modelPages;

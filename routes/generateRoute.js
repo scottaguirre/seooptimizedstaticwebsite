@@ -498,6 +498,20 @@ router.post('/generate', upload.any(), async (req, res) => {
 
       // Generate Page Sections Content
       const sections = await generatePagesContent(globalValues, page, pagesInterlinks);
+
+      // Skip this service page rather than failing the whole generation.
+      // The same guard the location pages needed: unparseable model output
+      // used to throw here and take every page with it, including ones that
+      // had already been written.
+      if (!sections || !sections.section1 || !Array.isArray(sections.section1.paragraphs)) {
+        console.warn(`   ⚠️ Skipping service page "${page.keyword}": content could not be generated`);
+        log.external('openai', 'servicePageContentFailed', {
+          requestId: req.id,
+          keyword: page.keyword,
+        });
+        continue;
+      }
+
       const sectionsWithLinks = injectPagesInterlinks(
                                         globalValues,
                                         pages,
