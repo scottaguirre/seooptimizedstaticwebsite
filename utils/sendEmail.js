@@ -15,6 +15,27 @@ const { log } = require('./logger');
 
 const isProd = process.env.NODE_ENV === 'production';
 
+// Created on first use, like the OpenAI client: constructing Resend without
+// a key throws, and a missing env var should not stop the server booting.
+let resendClient = null;
+function getResend() {
+  if (!resendClient) {
+    const { Resend } = require('resend');
+    resendClient = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resendClient;
+}
+
+/**
+ * Who the email comes from.
+ *
+ * Must be an address on a domain verified in Resend — they reject anything
+ * else, which is what stops their platform being used to spoof senders.
+ */
+function fromAddress() {
+  return process.env.EMAIL_FROM || 'onboarding@resend.dev';
+}
+
 function baseUrl() {
   return process.env.BASE_URL || 'http://localhost:3000';
 }
@@ -49,10 +70,29 @@ function sendToConsole({ to, subject, text, url }) {
  * say why.
  */
 async function sendViaProvider({ to, subject, text, html }) {
-  throw new Error(
-    'No email provider is configured. Set one up in utils/sendEmail.js ' +
-    'before running in production.'
-  );
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error(
+      'RESEND_API_KEY is not set. Verification and password reset emails ' +
+      'cannot be sent.'
+    );
+  }
+
+  const { data, error } = await getResend().emails.send({
+    from: fromAddress(),
+    to,
+    subject,
+    text,
+    ...(html ? { html } : {}),
+  });
+
+  // Resend reports failures in the response rather than throwing — a
+  // rejected send would otherwise look like a success and the user would
+  // wait for a message that was never accepted.
+  if (error) {
+    throw new Error(error.message || 'Resend rejected the message');
+  }
+
+  return { id: data?.id };
 }
 
 /**
@@ -69,7 +109,15 @@ async function sendViaProvider({ to, subject, text, html }) {
  */
 async function sendEmail({ to, subject, text, html, url }) {
   try {
-    if (!isProd) {
+    // EMAIL_TRANSPORT=resend forces real sending in development.
+    //
+    // Without this the only way to test a real email would be to run the
+    // whole app as production — which also turns on secure cookies and HSTS,
+    // neither of which works over plain http on localhost. So testing email
+    // would mean breaking login.
+    const forceProvider = process.env.EMAIL_TRANSPORT === 'resend';
+
+    if (!isProd && !forceProvider) {
       return sendToConsole({ to, subject, text, url });
     }
 
