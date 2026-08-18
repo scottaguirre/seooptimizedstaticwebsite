@@ -70,10 +70,11 @@ router.post('/signup', async (req, res) => {
       verificationExpiresAt: verificationExpires,
     });
 
-    // 🔹 In production you’d send an email here.
-    // For now, just log the URL so you can click it in dev:
-    const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
-    console.log(`📧 Verify this account: ${baseUrl}/verify?token=${verificationToken}`);
+    // Through the shared sender: prints to the console in development, goes
+    // to Resend in production (or whenever EMAIL_TRANSPORT=resend). This was
+    // a console.log, which meant every new email feature would invent its
+    // own version and switching provider would mean finding them all.
+    await sendEmail(verificationEmail({ to: user.email, token: verificationRaw }));
 
     // 🔹 Do NOT log them in yet; require verification first
     res.send(`
