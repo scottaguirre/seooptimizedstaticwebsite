@@ -34,13 +34,38 @@ function userOrIp(req) {
  * Login and signup. Deliberately tight: a real person does not attempt ten
  * logins a minute, and an attacker needs thousands.
  */
+/**
+ * "Please try again in 12 minutes" rather than "wait an hour".
+ *
+ * The window is a rolling one, so someone who hit the limit 55 minutes ago
+ * only needs to wait five — telling them an hour is both wrong and likely to
+ * lose them. express-rate-limit exposes the real reset time on the request,
+ * so the number is available; it just was not being used.
+ */
+function retryMessage(req, res, what = 'requests') {
+  const resetAt = req.rateLimit?.resetTime;
+
+  if (!resetAt) {
+    return `Too many ${what}. Please try again shortly.`;
+  }
+
+  const seconds = Math.max(1, Math.ceil((new Date(resetAt) - Date.now()) / 1000));
+
+  const wait =
+    seconds < 60  ? `${seconds} second${seconds === 1 ? '' : 's'}` :
+    seconds < 3600 ? `${Math.ceil(seconds / 60)} minute${Math.ceil(seconds / 60) === 1 ? '' : 's'}` :
+                     `${Math.ceil(seconds / 3600)} hour${Math.ceil(seconds / 3600) === 1 ? '' : 's'}`;
+
+  return `Too many ${what}. Please try again in ${wait}.`;
+}
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,   // only failed attempts count
-  message: 'Too many attempts. Please wait 15 minutes and try again.',
+  message: (req, res) => retryMessage(req, res, 'login attempts'),
 });
 
 /**
@@ -49,10 +74,27 @@ const authLimiter = rateLimit({
  */
 const emailLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 5,
+
+  // Raised from 5.
+  //
+  // The limit is per IP, so everyone behind one address shares it — an
+  // office where three people forget their password in the same morning
+  // would block the fourth. 15 still stops enumeration and mail-bombing
+  // while leaving room for a handful of genuine users.
+  //
+  // It also made local testing painful: two browsers on localhost are both
+  // ::1, so they spent the same budget.
+  max: Number(process.env.EMAIL_RATE_LIMIT) || 15,
+
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'Too many requests. Please wait an hour and try again.',
+  // A function, not a string: it is evaluated per request, so the countdown
+  // reflects that user's actual remaining time.
+  message: (req, res) => retryMessage(req, res, 'password reset requests'),
+
+  // Development is exempt. Testing a reset flow means requesting several
+  // links in a row, and being locked out for an hour mid-test helps nobody.
+  skip: () => process.env.NODE_ENV !== 'production',
 });
 
 /**
@@ -66,7 +108,7 @@ const generateLimiter = rateLimit({
   keyGenerator: userOrIp,
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'You have generated a lot of sites in the last hour. Please wait before generating again.',
+  message: (req, res) => retryMessage(req, res, 'site generations'),
 });
 
 /**
@@ -85,7 +127,7 @@ const generalLimiter = rateLimit({
               || req.path.startsWith('/js/')
               || req.path.startsWith('/images/')
               || req.path.startsWith('/previews/'),
-  message: 'Too many requests. Please slow down.',
+  message: (req, res) => retryMessage(req, res, 'requests'),
 });
 
 module.exports = {

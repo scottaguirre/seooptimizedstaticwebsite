@@ -310,7 +310,7 @@
       return `
         <div class="col-12">
           <label class="mode-card d-flex gap-3 p-4 rounded border w-100 mb-0
-                        ${selected ? 'border-success border-3' : 'border-secondary'}"
+                        ${selected ? ' border-3' : 'border-secondary'}"
                  for="siteMode-${mode.value}" style="cursor:pointer;">
 
             <div class="form-check mb-0">

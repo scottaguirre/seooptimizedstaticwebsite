@@ -113,6 +113,21 @@ function csrfProtect(req, res, next) {
   next();
 }
 
+/**
+ * The login and signup forms get special handling.
+ *
+ * A stale token on those pages is not an attack — it is someone whose
+ * session expired while the tab sat open, or who was just signed out by a
+ * password reset. Showing them "Session expired" when they are TRYING to
+ * sign in is both confusing and circular.
+ *
+ * Re-rendering the form with a fresh token turns a dead end into a single
+ * retry, with their email still filled in.
+ */
+function isSignInForm(req) {
+  return req.path === '/login' || req.path === '/signup';
+}
+
 function rejectCsrf(req, res) {
   // Required lazily: utils/logger pulls in pino, and middleware loaded at
   // startup should not force that ordering.
@@ -125,6 +140,22 @@ function rejectCsrf(req, res) {
     userId: req.session?.userId,
     ip: req.ip,
   });
+
+  // Re-render the sign-in form rather than an error page.
+  if (isSignInForm(req)) {
+    try {
+      const { renderAuthPage } = require('../utils/renderAuthPage');
+      const view = req.path === '/signup' ? 'signup' : 'login';
+
+      return res.status(403).send(renderAuthPage(view, {
+        notice: 'Your session timed out while this page was open. Please try again.',
+        email: String(req.body?.email || ''),
+        csrfField: res.locals.csrfField || '',
+      }));
+    } catch (_) {
+      // Fall through to the generic page if rendering fails.
+    }
+  }
 
   const wantsJson =
     req.xhr ||

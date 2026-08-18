@@ -9,6 +9,8 @@ const requireAuth = require('../middleware/requireAuth');
 const { getCurrentSite } = require('../utils/currentSite');
 const { log } = require('../utils/logger');
 const { renderAuthPage } = require('../utils/renderAuthPage');
+const { createVerificationToken, hashToken, notExpired } = require('../utils/authTokens');
+const { sendEmail, verificationEmail } = require('../utils/sendEmail');
 
 
 // GET /signup – show signup form
@@ -53,7 +55,10 @@ router.post('/signup', async (req, res) => {
     const role = userCount === 0 ? 'admin' : 'free';
 
     // 🔹 Generate verification token
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    // Hashed at rest, with an expiry. The raw value goes in the email; only
+    // its SHA-256 is stored, so a leaked backup holds no working links.
+    const { raw: verificationRaw, hashed: verificationHash, expiresAt: verificationExpires }
+      = createVerificationToken();
 
     const user = await User.create({
       email,
@@ -61,7 +66,8 @@ router.post('/signup', async (req, res) => {
       role,
       credits: role === 'admin' ? 9999 : 10, // whatever logic you like
       verified: false,
-      verificationToken
+      verificationTokenHash: verificationHash,
+      verificationExpiresAt: verificationExpires,
     });
 
     // 🔹 In production you’d send an email here.
@@ -168,6 +174,14 @@ router.post('/login', async (req, res) => {
       // Cached on the session so requireOwnDist and the rate limiters do not
       // hit the database on every request.
       req.session.role = user.role;
+
+      // When this session was issued.
+      //
+      // requireAuth compares it against the user's passwordChangedAt and
+      // rejects anything older, which is what signs someone out everywhere
+      // after a password reset. Without this the reset sets a timestamp
+      // nothing ever reads.
+      req.session.issuedAt = new Date();
 
       // Wait for the store to persist before redirecting, or the next request
       // can arrive before the session exists.
@@ -436,21 +450,61 @@ router.get('/verify', async (req, res) => {
       return res.status(400).send('Invalid verification link (missing token).');
     }
 
-    const user = await User.findOne({ verificationToken: token });
+    // Accepts BOTH token formats.
+    //
+    // New signups store a SHA-256 hash. Accounts created before that shipped
+    // have the raw value in verificationToken, and their emails are already
+    // sent — dropping the old lookup would strand every one of them.
+    const user = await User.findOne({
+      $or: [
+        { verificationTokenHash: hashToken(token) },
+        { verificationToken: token },
+      ],
+    });
 
     if (!user) {
-      return res.status(400).send('Invalid or expired verification link.');
+      return res.status(400).send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Invalid link</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head><body class="bg-dark text-white"><div class="container py-5" style="max-width:600px;">
+  <h1>That link is not valid</h1>
+  <p class="lead">It may have already been used.</p>
+  <a href="/resend-verification" class="btn btn-primary mt-3">Send a new link</a>
+</div></body></html>`);
+    }
+
+    // Verification links now last 24 hours. A missing expiry means the
+    // account predates the field, and is treated as still valid.
+    if (!notExpired(user.verificationExpiresAt)) {
+      return res.status(400).send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Link expired</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head><body class="bg-dark text-white"><div class="container py-5" style="max-width:600px;">
+  <h1>That link has expired</h1>
+  <p class="lead">Verification links work for 24 hours.</p>
+  <a href="/resend-verification" class="btn btn-primary mt-3">Send a new link</a>
+</div></body></html>`);
     }
 
     user.verified = true;
     user.verificationToken = null;
+    user.verificationTokenHash = undefined;
+    user.verificationExpiresAt = undefined;
     await user.save();
 
-    res.send(`
-      <h2>Email verified 🎉</h2>
-      <p>Your account is now active. You can log in and start using the app.</p>
-      <a href="/login">Go to login</a>
-    `);
+    log.info('auth.verification.completed', {
+      requestId: req.id,
+      userId: String(user._id),
+    });
+
+    res.send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Email verified</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head><body class="bg-dark text-white"><div class="container py-5" style="max-width:600px;">
+  <h1>Email verified</h1>
+  <p class="lead">Your account is active. You can log in and start using the app.</p>
+  <a href="/login" class="btn btn-primary mt-3">Go to login</a>
+</div></body></html>`);
   } catch (err) {
     console.error('Verify error:', err);
     res.status(500).send('Error verifying email.');

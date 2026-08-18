@@ -211,6 +211,13 @@ app.use(csrfToken);
 app.use(csrfProtect);
 
 
+// Password reset and resend verification.
+// The emailLimiter above already covers these paths — it was added for
+// routes that did not exist yet.
+const passwordRoute = require('./routes/passwordRoute');
+app.use('/', passwordRoute);
+
+
 // Job progress: /jobs/:id and /api/jobs/:id
 const jobRoute = require('./routes/jobRoute');
 app.use('/', jobRoute);
