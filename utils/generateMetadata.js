@@ -1,4 +1,5 @@
-const { getOpenAI } = require('./openaiClient'); 
+const { getOpenAI } = require('./openaiClient');
+const { withRetry } = require('./withRetry'); 
 
 
 // === Generate <title> and <meta description> tags ===
@@ -14,7 +15,10 @@ async function generateMetadata(businessName, keyword, location, formatCityState
   <title>...</title>
   <meta name="description" content="...">`;
   
-     const response = await getOpenAI().responses.create({
+     // Wrapped: a dropped connection ("terminated") used to lose this call
+     // outright. Fires once per service page, so on a 10-page site there are
+     // ten chances for a transient network fault.
+     const response = await withRetry(() => getOpenAI().responses.create({
           model: "gpt-5.6-terra",
           input: prompt,
           reasoning: {
@@ -23,7 +27,7 @@ async function generateMetadata(businessName, keyword, location, formatCityState
           text: {
               verbosity: "medium"
           }
-      });
+      }), { label: 'page metadata' });
       
       console.log("generateMetaData usage:", response.usage);
       

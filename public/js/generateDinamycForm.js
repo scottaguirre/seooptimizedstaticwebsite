@@ -320,7 +320,7 @@
             </div>
 
             <div>
-              <h4 class="m-0">${i + 1}. ${mode.title}</h4>
+              <h4 class="m-0"> ${mode.title}</h4>
               <p class="mb-0 mt-1 text-white-50">${mode.description}</p>
             </div>
           </label>

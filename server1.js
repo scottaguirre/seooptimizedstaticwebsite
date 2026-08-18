@@ -211,11 +211,6 @@ app.use(csrfToken);
 app.use(csrfProtect);
 
 
-// Job progress: /jobs/:id and /api/jobs/:id
-const jobRoute = require('./routes/jobRoute');
-app.use('/', jobRoute);
-
-
 // Billing: /buy-credits, /api/checkout, /api/stripe-webhook.
 // After the session middleware — requireAuth needs req.session.
 const billingRoute = require('./routes/billingRoute');
@@ -296,23 +291,8 @@ app.use((err, req, res, next) => {
 });
 
 
-// The background job runner.
-//
-// Started after the routes so nothing picks up a job before the app is ready
-// to report on it. Registering the generator here rather than inside the
-// runner keeps that module free of any dependency on site building.
-const jobRunner = require('./utils/jobRunner');
-const { generateForJob } = require('./utils/jobGenerator');
-
-jobRunner.registerGenerator(generateForJob);
-
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on http://localhost:${PORT}`);
-
-  // Only after Mongo is connected — the runner queries it immediately, and
-  // requeueing stale jobs on a dead connection would just log errors.
-  mongoose.connection.once('open', () => jobRunner.start());
-  if (mongoose.connection.readyState === 1) jobRunner.start();
   log.info('server.started', { port: PORT, env: process.env.NODE_ENV || 'development' });
 });
 

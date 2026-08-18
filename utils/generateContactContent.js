@@ -6,17 +6,12 @@
 // Kept deliberately small. The rest of the page is the form and the NAP/map
 // block, both reused unchanged from the home page — a contact page does not
 // need an essay, and padding it out would only dilute the call to action.
-
-const { OpenAI } = require('openai');
+const { getOpenAI } = require('./openaiClient');
 const { parseModelJson } = require('./parseModelJson');
 
 // Created on first use: constructing OpenAI without a key throws, which
 // would take the server down at boot rather than skipping one section.
-let openaiClient = null;
-function getOpenAI() {
-  if (!openaiClient) openaiClient = new OpenAI();
-  return openaiClient;
-}
+
 
 function buildContactPrompt({ businessName, businessType, location, phone }) {
   return `
@@ -103,7 +98,7 @@ async function generateContactContent({ businessName, businessType, location, ph
   
   console.log("generateContactContent usage:", response.usage);
   
-  const raw = response.output_text.trim();
+  const raw = response.output_text;
 
     const cleaned = raw
       .replace(/```json|```/g, '')

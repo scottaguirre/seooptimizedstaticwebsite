@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const { createPagesPrompt } = require('./createPagesPrompt');
-const { getOpenAI } = require('./openaiClient'); 
+const { getOpenAI } = require('./openaiClient');
+const { withRetry } = require('./withRetry');
+const { parseModelJson } = require('./parseModelJson'); 
 
 async function generatePagesContent(globalValues, page, pagesInterlinks, attempt = 1) {
   
@@ -11,16 +13,19 @@ async function generatePagesContent(globalValues, page, pagesInterlinks, attempt
     keywords: pagesInterlinks
   });
 
-   const response = await getOpenAI().responses.create({
-        model: "gpt-5.6-terra",
-        input: prompt,
-        reasoning: {
-            effort: "low"
-        },
-        text: {
-            verbosity: "medium"
-        }
-    });
+  // Wrapped: a dropped connection ("terminated") used to lose this call
+  // outright, and this is the most expensive one to lose — it carries the
+  // whole page's content.
+  const response = await withRetry(() => getOpenAI().responses.create({
+    model: "gpt-5.6-terra",
+    input: prompt,
+    reasoning: {
+        effort: "low"
+    },
+    text: {
+        verbosity: "medium"
+    }
+  }), { label: 'service page content' });
     
     console.log("generatePagesContent usage:", response.usage);
     
@@ -34,7 +39,12 @@ async function generatePagesContent(globalValues, page, pagesInterlinks, attempt
     .trim();
 
   try {
-    const parsed = JSON.parse(cleaned);
+    // Tolerant parse: the model sometimes writes an unescaped quote inside a
+    // value, which ends the string early and breaks JSON.parse. Repairing it
+    // is the difference between a usable page and a failed generation.
+    const parseResult = parseModelJson(cleaned, { label: 'service page content' });
+    if (!parseResult.ok) throw parseResult.error;
+    const parsed = parseResult.data;
 
     // Basic structural check to prevent silent failures
     if (
@@ -53,7 +63,7 @@ async function generatePagesContent(globalValues, page, pagesInterlinks, attempt
 
     // Save failed output for debugging
     const logDir = path.join(__dirname, '../logs');
-    const logPath = path.join(logDir, 'about-us-failed.json');
+    const logPath = path.join(logDir, 'pages-content-failed.json');
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 
     fs.writeFileSync(
@@ -73,10 +83,17 @@ async function generatePagesContent(globalValues, page, pagesInterlinks, attempt
     // Retry once if first attempt fails
     if (attempt < 2) {
       console.log('🔁 Retrying Pages content generation...: generatePagesContent.js');
-      return await generatePagesContent(globalValues, pagesInterlinks, attempt + 1);
+      // The `page` argument was missing here: the retry passed
+      // pagesInterlinks as `page`, so the second attempt built a prompt for
+      // the wrong thing entirely — and any content it produced belonged to
+      // no page. The same bug was fixed in generateLocationPagesContent.
+      return await generatePagesContent(globalValues, page, pagesInterlinks, attempt + 1);
     }
 
-    return {};
+    // null, not {}. An empty object looks like success to the caller, which
+    // then reads sections.section1.heading and throws — one unparseable page
+    // used to take the whole generation with it.
+    return null;
   }
 }
 

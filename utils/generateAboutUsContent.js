@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { createAboutUsPrompt } = require('./createAboutUsPrompt');
 const { getOpenAI } = require('./openaiClient');
+const { withRetry } = require('./withRetry');
+const { parseModelJson } = require('./parseModelJson');
 
 async function generateAboutUsContent(globalValues, indexInterlinks, attempt = 1) {
   /* console.log('🧠 Backlink/pages slugs passed for content generation: generateAboutUsContent.js', indexInterlinks);
@@ -17,7 +19,10 @@ async function generateAboutUsContent(globalValues, indexInterlinks, attempt = 1
     keywords: indexInterlinks
   });
 
-  const response = await getOpenAI().responses.create({
+  // Wrapped: a dropped connection ("terminated") used to lose this call
+  // outright, and this is the most expensive one to lose — it carries the
+  // whole page's content.
+  const response = await withRetry(() => getOpenAI().responses.create({
     model: "gpt-5.6-terra",
     input: prompt,
     reasoning: {
@@ -26,7 +31,7 @@ async function generateAboutUsContent(globalValues, indexInterlinks, attempt = 1
     text: {
         verbosity: "medium"
     }
-});
+  }), { label: 'about us content' });
 
 console.log("generateAboutuscontent usage:", response.usage);
 
@@ -42,7 +47,12 @@ const raw = response.output_text;
     .trim();
 
   try {
-    const parsed = JSON.parse(cleaned);
+    // Tolerant parse: the model sometimes writes an unescaped quote inside a
+    // value, which ends the string early and breaks JSON.parse. Repairing it
+    // is the difference between a usable page and a failed generation.
+    const parseResult = parseModelJson(cleaned, { label: 'about us content' });
+    if (!parseResult.ok) throw parseResult.error;
+    const parsed = parseResult.data;
 
     // Basic structural check to prevent silent failures
     if (
@@ -84,7 +94,10 @@ const raw = response.output_text;
       return await generateAboutUsContent(globalValues, indexInterlinks, attempt + 1);
     }
 
-    return {};
+    // null, not {}. An empty object looks like success to the caller, which
+    // then reads sections.section1.heading and throws — one unparseable page
+    // used to take the whole generation with it.
+    return null;
   }
 }
 

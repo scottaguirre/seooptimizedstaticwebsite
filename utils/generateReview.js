@@ -1,4 +1,5 @@
 const { getOpenAI } = require('./openaiClient');
+const { withRetry } = require('./withRetry');
 
 
 // === Generate Review for Schema ===
@@ -7,7 +8,10 @@ async function generateReview(businessName) {
   Keep it under 30 words. Include a realistic reviewer name (first and last).
   Format as: Reviewer Name: "Review text here".`;
   
-     const response = await getOpenAI().responses.create({
+     // Wrapped: a dropped connection ("terminated") used to lose this call
+     // outright. Fires once per service page, so on a 10-page site there are
+     // ten chances for a transient network fault.
+     const response = await withRetry(() => getOpenAI().responses.create({
           model: "gpt-5.6-terra",
           input: prompt,
           reasoning: {
@@ -16,7 +20,7 @@ async function generateReview(businessName) {
           text: {
               verbosity: "medium"
           }
-      });
+      }), { label: 'schema review' });
       
       console.log("generateReview usage:", response.usage);
       
