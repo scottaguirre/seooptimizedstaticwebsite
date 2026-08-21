@@ -10,6 +10,7 @@ const { writePageAssets } = require('./buildAssets');
 const { buildSocialLinks } = require('./buildSocialLinks');
 const CM = require('./contentModel');
 const { stripUnusedHero } = require('./stripUnusedHero');
+const { locationMeta } = require('./pageMeta');
 const { fillLegalLinks } = require('./legalLinks');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectPagesInterlinks } = require('./injectPagesInterlinks');
@@ -58,6 +59,9 @@ const buildLocationPages = async function (
 
   for (const [index, locationPage] of locationPages.entries()) {
     let locationSlug = locationPage.slug || locationPage.display || ''; // e.g., "Austin TX"
+    // altSuffix is no longer appended to alt text: buildAltText already ends
+    // with "in <Location>", so adding the slug repeated the location and read
+    // badly — "…fittings in Austin, TX - austin-tx".
     const altSuffix = locationSlug;
     const globalForLoc = { ...globalValues, location: locationPage.display };
 
@@ -82,8 +86,10 @@ const buildLocationPages = async function (
     let template = fs.readFileSync(hasLocationTpl ? baseTemplatePath : fallbackTemplatePath, 'utf-8');
 
     // Metadata / schema
-    const metaTitle = `${globalForLoc.businessName} in ${globalForLoc.location} - ${globalForLoc.businessType}`;
-    const metaDesc  = `Serving ${globalForLoc.location}. Contact ${globalForLoc.businessName} for trusted ${globalForLoc.businessType.toLowerCase()} services.`;
+    // From utils/pageMeta.js. globalForLoc.location is THIS page's location,
+    // not the site's main one, which is what we want here.
+    const { title: metaTitle, description: metaDesc } =
+      locationMeta(globalForLoc.location, globalForLoc);
     const pagePath = `location-${slugify(locationPage.display)}.html`;
     
     const jsonLdString = buildLocationPagesSchema(
@@ -242,7 +248,7 @@ const buildLocationPages = async function (
     });
 
     // === Semantic model for this location page ===
-    const heroAlt = `${altTexts['hero-mobile']} - ${altSuffix}`;
+    const heroAlt = altTexts['hero-mobile'];
     modelPages.push({
       type: CM.PAGE_TYPES.LOCATION,
       htmlFile: `location-${locationSlug}.html`,
@@ -273,9 +279,9 @@ const buildLocationPages = async function (
           source: sectionsWithLinks.section2 || {},
           imageList: [
             CM.image({ role:'section2-img1', src:uploadedImages[index]?.section2Img1,
-                       alt:`${altTexts['section2-1']} - ${altSuffix}`, width:600, height:400 }),
+                       alt:altTexts['section2-1'], width:600, height:400 }),
             CM.image({ role:'section2-img2', src:uploadedImages[index]?.section2Img2,
-                       alt:`${altTexts['section2-2']} - ${altSuffix}`, width:600, height:400 }),
+                       alt:altTexts['section2-2'], width:600, height:400 }),
           ],
         }),
         CM.section({
@@ -289,9 +295,9 @@ const buildLocationPages = async function (
           source: sectionsWithLinks.section4 || {},
           imageList: [
             CM.image({ role:'section4-img1', src:uploadedImages[index]?.section4Img1,
-                       alt:`${altTexts['section4-1']} - ${altSuffix}`, width:600, height:400 }),
+                       alt:altTexts['section4-1'], width:600, height:400 }),
             CM.image({ role:'section4-img2', src:uploadedImages[index]?.section4Img2,
-                       alt:`${altTexts['section4-2']} - ${altSuffix}`, width:600, height:400 }),
+                       alt:altTexts['section4-2'], width:600, height:400 }),
           ],
         }),
         CM.section({

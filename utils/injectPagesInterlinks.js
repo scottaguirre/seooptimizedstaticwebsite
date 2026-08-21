@@ -14,13 +14,21 @@ function makeLooseSlugRegex(slug) {
   return new RegExp(`(^|\\s)(${escaped})(?=\\s|\\.|,|$)`, 'i');
 }
 
+/**
+ * @param {object} [options]
+ * @param {string} [options.homeAnchor]  text to link to the home page instead
+ *        of the business name. The contact page uses "our plumbing company",
+ *        because repeating the business name there and linking it competes
+ *        with the page's actual job.
+ */
 function injectPagesInterlinks(
    globalValues,
    pages,
    page,
    pagesInterlinks,
    sections,
-   mainLocation
+   mainLocation,
+   options = {}
 ){
 
   const usedSlugs = new Set();
@@ -52,8 +60,16 @@ function injectPagesInterlinks(
 
           // ----- Special case: index (About/Home) -----
           if (slug === 'index') {
-            const aboutAnchor = `<a href="./">${globalValues.businessName}</a>`;
-            const regex = new RegExp(`(^|\\s)(${globalValues.businessName})(?=\\s|\\.|,|$)`, 'i');
+            // The phrase to link. Defaults to the business name; the contact
+            // page overrides it with "our <trade> company".
+            const homeAnchorText = options.homeAnchor || globalValues.businessName;
+
+            const aboutAnchor = `<a href="./">${homeAnchorText}</a>`;
+
+            // Escape it: a business name can contain regex metacharacters —
+            // "A+ Plumbing" would otherwise build a broken pattern.
+            const escapedAnchor = String(homeAnchorText).replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`(^|\\s)(${escapedAnchor})(?=\\s|\\.|,|$)`, 'i');
 
             if (regex.test(paragraph)) {
               paragraph = paragraph.replace(regex, (match, leadingSpace, matchedText) => {
@@ -65,7 +81,7 @@ function injectPagesInterlinks(
             }
 
             usedSlugs.add(normalizedSlug);
-            usedAnchorTexts.add(globalValues.businessName.toLowerCase());
+            usedAnchorTexts.add(String(homeAnchorText).toLowerCase());
             totalLinksInjected++;
             break;
           }

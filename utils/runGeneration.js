@@ -45,6 +45,7 @@ const { generateServiceCards } = require('./buildServiceCards');
 const { generatePricing } = require('./buildPricingTable');
 const { buildSitemap } = require('./buildSitemap');
 const { stripUnusedHero } = require('./stripUnusedHero');
+const { serviceMeta } = require('./pageMeta');
 const { log } = require('./logger');
 const { generationLimiter } = require('./concurrencyLimiter');
 const { fillLegalLinks } = require('./legalLinks');
@@ -387,8 +388,13 @@ async function runGeneration(ctx) {
       template = buildNavMenu(template, globalValues, pages, basePath, slugify(globalValues.location), page.filename, context);
 
 
-      // Meta Title
-      const meta = await generateMetadata(globalValues.businessName, page.keyword, globalValues.location, formatCityState);
+      // Meta title and description.
+      //
+      // These used to be an OpenAI call per service page — two on a 10-page
+      // site's worth of tokens, and unpredictable output. The format is fixed
+      // now, so the call is gone: one less API request per page, and no
+      // chance of the model returning something malformed.
+      const meta = serviceMeta(page.filename || page.keyword, globalValues);
 
 
 
@@ -438,8 +444,11 @@ async function runGeneration(ctx) {
         .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location} - ${page.filename}`)
         .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
         .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
-        .replace(/{{PAGE_TITLE}}/g, `${page.filename} | ${globalValues.location}`)
-        .replace(/{{META_DESCRIPTION}}/g, `${page.filename} | ${globalValues.location}. Call us now to get a free quote.`)
+        // From utils/pageMeta.js. The `meta` computed above was previously
+        // never used here — the title was built inline instead, so the
+        // OpenAI call that produced it was paid for and discarded.
+        .replace(/{{PAGE_TITLE}}/g, meta.title)
+        .replace(/{{META_DESCRIPTION}}/g, meta.description)
         .replace(/{{PAGE_NAME}}/g, page.filename.toUpperCase())
         .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
         .replace(/{{HERO_IMG_MOBILE}}/g, uploadedImages[index]?.heroMobile || '')
@@ -547,8 +556,11 @@ async function runGeneration(ctx) {
         isFrontPage: false,
         menuOrder: Number(index) + 1,
         meta: {
-          title: `${page.filename} | ${globalValues.location}`,
-          description: `${page.filename} | ${globalValues.location}. Call us now to get a free quote.`,
+          // The same `meta` the template above uses — hardcoding it here
+          // separately is how the WordPress export drifted from the static
+          // site in the first place.
+          title: meta.title,
+          description: meta.description,
         },
         schema: jsonLdString || '',
         sections: [

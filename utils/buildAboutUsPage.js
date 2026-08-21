@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
 const { buildAltText } = require('./buildAltText');
+const { indexMeta } = require('./pageMeta');
 const { buildNavMenu } = require('./buildNavMenu');
 const { formatPhoneForHref } = require('./formatPhoneForHref');
 const { injectIndexInterlinks } = require('./injectIndexInterlinks'); 
@@ -99,10 +100,19 @@ const  buildAboutUsPage =  async function (
         }
         
 
-        // seoPrefix
+        // seoPrefix for this page's image filenames.
+        //
+        // The "-in-" reads as a phrase rather than two slugs run together:
+        //   quality-plumbing-leander-in-leander-tx-hero-desktop.webp
+        // rather than
+        //   quality-plumbing-leander-leander-tx-hero-desktop.webp
+        // where "leander-leander" looks like a mistake.
+        //
+        // The business name belongs here, on the home page. Service, location
+        // and contact pages use their own prefix without it.
         const seoPrefix = useNearMe
-        ? `${slugify(globalValues.businessName)}-${slugify(nearMeTerm)}-${slugify(globalValues.location)}`
-        : `${slugify(globalValues.businessName)}-${slugify(globalValues.location)}`;
+        ? `${slugify(globalValues.businessName)}-${slugify(nearMeTerm)}-in-${slugify(globalValues.location)}`
+        : `${slugify(globalValues.businessName)}-in-${slugify(globalValues.location)}`;
 
         
         const pageImageDirs = {
@@ -194,8 +204,10 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location}. ${nearMeTerm}`)
                 .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
                 .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
-                .replace(/{{PAGE_TITLE}}/g, `${globalValues.businessName} | ${globalValues.location}. ${nearMeTerm}`)
-                .replace(/{{META_DESCRIPTION}}/g, `We are ${globalValues.businessName}. We serve ${globalValues.location}. Call us now for a free quote. ${nearMeTerm}`)
+                // From utils/pageMeta.js so every page type's format lives in
+                // one file rather than four.
+                .replace(/{{PAGE_TITLE}}/g, indexMeta(globalValues).title)
+                .replace(/{{META_DESCRIPTION}}/g, indexMeta(globalValues).description)
                 .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
                 .replace(/{{LOCATION}}/g, globalValues.location)
                 .replace(/{{HERO_IMG_MOBILE}}/g, `assets/${seoPrefix}-heroMobile.webp`)
@@ -379,7 +391,15 @@ const  buildAboutUsPage =  async function (
                 }),
             ];
 
-            if (sectionsWithLinks.section5) {
+            // useNearMe, not just "did the model return a section5".
+            //
+            // The AI generates section5 whether or not the wizard box was
+            // ticked, and the static page checks useNearMe before rendering
+            // it (see the conditional block above). The model checked only
+            // for the section's existence — so a user who left "Near Me"
+            // unticked got no such section on the downloaded site, but did
+            // get one in the exported WordPress theme.
+            if (useNearMe && sectionsWithLinks.section5) {
                 modelSections.push(CM.section({
                     key: 'nearMe', label: 'Near Me',
                     type: CM.SECTION_TYPES.TEXT,
@@ -443,7 +463,14 @@ const  buildAboutUsPage =  async function (
                 extra: { videoUrl: globalValues.youtubeVideoUrl || '' },
             }));
 
-            if (globalValues.showAboutForm) {
+            // Matches the static page's guard exactly: hasEmail AND the
+            // normalised toggle.
+            //
+            // This checked the RAW value, so the string "false" from a form
+            // post passed as truthy — and it ignored hasEmail entirely, so a
+            // site with no email address got a form in WordPress that the
+            // downloaded site did not have, pointing nowhere.
+            if (hasEmail && showAboutForm) {
                 modelSections.push({
                     key: 'form', label: 'Contact Form',
                     type: CM.SECTION_TYPES.FORM,
@@ -467,8 +494,14 @@ const  buildAboutUsPage =  async function (
                 isFrontPage: true,
                 menuOrder: 0,
                 meta: {
-                    title: `${globalValues.businessName} | ${globalValues.location}. ${nearMeTerm}`,
-                    description: `We are ${globalValues.businessName}. We serve ${globalValues.location}. Call us now for a free quote. ${nearMeTerm}`,
+                    // From pageMeta, the SAME source the static template uses.
+                    //
+                    // These were hardcoded separately, so updating the
+                    // template left WordPress showing the old wording — the
+                    // exported theme and the downloaded site disagreed on
+                    // every title and description.
+                    title: indexMeta(globalValues).title,
+                    description: indexMeta(globalValues).description,
                 },
                 schema: jsonLdString || '',
                 sections: modelSections,

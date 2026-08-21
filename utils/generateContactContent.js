@@ -6,12 +6,19 @@
 // Kept deliberately small. The rest of the page is the form and the NAP/map
 // block, both reused unchanged from the home page — a contact page does not
 // need an essay, and padding it out would only dilute the call to action.
-const { getOpenAI } = require('./openaiClient');
+
+const { OpenAI } = require('openai');
+const { withRetry } = require('./withRetry');
 const { parseModelJson } = require('./parseModelJson');
+const { businessNoun } = require('./pageMeta');
 
 // Created on first use: constructing OpenAI without a key throws, which
 // would take the server down at boot rather than skipping one section.
-
+let openaiClient = null;
+function getOpenAI() {
+  if (!openaiClient) openaiClient = new OpenAI();
+  return openaiClient;
+}
 
 function buildContactPrompt({ businessName, businessType, location, phone }) {
   return `
@@ -25,6 +32,9 @@ HEADING
   or "Talk To Our Team", but not those exact phrases.
 
 PARAGRAPH 1 — 35 to 50 words
+- Open by referring to the business as "our ${businessNoun(businessType)}"
+  — NOT by its name, and using EXACTLY that phrase. The name belongs on the
+  home page; this phrase is what links back there, so it has to match.
 - How to reach the business: the form below, or by phone${phone ? ` on ${phone}` : ''}.
 - Say what a visitor should include so the reply is useful — the job, the
   property, and roughly when they need it.
@@ -59,7 +69,7 @@ function fallbackContent({ businessName, businessType, location, phone }) {
   return {
     heading: 'Get In Touch',
     paragraphs: [
-      `Send us a message using the form below${phone ? `, or call ${phone}` : ''}. ` +
+      `Reach our ${businessNoun(businessType)} using the form below${phone ? `, or call ${phone}` : ''}. ` +
       `Tell us what the job involves, the type of property, and when you would like the work done — ` +
       `the more detail you give us, the more useful our reply will be.`,
 
@@ -85,20 +95,29 @@ async function generateContactContent({ businessName, businessType, location, ph
     // at boot.
     const prompt = buildContactPrompt({ businessName, businessType, location, phone });
 
-    const response = await getOpenAI().responses.create({
-      model: "gpt-5.6-terra",
-      input: prompt,
-      reasoning: {
-          effort: "low"
-      },
-      text: {
-          verbosity: "medium"
-      }
-  });
+    // Wrapped: a dropped connection used to lose this call outright.
+
+
+    // Under two concurrent generations the FAQ request was cut off
+
+
+    // mid-response with "terminated" — a transient fault a retry fixes.
+
+
+    const response = await withRetry(() => getOpenAI().responses.create({
+        model: "gpt-5.6-terra",
+        input: prompt,
+        reasoning: {
+            effort: "low"
+        },
+        text: {
+            verbosity: "medium"
+        }
+    }), { label: 'contact intro' });
   
   console.log("generateContactContent usage:", response.usage);
   
-  const raw = response.output_text;
+  const raw = response.output_text.trim();
 
     const cleaned = raw
       .replace(/```json|```/g, '')

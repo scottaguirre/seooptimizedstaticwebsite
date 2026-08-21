@@ -10,7 +10,7 @@ function copyPageImage({
   srcDir,
   filename,
   field,
-  businessName,
+  businessType,
   keyword,
   location,
   index,
@@ -32,9 +32,19 @@ function copyPageImage({
 
   const ext = path.extname(filename); // get original extension
 
-  let seoPrefix = `${slugify(businessName)}-`;
-  seoPrefix += (imageContext === 'imageLocationPages')
-    ? `${slugify(keyword)}`
+  // The business name is deliberately NOT here.
+  //
+  // It used to lead every filename on every page, which repeated it dozens of
+  // times across a site for no benefit — the home page is where the business
+  // identity belongs. buildAboutUsPage keeps it for that page alone.
+  //
+  //   service page   water-heater-repair-leander-tx-hero-desktop.webp
+  //   location page  plumbing-austin-tx-hero-desktop.webp
+  //
+  // A location page leads with the TRADE rather than the location alone, so
+  // the filename says what the image is of as well as where.
+  const seoPrefix = (imageContext === 'imageLocationPages')
+    ? `${slugify(businessType)}-${slugify(keyword)}`
     : `${slugify(keyword)}-${slugify(location)}`;
 
   const newFilename = `${seoPrefix}-${field}${ext}`;
@@ -74,7 +84,9 @@ function copyAllPredefinedImages({
   const section4Dir = path.join(baseDir, 'section4');
 
   const params = {
-    businessName: globalValues.businessName,
+    // businessType, not businessName: see the filename comment in
+    // copyPageImage above.
+    businessType: globalValues.businessType,
     keyword,
     location: globalValues.location,
     index,

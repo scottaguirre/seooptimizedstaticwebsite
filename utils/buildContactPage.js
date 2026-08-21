@@ -22,6 +22,8 @@ const { fillLegalLinks } = require('./legalLinks');
 const { buildAltText } = require('./buildAltText');
 const { generateContactContent } = require('./generateContactContent');
 const { injectPagesInterlinks } = require('./injectPagesInterlinks');
+const { stripUnusedHero } = require('./stripUnusedHero');
+const { contactMeta, businessNoun } = require('./pageMeta');
 const { copyPageImage } = require('./pageParts');
 const CM = require('./contentModel');
 
@@ -67,7 +69,10 @@ const buildContactPage = async function (
   let contact = fs.readFileSync(path.join(__dirname, '../src/contactTemplate.html'), 'utf-8');
 
   const businessType = slugify(globalValues.businessType || '');
-  const seoPrefix = `${slugify(globalValues.businessName)}-${slugify(globalValues.location)}-contact`;
+  // No business name: it belongs on the home page, not repeated into every
+  // filename across the site. "contact" leads so the page is identifiable
+  // from the filename alone.
+  const seoPrefix = `contact-${slugify(globalValues.location)}`;
 
   // Nav: this page is the CONTACT tab
   contact = buildNavMenu(
@@ -108,11 +113,22 @@ const buildContactPage = async function (
     if (contactInterlinks.length) {
       introSections = injectPagesInterlinks(
         globalValues,
-        pages,
+        // Array form: the injector calls .find on this, and `pages` arrives
+        // from the form as an object keyed by index.
+        Array.isArray(pages) ? pages : Object.values(pages || {}),
         { slug: 'contact' },     // so the injector does not self-link
         contactInterlinks,
         introSections,
-        globalValues.location
+        globalValues.location,
+        {
+          // Link the trade, not the business name. The intro is written to
+          // say "our plumbing company", and this turns that phrase into the
+          // link home.
+          // businessNoun picks the right word: "our law firm", "our practice",
+          // "our plumbing company". Appending "company" to everything gave
+          // "our law firm company".
+          homeAnchor: `our ${businessNoun(globalValues.businessType)}`,
+        }
       );
     }
   } catch (err) {
@@ -130,9 +146,9 @@ const buildContactPage = async function (
     .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location}`)
     .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
     .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
-    .replace(/{{PAGE_TITLE}}/g, `Contact ${globalValues.businessName} | ${globalValues.location}`)
-    .replace(/{{META_DESCRIPTION}}/g,
-      `Contact ${globalValues.businessName} in ${globalValues.location}. Call ${globalValues.phone} or send a message for a free estimate.`)
+    // From utils/pageMeta.js — the trade and the place, no business name.
+    .replace(/{{PAGE_TITLE}}/g, contactMeta(globalValues).title)
+    .replace(/{{META_DESCRIPTION}}/g, contactMeta(globalValues).description)
 
     .replace(/{{HERO_IMG_MOBILE}}/g,  `assets/${seoPrefix}-heroMobile.webp`)
     .replace(/{{HERO_IMG_TABLET}}/g,  `assets/${seoPrefix}-heroTablet.webp`)
@@ -145,6 +161,13 @@ const buildContactPage = async function (
     .replace(/{{LOCATION}}/g, globalValues.location)
 
     .replace(/{{CONTACT_DETAILS_H3}}/g, 'Contact Details')
+    // The hero heading is "Contact Us", not the business name.
+    //
+    // The name is already in the nav, the details block, the NAP block and
+    // the footer; as an H1 here it says nothing about what the page is for.
+    // "Contact Us" tells a visitor they are in the right place.
+    .replace(/{{HERO_H1}}/g, 'Contact Us')
+
     .replace(/{{BUSINESS_NAME_TITLE}}/g, escapeAttr(globalValues.businessName || ''))
     .replace(/{{SERVICES_LIST}}/g, buildServicesList(pages))
 
@@ -188,6 +211,16 @@ const buildContactPage = async function (
 
   contact = fillLegalLinks(contact, globalValues);
 
+  // Remove whichever hero block this theme does not use.
+  //
+  // The template carries both — a standard side-by-side layout and an overlay
+  // one — and the CSS shows the right one per theme. Without this the contact
+  // page shipped BOTH in the markup, so the hero appeared twice.
+  //
+  // Every other page builder already did this; the contact page was missed
+  // when it was added.
+  contact = stripUnusedHero(contact, globalValues.styleKey);
+
   fs.writeFileSync(contactPath, contact);
 
   writePageAssets({
@@ -208,13 +241,17 @@ const buildContactPage = async function (
     isFrontPage: false,
     menuOrder: 9000,
     meta: {
-      title: `Contact ${globalValues.businessName} | ${globalValues.location}`,
-      description: `Contact ${globalValues.businessName} in ${globalValues.location}.`,
+      // From pageMeta, the same source the static template uses — these were
+      // hardcoded separately and had drifted from it.
+      title: contactMeta(globalValues).title,
+      description: contactMeta(globalValues).description,
     },
     schema: globalValues.contactSchema || '',
     sections: [
       CM.heroSection({
-        h1: globalValues.businessName.toUpperCase(),
+        // Must match the static page, or the exported WordPress theme shows
+        // the business name where the downloaded site shows "Contact Us".
+        h1: 'CONTACT US',
         tagline: globalValues.location,
         imageList: CM.heroImages({
           heroMobile:  `assets/${seoPrefix}-heroMobile.webp`,
@@ -227,7 +264,13 @@ const buildContactPage = async function (
         key: 'contactIntro',
         label: 'Contact Intro',
         type: CM.SECTION_TYPES.TEXT,
-        source: { heading: intro.heading, paragraphs: intro.paragraphs },
+        // introParas, NOT intro.paragraphs.
+        //
+        // intro.paragraphs is the raw model output; introParas is the same
+        // text after the interlinker has added the link home. Storing the raw
+        // version meant the WordPress contact page had no link back to the
+        // front page at all, while the static one did.
+        source: { heading: introHeading, paragraphs: introParas },
       }),
       // Only modelled when the page actually has one, or the exported
       // WordPress theme would show a form the downloaded site does not.

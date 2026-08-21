@@ -86,10 +86,13 @@ Write ${includeNearMe ? 5 : 4} sections. Each section must include:
 - Two short, helpful paragraphs that sound natural and professional.
 
 Use these section headings in order:
-1. 'Who is ${businessName}?' (besides the paragraphs, also create a subheading related to 'Who We Are' but including ${category}).
+1. 'Who is ${businessName}?'
+
+    SUBHEADING — use exactly this, word for word:
+    We Are Your Local ${businessName} in ${location}
 
     PARAGRAPH 1 — keep it to two or three sentences. Start with exactly this phrase:
-    ${businessName} is a local ${category} company serving ${location}.
+    ${businessName} is a local ${category} company in ${location}.
     ${ownerInstruction}
 
     TRUST POINTS — also return a "trustPoints" array for this section.
@@ -120,12 +123,12 @@ ${is24Hours ? '      "Open 24 hours, 7 days a week"\n' : ''}      "Visa, Masterc
     Include this word: ${rawKeywords[0]}
     Do not write it as a list. Two or three flowing sentences.
 
-2. 'Why Should You Hire ${businessName}?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
+2. 'What Makes Us Stand Out?'. In the second paragraph of this section include this word ${rawKeywords[1]}.
 
-3. 'What ${businessType} Services Does ${businessName} Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
+3. '${businessType} Services We Offer'. The first paragraph should list at least 10 services a local ${category} business offers.
 In the second paragraph of this section include this word ${rawKeywords[2]}.
 
-4. About ${location}.
+4. Talk about ${location}.
 Please include the 7 closest zip codes to the main location ${location} and 5 landmarks of ${location}.
 In the second paragraph of this section  include this word ${rawKeywords[3]}.
 

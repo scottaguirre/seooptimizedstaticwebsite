@@ -135,6 +135,42 @@ function ${p}_img_tag( $img, $class = '', $lazy = true ) {
 /**
  * All paragraphs for a section, in order.
  */
+/**
+ * Rewrite the generated site's relative links for WordPress.
+ *
+ * THE BUG THIS FIXES
+ * Interlinks are written at generation time as href="./" and href="page.html",
+ * which is correct for the static download: its pages are flat files at the
+ * site root, so "./" resolves to "/".
+ *
+ * WordPress permalinks are directories — /water-heater-repair/ — so "./"
+ * resolves to the CURRENT page. Clicking the business name in a paragraph
+ * reloaded the page you were already on.
+ *
+ * home_url() is used rather than a literal "/" so the theme works when
+ * WordPress is installed in a subdirectory.
+ */
+function ${p}_fix_links( $html ) {
+    $home = trailingslashit( home_url( '/' ) );
+
+    // href="./" -> the home page
+    $html = str_replace( array( 'href="./"', "href='./'" ), 'href="' . esc_url( $home ) . '"', $html );
+
+    // href="water-heater-repair-leander-tx.html" -> /water-heater-repair-leander-tx/
+    // Double-quoted hrefs only: that is what the generator writes, and
+    // avoiding a backreference keeps this readable inside a JS template
+    // string, where \\1 would be taken as an octal escape.
+    $html = preg_replace_callback(
+        '#href="(?!https?://|/|\\#|mailto:|tel:)([^"]+?)\\.html"#i',
+        function ( $m ) use ( $home ) {
+            return 'href="' . esc_url( $home . $m[1] . '/' ) . '"';
+        },
+        $html
+    );
+
+    return $html;
+}
+
 function ${p}_paragraphs( $post_id, $section_key ) {
     $count = (int) get_post_meta( $post_id, ${p}_key( $section_key, 'p_count' ), true );
     $out   = array();
@@ -142,7 +178,7 @@ function ${p}_paragraphs( $post_id, $section_key ) {
     for ( $i = 0; $i < $count; $i++ ) {
         $text = ${p}_rich( $post_id, $section_key, 'p_' . $i );
         if ( trim( wp_strip_all_tags( $text ) ) !== '' ) {
-            $out[] = $text;
+            $out[] = ${p}_fix_links( $text );
         }
     }
 

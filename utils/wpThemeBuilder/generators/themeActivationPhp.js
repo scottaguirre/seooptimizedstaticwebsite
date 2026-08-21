@@ -245,9 +245,11 @@ function ${p}_import_page( $page ) {
  * Build the Primary menu so it mirrors the static site exactly:
  *
  *   ABOUT US            -> front page
- *   <first service>     -> top-level link
- *   SERVICES            -> custom link "#" with the remaining services under it
+ *   SERVICES            -> a plain link when there is one service; a custom
+ *                          link "#" with all services under it when there
+ *                          are two or more
  *   LOCATIONS           -> custom link "#" with each location under it
+ *   CONTACT             -> contact page
  *
  * Creating it here means the client opens Appearance -> Menus and finds a
  * real, populated menu they can reorder, rename or extend — rather than an
@@ -304,14 +306,20 @@ function ${p}_build_menu( $front_page_id, $services, $locations, $contact = null
         $add_page( $front_page_id, __( 'About Us', '${themeSlug}' ) );
     }
 
-    // 2. First service sits outside the dropdown
-    if ( ! empty( $services ) ) {
-        $first = array_shift( $services );
-        $add_page( $first['id'], $first['title'] );
-    }
+    // 2. Services
+    //
+    // Matches the static site's rule: ONE service renders as a plain link,
+    // because a dropdown holding a single item reads oddly. Two or more all
+    // go inside the dropdown.
+    //
+    // This previously pulled the first service out and put the rest in a
+    // dropdown, which is what the static nav used to do before it changed —
+    // so the exported theme's menu no longer matched the downloaded site.
+    if ( count( $services ) === 1 ) {
+        $only = $services[0];
+        $add_page( $only['id'], $only['title'] );
 
-    // 3. Remaining services under a SERVICES group
-    if ( ! empty( $services ) ) {
+    } elseif ( count( $services ) > 1 ) {
         $parent = $add_group( __( 'Services', '${themeSlug}' ) );
         if ( ! is_wp_error( $parent ) ) {
             foreach ( $services as $svc ) {
