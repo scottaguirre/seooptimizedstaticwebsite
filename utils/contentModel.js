@@ -15,6 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { getPreset, normalizeSiteMode } = require('./seoPresets');
 
 const MODEL_VERSION = 1;
 const MODEL_FILENAME = 'content.json';
@@ -134,6 +135,18 @@ function heroImages(srcMap = {}, alt = '', title = '') {
  * needed at export time.
  */
 function createModel(globalValues = {}) {
+  // The mode this build actually ran as.
+  //
+  // This line read `globalValues.siteMode === 'sample' ? 'sample' : 'lead'`,
+  // which was right for two modes and wrong for three: a Rank Fast build
+  // wrote "lead" into content.json, and content.json is the ONLY thing the
+  // WordPress exporter reads. The exported theme would have had no way to
+  // know it was a Rank Fast site, whatever the downloaded one looked like.
+  //
+  // normalizeSiteMode still resolves anything unrecognised to 'lead', so the
+  // exporter's "refuse samples" check keeps working exactly as before.
+  const siteMode = normalizeSiteMode(globalValues.siteMode);
+
   return {
     version: MODEL_VERSION,
     generatedAt: new Date().toISOString(),
@@ -141,8 +154,12 @@ function createModel(globalValues = {}) {
     global: {
       businessName: globalValues.businessName || '',
       businessType: globalValues.businessType || '',
-      // 'lead' or 'sample' — the WordPress exporter refuses samples.
-      siteMode: globalValues.siteMode === 'sample' ? 'sample' : 'lead',
+      // 'rankfast', 'lead' or 'sample' — the WordPress exporter refuses samples.
+      siteMode,
+      // Structured data the exported theme should emit. Rank Fast ships
+      // LocalBusiness only; the visible FAQ section stays on the page in
+      // every mode, so the theme cannot infer this from the sections alone.
+      emitFaqSchema: getPreset(siteMode).schema.faqPage,
       location: globalValues.location || '',
 
       phone: globalValues.phone || '',
@@ -202,8 +219,19 @@ function addPages(model, pages = []) {
  * FAQ section built from People Also Ask questions and their generated
  * answers. Stored as a list of pairs so the WordPress admin can show one
  * labelled field per question.
+ *
+ * `heading` is a parameter, not a constant, because the static page and this
+ * model are two passes over the same data and they have to agree. The home
+ * page keeps the default. Location pages pass a heading naming the town, and
+ * pass the SAME string to buildFaqSection() — if this were hard-coded, the
+ * downloaded site would say "Frequently Asked Questions — Austin, TX" and the
+ * exported WordPress theme would say "Frequently Asked Questions".
+ *
+ * @param {Array}  faqs
+ * @param {string} label    the WordPress admin's name for the section
+ * @param {string} heading  the visible <h2>
  */
-function faqSection(faqs = [], label = 'FAQ') {
+function faqSection(faqs = [], label = 'FAQ', heading = 'Frequently Asked Questions') {
   const items = (faqs || []).filter(f => f && f.question && f.answer);
   if (!items.length) return null;
 
@@ -211,7 +239,7 @@ function faqSection(faqs = [], label = 'FAQ') {
     key: 'faq',
     label,
     type: SECTION_TYPES.FAQ,
-    heading: 'Frequently Asked Questions',
+    heading: String(heading || 'Frequently Asked Questions'),
     paragraphs: [],
     images: [],
     faqs: items.map(f => ({

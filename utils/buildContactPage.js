@@ -25,6 +25,8 @@ const { injectPagesInterlinks } = require('./injectPagesInterlinks');
 const { stripUnusedHero } = require('./stripUnusedHero');
 const { contactMeta, businessNoun } = require('./pageMeta');
 const { copyPageImage } = require('./pageParts');
+const { assetPath, imageAlt } = require('./seoPresets');
+const { canonicalTag } = require('./canonicalUrl');
 const CM = require('./contentModel');
 
 const basePath = '';
@@ -72,7 +74,14 @@ const buildContactPage = async function (
   // No business name: it belongs on the home page, not repeated into every
   // filename across the site. "contact" leads so the page is identifiable
   // from the filename alone.
+  //
+  // UNCHANGED IN EVERY MODE, including Rank Fast. Only the index page drops
+  // its prefix, and only because there is exactly one index page.
   const seoPrefix = `contact-${slugify(globalValues.location)}`;
+
+  // One definition of where this page's images live, used by the <img src>
+  // and by the WordPress model at the bottom of this file.
+  const img = (field) => assetPath(seoPrefix, field);
 
   // Nav: this page is the CONTACT tab
   contact = buildNavMenu(
@@ -94,7 +103,21 @@ const buildContactPage = async function (
   copyPageImage(heroDir, seoPrefix, 'hero-large.webp',   'heroLarge',   distDir);
 
   const altTexts = buildAltText(globalValues, 0);
-  const heroAlt = `${altTexts['hero-mobile'] || globalValues.businessType} - ${globalValues.location}`;
+
+  // The hero's alt/title.
+  //
+  //   Rank GBPs   a plumber's van in Leander, TX - Leander, TX
+  //   Rank Fast   a plumber's van
+  //
+  // Built through the preset rather than interpolated here, so the mode's
+  // format reaches this page too. buildAltText has already dropped the
+  // location for Rank Fast; appending it back at this call site is exactly
+  // how a format ends up half applied.
+  const heroAlt = imageAlt(
+    globalValues,
+    altTexts['hero-mobile'] || globalValues.businessType,
+    { suffix: globalValues.location }
+  );
 
   // The intro
   const intro = await generateContactContent({
@@ -110,27 +133,34 @@ const buildContactPage = async function (
   let introSections = { section1: { heading: intro.heading, paragraphs: intro.paragraphs } };
 
   try {
-    if (contactInterlinks.length) {
-      introSections = injectPagesInterlinks(
-        globalValues,
-        // Array form: the injector calls .find on this, and `pages` arrives
-        // from the form as an object keyed by index.
-        Array.isArray(pages) ? pages : Object.values(pages || {}),
-        { slug: 'contact' },     // so the injector does not self-link
-        contactInterlinks,
-        introSections,
-        globalValues.location,
-        {
-          // Link the trade, not the business name. The intro is written to
-          // say "our plumbing company", and this turns that phrase into the
-          // link home.
-          // businessNoun picks the right word: "our law firm", "our practice",
-          // "our plumbing company". Appending "company" to everything gave
-          // "our law firm company".
-          homeAnchor: `our ${businessNoun(globalValues.businessType)}`,
-        }
-      );
-    }
+    // Called even with NO targets — which is every Rank Fast build, and any
+    // build whose ring is empty.
+    //
+    // Injecting links is not all this does: its first act on each paragraph
+    // is stripMarkdownLinks(), turning the [text](url) the content generator
+    // sometimes emits back into plain text. Handed an empty list it strips
+    // that markdown and injects nothing. The old `if (contactInterlinks.length)`
+    // guard skipped the call, so a stray markdown link in the intro shipped
+    // raw — the one page on the site where that is most visible.
+    introSections = injectPagesInterlinks(
+      globalValues,
+      // Array form: the injector calls .find on this, and `pages` arrives
+      // from the form as an object keyed by index.
+      Array.isArray(pages) ? pages : Object.values(pages || {}),
+      { slug: 'contact' },     // so the injector does not self-link
+      contactInterlinks,
+      introSections,
+      globalValues.location,
+      {
+        // Link the trade, not the business name. The intro is written to
+        // say "our plumbing company", and this turns that phrase into the
+        // link home.
+        // businessNoun picks the right word: "our law firm", "our practice",
+        // "our plumbing company". Appending "company" to everything gave
+        // "our law firm company".
+        homeAnchor: `our ${businessNoun(globalValues.businessType)}`,
+      }
+    );
   } catch (err) {
     console.warn('   ⚠️ Could not interlink the contact intro:', err.message);
   }
@@ -139,6 +169,8 @@ const buildContactPage = async function (
   const introParas = introSections.section1?.paragraphs || intro.paragraphs;
 
   contact = contact
+    // Self-referencing canonical, matching the sitemap's entry for this page.
+    .replace(/{{CANONICAL}}/g, canonicalTag(globalValues, 'contact.html'))
     .replace(/{{JSON_LD_SCHEMA}}/g, globalValues.contactSchema || globalValues.jsonLdString || '')
     .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
     .replace(/{{LOGO_PATH}}/g, globalValues.logo)
@@ -147,13 +179,14 @@ const buildContactPage = async function (
     .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
     .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
     // From utils/pageMeta.js — the trade and the place, no business name.
+    // Identical in every mode: only the index page's format varies.
     .replace(/{{PAGE_TITLE}}/g, contactMeta(globalValues).title)
     .replace(/{{META_DESCRIPTION}}/g, contactMeta(globalValues).description)
 
-    .replace(/{{HERO_IMG_MOBILE}}/g,  `assets/${seoPrefix}-heroMobile.webp`)
-    .replace(/{{HERO_IMG_TABLET}}/g,  `assets/${seoPrefix}-heroTablet.webp`)
-    .replace(/{{HERO_IMG_DESKTOP}}/g, `assets/${seoPrefix}-heroDesktop.webp`)
-    .replace(/{{HERO_IMG_LARGE}}/g,   `assets/${seoPrefix}-heroLarge.webp`)
+    .replace(/{{HERO_IMG_MOBILE}}/g,  img('heroMobile'))
+    .replace(/{{HERO_IMG_TABLET}}/g,  img('heroTablet'))
+    .replace(/{{HERO_IMG_DESKTOP}}/g, img('heroDesktop'))
+    .replace(/{{HERO_IMG_LARGE}}/g,   img('heroLarge'))
     .replace(/{{HERO_IMG_ALT}}/g, escapeAttr(heroAlt))
     .replace(/{{HERO_IMG_TITLE}}/g, escapeAttr(heroAlt))
 
@@ -232,6 +265,9 @@ const buildContactPage = async function (
   });
 
   // === Semantic model for the WordPress exporter ===
+  //
+  // SECOND PASS. `img()` and `heroAlt` are the same ones the HTML above used,
+  // so the exported theme cannot disagree with the downloaded page.
   return {
     type: CM.PAGE_TYPES.CONTACT,
     htmlFile: 'contact.html',
@@ -254,10 +290,10 @@ const buildContactPage = async function (
         h1: 'CONTACT US',
         tagline: globalValues.location,
         imageList: CM.heroImages({
-          heroMobile:  `assets/${seoPrefix}-heroMobile.webp`,
-          heroTablet:  `assets/${seoPrefix}-heroTablet.webp`,
-          heroDesktop: `assets/${seoPrefix}-heroDesktop.webp`,
-          heroLarge:   `assets/${seoPrefix}-heroLarge.webp`,
+          heroMobile:  img('heroMobile'),
+          heroTablet:  img('heroTablet'),
+          heroDesktop: img('heroDesktop'),
+          heroLarge:   img('heroLarge'),
         }, heroAlt, heroAlt),
       }),
       CM.section({

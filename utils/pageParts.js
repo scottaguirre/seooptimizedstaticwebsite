@@ -10,11 +10,22 @@
 
 const fs = require('fs');
 const path = require('path');
+const { assetFile } = require('./seoPresets');
 
 /**
  * Copy one predefined image into the page's assets folder under an
  * SEO-friendly name. Silently skips a missing source: a page with one fewer
  * image is fine, a crashed build is not.
+ *
+ * seoPrefix may be empty — Rank Fast's index page writes assets/heroLarge.webp
+ * with no prefix at all. The name is built by seoPresets.assetFile() rather
+ * than by interpolating a dash here, because the page's <img src> is built by
+ * the same function: a leading dash on one side and not the other would 404
+ * every image on the page, and nothing in the build would report it.
+ *
+ * Only the index page may go unprefixed. Service and location pages each copy
+ * from a different source folder into the same field names, so without a
+ * distinguishing prefix each page would overwrite the last one's images.
  */
 function copyPageImage(srcDir, seoPrefix, filename, field, distDir) {
   const src = path.join(srcDir, filename);
@@ -23,7 +34,7 @@ function copyPageImage(srcDir, seoPrefix, filename, field, distDir) {
   const assetsDir = path.join(distDir, 'assets');
   fs.mkdirSync(assetsDir, { recursive: true });
 
-  fs.copyFileSync(src, path.join(assetsDir, `${seoPrefix}-${field}.webp`));
+  fs.copyFileSync(src, path.join(assetsDir, assetFile(seoPrefix, field, '.webp')));
   return true;
 }
 

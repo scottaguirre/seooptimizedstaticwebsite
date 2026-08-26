@@ -42,6 +42,7 @@ const { generationLimiter } = require('../utils/concurrencyLimiter');
 const { fillLegalLinks } = require('../utils/legalLinks');
 const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
+const { MODES, normalizeSiteMode } = require('../utils/seoPresets');
 
 const CM = require('../utils/contentModel');
 
@@ -220,22 +221,34 @@ router.post('/generate', upload.any(), async (req, res) => {
       });
     }
 
-    // Affordability check. Nothing is deducted yet — that happens only if
-    // the build succeeds, so a failure never costs the user credits.
-    // A design sample is one page shown to a prospective client. It skips
-    // the service, location and legal pages, the pricing table, the FAQ and
-    // the sitemap — everything that only matters for a published site.
+    // THE site mode for this submission, resolved once.
     //
-    // Read from the request rather than globalValues, which is not built
-    // until later in this handler.
-    const isSample =
-      (req.body.global?.siteMode ?? req.body['global[siteMode]']) === 'sample';
+    // This used to be a boolean — `siteMode === 'sample'` — and every use of
+    // it below re-derived a string as `isSample ? 'sample' : 'lead'`. With two
+    // modes that was correct. With three it silently rewrites 'rankfast' as
+    // 'lead' in the credit check, in both log lines and, worst of all, in the
+    // Job record that is this build's permanent history.
+    //
+    // normalizeSiteMode() knows all three and still falls back to 'lead' for
+    // anything unrecognised, so a hand-crafted POST cannot invent a mode.
+    //
+    // A design sample is one page shown to a prospective client. It skips the
+    // service, location and legal pages, the pricing table, the FAQ and the
+    // sitemap — everything that only matters for a published site. Rank Fast
+    // builds all of them; only the SEO formats differ.
+    //
+    // Read from the request rather than globalValues, which does not exist in
+    // this handler at all — generation happens in the background job.
+    const siteMode = normalizeSiteMode(
+      req.body.global?.siteMode ?? req.body['global[siteMode]']
+    );
+    const isSample = siteMode === MODES.SAMPLE;
 
     const startedAt = Date.now();
     log.generation('generation.started', {
       requestId: req.id,
       userId: String(req.user._id),
-      siteMode: isSample ? 'sample' : 'lead',
+      siteMode,
       servicePages: Object.keys(pages || {}).length,
     });
 
@@ -249,8 +262,12 @@ router.post('/generate', upload.any(), async (req, res) => {
       ? 0
       : (Array.isArray(locations) ? locations.length : 0);
 
+    // The real mode goes through, so this quote and the one runGeneration
+    // re-checks at build time are computed from the same input. Sending
+    // 'lead' here and the real mode there would let a user be quoted one
+    // price and charged another.
     const credit = checkCredits(req.user, pages, {
-      siteMode: isSample ? 'sample' : 'lead',
+      siteMode,
       locationPages: locationCount,
     });
     if (!credit.ok) {
@@ -290,7 +307,15 @@ router.post('/generate', upload.any(), async (req, res) => {
     const job = await Job.create({
       user: req.user._id,
       status: 'queued',
-      siteMode: isSample ? 'sample' : 'lead',
+      // The REAL mode. The build itself reads siteMode out of `payload`, so
+      // it was always going to run as Rank Fast — but this column is what
+      // every list, filter and support query reads, and it was recording
+      // "lead" for a site that is not one.
+      //
+      // ⚠️ models/Job.js: if siteMode is declared with an enum, 'rankfast'
+      // has to be added to it or Job.create throws a ValidationError here and
+      // the wizard reports "Generation failed."
+      siteMode,
       payload: req.body,
       progress: {
         total: Object.keys(pages || {}).length + locationCount + 1,
@@ -313,7 +338,7 @@ router.post('/generate', upload.any(), async (req, res) => {
       requestId: req.id,
       userId: String(req.user._id),
       jobId: String(job._id),
-      siteMode: isSample ? 'sample' : 'lead',
+      siteMode,
       servicePages: Object.keys(pages || {}).length,
       locationPages: locationCount,
       estimatedCredits: credit.totalCost,

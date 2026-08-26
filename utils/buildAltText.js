@@ -1,5 +1,6 @@
 const { slugify } = require('./slugify');
 const imageDesc = require('./altText');
+const { getPreset } = require('./seoPresets');
 
 /**
  * Picks an alt text set for a page and stamps the location onto it — plus the
@@ -10,6 +11,19 @@ const imageDesc = require('./altText');
  * screen reader and reads as keyword stuffing to a search engine. The home
  * page is where the business identity belongs; a service or location page is
  * better served by describing the image and naming the place.
+ *
+ * RANK FAST
+ * That reasoning applies to the location too, so Rank Fast keeps only the
+ * description:
+ *
+ *   Rank GBPs   a male plumber fixing a water heater from Quality Plumbing in Leander, TX
+ *   Rank Fast   a male plumber fixing a water heater
+ *
+ * The suffixes the CALLERS add — the page name on a service page, the
+ * "near me" term on the index page — are dropped by seoPresets.imageAlt(),
+ * which every builder should route its alt strings through. Dropping the
+ * location here but appending " near me" at the call site would leave the
+ * format half applied.
  *
  * Set selection:
  *   - index === 'aboutIndex'  -> set 0 (reserved for the About Us page)
@@ -35,10 +49,17 @@ function buildAltText(globalValues, index) {
     return {};
   }
 
+  const preset = getPreset(globalValues.siteMode);
   const result = {};
 
   for (const [key, desc] of Object.entries(selectedSet)) {
-    result[key] = isAboutPage
+    // Rank Fast: the description and nothing else.
+    if (!preset.alt.location && !preset.alt.businessNameOnIndex) {
+      result[key] = desc;
+      continue;
+    }
+
+    result[key] = (isAboutPage && preset.alt.businessNameOnIndex)
       ? `${desc} from ${globalValues.businessName} in ${location}`
       : `${desc} in ${location}`;
   }

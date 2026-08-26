@@ -10,6 +10,18 @@
 // So to reach 6 we run two related queries and merge them. Each returns ~4,
 // they overlap partially, and after de-duplication there are reliably enough.
 //
+// THE SECOND QUERY IS OPTIONAL
+//
+// The home page wants six questions, so it needs both queries. secondQuery
+// and maxQuestions exist for any caller that wants one cheap query instead.
+//
+// NOTE: nothing currently passes them. They were added for per-town location
+// page lookups, which have since been removed — Google returns the STATE's
+// PAA block for a small-town query, so every town got the same questions.
+// See utils/generateLocationFaq.js. The options are kept because they are
+// tested and a single-credit lookup is a reasonable thing to want; the header
+// says so rather than implying a caller that does not exist.
+//
 // Cost: 1 credit per query. Do NOT enable include_ai_overview_paa — it adds
 // 1 credit PER QUESTION for Google's own AI answers, which we discard because
 // we write our own with GPT. That flag alone turned a 1-credit request into 6.
@@ -25,6 +37,50 @@ const MAX_QUESTIONS = 6;
 // timeouts on both queries; 45s with one retry is far more forgiving.
 const REQUEST_TIMEOUT_MS = 45000;
 const RETRY_ATTEMPTS = 2;
+
+// === QUOTA CIRCUIT BREAKER ===
+//
+// When the ValueSERP account runs out of credits every request returns 402.
+// Without this, a site with five location pages sends five doomed requests
+// and waits out the full round trip on each one — a real build spent close to
+// two minutes discovering the same thing three times:
+//
+//   ⚠️ PAA query failed for "Plumbing Cedar Park, TX": 402 … used all of your…
+//   ⚠️ PAA query failed for "Plumbing Round Rock, TX": 402 … used all of your…
+//   ⚠️ PAA query failed for "Plumbing Georgetown, TX": 402 … used all of your…
+//
+// The first 402 (or 401/403 — a dead or wrong key behaves the same way) opens
+// the breaker and the rest of the build skips the network entirely.
+//
+// TIME-BOXED, not permanent. The server is long-running: a permanent flag
+// would keep every later generation FAQ-less until someone restarted the
+// process, even after the account was topped up. Ten minutes is long enough
+// to cover the build that hit the wall and short enough that a top-up is
+// picked up on its own.
+//
+// The CACHE IS CHECKED FIRST and is unaffected — a cached town still gets its
+// FAQ while the breaker is open, because that costs nothing.
+const QUOTA_COOLDOWN_MS = 10 * 60 * 1000;
+let quotaBlockedUntil = 0;
+
+/** True while the breaker is open. */
+function quotaBlocked() {
+  return Date.now() < quotaBlockedUntil;
+}
+
+/** Open the breaker. Called on the first 401/402/403. */
+function blockQuota(status) {
+  if (quotaBlocked()) return;
+  quotaBlockedUntil = Date.now() + QUOTA_COOLDOWN_MS;
+  const minutes = Math.round(QUOTA_COOLDOWN_MS / 60000);
+  console.warn(`   ⚠️ ValueSERP returned ${status} — skipping all further FAQ lookups for ${minutes} minutes. Pages build without an FAQ.`);
+  log.external('valueserp', 'quotaBlocked', { status, cooldownMs: QUOTA_COOLDOWN_MS });
+}
+
+/** Close the breaker by hand — for tests, or after topping up credits. */
+function resetQuotaBlock() {
+  quotaBlockedUntil = 0;
+}
 
 // Optional Mongo cache. Loaded lazily so this module works without it.
 let PaaCache = null;
@@ -89,6 +145,10 @@ async function fetchOne(query, { apiKey, location, device, gl, hl, googleDomain 
       const status = err.response && err.response.status;
       const worthRetrying = !status || status >= 500;
 
+      // Out of credits, bad key, or key rejected. Nothing later in this build
+      // will fare any better, so stop the rest of them reaching the network.
+      if (status === 401 || status === 402 || status === 403) blockQuota(status);
+
       const detail = err.response
         ? `${status} ${JSON.stringify(err.response.data || {}).slice(0, 120)}`
         : err.message;
@@ -119,7 +179,12 @@ async function fetchOne(query, { apiKey, location, device, gl, hl, googleDomain 
  *   businessType  used to build the second query, e.g. "Plumbing"
  *   location      free text, e.g. "Leander, TX"
  *   apiKey        defaults to process.env.VALUESERP_API_KEY
- * @returns {Promise<string[]>} 0–6 questions; [] when unavailable
+ *   secondQuery   run the "<businessType> <location>" query too. Default true
+ *                 (the home page needs six questions). Pass false for a page
+ *                 whose primary query is already local — one credit, ~4
+ *                 questions.
+ *   maxQuestions  cap on the merged list. Default 6.
+ * @returns {Promise<string[]>} 0–maxQuestions questions; [] when unavailable
  */
 async function fetchPeopleAlsoAsk({
   keyword,
@@ -132,7 +197,15 @@ async function fetchPeopleAlsoAsk({
   googleDomain = 'google.com',
   useCache = true,
   cacheDays = 30,
+  secondQuery = true,
+  maxQuestions = MAX_QUESTIONS,
 } = {}) {
+
+  // A caller asking for four questions must not be handed a six-question
+  // cache entry, and vice versa — but the cache key is built from the QUERY
+  // list, and the query list already differs when secondQuery is off. Single
+  // and double query runs therefore never share a cache row.
+  const limit = Math.max(1, Number(maxQuestions) || MAX_QUESTIONS);
 
   if (!apiKey) {
     console.warn('   ⚠️ VALUESERP_API_KEY not set — skipping FAQ questions');
@@ -147,7 +220,7 @@ async function fetchPeopleAlsoAsk({
   const secondary = [businessType, location].filter(Boolean).join(' ').trim();
 
   const queries = [primary];
-  if (secondary && questionKey(secondary) !== questionKey(primary)) {
+  if (secondQuery && secondary && questionKey(secondary) !== questionKey(primary)) {
     queries.push(secondary);
   }
 
@@ -159,17 +232,28 @@ async function fetchPeopleAlsoAsk({
       const hit = await PaaCache.findOne({ key }).lean();
       if (hit && Array.isArray(hit.questions) && hit.questions.length) {
         console.log(`   PAA cache hit (${hit.questions.length} question(s)) — 0 credits used`);
-        return hit.questions.slice(0, MAX_QUESTIONS);
+        return hit.questions.slice(0, limit);
       }
     } catch (err) {
       console.warn('   ⚠️ PAA cache read failed:', err.message);
     }
   }
 
+  // ---- circuit breaker ----
+  // AFTER the cache read, BEFORE the network. A cached town still gets its
+  // FAQ while the breaker is open; an uncached one skips the doomed request
+  // instead of waiting out a 45-second round trip to be told again that the
+  // account has no credits.
+  if (quotaBlocked()) {
+    console.warn(`   ⚠️ Skipping PAA for "${primary}" — ValueSERP quota block still in effect`);
+    return [];
+  }
+
   // ---- fetch ----
-  // Both queries run at once. Google returns ~4 questions per query and we
-  // want 6, so the second call is effectively always needed — running them
-  // sequentially just doubled the wait for no saving.
+  // Both queries run at once when there are two. Google returns ~4 questions
+  // per query and the home page wants 6, so the second call is effectively
+  // always needed there — running them sequentially just doubled the wait for
+  // no saving. With secondQuery:false this is a single request.
   const results = await Promise.all(
     queries.map(query => fetchOne(query, { apiKey, location, device, gl, hl, googleDomain }))
   );
@@ -183,9 +267,9 @@ async function fetchPeopleAlsoAsk({
       if (!qk || seen.has(qk)) continue;
       seen.add(qk);
       merged.push(question);
-      if (merged.length >= MAX_QUESTIONS) break;
+      if (merged.length >= limit) break;
     }
-    if (merged.length >= MAX_QUESTIONS) break;
+    if (merged.length >= limit) break;
   }
 
   console.log(`   PAA total after merge: ${merged.length} question(s)`);
@@ -213,4 +297,10 @@ async function fetchPeopleAlsoAsk({
   return merged;
 }
 
-module.exports = { fetchPeopleAlsoAsk, questionKey, MAX_QUESTIONS };
+module.exports = {
+  fetchPeopleAlsoAsk,
+  questionKey,
+  MAX_QUESTIONS,
+  quotaBlocked,
+  resetQuotaBlock,
+};

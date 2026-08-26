@@ -423,6 +423,37 @@ function ${funcPrefix}_output_meta_description() {
 add_action( 'wp_head', '${funcPrefix}_output_meta_description', 1 );
 
 /**
+ * SEO: keep the legal pages out of the index.
+ *
+ * The static build ships <meta name="robots" content="noindex, follow"> on
+ * privacy, terms and accessibility, and leaves them out of sitemap.xml. Their
+ * text is boilerplate shared near-verbatim with every other site on the web:
+ * nobody searches for it, it never converts, and indexing it spends crawl
+ * budget on the pages that matter least.
+ *
+ * Without this the exported theme would index pages the downloaded site
+ * hides — the two would disagree about the same content.
+ *
+ * Read from ${funcPrefix}_page_type rather than matching on slug, so a page
+ * the client renames stays correctly excluded.
+ */
+function ${funcPrefix}_noindex_legal_pages() {
+    if ( ! is_singular() ) {
+        return;
+    }
+
+    $post_id = get_queried_object_id();
+    if ( ! $post_id ) {
+        return;
+    }
+
+    if ( get_post_meta( $post_id, '${funcPrefix}_page_type', true ) === 'legal' ) {
+        echo '<meta name="robots" content="noindex, follow">' . "\n";
+    }
+}
+add_action( 'wp_head', '${funcPrefix}_noindex_legal_pages', 1 );
+
+/**
  * NOTE: this file used to define ${funcPrefix}_filter_meta_content(), hooked to
  * get_post_metadata, which eval()'d any meta value containing PHP tags.
  *

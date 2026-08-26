@@ -31,7 +31,7 @@ const jobSchema = new mongoose.Schema({
     index: true,
   },
 
-  siteMode: { type: String, enum: ['lead', 'sample'], default: 'lead' },
+  siteMode: { type: String, enum: ['rankfast', 'lead', 'sample'], default: 'rankfast' },
 
   // Everything the generator needs, captured at enqueue time.
   //

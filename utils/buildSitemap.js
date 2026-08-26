@@ -47,6 +47,23 @@ function today() {
 }
 
 /**
+ * The legal pages, which are deliberately kept OUT of the sitemap.
+ *
+ * Their templates carry <meta name="robots" content="noindex, follow">, and a
+ * sitemap is a request to index. Listing a noindexed page tells a crawler two
+ * opposite things about the same URL — so they are excluded here rather than
+ * demoted to priority 0.3 as they used to be.
+ *
+ * Keep this list in step with the three templates. If you ever drop the
+ * noindex tag, delete the filter below in the same change.
+ */
+const NOINDEX_PAGES = [
+  'privacy-policy.html',
+  'terms-of-use.html',
+  'accessibility.html',
+];
+
+/**
  * Build the URL list from the pages actually written to disk.
  *
  * Reading the directory rather than re-deriving filenames means the sitemap
@@ -58,7 +75,9 @@ function today() {
 function collectUrls(distDir, baseUrl) {
   let files = [];
   try {
-    files = fs.readdirSync(distDir).filter(f => f.endsWith('.html'));
+    files = fs.readdirSync(distDir)
+      .filter(f => f.endsWith('.html'))
+      .filter(f => !NOINDEX_PAGES.includes(f));
   } catch (err) {
     return [];
   }
@@ -69,9 +88,6 @@ function collectUrls(distDir, baseUrl) {
     }
     if (file.startsWith('location-')) {
       return { loc: `${baseUrl}/${file}`, priority: '0.7', changefreq: 'monthly' };
-    }
-    if (['privacy-policy.html', 'terms-of-use.html', 'accessibility.html'].includes(file)) {
-      return { loc: `${baseUrl}/${file}`, priority: '0.3', changefreq: 'yearly' };
     }
     // service pages
     return { loc: `${baseUrl}/${file}`, priority: '0.8', changefreq: 'monthly' };
@@ -151,4 +167,4 @@ function buildSitemap(distDir, globalValues = {}) {
   }
 }
 
-module.exports = { buildSitemap, siteBaseUrl, collectUrls, renderSitemap, renderRobots };
+module.exports = { buildSitemap, siteBaseUrl, collectUrls, renderSitemap, renderRobots, NOINDEX_PAGES };

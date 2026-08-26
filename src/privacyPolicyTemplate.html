@@ -4,9 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Privicy Policy Page</title>
-    <meta name="description" content="Privicy Policy Page">
+    <title>{{PAGE_TITLE}}</title>
+    <meta name="description" content="{{META_DESCRIPTION}}">
     <meta name="author" content="{{BUSINESS_NAME}}">
+    <!-- Legal boilerplate: shared near-verbatim with every other site on
+         the web, never searched for, never converts. Keeping it out of the
+         index costs nothing and keeps the indexed pages the ones that matter.
+         "follow" so the nav links from here still pass through. -->
+    <meta name="robots" content="noindex, follow">
+    {{CANONICAL}}
 
 
     <!-- Favicon -->

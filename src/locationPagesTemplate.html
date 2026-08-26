@@ -7,6 +7,7 @@
   <title>{{PAGE_TITLE}}</title>
   <meta name="description" content="{{META_DESCRIPTION}}">
   <meta name="author" content="{{BUSINESS_NAME}}">
+  {{CANONICAL}}
 
 
   <!-- Favicon -->
@@ -15,6 +16,12 @@
   <script type="application/ld+json">
   {{JSON_LD_SCHEMA}}
   </script>
+
+  <!-- FAQPage JSON-LD for this location's People Also Ask block.
+       Emitted as a complete <script> tag by buildFaqSchemaTag(), so it is NOT
+       wrapped here. Empty string in Rank Fast (that mode ships no FAQPage) and
+       whenever the page has no FAQ. -->
+  {{FAQ_SCHEMA}}
 
 <!-- style.css will be auto-injected by HtmlWebpackPlugin -->
 
@@ -202,6 +209,11 @@
   </div>
 </section>
 
+
+<!-- FAQ Section: questions from Google's "People Also Ask" for THIS town.
+     buildFaqSection() returns '' when there is no FAQ, so the placeholder
+     simply disappears rather than leaving an empty <section> behind. -->
+{{FAQ_SECTION}}
 
 
 <!-- Sixth Section: NAP and Map -->

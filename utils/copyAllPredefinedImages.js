@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
+const { assetFile, assetPath } = require('./seoPresets');
 
 /**
  * Copy a single predefined image into the *per-user* distDir/assets folder,
@@ -43,16 +44,27 @@ function copyPageImage({
   //
   // A location page leads with the TRADE rather than the location alone, so
   // the filename says what the image is of as well as where.
+  //
+  // THIS PREFIX DOES NOT VARY BY SITE MODE, AND MUST NOT.
+  //
+  // Rank Fast drops the prefix on the index page, which is safe there because
+  // a site has exactly one index page. Every service page and every location
+  // page copies from a DIFFERENT source folder into the SAME field names
+  // ('heroMobile', 'section2Img1', ...) inside this one assets/ folder. Drop
+  // the prefix here and the last page built silently overwrites every earlier
+  // page's images — the build succeeds, every page renders, and every page
+  // shows the same photographs.
   const seoPrefix = (imageContext === 'imageLocationPages')
     ? `${slugify(businessType)}-${slugify(keyword)}`
     : `${slugify(keyword)}-${slugify(location)}`;
 
-  const newFilename = `${seoPrefix}-${field}${ext}`;
-  const dest = path.join(assetsDir, newFilename);
+  const dest = path.join(assetsDir, assetFile(seoPrefix, field, ext));
 
   fs.copyFileSync(src, dest);
 
-  const imagePath = `assets/${newFilename}`;
+  // Same helper as the filename above, so the <img src> and the file on disk
+  // can never disagree about the naming convention.
+  const imagePath = assetPath(seoPrefix, field, ext);
 
   // Assign this image to every page that cycles to this set
   uploadedImages[index] ||= {};

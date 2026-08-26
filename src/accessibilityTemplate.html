@@ -4,9 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Accessibility</title>
-    <meta name="description" content="Accessibility Page">
+    <title>{{PAGE_TITLE}}</title>
+    <meta name="description" content="{{META_DESCRIPTION}}">
     <meta name="author" content="{{BUSINESS_NAME}}">
+    <!-- Legal boilerplate: shared near-verbatim with every other site on
+         the web, never searched for, never converts. Keeping it out of the
+         index costs nothing and keeps the indexed pages the ones that matter.
+         "follow" so the nav links from here still pass through. -->
+    <meta name="robots" content="noindex, follow">
+    {{CANONICAL}}
 
 
     <!-- Favicon -->
@@ -62,7 +68,7 @@
                 <h2>Our Commitment</h2>
                 <p>{{BUSINESS_NAME}} is committed to providing individuals
                    with disabilities access to information, goods, services and
-                   privileges offered on this website, www.{{DOMAIN}},
+                   privileges offered on this website, {{DOMAIN}},
                    and is in an ongoing process of improving its accessibility.
                    We are making every effort to provide a website in which functionality
                    and content is accessible to all individuals, and we are actively updating

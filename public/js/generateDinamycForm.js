@@ -231,10 +231,12 @@
   }
 
   const state = {
-    // 'lead' = the full optimised site. 'sample' = a one-page design sample
-    // for showing a prospective client, with no service, location or legal
-    // pages and no pricing or FAQ section.
-    siteMode: 'lead',
+   // 'rankfast' = Rank Fast, the new formats. 'lead' = Rank GBPs, the full
+    // optimised site as it has always been built. 'sample' = a one-page
+    // design sample for showing a prospective client, with no service,
+    // location or legal pages and no pricing or FAQ section.
+
+    siteMode: 'rankfast',
     styleKey: 'style',
     businessType: '',
     logoType: 'square',     // 'square' | 'rect'
@@ -286,9 +288,10 @@
    * one should mean adding an entry here, not editing the template and
    * renumbering the labels by hand.
    */
+  
   const SITE_MODES = [
     {
-      value: 'lead',
+      value: 'rankfast',
       title: 'Rank Fast',
       description: 'Built fully SEO-optimized to rank fast and generate leads without a GBP',
     },
@@ -296,7 +299,16 @@
       value: 'sample',
       title: 'One-Page Design',
       description: 'Built to pitch clients a new web design',
-    }
+    },
+    {
+      // 'lead' is the ORIGINAL full-site mode, relabelled. The value stays
+      // exactly as it is: every existing Job record and content.json holds
+      // it, and renaming it would mean migrating all of them for a wizard
+      // caption. utils/seoPresets.js keys the old formats off this value.
+      value: 'lead',
+      title: 'Rank GBPs',
+      description: 'Optimised to rank an existing Google Business Profile',
+    },
   ];
 
   function renderSiteModeStep() {
@@ -1640,7 +1652,7 @@
   } catch {}
 
   // 5) Reset wizard “brain” (your in-memory state)
-  state.siteMode          = 'lead';
+  state.siteMode          = 'rankfast';
   state.businessType      = '';
   state.mainFormSnapshot  = null;  // wipes hours, near-me, CID, etc.
   state.pages             = [];

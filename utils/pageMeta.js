@@ -8,34 +8,17 @@
 // they had already drifted apart.
 //
 // THE FORMATS
-//   index      Contact 24/7 Emergency Plumber Austin in Austin, TX - Call 5125551234
+//   index      by site mode — see utils/seoPresets.js
+//                Rank GBPs  Contact 24/7 Emergency Plumber Austin in Austin, TX - Call 5125551234
+//                Rank Fast  Emergency Plumber Leander, TX. Call (512) 894-6167
 //   contact    Plumbing in Leander, TX
-//   service    Water Heater Repair in Leander, TX
+//   service    Driveway Repair in Leander, TX | Call us at (512) 894-6167
 //   location   Quality Plumbing Leander in Austin, TX
 //
-// The description currently mirrors the title. That is deliberate for now:
-// a description has roughly 160 characters to a title's 60, so this leaves
-// most of the space unused and search engines may substitute page text
-// instead. Worth revisiting once you can see how they look in results.
+// Only the index page differs by mode. The other three are the same in every
+// mode, so they are written here rather than duplicated into both presets.
 
-/**
- * "24/7" is prepended only when the business name already says "emergency".
- *
- * The point is to reinforce a claim the business is making about itself, not
- * to invent one — a plumber who does not advertise emergency work should not
- * have a title promising round-the-clock service.
- */
-function emergencyPrefix(businessName) {
-  return /\bemergency\b/i.test(String(businessName || '')) ? '24/7 ' : '';
-}
-
-/** Strip anything that would break out of an HTML attribute. */
-function clean(value) {
-  return String(value || '')
-    .replace(/["<>]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const { getPreset, clean, emergencyPrefix, serviceNoun } = require('./seoPresets');
 
 /**
  * How the business refers to itself in prose: "our law firm", "our practice",
@@ -90,36 +73,18 @@ function businessNoun(businessType = '') {
 }
 
 /**
- * The home page.
+ * The home page. Its format is the one thing that differs between site modes,
+ * so it is looked up rather than written here.
  *
- *   Contact 24/7 Emergency Plumber Austin in Austin, TX - Call 5125551234
+ * globalValues.siteMode is set in runGeneration and travels with everything
+ * else, so this needs no extra argument and no call site has to be told which
+ * mode it is in.
  *
  * @param {object} globalValues
  * @returns {{title: string, description: string}}
  */
 function indexMeta(globalValues = {}) {
-  const name = clean(globalValues.businessName);
-  const location = clean(globalValues.location);
-  const phone = clean(globalValues.phone);
-
-  const parts = [`Contact ${emergencyPrefix(name)}${name}`];
-
-  if (location) parts.push(`in ${location}`);
-
-  let title = parts.join(' ');
-  if (phone) title += ` - Call ${phone}`;
-
-  // The description extends the title rather than repeating it exactly.
-  //
-  // A description has roughly 160 characters against a title's 60, so an
-  // identical one wastes most of the space — and a search engine that judges
-  // it too thin will substitute page text instead. The call to action uses
-  // some of that room.
-  const description = phone
-    ? `${title} to get a free quote. Available Now.`
-    : title;
-
-  return { title, description };
+  return getPreset(globalValues.siteMode).indexMeta(globalValues);
 }
 
 /**
@@ -141,19 +106,52 @@ function contactMeta(globalValues = {}) {
 /**
  * A service page, named for the service itself.
  *
- *   Water Heater Repair in Leander, TX
+ *   title        Driveway Repair in Leander, TX | Call us at (512) 894-6167
+ *   description  Driveway Repair in Leander, TX | Call us at (512) 894-6167 for concrete services.
  *
- * @param {string} serviceName  the page's filename/keyword, e.g. "Water Heater Repair"
+ * The same format in EVERY mode. Only the index page's format varies by site
+ * mode; a service page reads the same on Rank Fast and Rank GBPs.
+ *
+ * WHAT CHANGED AND WHY
+ * Title and description used to be the identical string — "Driveway Repair in
+ * Leander, TX" — which spent 34 of the description's ~155 characters and put
+ * nothing in the search result a visitor could act on. The phone number now
+ * appears in both, so someone with a burst pipe can call straight from the
+ * result without opening the page.
+ *
+ * NO BUSINESS NAME, deliberately. The home page is the page that should own
+ * the business name, and on these sites the name often contains the primary
+ * keyword ("Emergency Plumber Leander"). Keeping it off the service pages
+ * keeps them aimed at the service and the town instead.
+ *
+ * The title runs past 60 characters for longer service names, so Google will
+ * sometimes cut the phone number off the end. Accepted: the service and the
+ * town lead, and those are the words a searcher typed.
+ *
+ * @param {string} serviceName  the page's filename/keyword, e.g. "Driveway Repair"
  */
 function serviceMeta(serviceName, globalValues = {}) {
   const service = clean(serviceName);
   const location = clean(globalValues.location);
+  const phone = clean(globalValues.phone);
 
-  const title = location
-    ? `${service} in ${location}`
-    : service;
+  // The half that identifies the page. Shared by the title and the
+  // description so the two can never disagree about what this page is.
+  const subject = location ? `${service} in ${location}` : service;
 
-  return { title, description: title };
+  const title = phone ? `${subject} | Call us at ${phone}` : subject;
+
+  // "concrete services", "plumbing services", "legal services" — from the
+  // business type, via the same helper the Rank Fast home page uses. It knows
+  // the awkward ones: Law Firm is not "law firm services", HVAC keeps its
+  // capitals.
+  const services = serviceNoun(globalValues.businessType);
+
+  const description = phone
+    ? `${subject} | Call us at ${phone} for ${services}.`
+    : `${subject} — ${services}.`;
+
+  return { title, description };
 }
 
 /**
