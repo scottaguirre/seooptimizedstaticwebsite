@@ -892,3 +892,255 @@ footer a {
         margin-bottom: var(--faq-gap);
     }
 }
+
+/* ==========================================================================
+   Pricing table — black / purple theme
+   --------------------------------------------------------------------------
+   REPLACES the previous pricing block in this one theme file.
+
+   CSS only. Same markup the builder already emits — no new elements, no
+   inline styles, no JS. Everything here is borders, backgrounds, spacing and
+   two pseudo-elements.
+
+   Colours are taken from what this theme already uses rather than invented:
+
+     #9f11d7   the hero .line-divider rule
+     #cf3def   .section-N a  (body links)
+     #c333fc   a.nav-link.active
+     rgb(177,27,218)  the glow under .row-first-section-2-img
+     #131415   .section-1 ... .section-4 background
+     rgb(238,234,234) .section-N body text
+
+   To port to another theme, change the five variables at the top and nothing
+   else.
+   ========================================================================== */
+
+   .pricing-section {
+    --price-accent:  #cf3def;              /* the figures */
+    --price-bright:  #e879ff;              /* hover */
+    --price-rule:    #9f11d7;              /* divider, matches .line-divider */
+    --price-glow:    rgba(177, 27, 218, .55);
+    --price-ink:     rgb(238, 234, 234);
+
+    /* .pricing-section is NOT in this theme's
+       ".section-1, .section-2, ..." background rule, so without this line the
+       section renders on the default page background — a white band in the
+       middle of a black site. Set explicitly rather than relying on that list
+       being updated. */
+    background-color: #131415;
+    color: var(--price-ink);
+}
+
+/* Echoes the hero's .line-divider — same 130px, same 2px, same colour — so
+   the section reads as part of this theme rather than bolted on. */
+.pricing-section h2 {
+    position: relative;
+    padding-bottom: 26px;
+}
+
+.pricing-section h2::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 130px;
+    height: 2px;
+    background: var(--price-rule);
+}
+
+/* --------------------------------------------------------------------------
+   The table
+   --------------------------------------------------------------------------
+   border-collapse: separate, not collapse. Collapsed borders swallow row
+   backgrounds and box-shadows, and the hover state below needs both.
+   -------------------------------------------------------------------------- */
+
+.pricing-table {
+    width: 100%;
+    margin: 30px 0 0;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.pricing-table thead th {
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;          /* matches the nav */
+    color: var(--price-accent);
+    padding: 0 16px 12px;
+    border-bottom: 2px solid var(--price-rule);
+}
+
+.pricing-table thead th:first-child { padding-left: 0; }
+
+.pricing-table thead th:last-child {
+    text-align: right;
+    padding-right: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Row rules
+   --------------------------------------------------------------------------
+   Drawn as a background-image, not a border. A border would be one flat
+   colour; this is a 100deg gradient — the same angle as the hero overlay and
+   the image overlays — so the rule is purple under the service name and fades
+   to a neutral hairline under the price. It ties the row to the theme without
+   putting a coloured line across the whole table.
+
+   The old version striped rows AND ruled them. That is two dividers doing one
+   job, and it made the table read as a solid slab. The fills are gone.
+   -------------------------------------------------------------------------- */
+
+.pricing-table tbody tr {
+    background-image: linear-gradient(
+        100deg,
+        rgba(207, 61, 239, .70)   0%,
+        rgba(207, 61, 239, .30)  24%,
+        rgba(238, 234, 234, .11) 48%,
+        rgba(238, 234, 234, .09) 100%
+    );
+    background-size: 100% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    transition: background-color .18s ease;
+}
+
+.pricing-table tbody tr:last-child { background-image: none; }
+
+.pricing-table tbody th,
+.pricing-table tbody td {
+    padding: 20px 16px;
+    vertical-align: baseline;
+    border: 0;
+}
+
+.pricing-table tbody th:first-child { padding-left: 0; }
+.pricing-table tbody td:last-child { padding-right: 0; }
+
+/* Hover: a faint wash, and the figure lights up.
+   The text-shadow is the same glow this theme puts under its section images
+   (box-shadow: 4px 4px 10px rgb(177,27,218)), reused at text scale. */
+.pricing-table tbody tr:hover { background-color: rgba(207, 61, 239, .07); }
+
+.pricing-table tbody tr:hover .pricing-amount {
+    color: var(--price-bright);
+    text-shadow: 0 0 14px var(--price-glow);
+}
+
+/* --------------------------------------------------------------------------
+   Cells
+   -------------------------------------------------------------------------- */
+
+.pricing-service {
+    font-weight: 600;
+    font-size: 17px;
+    line-height: 1.35;
+    text-align: left;
+    color: var(--price-ink);
+}
+
+.pricing-note {
+    display: block;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.45;
+    color: rgba(238, 234, 234, .55);
+    margin-top: 5px;
+}
+
+.pricing-range {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.pricing-amount {
+    display: block;
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: -.01em;
+    color: var(--price-accent);
+    /* the figures form a column, so the digits must share a width */
+    font-variant-numeric: tabular-nums;
+    transition: color .18s ease, text-shadow .18s ease;
+}
+
+.pricing-unit {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: rgba(238, 234, 234, .45);
+    margin-top: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   The estimate notice
+   --------------------------------------------------------------------------
+   NOTE THE SELECTOR. `.pricing-disclaimer` alone loses to this theme's
+   `.section-padding p` rule — same class count, but that one also names an
+   element, so it is more specific and the notice has been rendering at 19px
+   rather than the 14px the old block asked for. Two classes wins it back.
+   -------------------------------------------------------------------------- */
+
+.pricing-section .pricing-disclaimer {
+    margin-top: 28px;
+    padding: 16px 20px;
+    font-size: 14px;
+    line-height: 1.65;
+    color: rgba(238, 234, 234, .72);
+    background: rgba(0, 0, 0, .45);
+    border-left: 3px solid var(--price-rule);
+}
+
+.pricing-section .pricing-disclaimer strong {
+    color: var(--price-accent);
+    font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   Narrow screens
+   --------------------------------------------------------------------------
+   Each row stacks so the figure sits under the service rather than being
+   squeezed against it. The row rule stays, and moves to the bottom of the
+   stacked block.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 575.98px) {
+    .pricing-table thead {
+        /* clipped, not display:none — the column headers stay in the
+           accessibility tree for screen readers even though nothing shows */
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+    }
+
+    .pricing-table,
+    .pricing-table tbody,
+    .pricing-table tbody tr,
+    .pricing-table tbody th,
+    .pricing-table tbody td {
+        display: block;
+        width: 100%;
+    }
+
+    .pricing-table tbody tr { padding: 16px 0; }
+
+    .pricing-table tbody th,
+    .pricing-table tbody td { padding: 0; }
+
+    .pricing-range {
+        text-align: left;
+        margin-top: 10px;
+    }
+
+    .pricing-amount,
+    .pricing-unit { display: inline-block; }
+
+    .pricing-unit { margin-left: 10px; }
+}
