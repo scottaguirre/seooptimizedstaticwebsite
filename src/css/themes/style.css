@@ -644,149 +644,237 @@ footer a {
 }
 
 /* ==========================================================================
-   FAQ accordion
+   FAQ accordion — black / purple theme
    --------------------------------------------------------------------------
-   Append this to each theme you want it on:
-     src/css/themes/style.css
-     src/css/themes/style2.css   ... and so on
+   REPLACES the previous FAQ block in this one theme file.
 
-   It deliberately inherits rather than hardcoding colours, so the same block
-   works on every theme:
+   CSS only. Bootstrap's accordion markup is untouched — this works off the
+   .collapsed class Bootstrap already toggles.
 
-     - question text uses the theme's body colour (inherit)
-     - the +/x icon uses currentColor, so it matches that text
-     - the bar tint is a translucent black, which reads as a subtle shade of
-       whatever background sits behind it
+   WHY IT LOOKS DIFFERENT FROM THE OLD BLOCK
 
-   Typography already follows the theme, because the FAQ sits inside
-   .container.section-padding — so .section-padding h2 and
-   .section-padding p rules apply to the heading and answers.
+   The old one drew filled, rounded bars. That was a second visual language on
+   a page whose pricing table is built from rules, and the two sections read as
+   though they came from different sites. This uses the same four devices:
 
-   To tune one theme, override just the variables at the top:
+     the 100deg gradient hairline   identical to .pricing-table tbody tr
+     the 130px purple divider       identical to .pricing-section h2::after
+     the left rail on the answer    the pricing disclaimer's border-left
+     the hover glow                 the same rgb(177,27,218) at text scale
 
-     .faq-section { --faq-accent: #ff3f34; --faq-bar-bg: rgba(0,0,0,.06); }
+   THE BUG IT ALSO FIXES
+
+   The old values were rgba(0,0,0,.04) / .07 — a translucent BLACK tint. The
+   comment said it "reads as a subtle shade of whatever background sits behind
+   it", which is true on a light theme. This theme's sections are #131415, so
+   4% black over near-black was invisible: the question bars had no background
+   at all and the accordion looked unstyled. Nothing here depends on a tint.
    ========================================================================== */
 
    .faq-section {
-    --faq-bar-bg:        green;
-    --faq-bar-bg-hover:  #082d5b;
-    --faq-bar-bg-open:   #082d5b;
-    --faq-accent:        currentColor;   /* +/x icon */
-    --faq-gap:           10px;
-    --faq-radius:        6px;
+    --faq-accent:  #cf3def;               /* open question, +/x icon */
+    --faq-bright:  #e879ff;               /* hover */
+    --faq-rule:    #9f11d7;               /* rails and dividers */
+    --faq-glow:    rgba(177, 27, 218, .55);
+    --faq-ink:     rgb(238, 234, 234);
+    --faq-gap:     4px;
+
+    /* Same reason as the pricing section: .faq-section is not in this theme's
+       ".section-1, .section-2, ..." background rule, so without this it
+       renders on the default page background. */
+    background-color: #131415;
+    color: var(--faq-ink);
 }
 
-.faq-section {
-    background: #e2e3e5;
+/* The hero's .line-divider again — same 130px, same 2px, same colour. */
+.faq-section h2 {
+    position: relative;
+    padding-bottom: 26px;
 }
 
-/* Strip Bootstrap's card chrome so the bars sit on the page cleanly */
+.faq-section h2::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 130px;
+    height: 2px;
+    background: var(--faq-rule);
+}
+
+/* --------------------------------------------------------------------------
+   Strip Bootstrap
+   --------------------------------------------------------------------------
+   Bootstrap 5 paints .accordion-item white and gives the open button a blue
+   background and blue text from its own custom properties. All of it has to
+   go, or it fights this theme on every state.
+   -------------------------------------------------------------------------- */
+
 .faq-section .accordion,
 .faq-section .accordion-item {
-    background: transparent;
+    background-color: transparent;
     border: 0;
+    border-radius: 0;
+    color: var(--faq-ink);
 }
+
+/* --------------------------------------------------------------------------
+   The item rule
+   --------------------------------------------------------------------------
+   Byte for byte the gradient used on .pricing-table tbody tr — purple under
+   the start of the question, fading to a neutral hairline. Drawn as a
+   background-image because a border can only be one flat colour.
+   -------------------------------------------------------------------------- */
 
 .faq-section .accordion-item {
     margin-bottom: var(--faq-gap);
+    background-image: linear-gradient(
+        100deg,
+        rgba(207, 61, 239, .70)   0%,
+        rgba(207, 61, 239, .30)  24%,
+        rgba(238, 234, 234, .11) 48%,
+        rgba(238, 234, 234, .09) 100%
+    );
+    background-size: 100% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
 }
 
 .faq-section .accordion-item:last-child {
     margin-bottom: 0;
+    background-image: none;
 }
 
-/* ---- the question bar ---- */
+/* --------------------------------------------------------------------------
+   The question
+   --------------------------------------------------------------------------
+   Flush left, so questions line up with the h2 above them and with the
+   service names in the pricing table. The icon moved to the RIGHT to make
+   that possible — and it is where people expect an accordion control anyway.
+   -------------------------------------------------------------------------- */
 
 .faq-section .accordion-button {
-    background: var(--faq-bar-bg);
-    color: white;
+    position: relative;
+    background: transparent;
+    color: var(--faq-ink);
     font-size: 17px;
+    font-weight: 600;
     line-height: 1.4;
-    font-weight: 500;
-    padding: 14px 18px 14px 46px;   /* left room for the icon */
+    text-align: left;
+    padding: 18px 42px 18px 0;      /* right room for the icon */
     border: 0;
-    border-radius: var(--faq-radius) !important;
+    border-radius: 0 !important;
     box-shadow: none;
-    transition: background-color .2s ease;
+    transition: color .18s ease;
 }
 
-.faq-section .accordion-button:hover {
-    background: var(--faq-bar-bg-hover);
-}
+.faq-section .accordion-button:hover { color: var(--faq-bright); }
 
+/* Open: the question takes the accent, the way the active nav item does. */
 .faq-section .accordion-button:not(.collapsed) {
-    background: var(--faq-bar-bg-open);
-    color: white;
+    background: transparent;
+    color: var(--faq-accent);
     box-shadow: none;
-    border-bottom-left-radius: 0 !important;
-    border-bottom-right-radius: 0 !important;
 }
 
-/* Keyboard focus stays visible, but without Bootstrap's heavy blue ring */
+/* Keyboard focus stays visible without Bootstrap's heavy blue ring. */
 .faq-section .accordion-button:focus {
     box-shadow: none;
     outline: 2px solid var(--faq-accent);
-    outline-offset: 2px;
+    outline-offset: 3px;
 }
 
-/* ---- the +/x icon ---- */
+/* --------------------------------------------------------------------------
+   The +/x icon
+   -------------------------------------------------------------------------- */
 
-/* Bootstrap draws a chevron via a background image; remove it */
-.faq-section .accordion-button::after {
-    display: none;
-}
-
+/* Bootstrap draws a chevron as a background image on ::after. Remove it. */
+.faq-section .accordion-button::after { display: none; }
 
 .faq-section .accordion-button::before {
     content: "";
-    color: black;
     position: absolute;
-    left: 18px;
+    right: 6px;
     top: 50%;
     width: 14px;
     height: 14px;
     margin-top: -7px;
 
-    /* a plus sign drawn from two gradients, so it inherits currentColor */
+    /* a plus drawn from two gradients — no image, no font, no extra element */
     background:
         linear-gradient(var(--faq-accent), var(--faq-accent)) center / 100% 2px no-repeat,
         linear-gradient(var(--faq-accent), var(--faq-accent)) center / 2px 100% no-repeat;
 
-    transition: transform .25s ease;
-}
-
-.faq-section .accordion-button:hover::before {
-    color: white;
+    transition: transform .25s ease, filter .18s ease;
 }
 
 /* open: rotate the plus into a cross */
 .faq-section .accordion-button:not(.collapsed)::before {
     transform: rotate(45deg);
-    color:white;
 }
 
-/* ---- the answer ---- */
+/* the same glow this theme puts under its section images, at icon scale */
+.faq-section .accordion-button:hover::before {
+    filter: drop-shadow(0 0 6px var(--faq-glow));
+}
+
+/* --------------------------------------------------------------------------
+   The answer
+   --------------------------------------------------------------------------
+   The left rail is the pricing disclaimer's border-left, reused. It ties the
+   answer to the question above it and repeats a shape already on the page.
+   -------------------------------------------------------------------------- */
 
 .faq-section .accordion-body {
-    background: var(--faq-bar-bg-open);
-    padding: 4px 18px 18px 46px;
-    border-radius: 0 0 var(--faq-radius) var(--faq-radius);
+    background: transparent;
+    padding: 2px 42px 22px 18px;
+    border-left: 2px solid var(--faq-rule);
 }
 
+/* This theme sets .section-padding p to 19px, which is too heavy for an
+   answer sitting in a half-width column. Two classes plus the element beats
+   that rule — one class alone would not. */
 .faq-section .accordion-body p {
-    color: white;
     margin-bottom: 0;
+    font-size: 16px;
+    line-height: 1.65;
+    color: rgba(238, 234, 234, .78);
 }
 
-/* ---- columns ---- */
+/* --------------------------------------------------------------------------
+   Columns
+   -------------------------------------------------------------------------- */
 
-/* Below lg the two columns stack, so give the first one breathing room */
+/* Below lg the two columns stack, so the first needs breathing room. */
 @media (max-width: 991.98px) {
     .faq-section .col-lg-6:not(:last-child) {
         margin-bottom: var(--faq-gap);
     }
+
+    /* Stacked, the last item of the FIRST column is no longer the last thing
+       on screen — it needs its rule back or the two columns visibly join. */
+    .faq-section .col-lg-6:not(:last-child) .accordion-item:last-child {
+        background-image: linear-gradient(
+            100deg,
+            rgba(207, 61, 239, .70)   0%,
+            rgba(207, 61, 239, .30)  24%,
+            rgba(238, 234, 234, .11) 48%,
+            rgba(238, 234, 234, .09) 100%
+        );
+        background-size: 100% 1px;
+        background-position: 0 100%;
+        background-repeat: no-repeat;
+    }
 }
 
+@media (max-width: 575.98px) {
+    .faq-section .accordion-button {
+        font-size: 16px;
+        padding-right: 34px;
+    }
+
+    .faq-section .accordion-body { padding-right: 0; }
+}
 /* ==========================================================================
    Service cards (home page)
    --------------------------------------------------------------------------

@@ -1,4 +1,3 @@
-
 /* Your custom styles below */
 
 * {
@@ -382,7 +381,19 @@ footer a {
 }
 
 
-/* Form container */
+/* ==========================================================================
+   Contact form
+   --------------------------------------------------------------------------
+   Fields, validation and the submit button, matched to this theme.
+
+   Colours come from what the theme already uses:
+     #8a05bf / rgb(156,20,198)   .cta-btn a p  and its hover
+     rgb(208,188,188)            .cta-btn a p  border
+     #cf3def                     .section-N a
+     rgb(177,27,218)             the glow under .row-first-section-2-img
+     rgb(238,234,234)            .section-N body text
+   ========================================================================== */
+
 .form-container {
     overflow: hidden;
     width: 100%;
@@ -391,106 +402,291 @@ footer a {
     padding-bottom: 50px;
 }
 
-
-.form-container div {
+/* DIRECT CHILD, not any descendant.
+   `.form-container div` also matched every .form-group inside the form, so
+   the field groups were rendering at 90% width and centred rather than full
+   width — and anything painting a background here painted it behind every
+   field as well. */
+.form-container > div {
     width: 90%;
     margin: auto;
     border-radius: 16px;
 }
 
+/* --------------------------------------------------------------------------
+   Kill the light panel
+   --------------------------------------------------------------------------
+   Something OUTSIDE this file paints the form's wrapper near-white — a
+   contact-page stylesheet, or an inline style on the div. It is not in
+   style3.css: the border-radius above lands, the background does not, which
+   means the other declaration is winning on specificity or is inline.
 
-/* Form styles */
+   !important is the only thing that beats both from here, and it is the
+   correct tool for exactly this — an author rule reaching past a stylesheet
+   it does not control. It loses only to another !important; if the panel is
+   still grey after this, that is what is happening, and the rule needs
+   removing at the source instead.
+
+   The .form-group line matters too: if the outside rule is written
+   `.form-container div` it matches every field group as well, which would
+   leave grey blocks behind each input.
+   -------------------------------------------------------------------------- */
+
+.form-container > div,
+.form-container .contact-form,
+.contact-form .form-group {
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+}
+
 .contact-form {
     padding: 50px;
-    padding-bottom:60px;
+    padding-bottom: 60px;
     max-width: 700px;
     margin: auto;
+    background: transparent;
+
+    --field-edge:    rgba(238, 234, 234, .30);
+    --field-edge-hi: rgba(238, 234, 234, .60);
+    --field-ink:     rgb(238, 234, 234);
+    --field-hint:    rgba(238, 234, 234, .40);
+    --field-label:   rgba(238, 234, 234, .62);
+
+    /* only used to repaint Chrome's autofill background — must be the
+       section's real colour, never transparent (see the autofill block) */
+    --field-solid:   #131415;
+
+    --accent:        #cf3def;
+    --accent-lit:    rgba(207, 61, 239, .85);
+
+    /* semantic, deliberately not the accent hue */
+    --ok:            #3fb984;
+    --bad:           #ff5f5f;
+
+    /* the site's primary action, taken from .cta-btn a p */
+    --btn-bg:        #8a05bf;
+    --btn-bg-hi:     rgb(156, 20, 198);
+    --btn-edge:      rgb(208, 188, 188);
+    --btn-glow:      rgba(177, 27, 218, .45);
 }
 
 .contact-form h2 {
     font-size: 1.75rem;
     font-weight: 700;
-    color: #2d3748;
+    color: var(--field-ink);
     margin-bottom: 8px;
     text-align: center;
-    padding: 30px 25px;
+    padding: 0 0 10px;
 }
 
 .form-subtitle {
-    color: #718096;
+    color: rgba(238, 234, 234, .62);
     text-align: center;
-    margin-bottom: 32px;
+    margin-bottom: 34px;
     font-size: 0.95rem;
 }
 
-/* Form groups */
-.form-group {
-    margin-bottom: 20px;
+/* --------------------------------------------------------------------------
+   Field groups
+   -------------------------------------------------------------------------- */
+
+.contact-form .form-group {
+    width: 100%;
+    margin: 0 0 20px;
     position: relative;
+    background: transparent;
 }
 
+.contact-form .form-group:last-of-type { margin-bottom: 28px; }
+
+/* Uppercase and letterspaced — the same treatment as .pricing-unit and the
+   nav, so the form reads as part of the same site. */
 .form-group label {
     display: block;
     margin-bottom: 8px;
+    font-size: 12px;
     font-weight: 600;
-    color: #4a5568;
-    font-size: 0.9rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--field-label);
+    transition: color .18s ease;
 }
 
-/* Input and textarea styles */
+/* The label lights up with its own field. :focus-within on the group is what
+   makes this possible without touching the markup — CSS cannot look backwards
+   from an input to its label. */
+.form-group:focus-within label { color: var(--accent); }
+
+/* --------------------------------------------------------------------------
+   The fields
+   --------------------------------------------------------------------------
+   Transparent, so they sit on the section colour, with a bottom line only.
+
+   An underline only works as an affordance if it REACTS. The three things
+   that make this readable where a bare underline is not:
+
+     the line is visible    2px at 30% white, not 1px transparent
+     the line reacts        dim -> 60% on hover -> accent on focus
+     the text has a colour  #eeeaea, not inherited black on near-black
+
+   Flush left, so the text starts level with its label. With no panel there is
+   nothing for an inset to belong to.
+   -------------------------------------------------------------------------- */
+
 .form-group input,
 .form-group textarea {
     width: 100%;
-    padding: 14px 0;
-    border: none;
-    border-bottom: 1px solid transparent;
-    border-radius: 0;
+    padding: 12px 0;
     font-size: 1rem;
     font-family: inherit;
+    line-height: 1.5;
+
+    color: var(--field-ink);
     background-color: transparent;
+
+    border: 0;
+    border-bottom: 2px solid var(--field-edge);
+    border-radius: 0;
+
+    caret-color: var(--accent);
     resize: vertical;
+    transition: border-color .18s ease, box-shadow .18s ease;
 }
 
-.form-group input:focus,
-.form-group textarea:focus {
-    outline: none;
-    border-bottom-color: #667eea;
-    box-shadow: 0 2px 0 0 green;
-    transform: translateY(-2px);
+.form-group input::placeholder,
+.form-group textarea::placeholder {
+    color: var(--field-hint);
+    opacity: 1;                 /* Firefox dims placeholders by default */
 }
 
 .form-group input:hover,
 .form-group textarea:hover {
-    border-bottom-color: #cbd5e0;
+    border-bottom-color: var(--field-edge-hi);
 }
 
-/* Textarea specific */
+/* Focus: the line takes the accent and throws a glow DOWNWARD only. A ring on
+   all four sides would put the box back. */
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+    box-shadow: 0 5px 14px -6px var(--accent-lit);
+}
+
 .form-group textarea {
-    height: 80px;
-    min-height: 80px;
-    resize: vertical;
-    margin-bottom: 20px;
+    height: 120px;
+    min-height: 120px;
+    margin-bottom: 0;           /* the group already provides the gap */
 }
 
-/* Submit button */
+/* --------------------------------------------------------------------------
+   Validation
+   --------------------------------------------------------------------------
+   :user-invalid, NOT :invalid:not(:placeholder-shown).
+
+   The obvious guard is wrong on this form. :placeholder-shown only ever
+   matches an element that HAS a placeholder attribute, and these inputs do
+   not have one. So on an untouched, empty, required field:
+
+       :placeholder-shown        false
+       :not(:placeholder-shown)  TRUE
+       :invalid                  true
+
+   ...the whole selector matches the instant the page loads, and the visitor
+   is greeted by a form with every line already flagged.
+
+   :user-invalid is built for exactly this: the browser applies it only after
+   the person has actually interacted with the field, whatever attributes it
+   carries. The @supports fallback covers engines without it.
+   -------------------------------------------------------------------------- */
+
+@supports selector(:user-invalid) {
+
+    .form-group input:user-invalid,
+    .form-group textarea:user-invalid {
+        border-bottom-color: var(--bad);
+        box-shadow: 0 5px 14px -6px rgba(255, 95, 95, .8);
+    }
+
+    .form-group input:user-valid,
+    .form-group textarea:user-valid {
+        border-bottom-color: var(--ok);
+    }
+}
+
+@supports not selector(:user-invalid) {
+
+    .form-group input:invalid:not(:focus):not(:placeholder-shown),
+    .form-group textarea:invalid:not(:focus):not(:placeholder-shown) {
+        border-bottom-color: var(--bad);
+        box-shadow: 0 5px 14px -6px rgba(255, 95, 95, .8);
+    }
+
+    .form-group input:valid:not(:focus):not(:placeholder-shown),
+    .form-group textarea:valid:not(:focus):not(:placeholder-shown) {
+        border-bottom-color: var(--ok);
+    }
+}
+
+/* --------------------------------------------------------------------------
+   Chrome autofill
+   --------------------------------------------------------------------------
+   Chrome repaints autofilled inputs with its own near-white background, so
+   the moment it fills a name and email you get glaring white boxes in the
+   middle of a black form. There is no property to turn it off — the inset
+   shadow is the standard repaint, and the absurd transition delay stops
+   Chrome animating back to white.
+
+   --field-solid, not transparent: a transparent inset shadow paints nothing.
+   -------------------------------------------------------------------------- */
+
+.form-group input:-webkit-autofill,
+.form-group input:-webkit-autofill:hover,
+.form-group input:-webkit-autofill:focus,
+.form-group textarea:-webkit-autofill {
+    -webkit-text-fill-color: var(--field-ink);
+    -webkit-box-shadow: 0 0 0 1000px var(--field-solid) inset;
+            box-shadow: 0 0 0 1000px var(--field-solid) inset;
+    caret-color: var(--field-ink);
+    transition: background-color 100000s ease-in-out 0s;
+}
+
+/* --------------------------------------------------------------------------
+   Submit button
+   --------------------------------------------------------------------------
+   Not a new button — the SAME button as the phone CTA. Two different-looking
+   primary actions on one page make a visitor stop and work out which is the
+   real one.
+   -------------------------------------------------------------------------- */
+
 .submit-btn {
     width: 100%;
-    background: green;
-    color: white;
-    border: none;
-    padding: 16px 24px;
-    font-size: 1.1rem;
-    font-weight: 600;
-    border-radius: 12px;
-    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 10px;
+
+    padding: 16px 24px;
+    font-size: 1.15rem;
+    font-weight: 600;
+    font-family: inherit;
+    line-height: 1.2;
+
+    color: #fff;
+    background: var(--btn-bg);
+    border: 2px solid var(--btn-edge);
+    border-radius: 50px;                  /* the CTA pill */
+
+    cursor: pointer;
     position: relative;
-    overflow: hidden;
+    overflow: hidden;                     /* keeps the sweep inside the pill */
+
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
+    transition: background-color .2s ease, box-shadow .2s ease, transform .2s ease;
 }
 
+/* the shine sweep */
 .submit-btn::before {
     content: '';
     position: absolute;
@@ -498,67 +694,73 @@ footer a {
     left: -100%;
     width: 100%;
     height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    transition: left 0.6s ease;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .22), transparent);
+    transition: left .6s ease;
+    pointer-events: none;
 }
 
-.submit-btn:hover::before {
-    left: 100%;
-}
+.submit-btn:hover::before { left: 100%; }
 
 .submit-btn:hover {
+    background: var(--btn-bg-hi);
     transform: translateY(-2px);
-    box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+    /* the same glow this theme puts under .row-first-section-2-img */
+    box-shadow: 0 8px 22px var(--btn-glow);
 }
 
 .submit-btn:active {
     transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
 }
 
-.btn-text {
-    position: relative;
-    z-index: 1;
+/* Focus must be visible against BLACK. A translucent blue ring all but
+   vanished on #131415, which left keyboard users with no visible focus. */
+.submit-btn:focus-visible {
+    outline: 2px solid #e879ff;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 4px rgba(207, 61, 239, .28);
 }
 
-.btn-icon {
-    position: relative;
-    z-index: 1;
-    transition: transform 0.3s ease;
-}
-
-.submit-btn:hover .btn-icon {
-    transform: translateX(4px);
-}
-
-
-/* Focus styles for accessibility */
-.submit-btn:focus {
+.submit-btn:focus:not(:focus-visible) {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
 }
 
-/* Form validation styles */
-.form-group input:invalid:not(:focus):not(:placeholder-shown),
-.form-group textarea:invalid:not(:focus):not(:placeholder-shown) {
-    border-bottom-color: #082d5b;
-    /* box-shadow: 0 2px 0 0 rgba(198, 191, 191, 0.2); */
-}
-
-.form-group input:valid:not(:focus):not(:placeholder-shown),
-.form-group textarea:valid:not(:focus):not(:placeholder-shown) {
-    border-bottom-color: red;
-}
-
-/* Loading state for button */
 .submit-btn:disabled {
-    opacity: 0.7;
+    opacity: .55;
     cursor: not-allowed;
     transform: none;
+    background: var(--btn-bg);
+    box-shadow: none;
 }
 
-.submit-btn:disabled:hover {
-    transform: none;
-    box-shadow: none;
+.submit-btn:disabled::before { display: none; }
+
+.btn-text,
+.btn-icon {
+    position: relative;
+    z-index: 1;                     /* above the sweep */
+}
+
+.btn-icon { transition: transform .25s ease; }
+
+.submit-btn:hover .btn-icon { transform: translateX(4px); }
+
+/* --------------------------------------------------------------------------
+   Motion
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+    .submit-btn,
+    .submit-btn::before,
+    .btn-icon,
+    .form-group input,
+    .form-group textarea,
+    .form-group label { transition: none; }
+
+    .submit-btn:hover { transform: none; }
+    .submit-btn:hover::before { left: -100%; }
+    .submit-btn:hover .btn-icon { transform: none; }
 }
 
 
@@ -661,7 +863,7 @@ footer a {
         padding: 15px;
     }
 
-    .form-container div {
+    .form-container > div {
         width: 60%;
     }
     
@@ -760,111 +962,169 @@ footer a {
 
 }
 
-
 /* ==========================================================================
-   FAQ accordion
+   FAQ accordion — black / purple theme
    --------------------------------------------------------------------------
-   Append this to each theme you want it on:
-     src/css/themes/style.css
-     src/css/themes/style2.css   ... and so on
+   REPLACES the previous FAQ block in this one theme file.
 
-   It deliberately inherits rather than hardcoding colours, so the same block
-   works on every theme:
+   CSS only. Bootstrap's accordion markup is untouched — this works off the
+   .collapsed class Bootstrap already toggles.
 
-     - question text uses the theme's body colour (inherit)
-     - the +/x icon uses currentColor, so it matches that text
-     - the bar tint is a translucent black, which reads as a subtle shade of
-       whatever background sits behind it
+   WHY IT LOOKS DIFFERENT FROM THE OLD BLOCK
 
-   Typography already follows the theme, because the FAQ sits inside
-   .container.section-padding — so .section-padding h2 and
-   .section-padding p rules apply to the heading and answers.
+   The old one drew filled, rounded bars. That was a second visual language on
+   a page whose pricing table is built from rules, and the two sections read as
+   though they came from different sites. This uses the same four devices:
 
-   To tune one theme, override just the variables at the top:
+     the 100deg gradient hairline   identical to .pricing-table tbody tr
+     the 130px purple divider       identical to .pricing-section h2::after
+     the left rail on the answer    the pricing disclaimer's border-left
+     the hover glow                 the same rgb(177,27,218) at text scale
 
-     .faq-section { --faq-accent: #ff3f34; --faq-bar-bg: rgba(0,0,0,.06); }
+   THE BUG IT ALSO FIXES
+
+   The old values were rgba(0,0,0,.04) / .07 — a translucent BLACK tint. The
+   comment said it "reads as a subtle shade of whatever background sits behind
+   it", which is true on a light theme. This theme's sections are #131415, so
+   4% black over near-black was invisible: the question bars had no background
+   at all and the accordion looked unstyled. Nothing here depends on a tint.
    ========================================================================== */
 
    .faq-section {
-    --faq-bar-bg:        rgba(0, 0, 0, .04);
-    --faq-bar-bg-hover:  rgba(0, 0, 0, .07);
-    --faq-bar-bg-open:   rgba(0, 0, 0, .07);
-    --faq-accent:        currentColor;   /* +/x icon */
-    --faq-gap:           10px;
-    --faq-radius:        6px;
+    --faq-accent:  #cf3def;               /* open question, +/x icon */
+    --faq-bright:  #e879ff;               /* hover */
+    --faq-rule:    #9f11d7;               /* rails and dividers */
+    --faq-glow:    rgba(177, 27, 218, .55);
+    --faq-ink:     rgb(238, 234, 234);
+    --faq-gap:     4px;
+
+    /* Same reason as the pricing section: .faq-section is not in this theme's
+       ".section-1, .section-2, ..." background rule, so without this it
+       renders on the default page background. */
+    background-color: #131415;
+    color: var(--faq-ink);
 }
 
-/* Strip Bootstrap's card chrome so the bars sit on the page cleanly */
+/* The hero's .line-divider again — same 130px, same 2px, same colour. */
+.faq-section h2 {
+    position: relative;
+    padding-bottom: 26px;
+}
+
+.faq-section h2::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 130px;
+    height: 2px;
+    background: var(--faq-rule);
+}
+
+/* --------------------------------------------------------------------------
+   Strip Bootstrap
+   --------------------------------------------------------------------------
+   Bootstrap 5 paints .accordion-item white and gives the open button a blue
+   background and blue text from its own custom properties. All of it has to
+   go, or it fights this theme on every state.
+   -------------------------------------------------------------------------- */
+
 .faq-section .accordion,
 .faq-section .accordion-item {
-    background: transparent;
+    background-color: transparent;
     border: 0;
+    border-radius: 0;
+    color: var(--faq-ink);
 }
+
+/* --------------------------------------------------------------------------
+   The item rule
+   --------------------------------------------------------------------------
+   Byte for byte the gradient used on .pricing-table tbody tr — purple under
+   the start of the question, fading to a neutral hairline. Drawn as a
+   background-image because a border can only be one flat colour.
+   -------------------------------------------------------------------------- */
 
 .faq-section .accordion-item {
     margin-bottom: var(--faq-gap);
+    background-image: linear-gradient(
+        100deg,
+        rgba(207, 61, 239, .70)   0%,
+        rgba(207, 61, 239, .30)  24%,
+        rgba(238, 234, 234, .11) 48%,
+        rgba(238, 234, 234, .09) 100%
+    );
+    background-size: 100% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
 }
 
 .faq-section .accordion-item:last-child {
     margin-bottom: 0;
+    background-image: none;
 }
 
-/* ---- the question bar ---- */
+/* --------------------------------------------------------------------------
+   The question
+   --------------------------------------------------------------------------
+   Flush left, so questions line up with the h2 above them and with the
+   service names in the pricing table. The icon moved to the RIGHT to make
+   that possible — and it is where people expect an accordion control anyway.
+   -------------------------------------------------------------------------- */
 
 .faq-section .accordion-button {
-    background: var(--faq-bar-bg);
-    color: inherit;
+    position: relative;
+    background: transparent;
+    color: var(--faq-ink);
     font-size: 17px;
+    font-weight: 600;
     line-height: 1.4;
-    font-weight: 500;
-    padding: 14px 18px 14px 46px;   /* left room for the icon */
+    text-align: left;
+    padding: 18px 42px 18px 0;      /* right room for the icon */
     border: 0;
-    border-radius: var(--faq-radius) !important;
+    border-radius: 0 !important;
     box-shadow: none;
-    transition: background-color .2s ease;
+    transition: color .18s ease;
 }
 
-.faq-section .accordion-button:hover {
-    background: var(--faq-bar-bg-hover);
-}
+.faq-section .accordion-button:hover { color: var(--faq-bright); }
 
+/* Open: the question takes the accent, the way the active nav item does. */
 .faq-section .accordion-button:not(.collapsed) {
-    background: var(--faq-bar-bg-open);
-    color: inherit;
+    background: transparent;
+    color: var(--faq-accent);
     box-shadow: none;
-    border-bottom-left-radius: 0 !important;
-    border-bottom-right-radius: 0 !important;
 }
 
-/* Keyboard focus stays visible, but without Bootstrap's heavy blue ring */
+/* Keyboard focus stays visible without Bootstrap's heavy blue ring. */
 .faq-section .accordion-button:focus {
     box-shadow: none;
     outline: 2px solid var(--faq-accent);
-    outline-offset: 2px;
+    outline-offset: 3px;
 }
 
-/* ---- the +/x icon ---- */
+/* --------------------------------------------------------------------------
+   The +/x icon
+   -------------------------------------------------------------------------- */
 
-/* Bootstrap draws a chevron via a background image; remove it */
-.faq-section .accordion-button::after {
-    display: none;
-}
+/* Bootstrap draws a chevron as a background image on ::after. Remove it. */
+.faq-section .accordion-button::after { display: none; }
 
 .faq-section .accordion-button::before {
     content: "";
     position: absolute;
-    left: 18px;
+    right: 6px;
     top: 50%;
     width: 14px;
     height: 14px;
     margin-top: -7px;
 
-    /* a plus sign drawn from two gradients, so it inherits currentColor */
+    /* a plus drawn from two gradients — no image, no font, no extra element */
     background:
         linear-gradient(var(--faq-accent), var(--faq-accent)) center / 100% 2px no-repeat,
         linear-gradient(var(--faq-accent), var(--faq-accent)) center / 2px 100% no-repeat;
 
-    transition: transform .25s ease;
+    transition: transform .25s ease, filter .18s ease;
 }
 
 /* open: rotate the plus into a cross */
@@ -872,27 +1132,68 @@ footer a {
     transform: rotate(45deg);
 }
 
-/* ---- the answer ---- */
+/* the same glow this theme puts under its section images, at icon scale */
+.faq-section .accordion-button:hover::before {
+    filter: drop-shadow(0 0 6px var(--faq-glow));
+}
+
+/* --------------------------------------------------------------------------
+   The answer
+   --------------------------------------------------------------------------
+   The left rail is the pricing disclaimer's border-left, reused. It ties the
+   answer to the question above it and repeats a shape already on the page.
+   -------------------------------------------------------------------------- */
 
 .faq-section .accordion-body {
-    background: var(--faq-bar-bg);
-    padding: 4px 18px 18px 46px;
-    border-radius: 0 0 var(--faq-radius) var(--faq-radius);
+    background: transparent;
+    padding: 2px 42px 22px 18px;
+    border-left: 2px solid var(--faq-rule);
 }
 
+/* This theme sets .section-padding p to 19px, which is too heavy for an
+   answer sitting in a half-width column. Two classes plus the element beats
+   that rule — one class alone would not. */
 .faq-section .accordion-body p {
     margin-bottom: 0;
+    font-size: 16px;
+    line-height: 1.65;
+    color: rgba(238, 234, 234, .78);
 }
 
-/* ---- columns ---- */
+/* --------------------------------------------------------------------------
+   Columns
+   -------------------------------------------------------------------------- */
 
-/* Below lg the two columns stack, so give the first one breathing room */
+/* Below lg the two columns stack, so the first needs breathing room. */
 @media (max-width: 991.98px) {
     .faq-section .col-lg-6:not(:last-child) {
         margin-bottom: var(--faq-gap);
     }
+
+    /* Stacked, the last item of the FIRST column is no longer the last thing
+       on screen — it needs its rule back or the two columns visibly join. */
+    .faq-section .col-lg-6:not(:last-child) .accordion-item:last-child {
+        background-image: linear-gradient(
+            100deg,
+            rgba(207, 61, 239, .70)   0%,
+            rgba(207, 61, 239, .30)  24%,
+            rgba(238, 234, 234, .11) 48%,
+            rgba(238, 234, 234, .09) 100%
+        );
+        background-size: 100% 1px;
+        background-position: 0 100%;
+        background-repeat: no-repeat;
+    }
 }
 
+@media (max-width: 575.98px) {
+    .faq-section .accordion-button {
+        font-size: 16px;
+        padding-right: 34px;
+    }
+
+    .faq-section .accordion-body { padding-right: 0; }
+}
 /* ==========================================================================
    Pricing table — black / purple theme
    --------------------------------------------------------------------------
