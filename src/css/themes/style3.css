@@ -160,7 +160,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     width: 55%;
     font-size: 26px;;
     margin:0;
-    padding:15% 0 10px 30px;
+    padding:10% 0 10px 30px;
     line-height: 1.2;
 }
 
@@ -178,6 +178,17 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     width: 130px;
     margin-bottom: 10px;
     border-bottom: #9f11d7 2px solid;
+}
+
+
+.badges {
+    position: absolute;
+    left: 8%;
+    bottom: 2%;
+}
+
+.award, .licensed {
+    width: 15%;  
 }
 
 
@@ -225,7 +236,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     text-decoration: none; 
 }
 
-.section-1 {
+.section-1, .section-3 {
     border-bottom: 2px solid black;
 }
 
@@ -233,6 +244,14 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 .section-1, .section-2, .section-3, .section-4, .section-5 {
     background-color: #131415 !important;
     color:rgb(238, 234, 234);
+}
+
+.service-cards {
+    margin-top: 30px;
+}
+
+.service-card {
+    margin-bottom: 30px;
 }
 
 .section-1 a, .section-2 a, .section-3 a, .section-4 a, .section-5 a {
@@ -245,9 +264,8 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 .nearme {
-    background-color: #131415 !important;
+    background-color: black;
     color:rgb(238, 234, 234);
-    border-top: 3px solid #000;
 }
 
 
@@ -332,6 +350,16 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     position: relative;
     z-index: 1;
   }
+
+  .col-md-5 {
+    text-align: center;
+  }
+
+  .col-md-5 img {
+    box-shadow: 4px 4px 10px rgb(177, 27, 218);
+    border-radius: 10px;
+   
+}
 
 
 .google-map iframe {
@@ -787,7 +815,7 @@ footer a {
 @media (min-width: 550px) {
 
     .text-hero-for-style-and-style3 h1 {
-        padding-top: 15%;
+        padding-top: 12%;
         font-size: 2rem;
         width: 60%;
     }
@@ -812,7 +840,7 @@ footer a {
     }
 
     .text-hero-for-style-and-style3 h1 {
-        padding-top: 20%;
+        padding-top: 12%;
        
     }
 
@@ -856,6 +884,10 @@ footer a {
 
     .img-1-div {
         margin-bottom: auto;
+    }
+
+    .badges { 
+        bottom: 7%;
     }
 
     .about-video-section {
