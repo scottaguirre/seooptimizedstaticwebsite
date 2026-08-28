@@ -45,6 +45,7 @@ const { addUsedQuestions } = require('./generateLocationFaq');
 const { generateServiceCards } = require('./buildServiceCards');
 const { generatePricing } = require('./buildPricingTable');
 const { buildSitemap } = require('./buildSitemap');
+const { buildHtaccess } = require('./buildHtaccess');
 const { stripUnusedHero } = require('./stripUnusedHero');
 const { serviceMeta } = require('./pageMeta');
 const { log } = require('./logger');
@@ -880,6 +881,12 @@ async function runGeneration(ctx) {
     if (!isSample) {
       await report({ stage: 'Finishing up', current: 'sitemap.xml', done: pagesDone });
       buildSitemap(distDir, globalValues);
+
+      // Written alongside the sitemap on purpose: both declare the site's one
+      // true address, and both read it from siteBaseUrl()/normalizeDomain().
+      // Keeping them together is what stops the redirect and the canonical
+      // ever pointing at different hostnames.
+      buildHtaccess(distDir, globalValues);
     }
 
 

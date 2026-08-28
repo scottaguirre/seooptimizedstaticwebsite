@@ -22,11 +22,13 @@ function siteBaseUrl(domain) {
   const raw = String(domain || '').trim();
   if (!raw) return '';
 
-  // Validate BEFORE normalising: normalizeDomain() prepends "www.", so a
-  // bare word like "notadomain" would otherwise pass a naive dot check as
-  // "www.notadomain" and produce an unreachable sitemap URL.
-  const bare = raw.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(bare)) return '';
+  // Must still look like a hostname after cleaning. normalizeDomain no longer
+  // prepends "www." (it used to, which is why this check ran on `raw` first —
+  // a bare word like "notadomain" became "www.notadomain" and passed a naive
+  // dot check). Validating the normalised form is now both correct and
+  // simpler, and it catches a pasted path that would otherwise survive.
+  const bare = normalizeDomain(raw);
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(bare)) return '';
 
   const normalized = normalizeDomain(raw);
   return normalized ? `https://${normalized}` : '';
