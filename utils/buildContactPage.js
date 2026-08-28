@@ -170,60 +170,59 @@ const buildContactPage = async function (
 
   contact = contact
     // Self-referencing canonical, matching the sitemap's entry for this page.
-    .replace(/{{CANONICAL}}/g, canonicalTag(globalValues, 'contact.html'))
-    .replace(/{{JSON_LD_SCHEMA}}/g, globalValues.contactSchema || globalValues.jsonLdString || '')
-    .replace(/{{FAVICON_PATH}}/g, globalValues.favicon)
-    .replace(/{{LOGO_PATH}}/g, globalValues.logo)
-    .replace(/{{LOGO_ALT}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location}`)
-    .replace(/{{LOGO_TITLE}}/g, `Logo image of ${globalValues.businessName} in ${globalValues.location}`)
-    .replace(/{{LOGO_WIDTH}}/g, String(globalValues.logoWidth))
-    .replace(/{{LOGO_HEIGHT}}/g, String(globalValues.logoHeight))
+    .replace(/{{CANONICAL}}/g, () => (canonicalTag(globalValues, 'contact.html')))
+    .replace(/{{JSON_LD_SCHEMA}}/g, () => (globalValues.contactSchema || globalValues.jsonLdString || ''))
+    .replace(/{{FAVICON_PATH}}/g, () => (globalValues.favicon))
+    .replace(/{{LOGO_PATH}}/g, () => (globalValues.logo))
+    .replace(/{{LOGO_ALT}}/g, () => (`Logo image of ${globalValues.businessName} in ${globalValues.location}`))
+    .replace(/{{LOGO_TITLE}}/g, () => (`Logo image of ${globalValues.businessName} in ${globalValues.location}`))
+    .replace(/{{LOGO_WIDTH}}/g, () => (String(globalValues.logoWidth)))
+    .replace(/{{LOGO_HEIGHT}}/g, () => (String(globalValues.logoHeight)))
     // From utils/pageMeta.js — the trade and the place, no business name.
     // Identical in every mode: only the index page's format varies.
-    .replace(/{{PAGE_TITLE}}/g, contactMeta(globalValues).title)
-    .replace(/{{META_DESCRIPTION}}/g, contactMeta(globalValues).description)
+    .replace(/{{PAGE_TITLE}}/g, () => (contactMeta(globalValues).title))
+    .replace(/{{META_DESCRIPTION}}/g, () => (contactMeta(globalValues).description))
 
-    .replace(/{{HERO_IMG_MOBILE}}/g,  img('heroMobile'))
-    .replace(/{{HERO_IMG_TABLET}}/g,  img('heroTablet'))
-    .replace(/{{HERO_IMG_DESKTOP}}/g, img('heroDesktop'))
-    .replace(/{{HERO_IMG_LARGE}}/g,   img('heroLarge'))
-    .replace(/{{HERO_IMG_ALT}}/g, escapeAttr(heroAlt))
-    .replace(/{{HERO_IMG_TITLE}}/g, escapeAttr(heroAlt))
+    .replace(/{{HERO_IMG_MOBILE}}/g, () => (img('heroMobile')))
+    .replace(/{{HERO_IMG_TABLET}}/g, () => (img('heroTablet')))
+    .replace(/{{HERO_IMG_DESKTOP}}/g, () => (img('heroDesktop')))
+    .replace(/{{HERO_IMG_LARGE}}/g, () => (img('heroLarge')))
+    .replace(/{{HERO_IMG_ALT}}/g, () => (escapeAttr(heroAlt)))
+    .replace(/{{HERO_IMG_TITLE}}/g, () => (escapeAttr(heroAlt)))
 
-    .replace(/{{BUSINESS_NAME}}/g, globalValues.businessName.toUpperCase())
-    .replace(/{{LOCATION}}/g, globalValues.location)
+    .replace(/{{BUSINESS_NAME}}/g, () => (globalValues.businessName.toUpperCase()))
+    .replace(/{{LOCATION}}/g, () => (globalValues.location))
 
-    .replace(/{{CONTACT_DETAILS_H3}}/g, 'Contact Details')
+    .replace(/{{CONTACT_DETAILS_H3}}/g, () => ('Contact Details'))
     // The hero heading is "Contact Us", not the business name.
     //
     // The name is already in the nav, the details block, the NAP block and
     // the footer; as an H1 here it says nothing about what the page is for.
     // "Contact Us" tells a visitor they are in the right place.
-    .replace(/{{HERO_H1}}/g, 'Contact Us')
+    .replace(/{{HERO_H1}}/g, () => ('Contact Us'))
 
-    .replace(/{{BUSINESS_NAME_TITLE}}/g, escapeAttr(globalValues.businessName || ''))
-    .replace(/{{SERVICES_LIST}}/g, buildServicesList(pages))
+    .replace(/{{BUSINESS_NAME_TITLE}}/g, () => (escapeAttr(globalValues.businessName || '')))
+    .replace(/{{SERVICES_LIST}}/g, () => (buildServicesList(pages)))
 
-    .replace(/{{CONTACT_H2}}/g, escapeAttr(introHeading).toUpperCase())
+    .replace(/{{CONTACT_H2}}/g, () => (escapeAttr(introHeading).toUpperCase()))
     // NOT escaped: the interlinker has inserted <a> tags, and escaping here
     // would render them as visible markup.
-    .replace(/{{CONTACT_P1}}/g, introParas[0] || '')
-    .replace(/{{CONTACT_P2}}/g, introParas[1] || '')
+    .replace(/{{CONTACT_P1}}/g, () => (introParas[0] || ''))
+    .replace(/{{CONTACT_P2}}/g, () => (introParas[1] || ''))
 
     // The home page's form, unchanged
-    .replace(/{{FORM}}/g, formHtml || '')
+    .replace(/{{FORM}}/g, () => (formHtml || ''))
 
-    .replace(/{{ADDRESS}}/g, globalValues.address || '')
-    .replace(/{{EMAIL}}/g, globalValues.email || '')
-    .replace(/{{HOURS_TIME}}/g, getHoursTimeText(globalValues.is24Hours, globalValues.hours))
-    .replace(/{{PHONE_RAW}}/g, formatPhoneForHref(globalValues.phone))
-    .replace(/{{PHONE_DISPLAY}}/g, globalValues.phone || '')
-    .replace(/{{MAP_IFRAME_SRC}}/g, globalValues.mapEmbed || '')
-    .replace(/{{MAP_IFRAME_TITLE}}/g,
-      escapeAttr(`Google map of ${globalValues.businessName} — ${globalValues.address || globalValues.location}`))
+    .replace(/{{ADDRESS}}/g, () => (globalValues.address || ''))
+    .replace(/{{EMAIL}}/g, () => (globalValues.email || ''))
+    .replace(/{{HOURS_TIME}}/g, () => (getHoursTimeText(globalValues.is24Hours, globalValues.hours)))
+    .replace(/{{PHONE_RAW}}/g, () => (formatPhoneForHref(globalValues.phone)))
+    .replace(/{{PHONE_DISPLAY}}/g, () => (globalValues.phone || ''))
+    .replace(/{{MAP_IFRAME_SRC}}/g, () => (globalValues.mapEmbed || ''))
+    .replace(/{{MAP_IFRAME_TITLE}}/g, () => (escapeAttr(`Google map of ${globalValues.businessName} — ${globalValues.address || globalValues.location}`)))
 
-    .replace(/{{CURRENT_YEAR}}/g, new Date().getFullYear())
-    .replace(/{{SOCIAL_LINKS}}/g, buildSocialLinks(globalValues));
+    .replace(/{{CURRENT_YEAR}}/g, () => (new Date().getFullYear()))
+    .replace(/{{SOCIAL_LINKS}}/g, () => (buildSocialLinks(globalValues)));
 
   // Remove the email line and its rule when no email was given
   if (!(globalValues.email || '').trim()) {

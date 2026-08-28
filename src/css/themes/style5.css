@@ -226,6 +226,8 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 
+
+
 .style-4-image-wrap img {
     width: 90%;
     margin: auto;
@@ -234,6 +236,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     margin-bottom: 25px;
     box-shadow: 10px 0.5rem 5px black;   
 }
+
 
 .text-hero-for-style4 {
     background: transparent;
@@ -265,6 +268,17 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     width: 130px;
     margin: 10px auto;
     border-bottom: white 2px solid;
+}
+
+.badges {
+    position: absolute;
+    left: 8%;
+    bottom: 5%;
+}
+
+img.award, img.licensed {
+    width: 15% !important;  
+    box-shadow: none;
 }
 
 
@@ -426,6 +440,25 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     border-radius: 50px;
 }
 
+.service-cards {
+    margin-top: 20px;
+}
+
+.service-card {
+    padding-bottom: 20px;;
+}
+
+.service-card-icon svg {
+    color: #0d6efd;
+}
+
+.section-5 .col-md-5 .img-fluid {
+    text-align: center;
+    box-shadow: 15px -15px 1px #0a65fc;
+    border-radius: 10px;
+    border: 2px solid rgb(6, 18, 87);
+
+}
 
 
 .row-first-section-2-img, .row-second-section-2-img {
@@ -713,6 +746,16 @@ footer a {
         width: 80%;
     }
 
+    .badges {
+        position: absolute;
+        left: 8%;
+        bottom: 5%;
+    }
+    
+    .award, .licensed {
+        width: 15%;  
+    }
+
     
 
     .hero-img-mobile {
@@ -754,8 +797,7 @@ footer a {
 
     .style-4-image-wrap {
         padding-top: 30px;
-    }
-
+    } 
   
 
     .hero-img-tablet {
@@ -793,6 +835,7 @@ footer a {
     .img-1-div {
         margin-bottom: auto;
     }
+
 
 }
 
@@ -854,6 +897,10 @@ footer a {
         font-size: 3rem;
     }
 
+    .badges { 
+        bottom: 10%;
+    }
+
 }
   
 
@@ -903,7 +950,7 @@ footer a {
 
     .cta-btn a p {
         padding:20px;
-    }
+    } 
 
 }
   
@@ -1038,4 +1085,265 @@ footer a {
     .faq-section .col-lg-6:not(:last-child) {
         margin-bottom: var(--faq-gap);
     }
+}
+
+/* ==========================================================================
+   Pricing table — style4 (white page / navy panels / blue accents)
+   --------------------------------------------------------------------------
+   REPLACES the previous pricing block in this one theme file.
+
+   CSS only, same markup.
+
+   THE SHAPE IS BORROWED, NOT INVENTED
+
+   This theme's rhythm is white sections interrupted by a rounded panel:
+
+       .section-2               { background: rgb(6,18,87); width: 90%;
+                                  margin: auto; border-radius: 20px; }
+       .second-button-container { background: #0a65fc;      width: 90%;
+                                  margin: auto; border-radius: 20px; }
+
+   The pricing section takes exactly that shape. It is a feature block — the
+   one place on the page with hard numbers — so it earns a panel rather than
+   sitting flat on white like sections 1, 3 and 4.
+
+   THE PRICE COLOUR IS NOT #0a65fc, AND THAT IS DELIBERATE
+
+   The obvious move is to reuse the theme's blue for the figures. Measured
+   against the navy panel it does not hold up:
+
+       #0a65fc on rgb(6,18,87)   3.47:1   large text only, and muddy
+       #8ec5ff on rgb(6,18,87)   9.40:1   clean
+
+   Blue on blue at 3.5:1 is legible in the sense that you can make it out, not
+   in the sense that a price list should be. #8ec5ff is the same hue family,
+   lightened until it actually reads.
+
+   To port to another theme, change the six variables below.
+   ========================================================================== */
+
+   .pricing-section {
+    --price-panel:  rgb(6, 18, 87);        /* .section-2 */
+    --price-ink:    #ffffff;
+    --price-accent: #8ec5ff;               /* the figures */
+    --price-soft:   rgba(255, 255, 255, .65);
+    --price-faint:  rgba(255, 255, 255, .45);
+    --price-rule:   rgba(255, 255, 255, .22);
+
+    /* the panel — same three values as .section-2 */
+    background: var(--price-panel);
+    color: var(--price-ink);
+    width: 90%;
+    margin: 0 auto;
+    margin-top: 60px;
+    border-radius: 20px;
+}
+
+/* The hero's .line-divider, reused: 130px, 2px, white. Left-aligned here
+   because body headings in this theme are left-aligned — only the hero
+   centres. */
+.pricing-section h2 {
+    position: relative;
+    color: var(--price-ink);
+    padding-bottom: 26px;
+}
+
+.pricing-section h2::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 130px;
+    height: 2px;
+    background: var(--price-ink);
+}
+
+/* --------------------------------------------------------------------------
+   The table
+   -------------------------------------------------------------------------- */
+
+.pricing-table {
+    width: 100%;
+    margin: 30px 0 0;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+/* The 2px white rule under the header is the same device as
+   .second-button-container's `border-top: 4px white solid` — a white edge
+   dividing two areas of colour. */
+.pricing-table thead th {
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;          /* matches the nav */
+    color: var(--price-ink);
+    padding: 0 16px 12px;
+    border-bottom: 2px solid var(--price-ink);
+}
+
+.pricing-table thead th:first-child { padding-left: 0; }
+
+.pricing-table thead th:last-child {
+    text-align: right;
+    padding-right: 0;
+}
+
+/* Row rules: a flat translucent white, not a gradient.
+   The dark theme fades its rules because it has a coloured accent to fade
+   FROM. Here the panel is already the accent, so a plain white hairline is
+   the honest version — a gradient would be decoration for its own sake. */
+.pricing-table tbody tr {
+    transition: background-color .18s ease;
+}
+
+.pricing-table tbody th,
+.pricing-table tbody td {
+    padding: 20px 16px;
+    vertical-align: baseline;
+    border: 0;
+    border-bottom: 1px solid var(--price-rule);
+}
+
+.pricing-table tbody tr:last-child th,
+.pricing-table tbody tr:last-child td { border-bottom: 0; }
+
+.pricing-table tbody th:first-child { padding-left: 0; }
+.pricing-table tbody td:last-child { padding-right: 0; }
+
+/* Hover: a white wash and the figure goes to full white. No glow — this
+   theme's shadows are hard black (box-shadow: 2px 4px 5px black), which is
+   invisible on navy. */
+.pricing-table tbody tr:hover { background-color: rgba(255, 255, 255, .06); }
+
+.pricing-table tbody tr:hover .pricing-amount { color: var(--price-ink); }
+
+/* --------------------------------------------------------------------------
+   Cells
+   -------------------------------------------------------------------------- */
+
+.pricing-service {
+    font-weight: 600;
+    font-size: 17px;
+    line-height: 1.35;
+    text-align: left;
+    color: var(--price-ink);
+}
+
+.pricing-note {
+    display: block;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--price-soft);
+    margin-top: 5px;
+}
+
+.pricing-range {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.pricing-amount {
+    display: block;
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: -.01em;
+    color: var(--price-accent);
+    /* the figures form a column, so the digits must share a width */
+    font-variant-numeric: tabular-nums;
+    transition: color .18s ease;
+}
+
+.pricing-unit {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--price-faint);
+    margin-top: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   The estimate notice
+   --------------------------------------------------------------------------
+   NOTE THE SELECTOR. `.pricing-disclaimer` on its own loses to this theme's
+   `.section-padding p` rule — same class count, but that one also names an
+   element, so it is more specific and the notice renders at 19px rather than
+   the 14px intended. Two classes takes it back.
+
+   Rounded, because everything in this theme is: 20px panels, 50px buttons,
+   50px images. A square-cornered box here would be the one hard edge on the
+   page.
+   -------------------------------------------------------------------------- */
+
+.pricing-section .pricing-disclaimer {
+    margin-top: 28px;
+    padding: 16px 20px;
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--price-soft);
+    background: rgba(255, 255, 255, .07);
+    border-left: 3px solid var(--price-ink);
+    border-radius: 0 12px 12px 0;
+}
+
+.pricing-section .pricing-disclaimer strong {
+    color: var(--price-ink);
+    font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+   Narrow screens
+   --------------------------------------------------------------------------
+   Each row stacks so the figure sits under the service rather than being
+   squeezed against it.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 575.98px) {
+    .pricing-table thead {
+        /* clipped, not display:none — the column headers stay in the
+           accessibility tree even though nothing shows */
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+    }
+
+    .pricing-table,
+    .pricing-table tbody,
+    .pricing-table tbody tr,
+    .pricing-table tbody th,
+    .pricing-table tbody td {
+        display: block;
+        width: 100%;
+    }
+
+    .pricing-table tbody tr {
+        padding: 16px 0;
+        border-bottom: 1px solid var(--price-rule);
+    }
+
+    .pricing-table tbody tr:last-child { border-bottom: 0; }
+
+    /* the rule moves to the row; the cells inside must not draw their own */
+    .pricing-table tbody th,
+    .pricing-table tbody td {
+        padding: 0;
+        border-bottom: 0;
+    }
+
+    .pricing-range {
+        text-align: left;
+        margin-top: 10px;
+    }
+
+    .pricing-amount,
+    .pricing-unit { display: inline-block; }
+
+    .pricing-unit { margin-left: 10px; }
 }
