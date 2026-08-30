@@ -7,7 +7,8 @@
     { key: 'style2', label: 'Design 2', preview: '/previews/style2.png' },
     { key: 'style3', label: 'Design 3', preview: '/previews/style3.png' },
     { key: 'style4', label: 'Design 4', preview: '/previews/style4.png' },
-    { key: 'style5', label: 'Design 5', preview: '/previews/style5.png' }
+    { key: 'style5', label: 'Design 5', preview: '/previews/style5.png' },
+    { key: 'style6', label: 'Design 6', preview: '/previews/style6.png' }
     // add more later: { key: 'style3', label: 'Style 3', preview: '/previews/style3.jpg' }, ...
   ];
 

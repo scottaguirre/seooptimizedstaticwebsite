@@ -107,11 +107,49 @@
 </div>
 <!--/HERO:overlay-->
 
+<!--HERO:split-->
+<!-- Hero Section for style6: two columns, CTA inside the left one -->
+<div class="container-fluid hero-container-for-style-and-style3-992px hero-container-for-style4">
+  <div class="row">
+
+    <div class="col-md-6">
+      <div class="text-hero-for-style-and-style3 text-hero-for-style4">
+        <h1 class="display-4 text-primary">{{HERO_H1}}</h1>
+        <div class="line-divider"></div>
+        <h2 class="lead">{{LOCATION}}</h2>
+      </div>
+
+      <!-- The CTA lives INSIDE this hero. The standalone one below is removed
+           by stripUnusedHero for the split layout, so a page never has two. -->
+      <div class="text-center btn-container first-button-container">
+        <div class="cta-btn"><a href="{{PHONE_RAW}}"><p>{{PHONE_DISPLAY}}</p></a></div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="style-4-image-wrap">
+        <picture>
+          <source media="(min-width:1250px)" srcset="{{HERO_IMG_LARGE}}"   width="1400" height="700">
+          <source media="(min-width:720px)"  srcset="{{HERO_IMG_DESKTOP}}" width="1250" height="700">
+          <source media="(min-width:601px)"  srcset="{{HERO_IMG_TABLET}}"  width="750"  height="400">
+          <img class="hero-img img-fluid" src="{{HERO_IMG_MOBILE}}" width="600" height="350"
+               alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}" fetchpriority="high">
+        </picture>
+      </div>
+    </div>
+
+  </div>
+</div>
+<!--/HERO:split-->
+
+
 
 <!-- 1st Button Section-->
+<!--HERO:cta-->
 <div class="text-center btn-container first-button-container">
   <div class="cta-btn"><a href="{{PHONE_RAW}}"><p>{{PHONE_DISPLAY}}</p></a></div>
 </div>
+<!--/HERO:cta-->
 
 
 <!-- Contact intro -->
