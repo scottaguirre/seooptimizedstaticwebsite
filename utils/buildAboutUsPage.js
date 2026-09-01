@@ -449,6 +449,14 @@ const  buildAboutUsPage =  async function (
                         CM.image({ role:'section4-img2', src:img('section4Img2'),
                                    alt:section4Alt2, width:600, height:400 }),
                     ],
+                    // The images row here is the page's SECOND two-image block,
+                    // and aboutUsTemplate.html marks it row-second-section-2-img.
+                    // The exporter's fallback table is keyed on the section key,
+                    // and 'section3' is a plain text block on every other page
+                    // type — so it handed this one row-first-section-2-img and
+                    // the two images sat at the wrong vertical rhythm. Declared
+                    // here, the table is never consulted.
+                    extra: { rowClass: 'row-second-section-2-img' },
                 }),
             ];
 
@@ -480,7 +488,12 @@ const  buildAboutUsPage =  async function (
             // ({{SERVICE_CARDS}} is inside that section), so insert them there
             // rather than appending — pushing left them after the location
             // section in WordPress, in a different order to the static site.
-            const serviceCardsSection = CM.serviceCardsSection(serviceCards);
+            //
+            // Order alone was not enough. {{SERVICE_CARDS}} is inside
+            // section-3's .container.section-padding, so the cards need to be
+            // nested, not merely adjacent: nestIn says so explicitly instead
+            // of leaving the exporter to guess from position.
+            const serviceCardsSection = CM.serviceCardsSection(serviceCards, { nestIn: 'section3' });
             if (serviceCardsSection) {
                 const afterServices = modelSections.findIndex(sec => sec.key === 'section3');
                 if (afterServices >= 0) {
@@ -528,7 +541,24 @@ const  buildAboutUsPage =  async function (
                         width: 400, height: 600,
                     }),
                 ],
-                extra: { videoUrl: globalValues.youtubeVideoUrl || '' },
+                extra: {
+                    videoUrl: globalValues.youtubeVideoUrl || '',
+
+                    // THE SECTION DECLARES ITS OWN LAYOUT.
+                    //
+                    // Without these two the WordPress page did not match the
+                    // static one. The key is 'section4', and themeModel maps
+                    // keys to classes through SECTION_STYLE — which mirrors
+                    // template.html, where section4 is a two-image block. On
+                    // the ABOUT page this same key is the service-area block:
+                    // one media slot beside the text, in a .section-5 wrapper.
+                    //
+                    // So the key meant two different layouts depending on the
+                    // page, and the exporter could only guess one. Naming the
+                    // layout here removes the guess.
+                    cssClass: 'section-5',
+                    mediaLayout: 'side',
+                },
             }));
 
             // Matches the static page's guard exactly: hasEmail AND the

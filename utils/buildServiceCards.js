@@ -157,7 +157,7 @@ function buildServiceCards(cards = []) {
   }).join('');
 
   return `
-    <div class="row g-4 service-cards">${cardHtml}
+    <div class="row service-cards">${cardHtml}
     </div>`;
 }
 

@@ -12,15 +12,18 @@
      background: transparent !important;
 }
 
-.navbar-toggler {
-    background-color: white; 
-} 
 
 .navbar-nav {
     margin-top: 25px;
     width: 300px;
     position: relative;
     left: 0px;
+    margin-top: 0;
+}
+
+
+.navbar-toggler {
+    background-color: white;
 }
 
 .nav-link {
@@ -42,23 +45,39 @@ a.nav-link:hover, .menu-item a:hover {
 }
 
 
+
 a.nav-link.active, .current-menu-item a {
     color: #ee5519 !important;
     font-weight: bold;
 }
 
+/*
+
 a.nav-link.active:hover, .current-menu-item a:hover {
     border-bottom: 2px solid white;
 }
 
+*/
+
+ a.nav-link.active:hover, .current-menu-item a:hover {
+    border-bottom: 0;
+    color: red !important; 
+
+}
+
 .nav-item, .menu-item {
+    background: hsla(207, 45%, calc(38% - 25%), 100%);
     font-size: 16px;
     margin-bottom: 20px;
     list-style: none;
 }
 
+.navbar-nav .nav-link.show {
+    color: white;
+}
+
 .nav-item:has(a.active) {
-    margin-bottom: 30px;
+   /* margin-bottom: 30px; */
 }
 
 
@@ -67,18 +86,16 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 
+
 .navbar-nav .dropdown-menu, .sub-menu {
-    background: white;
-}
-
-
-.navbar-nav .dropdown-menu {
     position: relative;
     width: 250px;
     left: 50px;
     padding-top: 0;
     padding-bottom: 0;
     margin-top: 15px;
+    border-radius: 0;
+    border: 1px solid black;
 }
 
 
@@ -799,6 +816,7 @@ footer a {
     }
 
 
+
     .text-hero-for-style4 h1 {
         width: 100%;
         font-size: 2.5rem;
@@ -839,6 +857,14 @@ footer a {
             #ee5519 var(--cut, 25px),
             transparent var(--cut, 25px)
         );
+    }
+
+    .dropdown-menu li:last-child, .sub-menu li.menu-item:last-child {
+        background-image: none;
+        border: none;
+        padding-top: 15px;
+        padding-bottom: 15px;
+        margin-top: initial;
     }
 
 

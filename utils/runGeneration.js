@@ -925,6 +925,41 @@ async function runGeneration(ctx) {
 
     CM.writeModel(distDir, contentModel);
 
+    // STRUCTURE PARITY.
+    //
+    // The static pages and content.json are two independent passes over the
+    // same data, and every time they have drifted the symptom has been the
+    // same: the exported WordPress site lays out differently to the site the
+    // customer downloaded. This compares them and says so in the log.
+    //
+    // It WARNS, it does not throw. The static site is already written and
+    // already correct — it is the ground truth this checks against — so a
+    // mismatch is a reason to look at the exporter, never a reason to fail a
+    // build the customer has waited for and is about to be charged for.
+    try {
+      const { checkSite } = require('./checkStructureParity');
+      const parity = checkSite(distDir);
+
+      if (parity.skipped) {
+        // no content.json — writeModel already logged why
+      } else if (parity.ok) {
+        console.log(parity.text);
+      } else {
+        console.warn(parity.text);
+        log.generation('generation.structure_drift', {
+          requestId: ctx.requestId,
+          userId,
+          differences: parity.problems.length,
+          // The first few are enough to identify the section; the full report
+          // is in the build log directly above this.
+          sample: parity.problems.slice(0, 5).map(p => `${p.where}: ${p.what}`),
+        });
+      }
+    } catch (err) {
+      // A bug in the checker must never take down a successful generation.
+      console.warn('⚠️ structure check could not run:', err.message);
+    }
+
 
     // Charge only now that the build has succeeded
     const remaining = await chargeCredits(ctx.user, credit.totalCost);

@@ -89,7 +89,31 @@ function ${p}_image_url( $value ) {
         return $value;
     }
 
-    return trailingslashit( get_template_directory_uri() ) . $value;
+    $url = trailingslashit( get_template_directory_uri() ) . $value;
+
+    // CACHE BUSTING, the same device already used for the stylesheets.
+    //
+    // Every export writes the same filenames — assets/section2Img1.webp and
+    // so on — so an image's URL never changes between builds even when the
+    // picture behind it does. A browser that has fetched it once has no
+    // reason to ask again, which is how a rebuilt site can keep showing the
+    // PREVIOUS business's photographs long after the files were replaced.
+    //
+    // The file's modification time changes on every export, so appending it
+    // makes each build's images distinct URLs and the browser re-fetches.
+    //
+    // Only theme-relative paths reach this point: an attachment ID returned
+    // above already gets a unique URL from WordPress, and an absolute URL is
+    // somebody else's asset to version.
+    $path = get_template_directory() . '/' . $value;
+    if ( file_exists( $path ) ) {
+        $mtime = filemtime( $path );
+        if ( $mtime ) {
+            $url = add_query_arg( 'v', $mtime, $url );
+        }
+    }
+
+    return $url;
 }
 
 /**
@@ -371,13 +395,22 @@ function ${p}_render_hero( $post_id, $s ) {
     $h1      = ${p}_field( $post_id, $key, 'heading' );
     $tagline = ${p}_field( $post_id, $key, 'subheading' );
 
-    // Only one hero block is rendered — the one this design displays. The
-    // theme was built for a single style, so the choice is baked in at build
-    // time rather than decided here. See utils/stripUnusedHero.js; this
-    // constant is written to match.
+    // Only the block this design displays is rendered. The theme is built for
+    // one style, so the choice is baked in at build time rather than decided
+    // here. The value comes from HERO_LAYOUT in utils/stripUnusedHero.js — the
+    // same map the static build uses, so the two cannot disagree.
+    //
+    // POSITIVE CONDITIONS, ON PURPOSE. This used to read
+    //     if ( $layout !== 'overlay' )   ... standard
+    //     if ( $layout !== 'standard' )  ... overlay
+    // which is fine for two layouts and silently wrong for three: 'split'
+    // matches neither exclusion, so BOTH legacy blocks rendered and the
+    // WordPress page carried two heroes and two <h1>s while the static site
+    // carried one. Naming the layouts each block belongs to means a fourth
+    // layout added later renders nothing here rather than everything.
     $layout = '${heroLayout}';
     ?>
-    <?php if ( $layout !== 'overlay' ) : ?>
+    <?php if ( $layout === 'standard' || $layout === 'both' ) : ?>
     <div class="container-fluid hero-container">
       <div class="row align-items-center justify-content-center">
         <div class="col-lg-6 order-lg-2 hero-img-wrap">
@@ -393,7 +426,7 @@ function ${p}_render_hero( $post_id, $s ) {
     </div>
     <?php endif; ?>
 
-    <?php if ( $layout !== 'standard' ) : ?>
+    <?php if ( $layout === 'overlay' || $layout === 'both' ) : ?>
     <div class="container-fluid hero-container-for-style-and-style3-992px hero-container-for-style4">
       <div class="style-4-image-wrap">
         <?php ${p}_hero_picture( $post_id, $key ); ?>
@@ -406,7 +439,45 @@ function ${p}_render_hero( $post_id, $s ) {
       </div>
     </div>
     <?php endif; ?>
+
+    <?php if ( $layout === 'split' ) : ?>
+    <div class="container-fluid hero-container-for-style-and-style3-992px hero-container-for-style4">
+      <div class="row">
+
+        <div class="col-md-6">
+          <div class="text-hero-for-style-and-style3 text-hero-for-style4">
+            <h1 class="display-4 text-primary"><?php echo esc_html( $h1 ); ?></h1>
+            <div class="line-divider"></div>
+            <h2 class="lead"><?php echo esc_html( $tagline ); ?></h2>
+          </div>
+
+          <?php // The CTA sits INSIDE this hero, matching the static markup.
+                // ${p}_render_sections() suppresses the standalone one below. ?>
+          <?php ${p}_render_cta_button( 'first-button-container' ); ?>
+        </div>
+
+        <div class="col-md-6">
+          <div class="style-4-image-wrap">
+            <?php ${p}_hero_picture( $post_id, $key ); ?>
+            <?php ${p}_hero_badges( $post_id, $key ); ?>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <?php endif; ?>
     <?php
+}
+
+/**
+ * True when the chosen hero already contains the phone CTA.
+ *
+ * Mirrors CTA_INSIDE_HERO in utils/stripUnusedHero.js, which removes the
+ * standalone button from the static templates for the same layouts. Without
+ * this the WordPress page shows the phone number twice in a row.
+ */
+function ${p}_hero_has_cta() {
+    return '${heroLayout}' === 'split';
 }
 
 /**
@@ -512,7 +583,7 @@ function ${p}_render_text( $post_id, $s, $index ) {
     <?php
 }
 
-function ${p}_render_text_images( $post_id, $s, $index ) {
+function ${p}_render_text_images( $post_id, $s, $index, $nested = array() ) {
     $key     = $s['key'];
     $heading = ${p}_field( $post_id, $key, 'heading' );
     $roles   = isset( $s['image_roles'] ) && is_array( $s['image_roles'] ) ? $s['image_roles'] : array();
@@ -525,6 +596,46 @@ function ${p}_render_text_images( $post_id, $s, $index ) {
     }
     $class   = ! empty( $s['css_class'] ) ? $s['css_class'] : 'section-' . $index;
     $rowclass = ! empty( $s['row_class'] ) ? $s['row_class'] : 'row-first-section-2-img';
+
+    // 'side' = text and ONE media slot next to each other, which is what
+    // buildAboutMediaHtml() renders on the static About page. Anything else
+    // gets the stacked layout used by sections 2 and 3: an images row on top,
+    // text underneath.
+    //
+    // This branch used to exist only for videos. With an image the section
+    // fell through to the stacked layout, so the About page's service-area
+    // block came out as a full-width image above the text in WordPress and
+    // side by side in the download — the same content, two layouts.
+    $media_layout = ! empty( $s['media_layout'] ) ? $s['media_layout'] : 'stacked';
+
+    if ( $media_layout === 'side' ) {
+        $media_role = ! empty( $roles ) ? $roles[0] : '';
+        $media_img  = $media_role ? ${p}_image( $post_id, $key, $media_role ) : array( 'url' => '' );
+        ?>
+        <section class="<?php echo esc_attr( $class ); ?>">
+          <div class="container section-padding">
+            <div class="row align-items-center">
+              <div class="col-md-7 div-text-padding-bottom">
+                <?php if ( $heading ) : ?><h2><?php echo esc_html( $heading ); ?></h2><?php endif; ?>
+                <div class="line-divider city-line-divider"></div>
+                <?php ${p}_echo_paragraphs( $post_id, $key ); ?>
+              </div>
+              <div class="col-md-5">
+                <?php
+                if ( $video_url !== '' ) {
+                    ${p}_render_video_embed( $video_url );
+                } elseif ( ! empty( $media_img['url'] ) ) {
+                    ${p}_img_tag( $media_img, 'img-fluid' );
+                }
+                ?>
+              </div>
+            </div>
+            <?php ${p}_render_nested( $post_id, $nested ); ?>
+          </div>
+        </section>
+        <?php
+        return;
+    }
     ?>
     <section class="bg-secondary-subtle text-two-images-section <?php echo esc_attr( $class ); ?>">
       <div class="container section-padding">
@@ -568,9 +679,43 @@ function ${p}_render_text_images( $post_id, $s, $index ) {
           </div>
         </div>
         <?php endif; ?>
+        <?php ${p}_render_nested( $post_id, $nested ); ?>
       </div>
     </section>
     <?php
+}
+
+/**
+ * Section types that emit bare markup — no <section>, no .container of their
+ * own — and can therefore be drawn inside another section's container.
+ *
+ * Everything else brings its own wrapper, so nesting it would produce a
+ * <section> inside a <section>. ${p}_render_sections() checks this list and
+ * leaves any other 'nest_in' section at the top level, where it renders
+ * exactly as it did before rather than disappearing.
+ */
+function ${p}_nestable_types() {
+    return array( 'service-cards' );
+}
+
+/**
+ * Render the sections that declared they belong inside this one.
+ */
+function ${p}_render_nested( $post_id, $nested ) {
+    foreach ( (array) $nested as $n ) {
+        if ( empty( $n['type'] ) || empty( $n['key'] ) ) {
+            continue;
+        }
+        if ( ${p}_section_is_empty( $post_id, $n ) ) {
+            continue;
+        }
+
+        switch ( $n['type'] ) {
+            case 'service-cards':
+                ${p}_render_service_cards( $post_id, $n );
+                break;
+        }
+    }
 }
 
 /**
@@ -704,7 +849,11 @@ function ${p}_render_service_cards( $post_id, $s ) {
 
     $icons = ${p}_service_card_icons();
     ?>
-    <div class="row g-4 service-cards">
+    <!-- No g-4. buildServiceCards() on the static side emits
+         class="row service-cards", and the gap is set in the theme CSS.
+         Bootstrap's g-4 added a gutter here that the downloaded site does
+         not have, so the cards sat further apart in WordPress. -->
+    <div class="row service-cards">
       <?php foreach ( $cards as $i => $card ) : ?>
         <div class="col-md-6 col-lg-4">
           <div class="service-card h-100">
@@ -790,7 +939,9 @@ function ${p}_render_pricing( $post_id, $s ) {
     <section class="pricing-section">
       <div class="container section-padding">
         <div class="row">
-          <!-- Narrower and centred; matches the static build -->
+          <!-- Narrower than the prose sections and centred: the table has only
+           two columns, so at col-lg-10 the price sat a long way from the
+           service name. mx-auto gives it equal margins either side. -->
           <div class="col-lg-8 mx-auto">
             <h2><?php echo esc_html( $heading ); ?></h2>
 
@@ -1496,8 +1647,52 @@ function ${p}_render_sections( $post_id ) {
 
     $text_index = 1;
 
+    // NESTING, DECLARED BY THE CHILD.
+    //
+    // A section may name another section it belongs INSIDE — the About page's
+    // service cards sit in section-3's .container.section-padding, which is
+    // where {{SERVICE_CARDS}} is in aboutUsTemplate.html. Being next in the
+    // list is not the same as being inside, and the flat loop could only ever
+    // produce "next".
+    //
+    // Collected up front so the parent can draw them in place, and so this
+    // loop knows to skip them. A hint naming a section that is not in this
+    // page, or naming a parent that is itself skipped as empty, leaves the
+    // child at the top level — the old behaviour, not a blank space.
+    $nested_by_parent = array();
+    $nested_keys      = array();
+    $nestable         = ${p}_nestable_types();
+    $renderable_keys  = array();
+
+    foreach ( $sections as $s ) {
+        // A parent that is itself skipped cannot hold anything, so its
+        // children stay at the top level and still render.
+        if ( ! empty( $s['key'] ) && ! empty( $s['type'] ) && ! ${p}_section_is_empty( $post_id, $s ) ) {
+            $renderable_keys[ $s['key'] ] = true;
+        }
+    }
+
+    foreach ( $sections as $s ) {
+        if ( empty( $s['nest_in'] ) || empty( $s['type'] ) || empty( $s['key'] ) ) {
+            continue;
+        }
+        if ( ! in_array( $s['type'], $nestable, true ) ) {
+            continue;
+        }
+        if ( empty( $renderable_keys[ $s['nest_in'] ] ) ) {
+            continue;
+        }
+        $nested_by_parent[ $s['nest_in'] ][] = $s;
+        $nested_keys[ $s['key'] ]            = true;
+    }
+
     foreach ( $sections as $s ) {
         if ( empty( $s['type'] ) || empty( $s['key'] ) ) {
+            continue;
+        }
+
+        // Drawn by its parent, further down this same list.
+        if ( ! empty( $nested_keys[ $s['key'] ] ) ) {
             continue;
         }
 
@@ -1510,8 +1705,11 @@ function ${p}_render_sections( $post_id ) {
         switch ( $s['type'] ) {
             case 'hero':
                 ${p}_render_hero( $post_id, $s );
-                // CTA directly under the hero, as in the static build
-                ${p}_render_cta_button( 'first-button-container' );
+                // CTA directly under the hero, as in the static build — unless
+                // this layout's hero already contains one.
+                if ( ! ${p}_hero_has_cta() ) {
+                    ${p}_render_cta_button( 'first-button-container' );
+                }
                 break;
 
             case 'text':
@@ -1520,7 +1718,12 @@ function ${p}_render_sections( $post_id ) {
                 break;
 
             case 'text-images':
-                ${p}_render_text_images( $post_id, $s, $text_index );
+                ${p}_render_text_images(
+                    $post_id,
+                    $s,
+                    $text_index,
+                    isset( $nested_by_parent[ $s['key'] ] ) ? $nested_by_parent[ $s['key'] ] : array()
+                );
                 $text_index++;
                 // Second CTA after the first image section, as in the static build
                 if ( ! empty( $s['cta_after'] ) ) {

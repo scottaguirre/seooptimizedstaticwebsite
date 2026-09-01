@@ -175,7 +175,8 @@ function buildPricingTable(rows = [], options = {}) {
   const heading = options.heading || 'Typical Service Pricing';
   const notice = options.notice || DEFAULT_NOTICE;
 
-  const body = items.map(row => `
+  const body = items.map(row => {
+    return `
               <tr>
                 <th scope="row" class="pricing-service">
                   ${escapeHtml(row.name)}
@@ -185,7 +186,8 @@ function buildPricingTable(rows = [], options = {}) {
                   <span class="pricing-amount">${money(row.low)} &ndash; ${money(row.high)}</span>
                   ${row.unit ? `<span class="pricing-unit">${escapeHtml(row.unit)}</span>` : ''}
                 </td>
-              </tr>`).join('');
+              </tr>`;
+  }).join('');
 
   return `
 <section class="pricing-section">

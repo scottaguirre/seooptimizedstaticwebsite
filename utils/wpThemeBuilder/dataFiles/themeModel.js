@@ -71,9 +71,28 @@ function normaliseSection(section) {
     image_roles: (section.images || []).map(img => img.role),
   };
 
-  if (style.css_class) out.css_class = style.css_class;
-  if (style.row_class) out.row_class = style.row_class;
+  // SECTION_STYLE is a fallback keyed on the section key, and a key does not
+  // uniquely identify a layout — 'section4' is a two-image block on a service
+  // page and the service-area block on the About page. A section that names
+  // its own class or layout therefore wins over the table.
+  const cssClass = section.cssClass || style.css_class;
+  const rowClass = section.rowClass || style.row_class;
+
+  if (cssClass) out.css_class = cssClass;
+  if (rowClass) out.row_class = rowClass;
   if (style.cta_after) out.cta_after = true;
+
+  // 'side'  -> text and one media slot side by side (col-md-7 / col-md-5),
+  //            which is what buildAboutMediaHtml() renders on the static page
+  // absent  -> the stacked two-image layout used by sections 2 and 3
+  if (section.mediaLayout) out.media_layout = section.mediaLayout;
+
+  // Nesting, declared by the child. The renderer draws this section inside
+  // the named section's .container instead of after it. Only types that emit
+  // no wrapper of their own are eligible — see ${p}_nestable_types() in the
+  // renderer, which ignores the hint for anything else rather than producing
+  // a <section> inside a <section>.
+  if (section.nestIn) out.nest_in = section.nestIn;
 
   if (section.headingTag) out.heading_tag = section.headingTag;
 

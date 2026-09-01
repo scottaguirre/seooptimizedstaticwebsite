@@ -253,11 +253,11 @@ function faqSection(faqs = [], label = 'FAQ', heading = 'Frequently Asked Questi
  * The six service cards under the Services paragraphs. Stored as name/line
  * pairs so each card is editable in WordPress.
  */
-function serviceCardsSection(cards = []) {
+function serviceCardsSection(cards = [], opts = {}) {
   const items = (cards || []).filter(c => c && c.name);
   if (!items.length) return null;
 
-  return {
+  const out = {
     key: 'serviceCards',
     label: 'Service Cards',
     type: SECTION_TYPES.SERVICE_CARDS,
@@ -269,6 +269,19 @@ function serviceCardsSection(cards = []) {
       line: String(c.line || '').trim(),
     })),
   };
+
+  // WHERE the cards go, declared rather than inferred.
+  //
+  // On the static About page {{SERVICE_CARDS}} sits INSIDE section-3's
+  // .container.section-padding, after the text row. The model listed the
+  // cards as their own top-level section, so WordPress rendered the row as a
+  // bare sibling with no container at all — same content, different box.
+  //
+  // `nestIn` names the section whose container they belong in. It stays a
+  // separate section so the WordPress admin keeps its own editable panel.
+  if (opts.nestIn) out.nestIn = String(opts.nestIn);
+
+  return out;
 }
 
 /**

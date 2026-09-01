@@ -175,10 +175,28 @@ function ${p}_section_descriptors( $sections ) {
             'type'  => $s['type'],
         );
 
-        foreach ( array( 'css_class', 'row_class', 'image_roles', 'cta_after', 'heading_tag' ) as $extra ) {
-            if ( isset( $s[ $extra ] ) ) {
-                $d[ $extra ] = $s[ $extra ];
+        // EVERY layout hint rides along; only CONTENT is left out, because
+        // content is written to its own fields by ${p}_import_section().
+        //
+        // This used to be a whitelist of five keys, which meant any hint
+        // added to the model later was silently dropped on import — the
+        // renderer asked for it, got nothing, and quietly fell back to the
+        // old layout. Nothing errored, so the only symptom was a page that
+        // looked wrong. Listing what to LEAVE OUT instead means a new hint
+        // added in themeModel.js arrives without anyone having to remember
+        // this file exists.
+        $content_keys = array(
+            'key', 'label', 'type',
+            'heading', 'subheading', 'paragraphs', 'images',
+            'cards', 'trust_points', 'badges', 'pricing', 'notice', 'faqs',
+            'video_url', 'map_embed', 'address_override',
+        );
+
+        foreach ( $s as $extra => $value ) {
+            if ( in_array( $extra, $content_keys, true ) ) {
+                continue;
             }
+            $d[ $extra ] = $value;
         }
 
         $out[] = $d;
