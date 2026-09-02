@@ -64,8 +64,10 @@ function ${p}_register_meta_boxes() {
         'high'
     );
 
-    // SEO applies to posts too — the blog automation publishes them, and
-    // without this they ship with no title tag and no meta description.
+    // SEO applies to posts too. The Interlink Engine plugin sets these fields
+    // on the posts it publishes, and this box is how anyone edits them
+    // afterwards — or fills them in on a post written by hand, which would
+    // otherwise ship with no title tag and no meta description.
     foreach ( array( 'page', 'post' ) as $seo_type ) {
         add_meta_box(
             '${p}_seo',

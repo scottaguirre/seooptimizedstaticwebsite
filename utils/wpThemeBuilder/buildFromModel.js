@@ -15,6 +15,7 @@ const {
   ensureDir,
   fileExists,
   copyDirRecursive,
+  deleteFile,
 } = require('./wpHelpers/fileHelpers');
 
 const { makePhpIdentifier } = require('./wpHelpers/phpHelpers');
@@ -28,9 +29,12 @@ const { generateTemplateHelpersPhp } = require('./generators/templateHelpersPhp'
 const { generateContactFormHandlerPhp } = require('./generators/contactFormHandlerPhp');
 const { generateContactFormJs } = require('./generators/contactFormJs');
 const { generateStyleCss } = require('./generators/styleCss');
-const { generateBlogAutomationSettingsPhp } = require('./generators/blogAutomationSettingsPhp');
-const { generateBlogAutomationEnginePhp } = require('./generators/blogAutomationEnginePhp');
-const { generateBlogAutomationSchedulerPhp } = require('./generators/blogAutomationSchedulerPhp');
+
+// NOTE: blog automation used to be generated here (blog-automation-settings /
+// -engine / -scheduler). It has been removed. Scheduled posting now lives in
+// the Interlink Engine plugin, which keeps the OpenAI key on our server rather
+// than in the customer's WordPress database, and which survives a theme change.
+// The theme still styles and lists posts via single.php / home.php.
 
 // New / rewritten
 const { generateSectionRendererPhp } = require('./generators/sectionRendererPhp');
@@ -114,7 +118,21 @@ async function buildWordPressThemeFromModel(distDir, options = {}) {
   // 4. Core PHP
   await writeFile(
     path.join(wpThemeRoot, 'functions.php'),
-    generateFunctionsPhp({ themeSlug, themeName, cssFiles, hasBootstrapJs })
+    generateFunctionsPhp({
+      themeSlug,
+      themeName,
+      cssFiles,
+      hasBootstrapJs,
+      // Changes on every export, which is the whole point: it answers "are
+      // these theme files different from the ones already installed?"
+      //
+      // Not style.css's Version, which is the same string on every rebuild.
+      // And not model.generatedAt, which is stamped when the SITE is
+      // generated — re-exporting a theme after a generator fix would reuse
+      // yesterday's stamp and skip the purge, which is exactly the case this
+      // is here to catch.
+      buildStamp: new Date().toISOString(),
+    })
   );
 
   await writeFile(
@@ -157,18 +175,21 @@ async function buildWordPressThemeFromModel(distDir, options = {}) {
     generateContactFormJs()
   );
 
-  await writeFile(
-    path.join(incDir, 'blog-automation-settings.php'),
-    generateBlogAutomationSettingsPhp({ themeSlug })
-  );
-  await writeFile(
-    path.join(incDir, 'blog-automation-engine.php'),
-    generateBlogAutomationEnginePhp({ themeSlug })
-  );
-  await writeFile(
-    path.join(incDir, 'blog-automation-scheduler.php'),
-    generateBlogAutomationSchedulerPhp({ themeSlug })
-  );
+  // 4b. Remove blog-automation files left behind by an older build.
+  //
+  // buildFromModel() is often pointed at a theme directory that already
+  // exists. Dropping the writeFile calls above stops NEW themes shipping the
+  // old automation, but a rebuilt theme would keep the stale inc/*.php files
+  // on disk — and functions.php no longer requires them, so they would sit
+  // there dead, registering nothing but still visible to anyone reading the
+  // folder. Delete them explicitly.
+  for (const stale of [
+    'blog-automation-settings.php',
+    'blog-automation-engine.php',
+    'blog-automation-scheduler.php',
+  ]) {
+    await deleteFile(path.join(incDir, stale));
+  }
 
   // 5. Layout
   await writeFile(path.join(wpThemeRoot, 'header.php'), generateHeaderPhp({ themeSlug, themeName }));

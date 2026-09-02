@@ -33,6 +33,21 @@ const productionRoute = require('./routes/productionRoute');
 const downloadZipRoute = require('./routes/downloadZipRoute');
 const exportWpThemeRoute = require('./routes/exportWpThemeRoute');
 
+// Blog automation.
+//
+// Three routers, and the split matters:
+//
+//   blogApiRoute + blogTopicsRoute  called by the WordPress plugin. No session,
+//                                   no CSRF token, no browser — authenticated
+//                                   by an HMAC signature instead. Mounted
+//                                   BELOW, before the requireAuth block.
+//
+//   blogSitesRoute                  a normal admin page for the logged-in
+//                                   customer. Mounted WITH requireAuth.
+const blogApiRoute = require('./routes/blogApiRoute');
+const blogTopicsRoute = require('./routes/blogTopicsRoute');
+const blogSitesRoute = require('./routes/blogSitesRoute');
+
 
 
 
@@ -68,7 +83,21 @@ app.use(express.static('public'));
 app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }));
 
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+
+// The Interlink Engine plugin signs the EXACT BYTES of its request body, so
+// the raw buffer has to be kept for those paths. A re-serialised object does
+// not reproduce it — key order and whitespace both differ — and every
+// signature would fail with no useful error.
+//
+// Same problem as the Stripe webhook above, different solution: Stripe needs
+// the raw body INSTEAD of a parsed one, this needs it AS WELL AS.
+app.use(express.json({
+  verify: (req, res, buf) => {
+    if (req.path.startsWith('/api/blog/')) {
+      req.rawBody = buf;
+    }
+  },
+}));
 
 
 // ===== Express Session Middleware
@@ -229,8 +258,19 @@ const billingRoute = require('./routes/billingRoute');
 app.use('/', billingRoute);
 
 
+// Blog automation, called by the plugin on a customer's WordPress.
+//
+// Above requireAuth deliberately: these requests carry no session cookie and
+// would be redirected to /login by it. They are authenticated by requireSite,
+// which verifies an HMAC signature over the method, path and body — a stronger
+// check than a session, and the reason '/api/blog/' is listed in the CSRF
+// exemptions alongside the Stripe webhook.
+app.use('/', blogApiRoute);      // /api/blog/activate|plan|generate|complete
+app.use('/', blogTopicsRoute);   // /api/blog/suggest|enrich
+
+
 // ===== AUTH UNPROTECTED ROUTES FIRST =====
-app.use('/', authRoute); 
+app.use('/', authRoute);
 // login, signup, logout
 // these must come before requireAuth middleware
   
@@ -243,6 +283,7 @@ app.use('/', requireAuth, generateRoute);     // /generate
 app.use('/', requireAuth, productionRoute);   // /production
 app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
+app.use('/', requireAuth, blogSitesRoute);    // /blog-sites — licence keys
 
 
 
@@ -310,16 +351,33 @@ app.use((err, req, res, next) => {
 // runner keeps that module free of any dependency on site building.
 const jobRunner = require('./utils/jobRunner');
 const { generateForJob } = require('./utils/jobGenerator');
+const { generateBlogPost } = require('./utils/blogGenerator');
 
-jobRunner.registerGenerator(generateForJob);
+// One runner, two kinds of work. The kind is stored on the Job, and
+// claimNextJob only claims kinds this process has a generator for — which
+// matters during a rolling deploy, when an older instance would otherwise
+// claim a blog job it cannot run and leave it stuck.
+jobRunner.registerGenerator('site', generateForJob);
+jobRunner.registerGenerator('blog', generateBlogPost);
+
+// Wakes each customer's WordPress when a post is due. The schedule lives here
+// rather than in WP-Cron because WP-Cron fires on a visit, and a brand new
+// blog has no visitors — which is the entire reason someone is buying posts.
+const blogScheduler = require('./utils/blogScheduler');
 
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on http://localhost:${PORT}`);
 
-  // Only after Mongo is connected — the runner queries it immediately, and
-  // requeueing stale jobs on a dead connection would just log errors.
-  mongoose.connection.once('open', () => jobRunner.start());
-  if (mongoose.connection.readyState === 1) jobRunner.start();
+  // Only after Mongo is connected — both query it immediately, and requeueing
+  // stale jobs on a dead connection would just log errors.
+  const startWorkers = () => {
+    jobRunner.start();
+    blogScheduler.start();
+  };
+
+  mongoose.connection.once('open', startWorkers);
+  if (mongoose.connection.readyState === 1) startWorkers();
+
   log.info('server.started', { port: PORT, env: process.env.NODE_ENV || 'development' });
 });
 

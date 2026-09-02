@@ -1,0 +1,49 @@
+CAMPAIGN  Quality Plumbing Leander — Leander, TX
+TARGET    Water Heater Repair  https://qualityplumberleander.com/water-heater-repair-leander-tx/
+CADENCE   every 30 days
+ANCHORS   {"semantic":2,"descriptive":1,"exact":1}
+WRITER    gpt-5.6-terra effort=low verbosity=high
+
+QUERIES   all distinct, none competing with the service page
+
+ORPHANS   none — every post has an inbound link
+
+LINK PLAN
+  topic-1  a-pilot-light-that-keeps-going-out-needs-more-than-a-relight
+      money(semantic)  next→topic-2 PENDING
+      anchor: "water heater repair in Leander"
+      query:  "water heater pilot light keeps going out"
+  topic-2  leander-s-hard-water-can-leave-hot-water-lukewarm
+      money(descriptive)  prev→topic-1  next→topic-3 PENDING
+      anchor: "what a repair usually involves"
+      query:  "hard water water heater problems"
+  topic-3  what-happens-during-a-water-heater-diagnosis-visit
+      money(exact)  prev→topic-2  next→topic-4 PENDING
+      anchor: "water heater repair"
+      query:  "what does a water heater inspection include"
+  topic-4  at-ten-years-many-water-heater-problems-are-still-repairable
+      money(semantic)  prev→topic-3  ring→topic-1 live
+      anchor: "repairing a leaking water heater"
+      query:  "ten year old water heater problems"
+
+ACTIVATE  Wed Apr 01 2026  topic-1 → topic-2  (1 link)
+ACTIVATE  Fri May 01 2026  topic-2 → topic-3  (1 link)
+ACTIVATE  Sun May 31 2026  topic-3 → topic-4  (1 link)
+
+FINAL STATE
+  topic-1  2 live link(s)
+  topic-2  3 live link(s)
+  topic-3  3 live link(s)
+  topic-4  3 live link(s)
+
+QUALITY
+  ~ topic-1  976w  density 1.54
+      warn  thin on specifics: 1.54 per 100 words
+  ✓ topic-2  852w  density 2.23
+  ~ topic-3  962w  density 1.14
+      warn  thin on specifics: 1.14 per 100 words
+  ~ topic-4  883w  density 1.47
+      warn  thin on specifics: 1.47 per 100 words
+  ✓ no repetition across posts
+
+All 4 posts pass the mechanical checks — now read them.

@@ -6,7 +6,8 @@
     "scripts": {
         "dev": "node server.js",
         "start": "NODE_ENV=production node server.js",
-        "build:webpack": "webpack --config webpack.config.js"
+        "build:webpack": "webpack --config webpack.config.js",
+        "test:blog": "node test-blog-api.js && node test-blog-plan.js"
     },
     "dependencies": {
         "archiver": "^5.3.1",

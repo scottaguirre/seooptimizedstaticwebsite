@@ -8,6 +8,10 @@ function generateFunctionsPhp(options = {}) {
     themeName = 'Local Business Theme',
     cssFiles = [],
     hasBootstrapJs = false,
+    // Changes on every export. Used as the upgrade stamp below, so a rebuilt
+    // theme purges its caches once even though style.css still says 1.0.0.
+    // An option rather than a value computed here so tests can pin it.
+    buildStamp = '',
   } = options;
 
   const funcPrefix = makePhpIdentifier(themeSlug);
@@ -55,9 +59,6 @@ require_once get_template_directory() . '/inc/template-nav.php';
 require_once get_template_directory() . '/inc/theme-settings.php';
 require_once get_template_directory() . '/inc/template-helpers.php';
 require_once get_template_directory() . '/inc/contact-form-handler.php';
-require_once get_template_directory() . '/inc/blog-automation-settings.php';
-require_once get_template_directory() . '/inc/blog-automation-engine.php';
-require_once get_template_directory() . '/inc/blog-automation-scheduler.php';
 
 /**
  * Theme setup
@@ -400,9 +401,11 @@ function ${funcPrefix}_output_meta_description() {
         if ( $post_id ) {
             $description = get_post_meta( $post_id, '${funcPrefix}_page_description', true );
 
-            // Posts published by the blog automation have no SEO fields set,
-            // so derive something useful rather than repeating the tagline on
-            // every one of them.
+            // A post created by hand in wp-admin has no SEO field set, so
+            // derive something from the excerpt rather than repeating the
+            // tagline on every one. Posts published by the Interlink Engine
+            // plugin DO set '${funcPrefix}_page_description', so they never
+            // reach this branch.
             if ( empty( $description ) && 'post' === get_post_type( $post_id ) ) {
                 $excerpt = get_the_excerpt( $post_id );
                 if ( $excerpt ) {
@@ -576,6 +579,78 @@ function ${funcPrefix}_smtp_admin_notice() {
     }
 }
 add_action( 'admin_notices', '${funcPrefix}_smtp_admin_notice' );
+
+/**
+ * Flush every cache this theme can reach whenever the theme's files change.
+ *
+ * Re-uploading a theme over itself does NOT fire 'after_switch_theme' — the
+ * active theme never changed — so a rebuilt theme would keep serving pages
+ * rendered from the previous content model until something else happened to
+ * clear the cache. 'upgrader_process_complete' is the hook that actually
+ * fires on an over-the-top upload, so both are wired here.
+ */
+function ${funcPrefix}_purge_caches() {
+    // Core object cache and rewrite rules
+    wp_cache_flush();
+    flush_rewrite_rules();
+
+    // Popular page caches, each a no-op when the plugin is absent
+    if ( function_exists( 'wp_cache_clear_cache' ) )      { wp_cache_clear_cache(); }        // WP Super Cache
+    if ( function_exists( 'w3tc_flush_all' ) )            { w3tc_flush_all(); }              // W3 Total Cache
+    if ( function_exists( 'rocket_clean_domain' ) )       { rocket_clean_domain(); }         // WP Rocket
+    if ( class_exists( 'LiteSpeed\\\\Purge' ) )              { do_action( 'litespeed_purge_all' ); }
+    if ( has_action( 'cache_enabler_clear_complete_cache' ) ) { do_action( 'cache_enabler_clear_complete_cache' ); }
+    if ( class_exists( 'autoptimizeCache' ) )             { autoptimizeCache::clearall(); }
+    if ( function_exists( 'sg_cachepress_purge_cache' ) ) { sg_cachepress_purge_cache(); }   // SiteGround
+
+    // PHP opcode cache — theme PHP files were just overwritten
+    if ( function_exists( 'opcache_reset' ) ) {
+        opcache_reset();
+    }
+}
+add_action( 'after_switch_theme', '${funcPrefix}_purge_caches' );
+add_action( 'upgrader_process_complete', '${funcPrefix}_purge_caches' );
+
+/**
+ * One-time cleanup after the theme files change.
+ *
+ * The two hooks above are not enough on their own. When a theme is uploaded
+ * over itself, WordPress serves that request using the PREVIOUS functions.php
+ * — the new file is not loaded until the next request — so a handler added in
+ * this version cannot run during the upgrade that installs it. A build stamp
+ * checked on admin_init closes that gap: the first admin page load after the
+ * new files land runs the cleanup exactly once.
+ *
+ * The stamp is the export time, not style.css's Version. Every rebuild of a
+ * site produces a new theme with the same declared version number, so the
+ * version header cannot tell one export from the next.
+ */
+define( '${constPrefix}_BUILD', '${buildStamp || new Date().toISOString()}' );
+
+function ${funcPrefix}_maybe_upgrade() {
+    $current = ${constPrefix}_BUILD;
+    $stored  = get_option( '${funcPrefix}_installed_build' );
+
+    if ( $stored === $current ) {
+        return;
+    }
+
+    ${funcPrefix}_purge_caches();
+
+    // Blog automation used to live in this theme. It now lives in the
+    // Interlink Engine plugin. The theme's cron event outlives the files that
+    // registered it, so an upgraded site would keep waking a callback that no
+    // longer exists, once a day, forever. Clear it.
+    //
+    // The saved settings are left in place deliberately: they hold the
+    // customer's topics and publishing schedule, and deleting them on a theme
+    // update would be destructive with nothing to gain. They are a few rows in
+    // wp_options and can be removed by hand if wanted.
+    wp_clear_scheduled_hook( '${funcPrefix}_generate_blog_post' );
+
+    update_option( '${funcPrefix}_installed_build', $current );
+}
+add_action( 'admin_init', '${funcPrefix}_maybe_upgrade' );
 `;
 }
 

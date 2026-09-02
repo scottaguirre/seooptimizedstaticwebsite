@@ -31,6 +31,13 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  */
 const EXEMPT = [
   '/api/stripe-webhook',
+
+  // The Interlink Engine plugin. Server-to-server from a customer's
+  // WordPress: no session cookie exists to forge, so there is nothing for a
+  // CSRF token to protect. Authenticated by an HMAC signature over the
+  // method, path and body instead — see middleware/requireSite.js — which is
+  // a stronger check than this one, exactly as with the Stripe webhook above.
+  '/api/blog/',
 ];
 
 function generateToken() {

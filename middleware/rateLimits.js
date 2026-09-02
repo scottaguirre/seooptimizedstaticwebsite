@@ -130,9 +130,89 @@ const generalLimiter = rateLimit({
   message: (req, res) => retryMessage(req, res, 'requests'),
 });
 
+/* -------------------------------------------------------------------------
+ * The Interlink Engine plugin
+ *
+ * Keyed by SITE, not by IP. A plugin usually runs on shared hosting, where
+ * one IP is hundreds of unrelated WordPress installs — keying by IP would let
+ * one busy neighbour exhaust the budget for every customer on that host, and
+ * would let one customer's misbehaving plugin lock out everyone else's.
+ *
+ * The site id is unauthenticated at this point (the signature is checked
+ * afterwards, in requireSite), so it identifies rather than authorises. That
+ * is fine for a limiter: a forged id can only spend its own bucket, and an
+ * absent one falls back to the IP.
+ * ---------------------------------------------------------------------- */
+
+function siteOrIp(req) {
+  const siteId = req.headers['x-il-site'];
+  return typeof siteId === 'string' && /^[a-f0-9]{24}$/i.test(siteId)
+    ? `site:${siteId}`
+    : `ip:${ipKeyGenerator(req.ip)}`;
+}
+
+/**
+ * Plan, generate and complete.
+ *
+ * Generous, because /generate is POLLED: the plugin calls it every few
+ * seconds while a post is being written, and a post takes 30-60 seconds.
+ * A campaign publishing weekly makes a handful of bursts a week, so this is
+ * far above any legitimate need and still well below what would cost us
+ * anything — the expensive part is behind the job queue, not this endpoint.
+ */
+const blogApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.BLOG_API_RATE_LIMIT) || 300,
+  keyGenerator: siteOrIp,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: (req, res) => retryMessage(req, res, 'requests'),
+});
+
+/**
+ * Activation. Deliberately tight, and keyed by IP rather than site — the
+ * caller has no site id yet.
+ *
+ * This is the only endpoint in the set that takes the licence key, which
+ * makes it the only guessable surface. A key is 20 random bytes, so guessing
+ * is hopeless anyway; this exists so that trying is also slow, and so the
+ * attempt shows up in the logs as a rate-limit trip rather than as noise.
+ */
+const blogActivateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.BLOG_ACTIVATE_RATE_LIMIT) || 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: (req, res) => retryMessage(req, res, 'activation attempts'),
+});
+
+/**
+ * Topic suggestion and enrichment.
+ *
+ * These are NOT billed — someone deciding whether the product is worth buying
+ * should not be charged to find out — so this limit is the only thing standing
+ * between a licence key and a free text generator.
+ *
+ * Ten batches an hour is far more than planning a campaign needs (a customer
+ * plans once, reviews six topics, maybe regenerates twice) and far less than
+ * the endpoint is worth stealing. Keyed by site, so one customer's exploration
+ * never blocks another's.
+ */
+const blogSuggestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.BLOG_SUGGEST_RATE_LIMIT) || 10,
+  keyGenerator: siteOrIp,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: (req, res) => retryMessage(req, res, 'topic requests'),
+});
+
 module.exports = {
   authLimiter,
   emailLimiter,
   generateLimiter,
   generalLimiter,
+  blogApiLimiter,
+  blogActivateLimiter,
+  blogSuggestLimiter,
 };

@@ -38,14 +38,38 @@ const STALE_AFTER_MS = Number(process.env.JOB_STALE_MS) || 90000;
 let running = false;
 let timer = null;
 
-/** The function that actually generates a site. Injected to avoid a cycle. */
-let generateFn = null;
+/**
+ * The functions that do the work, keyed by job kind. Injected rather than
+ * required, to avoid a cycle: the generators import models and utilities that
+ * would in turn import this file.
+ *
+ *   'site' -> utils/jobGenerator.js       the wizard's site build
+ *   'blog' -> utils/blogGenerator.js      one Interlink Engine post
+ */
+const generators = new Map();
 
 /**
- * @param {Function} fn  async (job, { onProgress }) => ({ creditsCharged, ... })
+ * @param {string}   kind  'site' | 'blog'
+ * @param {Function} fn    async (job, { onProgress }) => ({ creditsCharged, result })
+ *
+ * Called with one argument for years. That form registered the site generator,
+ * so it is still accepted and still means 'site' — an old call site keeps
+ * working rather than silently registering nothing under the key `undefined`.
  */
-function registerGenerator(fn) {
-  generateFn = fn;
+function registerGenerator(kind, fn) {
+  if (typeof kind === 'function') {
+    generators.set('site', kind);
+    return;
+  }
+  if (typeof fn !== 'function') {
+    throw new Error(`jobRunner: no function supplied for job kind '${kind}'`);
+  }
+  generators.set(String(kind), fn);
+}
+
+/** Kinds this process can actually run. */
+function registeredKinds() {
+  return Array.from(generators.keys());
 }
 
 /**
@@ -80,14 +104,32 @@ async function requeueStaleJobs() {
 }
 
 /**
- * Claim one queued job.
+ * Claim one queued job this process knows how to run.
  *
  * findOneAndUpdate is atomic, so two runners — or two server instances —
  * cannot pick up the same job. A plain find-then-save would race.
+ *
+ * The kind filter matters during a rolling deploy. An instance running the
+ * previous release has no 'blog' generator; without the filter it would claim
+ * a blog job, mark it 'running', fail to find a generator and leave it stuck
+ * until the stale-requeue rescued it 90 seconds later — repeatedly, for as
+ * long as the old instance is up. Filtering means it simply leaves that job
+ * for an instance that can do the work.
+ *
+ * $in with the registered kinds also matches nothing when the list is empty,
+ * which is the correct behaviour for a process with no generators at all.
  */
-async function claimNextJob() {
+async function claimNextJob(kinds = registeredKinds()) {
   return Job.findOneAndUpdate(
-    { status: 'queued' },
+    {
+      status: 'queued',
+      // Rows written before `kind` existed have no such field. They are site
+      // builds, so treat a missing value as 'site' rather than skipping them.
+      $or: [
+        { kind: { $in: kinds } },
+        ...(kinds.includes('site') ? [{ kind: { $exists: false } }] : []),
+      ],
+    },
     {
       $set: {
         status: 'running',
@@ -109,10 +151,20 @@ async function runJob(job) {
   }, HEARTBEAT_MS);
 
   const startedAt = Date.now();
+  const kind = job.kind || 'site';
 
   try {
+    const generateFn = generators.get(kind);
+    if (!generateFn) {
+      // Should be unreachable: claimNextJob only claims registered kinds.
+      // Throwing here rather than crashing the tick means the job is marked
+      // failed with a readable message instead of being claimed forever.
+      throw new Error(`No generator is registered for job kind '${kind}'`);
+    }
+
     log.info('jobs.started', {
       jobId,
+      kind,
       userId: String(job.user),
       siteMode: job.siteMode,
       resuming: (job.completedPages || []).length > 0,
@@ -139,18 +191,26 @@ async function runJob(job) {
       },
     });
 
-    await Job.updateOne({ _id: job._id }, {
-      $set: {
-        status: 'completed',
-        finishedAt: new Date(),
-        creditsCharged: result?.creditsCharged || 0,
-        'progress.stage': 'completed',
-        'progress.current': '',
-      },
-    });
+    const completion = {
+      status: 'completed',
+      finishedAt: new Date(),
+      creditsCharged: result?.creditsCharged || 0,
+      'progress.stage': 'completed',
+      'progress.current': '',
+    };
+
+    // Only for kinds whose output is data. A site build returns paths and
+    // counts; writing those into `result` would just duplicate what is
+    // already on the job.
+    if (result && result.result !== undefined) {
+      completion.result = result.result;
+    }
+
+    await Job.updateOne({ _id: job._id }, { $set: completion });
 
     log.info('jobs.completed', {
       jobId,
+      kind,
       userId: String(job.user),
       durationMs: Date.now() - startedAt,
       creditsCharged: result?.creditsCharged || 0,
@@ -168,6 +228,7 @@ async function runJob(job) {
 
     log.error('jobs.failed', err, {
       jobId,
+      kind,
       userId: String(job.user),
       durationMs: Date.now() - startedAt,
     });
@@ -201,7 +262,7 @@ async function tick() {
 
 function start() {
   if (running) return;
-  if (!generateFn) {
+  if (!generators.size) {
     throw new Error('jobRunner: registerGenerator() must be called before start()');
   }
 
@@ -210,8 +271,11 @@ function start() {
   requeueStaleJobs().catch(err => log.error('jobs.requeueFailed', err));
 
   timer = setInterval(tick, POLL_INTERVAL_MS);
-  log.info('jobs.runnerStarted', { pollMs: POLL_INTERVAL_MS });
-  console.log(`⚙️  Job runner active: polling every ${POLL_INTERVAL_MS}ms`);
+  log.info('jobs.runnerStarted', { pollMs: POLL_INTERVAL_MS, kinds: registeredKinds() });
+  console.log(
+    `⚙️  Job runner active: polling every ${POLL_INTERVAL_MS}ms ` +
+    `(${registeredKinds().join(', ')})`
+  );
 }
 
 function stop() {
@@ -220,4 +284,11 @@ function stop() {
   timer = null;
 }
 
-module.exports = { start, stop, registerGenerator, requeueStaleJobs, claimNextJob };
+module.exports = {
+  start,
+  stop,
+  registerGenerator,
+  registeredKinds,
+  requeueStaleJobs,
+  claimNextJob,
+};

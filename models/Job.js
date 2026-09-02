@@ -31,7 +31,25 @@ const jobSchema = new mongoose.Schema({
     index: true,
   },
 
-  siteMode: { type: String, enum: ['rankfast', 'lead', 'sample'], default: 'rankfast' },
+  /**
+   * What kind of work this is. Decides which generator the runner hands it to.
+   *
+   *   'site'  the wizard's full site build (the original, and the only one
+   *           that existed when this model was written)
+   *   'blog'  one Interlink Engine post
+   *
+   * Defaults to 'site' so every row written before this field existed keeps
+   * running exactly as it did. Do NOT make this required: a migration that
+   * missed a queued job would leave it unclaimable forever.
+   */
+  kind: {
+    type: String,
+    enum: ['site', 'blog'],
+    default: 'site',
+    index: true,
+  },
+
+  siteMode: { type: String, enum: ['lead', 'sample'], default: 'lead' },
 
   // Everything the generator needs, captured at enqueue time.
   //
@@ -76,6 +94,18 @@ const jobSchema = new mongoose.Schema({
 
   creditsCharged: { type: Number, default: 0 },
 
+  /**
+   * What the job produced, for kinds whose output is data rather than files.
+   *
+   * A site build writes HTML to disk and has nothing to put here. A blog post
+   * IS the result, and it has to survive the request that asked for it: the
+   * WordPress plugin polls, takes the post, publishes it, and confirms. If
+   * publishing fails and it polls again, it must get back the SAME post —
+   * regenerating would mean a second OpenAI call and a second charge for one
+   * slot the customer already paid for.
+   */
+  result: { type: mongoose.Schema.Types.Mixed },
+
   error: {
     message: String,
     stack: String,
@@ -91,8 +121,8 @@ const jobSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
-// The runner's main query: oldest queued job first.
-jobSchema.index({ status: 1, createdAt: 1 });
+// The runner's main query: oldest queued job first, of a kind it can run.
+jobSchema.index({ status: 1, kind: 1, createdAt: 1 });
 
 // "What is this user's latest job" — for the progress page.
 jobSchema.index({ user: 1, createdAt: -1 });
