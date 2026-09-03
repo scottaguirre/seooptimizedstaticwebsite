@@ -230,6 +230,24 @@ async function writeOneSlot({ campaign, slot, user, job, onProgress }) {
   // charging for nothing, or rewriting and charging twice.
   const quality = checkPost(post, planSlot);
 
+  // Logged, not just stored.
+  //
+  // The verdict goes onto the BlogPost either way, but a `qualityOk: false` in
+  // the batch log with no way to see WHY is a dead end for whoever is reading
+  // it — and the log is where anyone looks first. This line existed before the
+  // batch rewrite and I dropped it; putting it back costs nothing and answers
+  // the only question that matters when a post comes back marked bad.
+  if (!quality.ok) {
+    log.info('blog.post.qualityWarnings', {
+      campaignId: String(campaignId),
+      slotIndex: index,
+      failures: (quality.failures || []).slice(0, 5),
+      warnings: (quality.warnings || []).slice(0, 5),
+      words: quality?.stats?.words,
+      density: quality?.stats?.density,
+    });
+  }
+
   const payload = renderPayload(post, slot, targets);
 
   // Stored BEFORE the charge, so a crash between the two leaves a post that
