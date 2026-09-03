@@ -70,12 +70,33 @@ function zipExists(userId) {
 /**
  * Copy → optimise → zip.
  *
+ * @param {string}   userId
+ * @param {object}   [opts]
+ * @param {Function} [opts.onProgress]  async ({ stage }) => {}
+ *
+ * onProgress exists because this is now a background job with a page watching
+ * it. Webpack on a hundred pages is minutes of silence otherwise, and a bar
+ * that does not move is indistinguishable from one that has hung — which is
+ * the moment people refresh and start a second build.
+ *
+ * The stages are coarse on purpose. Webpack does not report its own progress
+ * through `exec`, so inventing a percentage would mean inventing a number.
+ *
  * @returns {Promise<{ok: boolean, zipPath?: string, reason?: string, error?: Error}>}
  *          Never throws; callers decide how to present a failure.
  */
-async function runProductionBuild(userId) {
+async function runProductionBuild(userId, opts = {}) {
   const id = String(userId);
   const { sourceDir, workDir, zipPath } = getPaths(id);
+
+  // Swallows its own errors: a progress update that fails must never take down
+  // a build the customer is waiting for.
+  const report = async (stage) => {
+    if (typeof opts.onProgress !== 'function') return;
+    try {
+      await opts.onProgress({ stage });
+    } catch (_) { /* progress is cosmetic */ }
+  };
 
   if (!fs.existsSync(sourceDir)) {
     return { ok: false, reason: 'no-site' };
@@ -93,6 +114,7 @@ async function runProductionBuild(userId) {
   let releaseSlot = () => {};
 
   try {
+    await report('Waiting for a free build slot');
     releaseSlot = await buildLimiter.acquire({ userId: id });
   } catch (err) {
     inFlight.delete(id);
@@ -108,14 +130,17 @@ async function runProductionBuild(userId) {
     fs.mkdirSync(zipRoot, { recursive: true });
 
     // 1. Fresh copy every run, so repeated builds are idempotent
+    await report('Copying your site');
     cleanDirectory(workDir);
     copyDirRecursive(sourceDir, workDir);
 
     // 2. Prepare the COPY for production
+    await report('Preparing files');
     replaceInProd(workDir);           // "dist/" -> "" in href/src
     removeScriptAndLinkTags(workDir); // strip dev-only tags
 
     // 3. Webpack, against the copy
+    await report('Optimising with Webpack');
     await new Promise((resolve, reject) => {
       exec(
         'npm run build:webpack',
@@ -138,6 +163,7 @@ async function runProductionBuild(userId) {
     pruneUnhashedAssets(workDir);
 
     // 5. Zip
+    await report('Creating your ZIP');
     if (fs.existsSync(zipPath)) {
       fs.unlinkSync(zipPath);
     }

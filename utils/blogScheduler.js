@@ -23,10 +23,29 @@
 //
 // WHAT IT DELIBERATELY DOES NOT DO
 //
-// It does not generate. A slot's content is produced by the job runner, after
-// the plugin asks for it. Generating here would mean paying for posts a site
-// may never collect — a site that has been offline for a month would run up a
-// bill for content nobody receives.
+// It does not write and it does not publish. Both happen on the far side of
+// the ping — writing in the job runner once the plugin approves a campaign,
+// publishing in WordPress. This end only ever decides WHEN to knock.
+//
+// WHAT THE KNOCKING IS FOR NOW, WHICH HAS CHANGED
+//
+// It used to mean "a post is due — come and collect it", because a post was
+// written on the day it was meant to appear. Nothing works that way any more:
+// every post in a campaign is written when the campaign is approved, and
+// WordPress publishes them from its own schedule.
+//
+// So there are three reasons to knock, and the third is the one that makes
+// this component necessary rather than merely useful:
+//
+//   1. a batch is being written and the site needs to come and collect it
+//   2. posts are written and paid for but the site has not taken them yet
+//   3. A SCHEDULED POST'S DATE HAS PASSED AND IT IS STILL NOT PUBLIC
+//
+// The third is not an error case. WordPress publishes future posts through
+// WP-Cron, WP-Cron fires when somebody visits the site, and these sites have
+// no visitors — that is the entire reason the owner is buying posts. Left to
+// itself a twelve-week campaign would publish nothing at all. The ping is what
+// makes the site's clock tick.
 
 const BlogSite = require('../models/BlogSite');
 const BlogCampaign = require('../models/BlogCampaign');
@@ -34,14 +53,41 @@ const { sign } = require('../middleware/requireSite');
 const { checkSiteUrl } = require('./blog/siteUrlGuard');
 const { log } = require('./logger');
 
-// How often to look for work. Slots are dated to the minute, so anything under
-// a minute is wasted queries; anything over five makes "publish at 09:00" mean
-// "some time after 09:00" by more than a customer would accept.
-const TICK_MS = Number(process.env.BLOG_SCHEDULER_TICK_MS) || 120000;
+// How often to look for work.
+//
+// The old reasoning for this number was that a late tick made "publish at
+// 09:00" mean "some time after 09:00". That is no longer this loop's problem:
+// WordPress holds the publish date and the missed-schedule sweep has a
+// fifteen-minute grace period anyway.
+//
+// What sets it now is collection. A ping gap is only ever as precise as the
+// tick that enforces it, so the tick has to be shorter than the shortest gap
+// or an "every two minutes" site is really pinged every four. One indexed
+// query a minute is cheap; a customer watching a progress bar is not patient.
+const TICK_MS = Number(process.env.BLOG_SCHEDULER_TICK_MS) || 60000;
 
-// A site is not pinged more often than this, however many slots are due. The
-// plugin works through them one at a time and does not need to be told twice.
-const MIN_PING_GAP_MS = Number(process.env.BLOG_MIN_PING_GAP_MS) || 10 * 60 * 1000;
+// How often a site may be pinged, and there are two answers because there are
+// two kinds of waiting.
+//
+// SOMEONE IS PROBABLY WATCHING. A campaign being written, or written and not
+// yet collected, was approved by a person who is very likely still looking at
+// the screen. A batch takes about eight minutes; a ten-minute gap would mean
+// they sit in front of "still writing" long after it finished.
+const COLLECT_GAP_MS = Number(process.env.BLOG_COLLECT_GAP_MS) || 2 * 60 * 1000;
+
+// NOBODY IS WATCHING. A scheduled post that WP-Cron missed is hours or days
+// late already; another few minutes changes nothing, and knocking gently keeps
+// the loop cheap for the great majority of sites that have nothing to do.
+const PUBLISH_GAP_MS = Number(process.env.BLOG_PUBLISH_GAP_MS) || 10 * 60 * 1000;
+
+// How late a scheduled post must be before it counts as missed.
+//
+// Not zero, because the two clocks are not the same one. WordPress runs its
+// cron on its own rhythm, and the site's timezone setting may not match what
+// it reported at activation. Without a grace period every site with a campaign
+// would be pinged in the minute after every scheduled post, whether or not
+// anything was actually wrong.
+const MISSED_GRACE_MS = Number(process.env.BLOG_MISSED_GRACE_MS) || 15 * 60 * 1000;
 
 // A site that has not answered this many times in a row is treated as gone.
 // Its campaigns stay planned and nothing is charged; it simply stops being
@@ -134,43 +180,68 @@ async function pingSite(site, campaignIds) {
 }
 
 /**
- * Campaigns with work waiting, grouped by site.
+ * Campaigns needing a knock, grouped by site.
  *
- * Two kinds of work, and both need a ping:
+ * Three reasons, and they do not all deserve the same urgency:
  *
- *   pending + due   a post whose time has come and has not been generated
- *   ready           a post generated and PAID FOR that never got published,
- *                   because the site was down when it was collected
+ *   writing     a batch is running. The person who approved it is probably
+ *               still watching, and the site has to come and collect.
+ *   ready       posts written and PAID FOR that the site has not taken. A
+ *               site that was down when its batch finished comes back to find
+ *               them waiting; leaving them there is taking money for nothing.
+ *   scheduled   a post whose date has passed that is still not public. This
+ *               is WP-Cron not running, which on a site with no visitors is
+ *               the normal state of affairs rather than a fault.
  *
- * The second is the one that would otherwise be forgotten. A customer has
- * already been charged for those posts; leaving them unpublished is taking
- * money for nothing.
+ * The first two are marked urgent, which buys a shorter ping gap. The third is
+ * a backstop and can wait.
+ *
+ * @returns {Map<string, { campaigns: string[], urgent: boolean }>} keyed by site id
  */
-async function findWork(now = new Date()) {
+async function findWork(now = new Date(), graceMs = MISSED_GRACE_MS) {
+  const cutoff = new Date(now.getTime() - graceMs);
+
   const campaigns = await BlogCampaign.find({
-    status: 'active',
-    slots: {
-      $elemMatch: {
-        $or: [
-          { status: 'pending', publishAt: { $lte: now } },
-          { status: 'ready' },
-        ],
-      },
-    },
-  }).select('site slots.status slots.publishAt').lean();
+    status: { $in: ['writing', 'active'] },
+    $or: [
+      // Being written. There are no interesting slots yet — the campaign's own
+      // status is the whole signal.
+      { status: 'writing' },
+      // Written and waiting to be taken.
+      { 'slots.status': 'ready' },
+      // On the site, past its date, still invisible. $elemMatch because both
+      // conditions have to hold for the SAME slot: without it, a campaign with
+      // any scheduled slot and any old slot would match.
+      { slots: { $elemMatch: { status: 'scheduled', publishAt: { $lte: cutoff } } } },
+    ],
+  }).select('site status slots.status slots.publishAt').lean();
 
   const bySite = new Map();
 
   for (const campaign of campaigns) {
-    const due = (campaign.slots || []).filter(s =>
-      s.status === 'ready' || (s.status === 'pending' && s.publishAt && s.publishAt <= now)
+    const slots = campaign.slots || [];
+
+    const urgent = campaign.status === 'writing' || slots.some(s => s.status === 'ready');
+
+    const missed = slots.some(
+      s => s.status === 'scheduled' && s.publishAt && s.publishAt <= cutoff
     );
 
-    if (!due.length) continue;
+    // The database query is broader than the real test — a campaign matches on
+    // 'slots.status': 'ready' without anything being late, and the $elemMatch
+    // branch cannot express the grace period as precisely as this can. Re-check
+    // rather than trust it.
+    if (!urgent && !missed) continue;
 
     const key = String(campaign.site);
-    if (!bySite.has(key)) bySite.set(key, []);
-    bySite.get(key).push(String(campaign._id));
+
+    if (!bySite.has(key)) {
+      bySite.set(key, { campaigns: [], urgent: false });
+    }
+
+    const entry = bySite.get(key);
+    entry.campaigns.push(String(campaign._id));
+    entry.urgent = entry.urgent || urgent;
   }
 
   return bySite;
@@ -185,7 +256,10 @@ async function tick() {
     const work = await findWork();
     if (!work.size) return;
 
-    const cutoff = new Date(Date.now() - MIN_PING_GAP_MS);
+    // The LOOSER of the two gaps, so a site whose only work is urgent is not
+    // filtered out here by the ten-minute rule. Each site's own gap is checked
+    // below, once we know whether its work is urgent.
+    const loosest = new Date(Date.now() - Math.min(COLLECT_GAP_MS, PUBLISH_GAP_MS));
 
     const sites = await BlogSite.find({
       _id: { $in: [...work.keys()] },
@@ -193,14 +267,24 @@ async function tick() {
       siteUrl: { $ne: '' },
       pingFailures: { $lt: MAX_PING_FAILURES },
       $or: [
-        { lastPingAt: { $lt: cutoff } },
+        { lastPingAt: { $lt: loosest } },
         { lastPingAt: { $exists: false } },
       ],
     });
 
     for (const site of sites) {
-      const campaignIds = work.get(String(site._id)) || [];
+      const entry = work.get(String(site._id));
+      const campaignIds = entry ? entry.campaigns : [];
       if (!campaignIds.length) continue;
+
+      // Now the real gap for THIS site. A site with only a missed schedule
+      // waiting is held to the slower cadence; one with a batch in flight is
+      // not.
+      const gap = entry.urgent ? COLLECT_GAP_MS : PUBLISH_GAP_MS;
+
+      if (site.lastPingAt && Date.now() - site.lastPingAt.getTime() < gap) {
+        continue;
+      }
 
       // Recorded BEFORE the request, not after. A ping that hangs for the full
       // timeout would otherwise leave lastPingAt untouched, and the next tick
@@ -220,6 +304,7 @@ async function tick() {
           siteId: String(site._id),
           siteUrl: site.siteUrl,
           campaigns: campaignIds.length,
+          urgent: entry.urgent,
         });
 
       } else {

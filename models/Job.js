@@ -34,9 +34,10 @@ const jobSchema = new mongoose.Schema({
   /**
    * What kind of work this is. Decides which generator the runner hands it to.
    *
-   *   'site'  the wizard's full site build (the original, and the only one
-   *           that existed when this model was written)
-   *   'blog'  one Interlink Engine post
+   *   'site'   the wizard's full site build (the original, and the only one
+   *            that existed when this model was written)
+   *   'blog'   one Interlink Engine post
+   *   'build'  webpack + zip for download
    *
    * Defaults to 'site' so every row written before this field existed keeps
    * running exactly as it did. Do NOT make this required: a migration that
@@ -44,12 +45,31 @@ const jobSchema = new mongoose.Schema({
    */
   kind: {
     type: String,
-    enum: ['site', 'blog'],
+    enum: ['site', 'blog', 'build'],
     default: 'site',
     index: true,
   },
 
-  siteMode: { type: String, enum: ['lead', 'sample'], default: 'lead' },
+  /**
+   * Which kind of site this build produces.
+   *
+   *   'lead'      Rank GBPs — the full optimised site
+   *   'rankfast'  Rank Fast — the newer formats and interlink ring
+   *   'sample'    a one-page design sample
+   *
+   * 'rankfast' was added to the wizard, to utils/pricing.js and to
+   * normalizeSiteMode() but never here, so every Rank Fast generation failed
+   * at Job.create() with "`rankfast` is not a valid enum value" — after the
+   * credit check had passed and the customer had been told it was starting.
+   *
+   * Whatever normalizeSiteMode() accepts, this must accept. They are two
+   * halves of one list.
+   */
+  siteMode: {
+    type: String,
+    enum: ['lead', 'rankfast', 'sample'],
+    default: 'lead',
+  },
 
   // Everything the generator needs, captured at enqueue time.
   //

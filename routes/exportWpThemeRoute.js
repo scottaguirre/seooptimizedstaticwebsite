@@ -96,10 +96,14 @@ function page({ title, heading, body, actions, status = 200, csrfToken = '' }) {
                   // read. Without it /production returns 403 and the user
                   // sees "The build failed", which is misleading: the build
                   // never started.
+                  //
+                  // Accept: application/json, because /production answers in
+                  // whichever shape the caller asks for — JSON here, a real
+                  // 302 for the plain form in downloadZipRoute.
                   const buildRes = await fetch('/production', {
                     method: 'POST',
                     headers: {
-                      'Accept': 'text/html',
+                      'Accept': 'application/json',
                       'X-CSRF-Token': '${csrfToken}',
                     },
                   });
@@ -108,16 +112,15 @@ function page({ title, heading, body, actions, status = 200, csrfToken = '' }) {
                     throw new Error('Your session expired. Please refresh the page and try again.');
                   }
                   if (!buildRes.ok) {
-                    throw new Error('The build failed. Please try again.');
+                    throw new Error('The build could not be started. Please try again.');
                   }
 
-          overlayText.textContent = 'Starting your download...';
-          window.location.href = '/download-zip';
+          // Queued, not finished — see the note in authRoute.js. Going to
+          // /download-zip here would arrive before the ZIP exists.
+          const data = await buildRes.json().catch(() => ({}));
 
-          setTimeout(() => {
-            overlay.style.display = 'none';
-            btn.disabled = false;
-          }, 3000);
+          overlayText.textContent = 'Preparing your download...';
+          window.location.href = data.redirect || '/dashboard';
 
         } catch (err) {
           overlay.style.display = 'none';

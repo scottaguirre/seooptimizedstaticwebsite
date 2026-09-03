@@ -136,22 +136,256 @@
   // Mirrors utils/pricing.js. The server is authoritative — it is what
   // actually takes the credits — but the review step has to show the same
   // number, so any change here needs the same change there.
-  const PRICING = {
-    SAMPLE: 100,
-    LEAD_BASE: 200,
-    SERVICE_PAGE: 100,
-    LOCATION_PAGE: 100,
+  // PRICES COME FROM THE SERVER. There is no copy of the price table here.
+  //
+  // There used to be one, mirroring utils/pricing.js, with a comment saying
+  // "any change here needs the same change there". That arrangement is what
+  // produced the 400-against-600 bug: two places computing a price are two
+  // prices, and they only have to disagree once for a customer to be quoted
+  // a number the server will not charge.
+  //
+  // /api/check-credits already returns the authoritative total and the
+  // balance, so everything that shows or gates on a price asks it.
+
+  const credits = {
+    total: null,       // what this site costs, per the server
+    available: null,   // the customer's balance
+    loaded: false,
   };
 
-  function quoteCredits() {
-    if (state.siteMode === 'sample') return PRICING.SAMPLE;
+  // A stale response landing after a newer one would show the wrong total, so
+  // each request carries a sequence number and only the newest is applied.
+  let quoteSeq = 0;
 
-    const services = state.pages.length;
-    const locs = state.addLocations ? state.locations.length : 0;
+  /**
+   * The service pages as /api/check-credits expects them.
+   *
+   * Read from the DOM when the pages step is on screen, because state.pages
+   * is only synced when the step is left — a row typed thirty seconds ago is
+   * in the DOM and not yet in state. Falls back to state everywhere else.
+   */
+  function currentPageNames() {
+    const inputs = document.querySelectorAll('#pagesList .page-row input[type="text"]');
+    if (inputs.length) {
+      return [...inputs].map(i => i.value.trim()).filter(Boolean);
+    }
+    return (state.pages || []).filter(Boolean);
+  }
 
-    return PRICING.LEAD_BASE
-      + services * PRICING.SERVICE_PAGE
-      + locs * PRICING.LOCATION_PAGE;
+  /**
+   * The location pages, same rule as above and for the same reason.
+   *
+   * Reading state.locations here was a bug: it is only written when the step
+   * is LEFT, so a location added a moment ago was invisible to the quote —
+   * and a location page costs exactly as much as a service page. Someone
+   * could add locations past their balance and see no warning at all.
+   */
+  function currentLocationNames() {
+    if (!state.addLocations) return [];
+
+    const inputs = document.querySelectorAll(
+      '#locationsList input[name="global[locationPages][]"]:not([type="hidden"])'
+    );
+    if (inputs.length) {
+      return [...inputs].map(i => i.value.trim()).filter(Boolean);
+    }
+    return (state.locations || []).filter(Boolean);
+  }
+
+  /**
+   * Ask the server what this site costs.
+   *
+   * @param {number} extraPages  price as if this many more pages existed,
+   *                             which is how the Add page button knows
+   *                             whether the next one is affordable.
+   * @returns {Promise<{totalCost:number, available:number, affordable:boolean}>}
+   */
+  async function fetchQuote({ extraPages = 0, extraLocations = 0 } = {}) {
+    const names = currentPageNames();
+
+    const pages = {};
+    names.forEach((name, i) => { pages[`pages[${i}][filename]`] = name; });
+
+    // Named rather than blank: checkCredits counts keys, and a blank value
+    // would be indistinguishable from a row the customer has not filled in.
+    for (let n = 0; n < extraPages; n++) {
+      pages[`pages[${names.length + n}][filename]`] = `page-${names.length + n + 1}`;
+    }
+
+    const csrf = document
+      .querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+    const res = await fetch('/api/check-credits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+      body: JSON.stringify({
+        pages,
+        siteMode: state.siteMode,
+        locationPages: currentLocationNames().length + extraLocations,
+      }),
+    });
+
+    if (!res.ok) throw new Error('Could not price this site');
+
+    const data = await res.json();
+
+    // Affordability is computed here rather than read from data.ok, because
+    // checkCredits also returns ok:false when there are no service pages yet
+    // — which is a different thing from "cannot afford it", and would make an
+    // empty form look like a money problem.
+    return {
+      totalCost: Number(data.totalCost) || 0,
+      available: Number(data.available) || 0,
+      affordable: (Number(data.available) || 0) >= (Number(data.totalCost) || 0),
+    };
+  }
+
+  /** Refresh the cached figures. Never throws; a blip leaves the last good value. */
+  async function refreshCredits(opts = {}) {
+    const seq = ++quoteSeq;
+    try {
+      const q = await fetchQuote(opts);
+      if (seq !== quoteSeq) return null;   // superseded
+      credits.total = q.totalCost;
+      credits.available = q.available;
+      credits.loaded = true;
+      return q;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** The total, or a placeholder while the first request is in flight. */
+  function creditsLabel() {
+    return credits.loaded ? credits.total.toLocaleString() : '…';
+  }
+
+  /**
+   * The "not enough credits" modal.
+   *
+   * Delegates to the one spinner.js publishes, so the sentence a customer
+   * reads is written once. A local copy here is how this file ended up with
+   * its own price table.
+   */
+  /* ------------------------------------------------------------------
+   * The draft
+   * ------------------------------------------------------------------
+   * Pressing "Buy Credits" navigates away, and coming back used to mean an
+   * empty form — every field retyped to reach the same wall.
+   *
+   * Saved to sessionStorage rather than the server: it is a half-finished
+   * form, not data anyone owns, and it should disappear when the tab does.
+   * It survives the round trip through Stripe because sessionStorage is per
+   * tab, not per page.
+   *
+   * THE LOGO CANNOT BE SAVED. Browsers do not allow JavaScript to set a file
+   * input's value — a page that could would be a page that can steal files.
+   * So the restore notice says so plainly, rather than letting someone submit
+   * and be told a logo is required.
+   * ---------------------------------------------------------------- */
+
+  const DRAFT_KEY = 'wizardDraft.v1';
+
+  function saveDraft() {
+    try {
+      // Everything except the File and its blob URL, which do not survive a
+      // navigation in any form.
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+        savedAt: Date.now(),
+        siteMode: state.siteMode,
+        styleKey: state.styleKey,
+        businessType: state.businessType,
+        logoType: state.logoType,
+        mainFormSnapshot: state.mainFormSnapshot,
+        pages: currentPageNames(),
+        addLocations: state.addLocations,
+        locations: currentLocationNames(),
+      }));
+    } catch (_) {
+      // Private browsing, or storage full. Losing a draft is a nuisance;
+      // throwing here would break the form.
+    }
+  }
+
+  function loadDraft() {
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (!raw) return null;
+
+      const draft = JSON.parse(raw);
+
+      // An hour. Long enough to buy credits and come back, short enough that
+      // yesterday's abandoned attempt does not reappear as a surprise.
+      if (!draft || Date.now() - (draft.savedAt || 0) > 60 * 60 * 1000) {
+        sessionStorage.removeItem(DRAFT_KEY);
+        return null;
+      }
+
+      return draft;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function clearDraft() {
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch (_) {}
+  }
+
+  // Published so spinner.js can save before it shows the credits modal. That
+  // modal appears on TWO paths — the Add page gate here, and a rejected
+  // submit over there — and only one of them lives in this file.
+  window.ieSaveDraft = saveDraft;
+
+  function applyDraft(draft) {
+    state.siteMode = draft.siteMode || state.siteMode;
+    state.styleKey = draft.styleKey || state.styleKey;
+    state.businessType = draft.businessType || '';
+    state.logoType = draft.logoType || state.logoType;
+    state.mainFormSnapshot = draft.mainFormSnapshot || null;
+    state.pages = Array.isArray(draft.pages) ? draft.pages : [];
+    state.addLocations = draft.addLocations !== false;
+    state.locations = Array.isArray(draft.locations) ? draft.locations : [];
+  }
+
+  /** Tells the customer what came back, and what did not. */
+  function showDraftNotice() {
+    const host = document.getElementById('dynamicFormContainer');
+    if (!host) return;
+
+    // Colours are set INLINE, not left to Bootstrap's alert classes.
+    //
+    // The page paints text white to sit on its dark background, and that rule
+    // reaches inside the alert — so <strong> came out white on a pale panel
+    // and was nearly unreadable. An inline style is the one thing a stylesheet
+    // cannot override, which is what this needs.
+    const note = el('div', {
+      class: 'alert alert-dismissible fade show',
+      role: 'alert',
+      style: 'background:#d1e7dd;border:1px solid #a3cfbb;color:#0a3622;',
+    });
+    note.innerHTML = `
+      <strong style="color:#0a3622;">Your details were kept.</strong>
+      <span style="color:#0a3622;">
+        Everything you entered is still here — you will need to choose your logo
+        again, because browsers do not let a page refill a file field.
+      </span>
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    host.parentNode.insertBefore(note, host);
+  }
+
+  function showCreditsModal(quote) {
+    // The draft is saved inside the modal itself, so every path that shows it
+    // saves — not just this one.
+    if (typeof window.ieShowCreditsModal === 'function') {
+      window.ieShowCreditsModal(quote);
+      return;
+    }
+    // spinner.js failed to load, so nothing else will save the draft.
+    saveDraft();
+    window.alert(
+      `This website needs ${quote.totalCost} credits and you have ${quote.available}.`
+    );
   }
 
   const STEP = {
@@ -1022,7 +1256,44 @@
         reindexPageRows(pagesList);
       }
     });
-    addPageBtn.addEventListener('click', () => addRow(''));
+    // THE GATE.
+    //
+    // Without it, someone with 150 credits can enter ten pages and only find
+    // out at the review step — after all the typing. Blocking the click is
+    // legitimate in a way that interrupting someone mid-keystroke is not:
+    // this fires on a deliberate action, and the action is one that cannot
+    // succeed.
+    //
+    // The price comes from the server, priced as if the new page already
+    // existed, so the gate and the review total can never disagree.
+    addPageBtn.addEventListener('click', async () => {
+      addPageBtn.disabled = true;
+      const label = addPageBtn.textContent;
+      addPageBtn.textContent = 'Checking…';
+
+      try {
+        const q = await fetchQuote({ extraPages: 1 });
+
+        credits.total = q.totalCost;
+        credits.available = q.available;
+        credits.loaded = true;
+
+        if (!q.affordable) {
+          showCreditsModal(q);
+          return;
+        }
+      } catch (_) {
+        // A failed check must NOT block the customer. The server checks again
+        // before any work is done, so the cost of being wrong here is a
+        // rejection later; the cost of blocking is someone unable to use the
+        // form because a request blipped.
+      } finally {
+        addPageBtn.disabled = false;
+        addPageBtn.textContent = label;
+      }
+
+      addRow('');
+    });
     svcWrap.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && e.target?.closest('#pagesList')) e.preventDefault();
     });
@@ -1051,6 +1322,57 @@
     const locToggle = locToggleWrap.querySelector('#addLocations');
     const ensureVisible = () => locBlock.style.display = locToggle.checked ? 'block' : 'none';
     locToggle.addEventListener('change', ensureVisible);
+
+    // THE LOCATION GATE.
+    //
+    // A location page costs the same as a service page, so it needs the same
+    // guard — an earlier version gated only "Add page", which meant someone
+    // could add locations past their balance and hear nothing until the
+    // review step.
+    //
+    // Intercepted in the CAPTURE phase because this button's real handler
+    // lives in locationPages.js, which this file does not own. Capture runs
+    // first, so stopping here prevents that handler from firing; when the
+    // check passes we call its published helper ourselves. Editing the other
+    // file would work too, and would leave the gate somewhere nobody looks
+    // when they wonder why a page was refused.
+    addLocBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      addLocBtn.disabled = true;
+      const label = addLocBtn.textContent;
+      addLocBtn.textContent = 'Checking…';
+
+      let allowed = true;
+
+      try {
+        const q = await fetchQuote({ extraLocations: 1 });
+
+        credits.total = q.totalCost;
+        credits.available = q.available;
+        credits.loaded = true;
+
+        allowed = q.affordable;
+        if (!allowed) showCreditsModal(q);
+      } catch (_) {
+        // Same rule as the page gate: a failed check must not block the
+        // customer. The server checks again before any work is done.
+      } finally {
+        addLocBtn.disabled = false;
+        addLocBtn.textContent = label;
+      }
+
+      if (!allowed) return;
+
+      if (window.addLocationInput) {
+        window.addLocationInput();
+      } else {
+        locList.appendChild(el('input', {
+          type: 'text', class: 'form-control mb-2', name: 'global[locationPages][]',
+        }));
+      }
+    }, true);   // capture
 
     const seedLocations = () => {
       locList.innerHTML = '';
@@ -1494,7 +1816,6 @@
 
     const pages = state.pages || [];
     const locations = state.addLocations ? (state.locations || []) : [];
-    const credits = quoteCredits();
 
     const header = el('div', { class: 'mb-3' });
     header.innerHTML = `
@@ -1502,8 +1823,8 @@
       <p class="text-white-50 mb-1">
         Check everything below before generating.
       </p>
-      <p class="text-white-50 mb-0">
-        This will use <strong>${credits.toLocaleString()}</strong> credits.
+      <p class="text-white-50 mb-0" id="reviewCredits">
+        This will use <strong>${creditsLabel()}</strong> credits.
       </p>
     `;
     container.appendChild(header);
@@ -1571,20 +1892,49 @@
       btn.addEventListener('click', () => go(Number(btn.dataset.step)));
     });
 
+    const generateLabel = (n) =>
+      `Generate ${state.siteMode === 'sample' ? 'Sample' : 'Website'} (${n} credits)`;
+
     renderNav(container, {
       showBack: true,
       backText: 'Back',
-      nextText: `Generate ${state.siteMode === 'sample' ? 'Sample' : 'Website'} (${credits.toLocaleString()} credits)`,
+      nextText: generateLabel(creditsLabel()),
       onBack: () => go(STEP.PAGES),
       onNext: () => {
         // Hidden fields were injected on the previous step, so this only
         // needs to fire the submit that spinner.js listens for.
+        // Submitted, so there is nothing to come back to. Left behind, it
+        // would reappear on the next visit as a half-finished form nobody
+        // asked for.
+        clearDraft();
+
         if (typeof form.requestSubmit === 'function') {
           form.requestSubmit();
         } else {
           form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         }
       }
+    });
+
+    // The total is fetched rather than computed, so it arrives a moment after
+    // the step renders. Both places that show it are updated together — the
+    // paragraph and the button — because a button reading one number while
+    // the text above reads another is the confusion this whole change exists
+    // to remove.
+    refreshCredits().then((q) => {
+      if (!q) return;   // a blip: leave the placeholder rather than guess
+
+      const line = document.getElementById('reviewCredits');
+      if (line) {
+        line.innerHTML = `This will use <strong>${q.totalCost.toLocaleString()}</strong> credits.`;
+        if (!q.affordable) {
+          line.innerHTML +=
+            ` <span class="text-warning">You have ${q.available.toLocaleString()}.</span>`;
+        }
+      }
+
+      const btn = container.querySelector('#nextBtn');
+      if (btn) btn.textContent = generateLabel(q.totalCost.toLocaleString());
     });
   }
 
@@ -1674,6 +2024,16 @@
     container = document.getElementById('dynamicFormContainer');
     form = document.getElementById('websiteForm');
     if (!container || !form) return;
+
+    // A draft left behind by a trip to /buy-credits. Applied before the first
+    // step renders, so the wizard comes up populated rather than flashing
+    // empty and then filling in.
+    const draft = loadDraft();
+    if (draft) {
+      applyDraft(draft);
+      clearDraft();
+      showDraftNotice();
+    }
 
     // single hidden logo input (backend expects this exact name)
     hiddenLogoInput = document.createElement('input');

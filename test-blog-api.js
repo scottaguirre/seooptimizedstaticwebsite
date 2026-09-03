@@ -53,12 +53,12 @@ function verify(signature, parts, secret = SECRET) {
 }
 
 test('a correctly signed request verifies', () => {
-  const parts = { timestamp: now(), method: 'POST', path: '/api/blog/generate', rawBody: body };
+  const parts = { timestamp: now(), method: 'POST', path: '/api/blog/write', rawBody: body };
   assert.ok(verify(sign(SECRET, parts), parts));
 });
 
 test('a changed body fails', () => {
-  const parts = { timestamp: now(), method: 'POST', path: '/api/blog/generate', rawBody: body };
+  const parts = { timestamp: now(), method: 'POST', path: '/api/blog/write', rawBody: body };
   const signature = sign(SECRET, parts);
 
   const tampered = {
@@ -74,7 +74,7 @@ test('the same signature replayed against another endpoint fails', () => {
   const parts = { timestamp: now(), method: 'POST', path: '/api/blog/complete', rawBody: body };
   const signature = sign(SECRET, parts);
 
-  assert.ok(!verify(signature, { ...parts, path: '/api/blog/generate' }));
+  assert.ok(!verify(signature, { ...parts, path: '/api/blog/write' }));
 });
 
 test('a changed method fails', () => {
@@ -83,7 +83,7 @@ test('a changed method fails', () => {
 });
 
 test('another site\'s secret fails', () => {
-  const parts = { timestamp: now(), method: 'POST', path: '/api/blog/generate', rawBody: body };
+  const parts = { timestamp: now(), method: 'POST', path: '/api/blog/write', rawBody: body };
   const otherSecret = crypto.randomBytes(32).toString('hex');
   assert.ok(!verify(sign(otherSecret, parts), parts));
 });
@@ -112,7 +112,7 @@ test('the canonical string is not vulnerable to field-splitting', () => {
   // A path containing a newline must not be able to impersonate a different
   // (timestamp, method, path) triple.
   const honest = canonicalString({ timestamp: '1', method: 'POST', path: '/api/blog/plan', rawBody: body });
-  const sneaky = canonicalString({ timestamp: '1', method: 'POST', path: '/api/blog/plan\n1\nPOST\n/api/blog/generate', rawBody: body });
+  const sneaky = canonicalString({ timestamp: '1', method: 'POST', path: '/api/blog/plan\n1\nPOST\n/api/blog/write', rawBody: body });
   assert.notStrictEqual(honest, sneaky);
 });
 

@@ -186,11 +186,25 @@ const generationLimiter = new ConcurrencyLimiter({
   queueTimeoutMs: 5 * 60 * 1000,
 });
 
+/**
+ * The queue timeout is 30 minutes, not 5.
+ *
+ * Five was right when a build ran inside an HTTP request: nobody's browser
+ * waits longer than that, so a longer wait was pointless. Builds are now
+ * background jobs with a progress page, and nothing is holding a connection —
+ * so waiting is exactly what a queued build should do.
+ *
+ * The old value had a specific failure. Three customers press Download
+ * together, a 100-page build takes four minutes, and the third waits eight —
+ * past the timeout. It got 'timed-out', which productionRoute had no message
+ * for, so it fell through to "Something went wrong during the build. Check the
+ * server logs." A build that had not even started was reported as a failure.
+ */
 const buildLimiter = new ConcurrencyLimiter({
   name: 'build',
   limit: Number(process.env.MAX_CONCURRENT_BUILDS) || 1,
   maxQueue: Number(process.env.MAX_QUEUED_BUILDS) || 20,
-  queueTimeoutMs: 5 * 60 * 1000,
+  queueTimeoutMs: Number(process.env.BUILD_QUEUE_TIMEOUT_MS) || 30 * 60 * 1000,
 });
 
 module.exports = {

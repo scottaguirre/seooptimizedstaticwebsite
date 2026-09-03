@@ -20,11 +20,26 @@
 //
 // THE LINK GRAPH
 // Every post links to the target page. Post 1 also leaves a placeholder for
-// post 2, which does not exist yet; when post 2 is published the placeholder
-// in post 1 becomes a real link. The last post closes the ring back to the
-// first. Placeholders are spans rather than anchors, so nothing is ever a
-// live link to a 404 — which is what would happen if post 1 shipped with an
-// <a href> to a URL three weeks in the future.
+// post 2, which is not live yet; when post 2 publishes the placeholder in post
+// 1 becomes a real link. The last post closes the ring back to the first.
+// Placeholders are spans rather than anchors, so nothing is ever a live link
+// to a 404 — which is what would happen if post 1 shipped with an <a href> to
+// a URL three weeks in the future.
+//
+// WRITE-AHEAD: WRITING AND PUBLISHING ARE NO LONGER THE SAME MOMENT
+//
+// Every post in a campaign is written the day the campaign is approved, in one
+// batch, and handed to WordPress as a future-dated post. WordPress publishes
+// them on the schedule itself.
+//
+// That splits what used to be one event into two, which is why there are now
+// six slot states rather than five. A post can be written, paid for, sitting in
+// WordPress with a real permalink, and still not be public — a future-dated
+// post returns 404 to anyone not logged in. `scheduled` is that state.
+//
+// It is also why the placeholders survive. Knowing post 5's permalink in week
+// one does not make it linkable in week one; it goes live in week five, and
+// until then a real <a> pointing at it is a broken link on a published page.
 
 const mongoose = require('mongoose');
 
@@ -35,14 +50,23 @@ const mongoose = require('mongoose');
  * moves:
  *
  *   pending     planned, nothing spent
- *   generating  claimed by a job; no other request may claim it
- *   ready       content exists on the job, credits charged, awaiting publish
- *   published   live on the site, WordPress has given it a URL
+ *   generating  claimed by the batch job; no other request may claim it
+ *   ready       written and paid for, stored as a BlogPost, not yet collected
+ *   scheduled   created in WordPress as a future post. Has a wpPostId and a
+ *               real permalink. NOT public — a future-dated post 404s to
+ *               anyone not logged in until its date arrives.
+ *   published   WordPress has flipped it live
  *   failed      generation failed; nothing charged, may be retried
  *
- * 'ready' exists precisely so a failed publish is recoverable. Without it
- * there would be no state meaning "paid for but not yet live", and the only
- * safe response to a retry would be to generate again.
+ * 'ready' exists precisely so a failed handover is recoverable. Without it
+ * there would be no state meaning "paid for but not yet on the site", and the
+ * only safe response to a retry would be to write it again.
+ *
+ * 'scheduled' exists because writing and publishing came apart. It is the
+ * state a post spends most of its life in — twelve weeks of a twelve-week
+ * campaign — and the one the scheduler watches: a slot stuck in 'scheduled'
+ * past its date means WordPress never ran the cron that publishes it, which on
+ * a zero-traffic site is the normal case rather than the exception.
  */
 const slotSchema = new mongoose.Schema({
   index: { type: Number, required: true },
@@ -88,7 +112,7 @@ const slotSchema = new mongoose.Schema({
 
   status: {
     type: String,
-    enum: ['pending', 'generating', 'ready', 'published', 'failed'],
+    enum: ['pending', 'generating', 'ready', 'scheduled', 'published', 'failed'],
     default: 'pending',
     index: true,
   },
@@ -97,11 +121,22 @@ const slotSchema = new mongoose.Schema({
   // automation scheduled by date alone, so posts surfaced at whatever hour
   // cron happened to fire — typically the small hours, which looks automated
   // to anyone watching the site.
+  //
+  // It no longer has anything to do with WHEN THE POST IS WRITTEN. Everything
+  // is written on approval day; this date is handed to WordPress as post_date
+  // and WordPress does the publishing.
   publishAt: { type: Date, index: true },
 
-  // The job that generated (or is generating) this slot. Holds the post
-  // itself in job.result, which is what a retry reads instead of paying for
-  // a second generation.
+  // What WordPress was actually told to publish it at, echoed back by the
+  // plugin. Normally publishAt converted to site-local time — recorded rather
+  // than assumed, because a site whose timezone setting disagrees with the one
+  // reported at activation would otherwise publish at the wrong hour for weeks
+  // with nothing in the data to show why.
+  scheduledFor: { type: Date },
+
+  // The batch job that wrote this slot. The post itself lives in the BlogPost
+  // collection, keyed { campaign, slotIndex }; this is kept for tracing a bad
+  // run back to its progress record, not for reading content.
   job: { type: mongoose.Schema.Types.ObjectId, ref: 'Job' },
 
   // Set when credits are actually taken, never before. Its presence is the
@@ -109,8 +144,9 @@ const slotSchema = new mongoose.Schema({
   chargedAt: { type: Date },
   credits: { type: Number, default: 0 },
 
-  // Filled in by the plugin once WordPress has assigned them. The slug is
-  // recorded as WordPress actually created it, not as we asked for it —
+  // Filled in by the plugin at SCHEDULING time, not at publication — a future
+  // post has its id and its permalink from the moment it is created. The slug
+  // is recorded as WordPress actually created it, not as we asked for it:
   // WordPress silently appends -2 when a slug is taken, and every link
   // pointing at the requested slug would 404.
   wpPostId: { type: Number },
@@ -187,17 +223,68 @@ const blogCampaignSchema = new mongoose.Schema({
 
   slots: [slotSchema],
 
+  /**
+   * Where the campaign is in its life.
+   *
+   *   draft      planned and priced, nothing spent. /plan leaves it here.
+   *   writing    the batch is running. Nothing may publish yet.
+   *   active     everything written and handed over; publishing on schedule
+   *   paused     the owner stopped it
+   *   completed  every slot published
+   *   cancelled  abandoned
+   *
+   * 'draft' finally means something. Before write-ahead, /plan created
+   * campaigns directly as 'active' because there was no separate approval
+   * step — planning and starting were the same act. Now approval is what
+   * triggers a large charge, so the two are properly distinct: a campaign sits
+   * in 'draft' until someone with credits says yes.
+   */
   status: {
     type: String,
-    enum: ['draft', 'active', 'paused', 'completed', 'cancelled'],
+    enum: ['draft', 'writing', 'active', 'paused', 'completed', 'cancelled'],
     default: 'draft',
     index: true,
   },
 
+  /**
+   * The write-ahead batch.
+   *
+   * One job writes every post in the campaign, so its state belongs to the
+   * campaign rather than to any slot. /write polls this to answer "how far
+   * along is it?" without loading twelve posts to count them.
+   *
+   * `written` and `failed` are recorded when the batch ends rather than
+   * derived from the slots on every poll — a poll every two seconds against a
+   * 52-slot campaign should not be counting array elements each time.
+   */
+  batch: {
+    job: { type: mongoose.Schema.Types.ObjectId, ref: 'Job' },
+    startedAt: { type: Date },
+    finishedAt: { type: Date },
+    written: { type: Number, default: 0 },
+    failed: { type: Number, default: 0 },
+    creditsCharged: { type: Number, default: 0 },
+  },
+
+  /**
+   * crossCheck()'s report over the whole batch: repeated sentences and shared
+   * openings across posts.
+   *
+   * This is the check that could never run before. Posts were written weeks
+   * apart, so there was nothing to compare a post against — every quality
+   * signal was per-post, and "all twelve of these open the same way" is not a
+   * per-post fact. It belongs here rather than on any BlogPost for the same
+   * reason: it is a property of the set.
+   */
+  crossCheck: { type: mongoose.Schema.Types.Mixed },
+
   createdAt: { type: Date, default: Date.now },
 });
 
-// "Which slots are due?" — the scheduler's only query.
+// "Which scheduled posts has WordPress failed to publish?" — the scheduler's
+// only query, and the reason status and slots.status are both in the key: it
+// asks for active campaigns holding scheduled slots, and neither half is
+// selective enough alone.
 blogCampaignSchema.index({ status: 1, 'slots.status': 1, 'slots.publishAt': 1 });
 
 /* -------------------------------------------------------------------------
@@ -284,8 +371,19 @@ blogCampaignSchema.statics.releaseSlot = function (campaignId, slotIndex, { mess
   );
 };
 
-/** Record what WordPress actually created. */
-blogCampaignSchema.statics.markSlotPublished = function (campaignId, slotIndex, published) {
+/**
+ * Record what WordPress created, as a future-dated post.
+ *
+ * This is the handover, and it is NOT publication. The post now exists on the
+ * site with a real id and a real permalink, and will 404 for the public until
+ * its date arrives. Both facts matter: the id is what lets the plugin edit the
+ * post later to switch on its placeholders, and the 404 is why those
+ * placeholders exist at all.
+ *
+ * Only from 'ready', so a duplicate confirmation — the plugin retrying a
+ * request whose response was lost — matches nothing and changes nothing.
+ */
+blogCampaignSchema.statics.markSlotScheduled = function (campaignId, slotIndex, created) {
   return this.findOneAndUpdate(
     {
       _id: campaignId,
@@ -293,33 +391,117 @@ blogCampaignSchema.statics.markSlotPublished = function (campaignId, slotIndex, 
     },
     {
       $set: {
-        'slots.$.status': 'published',
-        'slots.$.publishedAt': new Date(),
-        'slots.$.wpPostId': published.wpPostId,
-        'slots.$.publishedUrl': published.url || '',
-        'slots.$.publishedTitle': published.title || '',
+        'slots.$.status': 'scheduled',
+        'slots.$.wpPostId': created.wpPostId,
+        'slots.$.publishedUrl': created.url || '',
+        'slots.$.publishedTitle': created.title || '',
+        'slots.$.scheduledFor': created.scheduledFor || null,
       },
     },
     { new: true }
   );
 };
 
-/** Slots whose time has come and which have not been generated yet. */
-blogCampaignSchema.methods.dueSlots = function (now = new Date()) {
-  return (this.slots || []).filter(
-    s => s.status === 'pending' && s.publishAt && s.publishAt <= now
+/**
+ * WordPress has flipped a scheduled post live.
+ *
+ * Reported by the plugin from its future_to_publish hook. Nothing here needs
+ * updating except the status and the date — the id, URL and title were all
+ * settled when the post was created, and re-writing them would risk a stale
+ * value overwriting a correct one if the owner edited the post in between.
+ */
+blogCampaignSchema.statics.markSlotLive = function (campaignId, slotIndex, publishedAt) {
+  return this.findOneAndUpdate(
+    {
+      _id: campaignId,
+      slots: { $elemMatch: { index: slotIndex, status: 'scheduled' } },
+    },
+    {
+      $set: {
+        'slots.$.status': 'published',
+        'slots.$.publishedAt': publishedAt || new Date(),
+      },
+    },
+    { new: true }
+  );
+};
+
+// markSlotPublished() was here: the one-shot ready -> published transition.
+// It was correct when the plugin collected a post and published it in the same
+// breath, so there was no intermediate state to record. Deleted rather than
+// kept as a convenience, because skipping 'scheduled' loses the distinction
+// between a post that exists and a post the public can read — and that
+// distinction is the entire reason the placeholder spans still exist.
+
+/**
+ * Put a failed slot back in play, so a later run can fill the gap.
+ *
+ * Deliberate and explicit, because under write-ahead nothing else moves a slot
+ * back to 'pending'. The batch marks a slot that could not be written 'failed'
+ * and leaves it there: there is no weekly run that would come round again, so
+ * a slot sitting in 'pending' after the batch would be waiting for something
+ * that is never going to happen.
+ *
+ * `attempts` is the cap, and it is why this filter checks it rather than
+ * trusting the caller. Each claim increments it, so a topic the model keeps
+ * refusing stops costing API calls after a few tries however many times
+ * someone presses the button.
+ */
+blogCampaignSchema.statics.reopenSlot = function (campaignId, slotIndex, maxAttempts = 3) {
+  return this.findOneAndUpdate(
+    {
+      _id: campaignId,
+      slots: {
+        $elemMatch: {
+          index: slotIndex,
+          status: 'failed',
+          attempts: { $lt: maxAttempts },
+        },
+      },
+    },
+    {
+      $set: {
+        'slots.$.status': 'pending',
+        'slots.$.error': '',
+      },
+    },
+    { new: true }
   );
 };
 
 /**
- * Slots generated and paid for but never confirmed published.
+ * Slots written and paid for that WordPress has not taken yet.
  *
- * These are the ones a retry should hand straight back rather than
- * regenerate. A site that was down for a day comes back to find its posts
- * waiting, already paid for.
+ * The stranded ones. A site that was offline when the batch finished comes
+ * back to find its posts waiting, already paid for — these are what the plugin
+ * collects on its next run, and handing them over costs nothing.
  */
-blogCampaignSchema.methods.unpublishedReadySlots = function () {
+blogCampaignSchema.methods.uncollectedSlots = function () {
   return (this.slots || []).filter(s => s.status === 'ready');
+};
+
+/**
+ * Scheduled posts whose date has passed and which WordPress has not published.
+ *
+ * This replaces dueSlots(), and the change of meaning is the whole redesign in
+ * one function. It used to mean "a post that should be written by now". It now
+ * means "a post that WordPress was supposed to publish and did not" — because
+ * WordPress publishes future posts through WP-Cron, WP-Cron fires when someone
+ * visits the site, and these sites have no visitors. That is precisely why the
+ * customer is buying posts, and it makes the missed schedule the normal case
+ * here rather than an edge one.
+ *
+ * A grace period, because the two clocks are not the same. WordPress fires its
+ * cron on its own schedule and the site's timezone may be set differently from
+ * the one reported at activation; treating a post as missed the instant our
+ * clock passes the minute would ping every site on every campaign, every time.
+ */
+blogCampaignSchema.methods.missedSchedule = function (now = new Date(), graceMs = 15 * 60 * 1000) {
+  const cutoff = new Date(now.getTime() - graceMs);
+
+  return (this.slots || []).filter(
+    s => s.status === 'scheduled' && s.publishAt && s.publishAt <= cutoff
+  );
 };
 
 module.exports = mongoose.model('BlogCampaign', blogCampaignSchema);

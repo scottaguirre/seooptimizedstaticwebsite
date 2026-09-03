@@ -54,6 +54,9 @@ router.get('/api/jobs/:id', requireAuth, async (req, res) => {
     res.json({
       id: String(job._id),
       status: job.status,
+      // The page shows different wording and a different finish link per kind.
+      // Absent on rows written before `kind` existed — those are site builds.
+      kind: job.kind || 'site',
       siteMode: job.siteMode,
       progress: job.progress || { done: 0, total: 0 },
       skipped: job.skippedPages || [],
@@ -88,21 +91,37 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
 </body></html>`);
   }
 
+  const kind = job.kind || 'site';
+
+  // One page, three jobs. The wording and the finish link differ because the
+  // outcomes do: a generated site is viewed, a ZIP is downloaded, a blog post
+  // is read. A page that said "See your website" after a build would send
+  // someone to the preview rather than the file they were waiting for.
+  const COPY = {
+    site:  { title: 'Building your website', done: 'Your website is ready',   cta: 'See your website', href: '/dashboard' },
+    build: { title: 'Packaging your website', done: 'Your download is ready', cta: 'Download the ZIP', href: '/download-zip' },
+    // Defensive only: a blog job is polled by the WordPress plugin, not
+    // watched here. Pointing it at the dashboard rather than a WordPress path
+    // that does not exist on this server.
+    blog:  { title: 'Writing your post',      done: 'Your post is ready',     cta: 'My Dashboard',     href: '/dashboard' },
+  };
+  const copy = COPY[kind] || COPY.site;
+
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Building your website</title>
+  <title>${copy.title}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-dark text-white">
   <div class="container py-5" style="max-width: 720px;">
 
-    <h1 id="title" class="mb-2">Building your website</h1>
+    <h1 id="title" class="mb-2">${copy.title}</h1>
     <p id="subtitle" class="text-white-50">
       This can take a few minutes. You can leave this page open, or come back
-      to it from your dashboard — the build carries on either way.
+      to it from your dashboard — the work carries on either way.
     </p>
 
     <div class="progress mt-4" style="height: 28px;">
@@ -114,7 +133,7 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
     <p id="detail" class="text-white-50 small"></p>
 
     <div id="done" class="mt-4 d-none">
-      <a href="/dashboard" class="btn btn-primary btn-lg">See your website</a>
+      <a href="${copy.href}" class="btn btn-primary btn-lg">${copy.cta}</a>
     </div>
 
     <div id="failed" class="alert alert-danger mt-4 d-none" role="alert"></div>
@@ -149,13 +168,19 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
           const job = await res.json();
           const { done = 0, total = 0 } = job.progress || {};
 
+          // A build and a blog post are one unit of work with no meaningful
+          // fraction — webpack reports nothing through exec(). Forcing the
+          // indeterminate bar is more honest than a bar that sits at 0% and
+          // then jumps to 100%.
+          const indeterminate = job.kind === 'build' || job.kind === 'blog';
+
           // Indeterminate until the first page lands.
           //
           // Setup takes 15-20 seconds before anything completes, and a bar
           // frozen at 0% reads as "hung". A full-width striped animation is
           // honest — it says work is happening without claiming a percentage
           // nobody can calculate yet.
-          if (done === 0) {
+          if (done === 0 || indeterminate) {
             bar.style.width = '100%';
             bar.textContent = '';
             bar.classList.add('progress-bar-striped', 'progress-bar-animated');
@@ -188,7 +213,7 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
             bar.classList.add('bg-success');
             bar.style.width = '100%';
             bar.textContent = '100%';
-            title.textContent = 'Your website is ready';
+            title.textContent = ${JSON.stringify(copy.done)};
             subtitle.textContent = job.creditsCharged
               ? job.creditsCharged.toLocaleString() + ' credits were used.'
               : '';

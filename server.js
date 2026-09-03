@@ -265,7 +265,7 @@ app.use('/', billingRoute);
 // which verifies an HMAC signature over the method, path and body — a stronger
 // check than a session, and the reason '/api/blog/' is listed in the CSRF
 // exemptions alongside the Stripe webhook.
-app.use('/', blogApiRoute);      // /api/blog/activate|plan|generate|complete
+app.use('/', blogApiRoute);      // /api/blog/activate|plan|write|collect|complete|published
 app.use('/', blogTopicsRoute);   // /api/blog/suggest|enrich
 
 
@@ -351,14 +351,19 @@ app.use((err, req, res, next) => {
 // runner keeps that module free of any dependency on site building.
 const jobRunner = require('./utils/jobRunner');
 const { generateForJob } = require('./utils/jobGenerator');
-const { generateBlogPost } = require('./utils/blogGenerator');
+const { writeCampaign } = require('./utils/blogGenerator');
+const { buildForJob } = require('./utils/buildGenerator');
 
 // One runner, two kinds of work. The kind is stored on the Job, and
 // claimNextJob only claims kinds this process has a generator for — which
 // matters during a rolling deploy, when an older instance would otherwise
 // claim a blog job it cannot run and leave it stuck.
 jobRunner.registerGenerator('site', generateForJob);
-jobRunner.registerGenerator('blog', generateBlogPost);
+// 'blog' is one job per CAMPAIGN now, not one per post — every post is written
+// when the campaign is approved. The kind name is unchanged so a job queued by
+// an older instance during a deploy is still claimable.
+jobRunner.registerGenerator('blog', writeCampaign);
+jobRunner.registerGenerator('build', buildForJob);
 
 // Wakes each customer's WordPress when a post is due. The schedule lives here
 // rather than in WP-Cron because WP-Cron fires on a visit, and a brand new

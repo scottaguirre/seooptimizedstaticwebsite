@@ -378,25 +378,34 @@ router.get('/dashboard', requireAuth, async (req, res) => {
                   // read. Without it /production returns 403 and the user
                   // sees "The build failed", which is misleading: the build
                   // never started.
-                  const res = await fetch('/production', {
+                  //
+                  // Accept: application/json, because /production answers in
+                  // whichever shape the caller asks for — JSON here, a real
+                  // 302 for the plain form in downloadZipRoute.
+                  const buildRes = await fetch('/production', {
                     method: 'POST',
                     headers: {
-                      'Accept': 'text/html',
+                      'Accept': 'application/json',
                       'X-CSRF-Token': '${res.locals.csrfToken || ''}',
                     },
                   });
-                  if (res.status === 403) {
+                  if (buildRes.status === 403) {
                     throw new Error('Your session expired. Please refresh the page and try again.');
                   }
-                  if (!res.ok) throw new Error('The build failed. Please try again.');
+                  if (!buildRes.ok) throw new Error('The build could not be started. Please try again.');
 
-                  overlayText.textContent = 'Starting your download...';
-                  window.location.href = '/download-zip';
+                  // THE BUILD HAS NOT FINISHED. It has been queued.
+                  //
+                  // This used to go straight to /download-zip, which worked
+                  // only because /production blocked until the ZIP existed —
+                  // and blocking is what made a hundred-page build die in a
+                  // browser timeout. Now the response means "queued", so
+                  // going to the download would arrive before the file. The
+                  // progress page offers it the moment it is really there.
+                  const data = await buildRes.json().catch(() => ({}));
 
-                  setTimeout(() => {
-                    overlay.classList.remove('show');
-                    dlStatic.disabled = false;
-                  }, 3000);
+                  overlayText.textContent = 'Preparing your download...';
+                  window.location.href = data.redirect || '/dashboard';
 
                 } catch (err) {
                   overlay.classList.remove('show');
