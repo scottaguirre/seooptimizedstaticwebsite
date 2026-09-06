@@ -8,6 +8,9 @@ const requireAuth = require('../middleware/requireAuth');
 
 const { buildWordPressThemeFromModel } = require('../utils/wpThemeBuilder/buildFromModel');
 const { cleanDirectory } = require('../utils/helpers');
+const BlogSite = require('../models/BlogSite');
+const { CREDITS_PER_POST } = require('../utils/blogPricing');
+const { log } = require('../utils/logger');
 
 const projectRoot = path.join(__dirname, '..');
 const baseDistDir = path.join(projectRoot, 'dist');
@@ -244,6 +247,43 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
     const stat = fs.statSync(zipPath);
     const sizeMb = (stat.size / 1024 / 1024).toFixed(1);
 
+    /**
+     * The best moment in the app to mention blog automation.
+     *
+     * This person has, one second ago, made a WordPress site — which is the
+     * one prerequisite the plugin has. They will never be more ready to hear
+     * about it than now, and until this line existed the flow ended with
+     * "Back to Generator" and no hint the feature was there at all. The card
+     * on the dashboard only finds people who go looking.
+     *
+     * Suppressed once they already have a site connected. A prompt to set up
+     * something you have set up reads as the app not knowing who you are, and
+     * this is a page people see repeatedly — every re-export lands here.
+     */
+    let alreadyConnected = false;
+    try {
+      alreadyConnected = await BlogSite.exists({
+        user: req.user._id,
+        status: { $ne: 'revoked' },
+      });
+    } catch (err) {
+      // A page that has just built the customer's theme must not fail over a
+      // suggestion. Worst case they see an invitation they do not need.
+      log.error('exportWpTheme.blogSiteCheck.failed', err, { requestId: req.id });
+    }
+
+    const blogPrompt = alreadyConnected ? '' : `
+        <div class="alert alert-success mt-4">
+          <strong>Want this site to blog on its own?</strong>
+          <p class="mb-2 mt-2">
+            Plan a run of posts, and they are written in one go and published on
+            a schedule — each one linking to the service page you want to rank.
+            It works on the theme you just built, and on any other WordPress site.
+          </p>
+          <a href="/blog-sites" class="btn btn-success btn-sm">Set up Blog Automation</a>
+          <span class="text-muted small ms-2">${CREDITS_PER_POST} credits per post</span>
+        </div>`;
+
     return send(res, page({
       csrfToken: res.locals.csrfToken || '',
       title: 'WordPress Theme Ready',
@@ -266,7 +306,8 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
             <li>Extra sections added to the bottom of any page</li>
           </ul>
         </div>
-        <p class="text-muted small mb-0">ZIP size: ${sizeMb} MB</p>`,
+        <p class="text-muted small mb-0">ZIP size: ${sizeMb} MB</p>
+        ${blogPrompt}`,
       actions: `
         <a href="/download-wp-theme" class="btn btn-primary btn-lg">📥 Download WordPress Theme</a>
         <button type="button" id="dlStatic" class="btn btn-outline-primary">Download HTML Site</button>

@@ -56,6 +56,7 @@ const { requireSite } = require('../middleware/requireSite');
 const { blogActivateLimiter, blogApiLimiter } = require('../middleware/rateLimits');
 const { quotePosts, CREDITS_PER_POST } = require('../utils/blogPricing');
 const { planForCampaign } = require('../utils/blog/campaignPlan');
+const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 
 // How many written posts one /collect hands over. The plugin inserts them one
@@ -407,6 +408,18 @@ router.post('/api/blog/write', blogApiLimiter, requireSite, async (req, res) => 
         creditsError: true,
         quote,
         creditsAvailable: available,
+
+        // Where to fix it.
+        //
+        // This is the most common wall a self-serve customer hits, and until
+        // now it was a dead end: WordPress showed them the shortfall and
+        // nothing else. They are standing in wp-admin on their own site, and
+        // nothing on that screen says the balance lives somewhere else, let
+        // alone where. Sent as an absolute URL because the plugin has no idea
+        // what this server's address is beyond the one it was configured
+        // with, and building it there would guess wrong on every custom
+        // domain.
+        buyCreditsUrl: `${baseUrl(req)}/buy-credits`,
       });
     }
 

@@ -609,7 +609,7 @@
     const card = el('div', { class: 'card shadow-sm' });
     card.innerHTML = `
       <div class="card-body">
-        <h3 class="card-title mb-3">${stepNumber(STEP.TYPE)}. Choose your Business Type</h3>
+        <h3 class="card-title mb-2">${stepNumber(STEP.TYPE)}. Choose your Business Type</h3>
         <div class="row g-3">
           <div class="col-12">
             <select class="form-select" id="businessType" required>

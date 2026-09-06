@@ -770,9 +770,60 @@ function ${p}_render_video( $post_id, $s ) {
 }
 
 /**
- * Contact form. Submits over Ajax to inc/contact-form-handler.php.
+ * Contact form.
+ *
+ * THREE MODES, chosen in Theme Settings, because the built-in form is the
+ * right answer for about a week.
+ *
+ * The generated form submits over Ajax to inc/contact-form-handler.php and
+ * works the moment the theme is activated, with no plugin to install and
+ * nothing to configure — which is exactly what a brand new site needs. But
+ * anyone running a real business soon wants the form their CRM already reads,
+ * or Contact Form 7, or nothing at all on the home page. Until now the form
+ * was welded in: no setting turned it off, and no plugin's shortcode could
+ * replace it without editing the theme by hand.
+ *
+ *   builtin    the generated form (default, so existing sites do not change)
+ *   shortcode  runs whatever the owner pasted — [contact-form-7 id="42"]
+ *   none       renders nothing at all
+ *
+ * The shortcode is rendered INSIDE the same section wrapper, so a swapped
+ * form keeps the band, the background and the spacing the layout was designed
+ * around. Dropping a raw shortcode into the page without it leaves the
+ * section looking broken even when the form itself works.
  */
 function ${p}_render_form( $post_id, $s ) {
+    $mode = get_option( '${p}_contact_form_mode', 'builtin' );
+
+    if ( 'none' === $mode ) {
+        return;
+    }
+
+    if ( 'shortcode' === $mode ) {
+        $shortcode = trim( (string) get_option( '${p}_contact_form_shortcode', '' ) );
+
+        // Nothing pasted yet. Rendering an empty band would look like a bug to
+        // the owner and to their visitors; saying nothing is the safer read of
+        // "I have not finished setting this up".
+        if ( '' === $shortcode ) {
+            return;
+        }
+        ?>
+        <section class="form-container">
+          <div class="bg-secondary-subtle">
+            <div class="container section-padding">
+              <?php
+              // do_shortcode on an option only an administrator can set. The
+              // capability check is on the settings screen, not here — by this
+              // point the value is as trusted as the theme itself.
+              echo do_shortcode( $shortcode );
+              ?>
+            </div>
+          </div>
+        </section>
+        <?php
+        return;
+    }
     ?>
     <section class="form-container">
       <div class="bg-secondary-subtle">
@@ -1686,6 +1737,10 @@ function ${p}_render_sections( $post_id ) {
         $nested_keys[ $s['key'] ]            = true;
     }
 
+    // Set once the client's own sections have been drawn, so the fallback
+    // after the loop does not draw them a second time.
+    $custom_rendered = false;
+
     foreach ( $sections as $s ) {
         if ( empty( $s['type'] ) || empty( $s['key'] ) ) {
             continue;
@@ -1700,6 +1755,32 @@ function ${p}_render_sections( $post_id ) {
         // empty band of padding.
         if ( ${p}_section_is_empty( $post_id, $s ) ) {
             continue;
+        }
+
+        /**
+         * Client-added sections go here: after the body, above the contact
+         * blocks.
+         *
+         * They used to render after this whole loop, which put them below the
+         * NAP and map — the last thing on the page, under the address. That
+         * reads as an afterthought, and it is not where anyone writing a new
+         * section expects it to appear: they have just written about the town,
+         * and they mean it to follow the town.
+         *
+         * The rule is expressed as "before the first contact block" rather
+         * than "after the video section", because a page with no video would
+         * then have nowhere to put them. Form and NAP-map are the page's
+         * closing furniture on every layout, so inserting above whichever
+         * comes first lands the new content at the end of the body — which is
+         * the same place on a page that has a video and one that does not.
+         *
+         * Checked AFTER the skip conditions above, so an empty form section
+         * that renders nothing does not swallow the insertion point and leave
+         * the custom sections below the map anyway.
+         */
+        if ( ! $custom_rendered && ( 'form' === $s['type'] || 'nap-map' === $s['type'] ) ) {
+            ${p}_render_custom_sections( $post_id );
+            $custom_rendered = true;
         }
 
         switch ( $s['type'] ) {
@@ -1757,8 +1838,12 @@ function ${p}_render_sections( $post_id ) {
         }
     }
 
-    // Anything the client added goes at the end
-    ${p}_render_custom_sections( $post_id );
+    // Only reached when the page has neither a form nor a NAP-map section to
+    // sit above — a bare text page, say. Then the end IS the end of the body,
+    // and it is the right place after all.
+    if ( ! $custom_rendered ) {
+        ${p}_render_custom_sections( $post_id );
+    }
 }
 `;
 }

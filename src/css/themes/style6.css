@@ -61,7 +61,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 
  a.nav-link.active:hover, .current-menu-item a:hover {
     border-bottom: 0;
-    color: red !important; 
+    color: rgb(236, 55, 10) !important; 
 
 }
 

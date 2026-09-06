@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaigns Tab Layout</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --shell-bg:      #15171b;
+  --shell-surface: #1e2127;
+  --shell-line:    #2e333c;
+  --shell-text:    #e7e9ee;
+  --shell-muted:   #959ba6;
+  --shell-accent:  #d9a441;
+  --shell-good:    #7ec08e;
+
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* wp-admin, fixed in every theme: this is a preview of WordPress */
+  --wp-ground:  #f0f0f1;
+  --wp-surface: #ffffff;
+  --wp-text:    #1d2327;
+  --wp-muted:   #646970;
+  --wp-line:    #c3c4c7;
+  --wp-blue:    #2271b1;
+  --wp-red:     #d63638;
+  --wp-green:   #00a32a;
+  --wp-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+             "Helvetica Neue", sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --shell-bg:      #eceae5;
+    --shell-surface: #f7f6f3;
+    --shell-line:    #d6d2c9;
+    --shell-text:    #22242a;
+    --shell-muted:   #6b6f78;
+    --shell-accent:  #9a6b18;
+    --shell-good:    #2f6b41;
+  }
+}
+:root[data-theme="light"] {
+  --shell-bg:      #eceae5;
+  --shell-surface: #f7f6f3;
+  --shell-line:    #d6d2c9;
+  --shell-text:    #22242a;
+  --shell-muted:   #6b6f78;
+  --shell-accent:  #9a6b18;
+  --shell-good:    #2f6b41;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--shell-bg);
+  color: var(--shell-text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page { max-width: 1120px; margin: 0 auto; padding: 44px 22px 88px;
+        display: flex; flex-direction: column; gap: 40px; }
+
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+           text-transform: uppercase; color: var(--shell-accent); }
+
+h1 { margin: 0; font-size: clamp(27px, 4vw, 38px); font-weight: 600;
+     letter-spacing: -.02em; text-wrap: balance; }
+
+.standfirst { margin: 0; max-width: 64ch; color: var(--shell-muted); font-size: 16px; }
+
+.masthead { display: flex; flex-direction: column; gap: 12px; }
+
+hr.rule { border: 0; border-top: 1px solid var(--shell-line); margin: 0; }
+
+/* ---------- wp-admin canvas ---------- */
+
+.wp {
+  background: var(--wp-ground);
+  color: var(--wp-text);
+  font-family: var(--wp-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 18px 22px 30px;
+  border: 1px solid var(--shell-line);
+  overflow-x: auto;
+}
+
+.wp-h1 { font-size: 23px; font-weight: 400; margin: 0; color: var(--wp-text); line-height: 1.3; }
+.wp h3 { font-size: 14px; font-weight: 600; margin: 22px 0 8px; color: var(--wp-text); }
+.wp a { color: var(--wp-blue); text-decoration: none; }
+.wp a:hover { text-decoration: underline; }
+.wp-sub { color: var(--wp-muted); margin: 0; }
+
+.headrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.spacer { flex: 1 1 auto; }
+
+/* WordPress's own tab idiom */
+.nav-tab-wrapper {
+  border-bottom: 1px solid var(--wp-line);
+  margin: 14px 0 20px;
+  padding-left: 4px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.nav-tab {
+  font-family: var(--wp-sans);
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 6px 12px;
+  border: 1px solid var(--wp-line);
+  border-bottom: none;
+  background: #dcdcde;
+  color: #50575e;
+  cursor: pointer;
+  margin-bottom: -1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.nav-tab:hover { background: #e6e6e8; color: var(--wp-text); }
+
+.nav-tab-active,
+.nav-tab-active:hover {
+  background: var(--wp-ground);
+  border-bottom: 1px solid var(--wp-ground);
+  color: var(--wp-text);
+  font-weight: 600;
+}
+
+.nav-tab:focus-visible { outline: 2px solid var(--wp-blue); outline-offset: -2px; }
+
+.count {
+  font-family: var(--wp-sans);
+  font-size: 11px;
+  font-weight: 600;
+  background: #b8bcc0;
+  color: #fff;
+  border-radius: 9px;
+  padding: 0 6px;
+  line-height: 16px;
+  min-width: 18px;
+  text-align: center;
+}
+.nav-tab-active .count { background: var(--wp-blue); }
+.count-need { background: #b8860b; }
+
+/* ---------- tables ---------- */
+
+table.wpt { width: 100%; border-collapse: collapse; background: var(--wp-surface);
+            border: 1px solid var(--wp-line); }
+table.wpt th { text-align: left; font-weight: 600; font-size: 13px; padding: 9px 10px;
+               border-bottom: 1px solid var(--wp-line); white-space: nowrap; }
+table.wpt td { padding: 9px 10px; border-top: 1px solid #f0f0f1; vertical-align: top; }
+table.wpt tr:nth-child(even) td { background: #f6f7f7; }
+
+.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.kw { font-family: var(--mono); font-size: 11.5px; background: #f0f0f1;
+      padding: 1px 5px; color: #3c434a; }
+
+/* ---------- controls ---------- */
+
+.btn {
+  display: inline-block; font-family: var(--wp-sans); font-size: 13px;
+  line-height: 2.1; padding: 0 11px; border: 1px solid var(--wp-blue);
+  background: var(--wp-surface); color: var(--wp-blue); border-radius: 3px;
+  cursor: pointer; white-space: nowrap;
+}
+.btn-primary { background: var(--wp-blue); color: #fff; }
+.btn-sm { font-size: 12px; line-height: 1.9; padding: 0 9px; }
+.btn:focus-visible { outline: 2px solid var(--wp-blue); outline-offset: 1px; }
+
+.linkish { background: none; border: 0; padding: 0; font: inherit;
+           color: var(--wp-blue); cursor: pointer; }
+.linkish:hover { text-decoration: underline; }
+.linkish:focus-visible { outline: 2px solid var(--wp-blue); outline-offset: 1px; }
+
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+        font-weight: 600; padding: 2px 8px; border-radius: 9px; white-space: nowrap; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill-live  { color: #14622a; background: #e5f5e9; }
+.pill-sched { color: #1a5d8a; background: #e4eff7; }
+.pill-wait  { color: #7a5c00; background: #fbf3d8; }
+.pill-done  { color: #4b5563; background: #eceef0; }
+
+.clash { color: #7a5c00; background: #fbf3d8; font-size: 11.5px; font-weight: 600;
+         padding: 1px 7px; border-radius: 9px; }
+
+/* ---------- campaign rows ---------- */
+
+.camp { background: var(--wp-surface); border: 1px solid var(--wp-line);
+        box-shadow: 0 1px 1px rgba(0,0,0,.04); margin-bottom: 8px; }
+
+.camp-row { width: 100%; display: flex; align-items: center; gap: 14px;
+            padding: 12px 14px; background: none; border: 0; font: inherit;
+            font-family: var(--wp-sans); text-align: left; cursor: pointer;
+            color: var(--wp-text); }
+.camp-row:hover { background: #f6f7f7; }
+.camp-row:focus-visible { outline: 2px solid var(--wp-blue); outline-offset: -2px; }
+
+.camp-name { font-weight: 600; font-size: 14px; }
+.camp-meta { color: var(--wp-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+.chev { color: var(--wp-muted); font-size: 11px; transition: transform .15s ease; flex: none; }
+.camp[data-open="1"] .chev { transform: rotate(90deg); }
+
+.camp-body { border-top: 1px solid var(--wp-line); padding: 14px; }
+
+.prog { width: 88px; height: 5px; background: #e6e7e8; border-radius: 3px;
+        overflow: hidden; flex: none; }
+.prog i { display: block; height: 100%; background: var(--wp-green); }
+
+.rowline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* draft callout */
+.draft-note {
+  background: #fbf6e3;
+  border: 1px solid #e6d9a8;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  color: #5c4a09;
+}
+
+/* ---------- the form ---------- */
+
+.formgrid { display: grid; grid-template-columns: 190px minmax(0,1fr); gap: 16px 20px;
+            align-items: start; max-width: 780px; }
+.formgrid label { font-weight: 600; padding-top: 5px; }
+.formgrid input[type=text], .formgrid select, .formgrid textarea {
+  font-family: var(--wp-sans); font-size: 13px; padding: 5px 8px;
+  border: 1px solid #8c8f94; border-radius: 3px; width: 100%; max-width: 420px;
+  background: var(--wp-surface); color: var(--wp-text);
+}
+.formgrid .hint { color: var(--wp-muted); margin: 5px 0 0; font-size: 12.5px; }
+.narrow { max-width: 200px !important; }
+
+/* ---------- shell commentary ---------- */
+
+.changes { border-left: 2px solid var(--shell-accent); padding-left: 18px;
+           display: flex; flex-direction: column; gap: 10px; }
+.changes h4 { margin: 0; font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+              text-transform: uppercase; color: var(--shell-accent); font-weight: 500; }
+.changes ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
+.changes li { font-size: 14px; }
+.changes li span { color: var(--shell-muted); }
+
+.screen-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.screen-label { font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+                text-transform: uppercase; padding: 3px 8px; border: 1px solid currentColor;
+                color: var(--shell-good); }
+.screen-title { font-weight: 600; font-size: 17px; }
+.screen-note { color: var(--shell-muted); font-size: 13.5px; max-width: 72ch; margin: 0; }
+
+.screen { display: flex; flex-direction: column; gap: 14px; }
+
+.foot { color: var(--shell-muted); font-size: 13.5px; max-width: 72ch; }
+.foot strong { color: var(--shell-text); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+@media (max-width: 640px) {
+  .wp { padding: 14px; }
+  .formgrid { grid-template-columns: 1fr; }
+  .formgrid label { padding-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Interlink Engine · wp-admin</div>
+    <h1>Campaigns Tab Layout</h1>
+    <p class="standfirst">
+      Four tabs, using WordPress's own tab styling so it looks native rather
+      than bolted on. <strong>The tabs work — click them.</strong> Campaign rows
+      open too.
+    </p>
+  </header>
+
+  <hr class="rule">
+
+  <section class="screen">
+    <div class="screen-head">
+      <span class="screen-label">Mockup</span>
+      <span class="screen-title">Campaigns, tabbed</span>
+    </div>
+    <p class="screen-note">
+      Real data in “In progress”; the other tabs use plausible examples so you
+      can see them populated.
+    </p>
+
+    <div class="wp">
+      <div class="headrow">
+        <h2 class="wp-h1">Campaigns</h2>
+        <span class="spacer"></span>
+        <span class="wp-sub">6,274 credits · 75 per post</span>
+      </div>
+
+      <nav class="nav-tab-wrapper" role="tablist" aria-label="Campaign status">
+        <button class="nav-tab nav-tab-active" role="tab" data-tab="running" aria-selected="true" aria-controls="p-running" id="t-running">
+          In progress <span class="count">2</span>
+        </button>
+        <button class="nav-tab" role="tab" data-tab="drafts" aria-selected="false" aria-controls="p-drafts" id="t-drafts" tabindex="-1">
+          Waiting for you <span class="count count-need">1</span>
+        </button>
+        <button class="nav-tab" role="tab" data-tab="done" aria-selected="false" aria-controls="p-done" id="t-done" tabindex="-1">
+          Completed <span class="count">2</span>
+        </button>
+        <button class="nav-tab" role="tab" data-tab="new" aria-selected="false" aria-controls="p-new" id="t-new" tabindex="-1">
+          New campaign
+        </button>
+      </nav>
+
+      <!-- ============ IN PROGRESS ============ -->
+      <div class="pane" id="p-running" role="tabpanel" aria-labelledby="t-running">
+
+        <div class="camp" data-open="0">
+          <button class="camp-row" type="button" data-toggle aria-expanded="false">
+            <span class="chev">▶</span>
+            <span class="camp-name">quality plumbing leander</span>
+            <span class="pill pill-sched">Publishing</span>
+            <span class="spacer"></span>
+            <span class="camp-meta">Next: today, 09:00</span>
+            <span class="prog"><i style="width:0%"></i></span>
+            <span class="camp-meta">0 of 6 live</span>
+          </button>
+          <div class="camp-body" hidden>
+            <p class="wp-sub" style="margin-bottom:12px;">
+              Feeding <a href="#0">quality plumbing leander</a> · a post every day · 450 credits, already paid
+            </p>
+            <table class="wpt">
+              <thead><tr><th>Post</th><th>Publishes</th><th>State</th><th></th></tr></thead>
+              <tbody>
+                <tr><td><a href="#0">Pilot Lights That Keep Going Out Often Point to a Repairable Gas Water Heater Fault</a></td><td class="when">Today, 09:00</td><td><span class="pill pill-sched">Scheduled</span></td><td><button class="linkish" type="button">Publish early</button></td></tr>
+                <tr><td><a href="#0">A Humming Water Heater Is Not Always a Tank Failure</a></td><td class="when">Mon 7 Sep</td><td><span class="pill pill-sched">Scheduled</span></td><td><button class="linkish" type="button">Publish early</button></td></tr>
+                <tr><td><a href="#0">Repair or Replace Depends on Whether the Tank Is Sound</a></td><td class="when">Tue 8 Sep</td><td><span class="pill pill-sched">Scheduled</span></td><td><button class="linkish" type="button">Publish early</button></td></tr>
+                <tr><td><a href="#0">Where a Water Heater Diagnostic Fee Goes Before Any Work Begins</a></td><td class="when">Wed 9 Sep</td><td><span class="pill pill-sched">Scheduled</span></td><td><button class="linkish" type="button">Publish early</button></td></tr>
+                <tr><td><a href="#0">Leander’s Hard Water Can Shorten Water Heater Anode-Rod Life</a></td><td class="when">Thu 10 Sep</td><td><span class="pill pill-sched">Scheduled</span></td><td><button class="linkish" type="button">Publish early</button></td></tr>
+                <tr><td>Repeatedly Resetting a Tripped Water Heater Can Hide an Electrical Fault</td><td class="when">Fri 11 Sep</td><td><span class="pill pill-wait">Arriving</span></td><td></td></tr>
+              </tbody>
+            </table>
+            <div class="rowline" style="margin-top:12px;">
+              <button class="linkish" type="button" data-kw>Show search terms</button>
+              <span style="color:var(--wp-line);">|</span>
+              <button class="linkish" type="button">Fetch now</button>
+              <span class="spacer"></span>
+              <button class="linkish" type="button" style="color:var(--wp-red);">Remove campaign</button>
+            </div>
+            <div data-kwbox hidden style="margin-top:12px;">
+              <table class="wpt">
+                <thead><tr><th>Post</th><th>Search term it targets</th></tr></thead>
+                <tbody>
+                  <tr><td>Pilot Lights That Keep Going Out…</td><td><span class="kw">water heater pilot light keeps going out</span></td></tr>
+                  <tr><td>A Humming Water Heater…</td><td><span class="kw">water heater humming noise</span></td></tr>
+                  <tr><td>Repair or Replace…</td><td><span class="kw">should i repair or replace water heater</span></td></tr>
+                  <tr><td>Where a Water Heater Diagnostic Fee…</td><td><span class="kw">water heater diagnostic fee</span></td></tr>
+                  <tr><td>Leander’s Hard Water…</td><td><span class="kw">hard water anode rod water heater</span></td></tr>
+                  <tr><td>Repeatedly Resetting a Tripped…</td><td><span class="kw">water heater reset button keeps tripping</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="camp" data-open="0">
+          <button class="camp-row" type="button" data-toggle aria-expanded="false">
+            <span class="chev">▶</span>
+            <span class="camp-name">drain cleaning leander</span>
+            <span class="pill pill-live">Live</span>
+            <span class="spacer"></span>
+            <span class="camp-meta">Next: Wed 9 Sep</span>
+            <span class="prog"><i style="width:50%"></i></span>
+            <span class="camp-meta">4 of 8 live</span>
+          </button>
+          <div class="camp-body" hidden>
+            <p class="wp-sub" style="margin:0;">
+              Four published, four still scheduled. Every published post now links to
+              <a href="#0">drain cleaning leander</a>. <em>Example campaign.</em>
+            </p>
+          </div>
+        </div>
+
+        <h3>Coming up</h3>
+        <table class="wpt">
+          <thead><tr><th>When</th><th>Post</th><th>Campaign</th></tr></thead>
+          <tbody>
+            <tr><td class="when">Today, 09:00</td><td><a href="#0">Pilot Lights That Keep Going Out Often Point to a Repairable Gas Water Heater Fault</a></td><td>quality plumbing leander</td></tr>
+            <tr><td class="when">Mon 7 Sep</td><td><a href="#0">A Humming Water Heater Is Not Always a Tank Failure</a></td><td>quality plumbing leander</td></tr>
+            <tr><td class="when">Tue 8 Sep</td><td><a href="#0">Repair or Replace Depends on Whether the Tank Is Sound</a></td><td>quality plumbing leander</td></tr>
+            <tr>
+              <td class="when">Wed 9 Sep <span class="clash">2 posts</span></td>
+              <td><a href="#0">Where a Water Heater Diagnostic Fee Goes Before Any Work Begins</a><br><a href="#0">How Long a Main Line Cleaning Actually Takes</a></td>
+              <td>quality plumbing leander<br>drain cleaning leander</td>
+            </tr>
+            <tr><td class="when">Thu 10 Sep</td><td><a href="#0">Leander’s Hard Water Can Shorten Water Heater Anode-Rod Life</a></td><td>quality plumbing leander</td></tr>
+          </tbody>
+        </table>
+        <p class="wp-sub" style="margin-top:8px;">Next seven days across every campaign. <a href="#0">See the full schedule</a></p>
+      </div>
+
+      <!-- ============ WAITING FOR YOU ============ -->
+      <div class="pane" id="p-drafts" role="tabpanel" aria-labelledby="t-drafts" hidden>
+        <div class="draft-note">
+          <strong>Nothing here has been charged.</strong> A campaign is planned as a
+          draft first. Approving it is what writes the posts and spends the credits.
+        </div>
+
+        <div class="camp" data-open="0">
+          <button class="camp-row" type="button" data-toggle aria-expanded="false">
+            <span class="chev">▶</span>
+            <span class="camp-name">emergency plumber leander</span>
+            <span class="pill pill-wait">Draft</span>
+            <span class="spacer"></span>
+            <span class="camp-meta">Planned 4 Sep</span>
+            <span class="camp-meta">12 posts · 900 credits</span>
+          </button>
+          <div class="camp-body" hidden>
+            <p class="wp-sub" style="margin-bottom:12px;">
+              Twelve topics, one every three days, starting tomorrow at 09:00.
+              Nothing written and nothing charged until you approve it. <em>Example campaign.</em>
+            </p>
+            <table class="wpt">
+              <thead><tr><th>Topic</th><th>Would publish</th></tr></thead>
+              <tbody>
+                <tr><td>What Counts as a Plumbing Emergency and What Can Wait</td><td class="when">Mon 7 Sep</td></tr>
+                <tr><td>Shutting Off the Water Before the Plumber Arrives</td><td class="when">Thu 10 Sep</td></tr>
+                <tr><td>Why a Burst Pipe Costs More on a Weekend</td><td class="when">Sun 13 Sep</td></tr>
+                <tr><td class="wp-sub" colspan="2">…and nine more</td></tr>
+              </tbody>
+            </table>
+            <div class="rowline" style="margin-top:14px;">
+              <button class="btn btn-primary" type="button">Write all 12 posts — 900 credits</button>
+              <button class="linkish" type="button">Edit topics</button>
+              <span class="spacer"></span>
+              <button class="linkish" type="button" style="color:var(--wp-red);">Discard</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ COMPLETED ============ -->
+      <div class="pane" id="p-done" role="tabpanel" aria-labelledby="t-done" hidden>
+        <p class="wp-sub" style="margin-bottom:14px;">
+          Every post stays on your site. A finished campaign is a record of what
+          was published and what it links to.
+        </p>
+
+        <div class="camp" data-open="0">
+          <button class="camp-row" type="button" data-toggle aria-expanded="false">
+            <span class="chev">▶</span>
+            <span class="camp-name">water cleanup leander</span>
+            <span class="pill pill-done">Finished</span>
+            <span class="spacer"></span>
+            <span class="camp-meta">1–3 Sep 2026</span>
+            <span class="prog"><i style="width:100%"></i></span>
+            <span class="camp-meta">3 of 3 live</span>
+          </button>
+          <div class="camp-body" hidden>
+            <p class="wp-sub" style="margin-bottom:12px;">
+              Fed <a href="#0">water cleanup leander</a> · 225 credits · every post links to that page, and to each other.
+            </p>
+            <table class="wpt">
+              <thead><tr><th>Post</th><th>Published</th><th>Links in</th></tr></thead>
+              <tbody>
+                <tr><td><a href="#0">Standing Water Under a Water Heater Is Rarely the Heater</a></td><td class="when">1 Sep 2026</td><td>2</td></tr>
+                <tr><td><a href="#0">What to Move First When a Supply Line Lets Go</a></td><td class="when">2 Sep 2026</td><td>2</td></tr>
+                <tr><td><a href="#0">Drying a Subfloor Properly Takes Longer Than People Expect</a></td><td class="when">3 Sep 2026</td><td>2</td></tr>
+              </tbody>
+            </table>
+            <div class="rowline" style="margin-top:14px;">
+              <button class="btn btn-sm" type="button">Plan another for this page</button>
+              <span class="wp-sub">Same page and search term, fresh topics.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="camp" data-open="0">
+          <button class="camp-row" type="button" data-toggle aria-expanded="false">
+            <span class="chev">▶</span>
+            <span class="camp-name">water heater replacement leander</span>
+            <span class="pill pill-done">Finished</span>
+            <span class="spacer"></span>
+            <span class="camp-meta">12–26 Aug 2026</span>
+            <span class="prog"><i style="width:100%"></i></span>
+            <span class="camp-meta">6 of 6 live</span>
+          </button>
+          <div class="camp-body" hidden>
+            <p class="wp-sub" style="margin:0;">Six posts, 450 credits. <em>Example campaign.</em></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ NEW CAMPAIGN ============ -->
+      <div class="pane" id="p-new" role="tabpanel" aria-labelledby="t-new" hidden>
+        <p class="wp-sub" style="margin-bottom:18px;">
+          Planning is free. You will see the topics and the price before anything is written.
+        </p>
+
+        <div class="formgrid">
+          <label for="f-page">Page to rank</label>
+          <div>
+            <select id="f-page" class="narrow"><option>Choose a page…</option><option>quality plumbing leander</option><option>drain cleaning leander</option></select>
+            <p class="hint">Every post will link to it. Pick the page that books jobs, not a blog page.</p>
+          </div>
+
+          <label for="f-term">Its search term</label>
+          <div>
+            <input id="f-term" type="text" value="water heater repair">
+            <p class="hint">What someone types to find that page. No post will be allowed to compete with it.</p>
+          </div>
+
+          <label for="f-goal">What the reader should end up doing</label>
+          <div>
+            <input id="f-goal" type="text" value="have an existing water heater repaired, rather than replaced">
+            <p class="hint">Shapes how every post closes.</p>
+          </div>
+
+          <label for="f-count">How many posts</label>
+          <div>
+            <input id="f-count" type="text" value="6" class="narrow" style="max-width:80px !important;">
+            <p class="hint">6 posts · <strong>450 credits</strong> · you have 6,274.</p>
+          </div>
+
+          <label for="f-every">One post every</label>
+          <div>
+            <select id="f-every" class="narrow" style="max-width:130px !important;"><option>1 day</option><option selected>3 days</option><option>7 days</option></select>
+            <p class="hint">Finishes Wed 23 September.</p>
+          </div>
+
+          <label for="f-time">Published at</label>
+          <div>
+            <input id="f-time" type="text" value="09:00" class="narrow" style="max-width:80px !important;">
+            <p class="hint">Your site’s timezone, America/Chicago. Posts hold this hour across the clock change.</p>
+          </div>
+
+          <div></div>
+          <div class="rowline">
+            <button class="btn btn-primary" type="button">Suggest topics</button>
+            <span class="wp-sub">Free. Nothing is written or charged at this step.</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="changes">
+      <h4>Calls I made that you should check</h4>
+      <ul>
+        <li>“In progress” opens first, not “New campaign” <span>— you check on things far more often than you start them. New campaign is last for the same reason.</span></li>
+        <li>Drafts got their own tab, called “Waiting for you” <span>— your three tabs had nowhere to put a planned-but-unapproved campaign. It isn’t in progress, and it certainly isn’t completed. The amber count is the only one that means “do something”.</span></li>
+        <li>“Coming up” lives inside In progress <span>— it only ever describes running campaigns, so it has no business on the other tabs.</span></li>
+        <li>The form gained the fields it was missing <span>— how many posts, how often, what time — with the price and the finish date shown as you set them. Right now you cannot see what a campaign costs until after you plan it.</span></li>
+        <li>Completed shows what you got <span>— which posts, when, and how many links each has. Plus “Plan another for this page”, which is what you actually want from a finished campaign.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <p class="foot">
+    <strong>Still just a preview.</strong> Tabs, campaign rows and the search-term
+    toggle work; nothing else does. In WordPress these would be real tabs —
+    <span style="font-family:var(--mono);font-size:13px;">?page=interlink-engine&amp;tab=drafts</span>
+    — so each is a bookmarkable page and a reload keeps you where you were.
+    Tell me what to change and I’ll write it into
+    <span style="font-family:var(--mono);font-size:13px;">class-ie-admin.php</span>.
+  </p>
+
+</div>
+
+<script>
+(function () {
+  var tabs  = Array.prototype.slice.call(document.querySelectorAll('.nav-tab'));
+  var panes = Array.prototype.slice.call(document.querySelectorAll('.pane'));
+
+  function show(name, focus) {
+    tabs.forEach(function (t) {
+      var on = t.getAttribute('data-tab') === name;
+      t.classList.toggle('nav-tab-active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      if (on && focus) t.focus();
+    });
+    panes.forEach(function (p) {
+      p.hidden = p.id !== 'p-' + name;
+    });
+    if (history.replaceState) history.replaceState(null, '', '#' + name);
+  }
+
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () { show(t.getAttribute('data-tab')); });
+  });
+
+  // Left/right arrows move between tabs, as a tablist should.
+  document.querySelector('.nav-tab-wrapper').addEventListener('keydown', function (e) {
+    var i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      var next = (i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+      show(tabs[next].getAttribute('data-tab'), true);
+    }
+  });
+
+  var start = (location.hash || '').replace('#', '');
+  if (start && document.getElementById('p-' + start)) show(start);
+
+  document.querySelectorAll('[data-toggle]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var camp = btn.closest('.camp');
+      var body = camp.querySelector('.camp-body');
+      var open = body.hidden;
+      body.hidden = !open;
+      camp.setAttribute('data-open', open ? '1' : '0');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
+
+  document.querySelectorAll('[data-kw]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var box = btn.closest('.camp-body').querySelector('[data-kwbox]');
+      var open = box.hidden;
+      box.hidden = !open;
+      btn.textContent = open ? 'Hide search terms' : 'Show search terms';
+    });
+  });
+})();
+</script>
+</body>
+</html>

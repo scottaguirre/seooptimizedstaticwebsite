@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema({
   },
   credits: {
     type: Number,
-    default: 20
+    default: 0
   },
   role: {
     type: String,

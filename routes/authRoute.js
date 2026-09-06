@@ -5,8 +5,10 @@ const router = express.Router();
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const User = require('../models/User');
+const BlogSite = require('../models/BlogSite');
 const requireAuth = require('../middleware/requireAuth');
 const { getCurrentSite } = require('../utils/currentSite');
+const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { renderAuthPage } = require('../utils/renderAuthPage');
 const { createVerificationToken, hashToken, notExpired } = require('../utils/authTokens');
@@ -64,7 +66,7 @@ router.post('/signup', async (req, res) => {
       email,
       passwordHash: hashed,
       role,
-      credits: role === 'admin' ? 9999 : 10, // whatever logic you like
+      credits: role === 'admin' ? 9999 : 0, // whatever logic you like
       verified: false,
       verificationTokenHash: verificationHash,
       verificationExpiresAt: verificationExpires,
@@ -253,6 +255,54 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     // only way back would be to regenerate and spend credits again.
     const site = getCurrentSite(req.session.userId);
 
+    // Blog Automation had no entry point anywhere in the app. /blog-sites was
+    // reachable only by typing the URL, which means the feature effectively
+    // did not exist for anyone who had not been told about it — including
+    // every customer who had paid for credits they could have spent on it.
+    //
+    // Counted rather than listed: the dashboard's job is to say the thing
+    // exists and whether it is set up. The detail belongs on its own page.
+    //
+    // Revoked sites are excluded deliberately. A revoked licence is a site
+    // that has been deliberately switched off, and counting it would report
+    // "2 sites connected" to someone who has one.
+    let connectedSites = 0;
+    try {
+      connectedSites = await BlogSite.countDocuments({
+        user: req.session.userId,
+        status: { $ne: 'revoked' },
+      });
+    } catch (err) {
+      // The dashboard is the page people land on after logging in. It must
+      // not fail to render because one optional count could not be taken.
+      log.error('dashboard.blogSiteCount.failed', err, { requestId: req.id });
+    }
+
+    const blogCard = `
+      <div class="card bg-dark border-secondary text-white mb-4">
+        <div class="card-body">
+          <h5 class="card-title mb-1">Blog Automation</h5>
+          <p class="card-subtitle text-white-50 mb-0">
+            ${connectedSites
+              ? `${connectedSites} WordPress site${connectedSites === 1 ? '' : 's'} connected`
+              : 'Publish a planned run of posts to a WordPress site, on a schedule'}
+            &middot; ${CREDITS_PER_POST} credits per post
+          </p>
+
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <a href="/blog-sites" class="btn btn-outline-light">
+              ${connectedSites ? 'Manage sites' : 'Set it up'}
+            </a>
+          </div>
+
+          ${connectedSites ? '' : `
+          <p class="text-white-50 small mb-0 mt-3">
+            Works on any WordPress site, with any theme — including ones this
+            app did not build.
+          </p>`}
+        </div>
+      </div>`;
+
     const siteCard = site ? `
       <div class="card bg-secondary-subtle text-dark mb-4">
         <div class="card-body">
@@ -317,6 +367,8 @@ router.get('/dashboard', requireAuth, async (req, res) => {
           <h1 class="mb-4">Dashboard</h1>
 
           ${siteCard}
+
+          ${blogCard}
 
           <!-- text-white is required: Bootstrap 5.3's .card sets
                color: var(--bs-body-color), which is dark, and that overrides

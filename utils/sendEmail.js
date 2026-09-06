@@ -36,9 +36,18 @@ function fromAddress() {
   return process.env.EMAIL_FROM || 'onboarding@resend.dev';
 }
 
-function baseUrl() {
-  return process.env.BASE_URL || 'http://localhost:3000';
-}
+// Re-exported rather than defined here.
+//
+// This file had its own copy, and because an email has no request to fall
+// back to, its copy answered 'http://localhost:3000' whenever BASE_URL was
+// unset — which it was. Every verification link sent from the deployed server
+// pointed at the recipient's own machine, so nobody who signed up could
+// finish signing up, and nothing logged a thing: the mail sent, the link was
+// well-formed, it just named the wrong computer.
+//
+// utils/baseUrl.js now owns the answer, and server.js refuses to boot in
+// production without BASE_URL set, so this cannot silently happen again.
+const { baseUrl } = require('./baseUrl');
 
 /**
  * Print the message instead of sending it.

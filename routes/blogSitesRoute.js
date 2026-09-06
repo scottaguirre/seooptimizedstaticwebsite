@@ -22,6 +22,15 @@
 // that install, and activate refuses the key. It deliberately does NOT delete
 // the record: campaigns reference it, and their history — what was published,
 // what was charged — has to survive.
+//
+// THE ORDER OF THE STEPS IS THE POINT
+//
+// This page used to open with "create a licence key" and then tell people to
+// paste it into a plugin it never said how to get. That is the wrong way
+// round twice over: the key is useless until the plugin is installed, and
+// there was nowhere in the entire app to download the plugin from. So the
+// setup card is numbered, install comes first, and the download button is on
+// it.
 
 const express = require('express');
 const router = express.Router();
@@ -30,6 +39,8 @@ const BlogSite = require('../models/BlogSite');
 const BlogCampaign = require('../models/BlogCampaign');
 const requireAuth = require('../middleware/requireAuth');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
+const { versionOrNull } = require('../utils/pluginPackage');
+const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 
 /** The same shell billingRoute and creditsRoute use, so this does not look bolted on. */
@@ -97,6 +108,93 @@ function when(date) {
     : esc(text);
 }
 
+/**
+ * The download button, or an honest explanation of why there isn't one.
+ *
+ * versionOrNull returns null when wp-plugin/ is not on disk. That is not a
+ * hypothetical: the deploy rsync names the directories it copies, and a new
+ * top-level folder is exactly the sort of thing that gets left out of it. A
+ * button that 500s teaches a customer the product is broken; a sentence
+ * saying it is temporarily unavailable does not.
+ */
+function downloadButton() {
+  const version = versionOrNull();
+
+  if (!version) {
+    return `<div class="alert alert-warning mb-0">
+      The plugin download is temporarily unavailable. Please contact support.
+    </div>`;
+  }
+
+  return `
+    <a href="/plugin/download" class="btn btn-primary">
+      <i class="bi bi-download me-1"></i> Download the plugin
+    </a>
+    <span class="small text-white-50 ms-2">version ${esc(version)}</span>`;
+}
+
+/**
+ * The three steps, in the order they actually have to happen.
+ *
+ * Rendered on the list page and again on the page that shows a new key, so
+ * someone who created a key first — which the old page invited — still finds
+ * the plugin.
+ */
+function setupSteps(req, res, { withKeyButton = true } = {}) {
+  const csrfField = res.locals.csrfField || '';
+  return `
+    <div class="card bg-secondary text-white mt-4">
+      <div class="card-body">
+        <h5 class="card-title mb-3">Connect a WordPress site</h5>
+
+        <ol class="mb-0" style="line-height: 1.9;">
+          <li>
+            <strong>Install the plugin.</strong>
+            <div class="my-2">${downloadButton()}</div>
+            <div class="small text-white-50 mb-3">
+              In WordPress: <strong>Plugins &rarr; Add New &rarr; Upload Plugin</strong>,
+              choose the file, then Install and Activate. Updating later works the
+              same way — upload the newer file and choose
+              <em>Replace current with uploaded</em>.
+            </div>
+          </li>
+
+          ${withKeyButton ? `
+          <li>
+            <strong>Create a licence key.</strong>
+            <div class="small text-white-50 mt-1 mb-2">
+              One key per site. You will see it once, so create it when you are
+              ready to paste it.
+            </div>
+            <form action="/blog-sites" method="POST" class="mb-3">
+              ${csrfField}
+              <button type="submit" class="btn btn-outline-light btn-sm">
+                <i class="bi bi-key me-1"></i> Create a licence key
+              </button>
+            </form>
+          </li>` : `
+          <li>
+            <strong>Create a licence key.</strong>
+            <div class="small text-success mt-1 mb-3">
+              Done — it is the one above.
+            </div>
+          </li>`}
+
+          <li>
+            <strong>Connect.</strong>
+            <div class="small text-white-50 mt-1">
+              In WordPress: <strong>Settings &rarr; Interlink Engine</strong>. Paste
+              the key, set the server address to
+              <code class="user-select-all">${esc(baseUrl(req))}</code>,
+              and press Connect. The site appears in your list above within a
+              few seconds.
+            </div>
+          </li>
+        </ol>
+      </div>
+    </div>`;
+}
+
 /* -------------------------------------------------------------------------
  * The list
  * ---------------------------------------------------------------------- */
@@ -157,25 +255,10 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
           </table>
         </div>` : `
         <div class="alert alert-secondary mt-4">
-          No sites yet. Create a licence key below, then paste it into
-          <strong>Settings &rarr; Interlink Engine</strong> in that site's WordPress admin.
+          No sites connected yet. The three steps below take about two minutes.
         </div>`}
 
-        <div class="card bg-secondary text-white mt-4">
-          <div class="card-body">
-            <h5 class="card-title">Add a site</h5>
-            <p class="small mb-3">
-              This creates a new licence key. You will see it once — copy it
-              straight into WordPress.
-            </p>
-            <form action="/blog-sites" method="POST">
-              ${res.locals.csrfField || ''}
-              <button type="submit" class="btn btn-primary">
-                <i class="bi bi-key me-1"></i> Create a licence key
-              </button>
-            </form>
-          </div>
-        </div>
+        ${setupSteps(req, res)}
 
         <a href="/dashboard" class="btn btn-outline-light mt-4">Back to Dashboard</a>`,
     }));
@@ -256,20 +339,15 @@ router.post('/blog-sites', requireAuth, async (req, res) => {
           </div>
         </div>
 
-        <h5 class="mt-4">What to do with it</h5>
-        <ol class="text-white-50">
-          <li>Install the Interlink Engine plugin on the site</li>
-          <li>Go to <strong>Settings &rarr; Interlink Engine</strong></li>
-          <li>Paste the key and click Connect</li>
-        </ol>
+        ${setupSteps(req, res, { withKeyButton: false })}
 
-        <p class="text-white-50 small">
+        <p class="text-white-50 small mt-3">
           The site reports its address when it connects, and it will appear in
           your list. Each post published costs ${CREDITS_PER_POST} credits from
           your balance.
         </p>
 
-        <a href="/blog-sites" class="btn btn-primary mt-3">Done</a>`,
+        <a href="/blog-sites" class="btn btn-outline-light mt-3">Done</a>`,
     }));
 
   } catch (err) {

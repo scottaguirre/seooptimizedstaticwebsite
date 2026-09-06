@@ -126,6 +126,31 @@ test('the first post is never already overdue', () => {
   assert.ok(dates[0].getTime() > Date.now());
 });
 
+test('a daily cadence in a zone behind UTC does not blow the stack', () => {
+  // The bug this guards: shifting past an already-passed first slot used to
+  // recurse with a UTC-MIDNIGHT anchor, and the next call read that instant
+  // back in the site's zone. Anywhere behind UTC that is still the PREVIOUS
+  // calendar day, so a one-day cadence advanced by nothing and recursed until
+  // "Maximum call stack size exceeded" surfaced as "Could not create the
+  // campaign". Weekly hid it — it crept forward six days a time and stopped.
+  //
+  // Every hour of the day is tried, because whether the shift runs at all
+  // depends on the clock at the moment the campaign is planned; the original
+  // report only reproduced after 09:00 local.
+  for (const tz of ['America/Chicago', 'America/New_York', 'America/Los_Angeles']) {
+    for (let h = 0; h < 24; h++) {
+      const at = `${String(h).padStart(2, '0')}:00`;
+      const dates = publishDates({ count: 3, everyDays: 1, publishTime: at, timezone: tz });
+
+      assert.strictEqual(dates.length, 3, `${tz} ${at}`);
+      assert.ok(dates[0].getTime() > Date.now(), `${tz} ${at} first slot already overdue`);
+      for (let i = 1; i < dates.length; i++) {
+        assert.ok(dates[i] > dates[i - 1], `${tz} ${at} slot ${i} is not after slot ${i - 1}`);
+      }
+    }
+  }
+});
+
 /* ===================================================================== */
 
 console.log('\nPlanning');

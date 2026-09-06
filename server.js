@@ -48,6 +48,10 @@ const blogApiRoute = require('./routes/blogApiRoute');
 const blogTopicsRoute = require('./routes/blogTopicsRoute');
 const blogSitesRoute = require('./routes/blogSitesRoute');
 
+// Where the customer gets the plugin. Zipped from wp-plugin/ on demand, so
+// the download is always the version in this repository.
+const pluginDownloadRoute = require('./routes/pluginDownloadRoute');
+
 
 
 
@@ -108,6 +112,12 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   console.error('FATAL: SESSION_SECRET is not set. Refusing to start in production.');
   process.exit(1);
 }
+
+// Same trade, different variable. Without BASE_URL, every verification and
+// password-reset email links to http://localhost:3000 — so no new customer
+// can ever finish signing up, and nothing reports it, because the mail sends
+// perfectly well and the link is perfectly well-formed.
+require('./utils/baseUrl').requireBaseUrlInProduction();
 
 // Behind Hostinger, nginx or any proxy, req.ip is the proxy without this —
 // so every visitor would share one rate-limit bucket, and `secure` cookies
@@ -284,6 +294,7 @@ app.use('/', requireAuth, productionRoute);   // /production
 app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
 app.use('/', requireAuth, blogSitesRoute);    // /blog-sites — licence keys
+app.use('/', requireAuth, pluginDownloadRoute); // /plugin/download — the WP plugin
 
 
 
