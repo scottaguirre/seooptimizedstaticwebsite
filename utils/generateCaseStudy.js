@@ -36,10 +36,16 @@
 // every time and produced "a home in an older part of Leander, TX", which is
 // what someone writes when they have never been there.
 //
-// The escape is now widening the RADIUS rather than dropping the name: the
-// nearest recognisable town, or a highway through the area. That still gives a
-// real place. Going nameless is the last resort, and the prompt says outright
-// that "an older part of town" is not good enough.
+// The second version replaced that with "widen the radius", named the kinds of
+// place wanted — school, park, mall, restaurant, highway — and said outright
+// that "an older part of town" is not good enough. That worked: a San Antonio
+// build came back with "a home a few minutes from the Alamo", which is a real,
+// famous landmark in the right city.
+//
+// The distance rule below was added anyway, because "widen the radius" has no
+// natural stopping point and the failure it invites — borrowing a famous
+// landmark from a different city because it is the one you can name — reads as
+// true and is not. It has not been observed; it is cheap to rule out.
 //
 // This is safe here in a way it would not have been a year ago because the
 // About Us page has been asking for five landmarks per town all along and
@@ -131,15 +137,22 @@ these work, and you should pick whichever you are most confident about:
 Write it as "a home a few minutes from <place>", "a property backing onto
 <place>", "on the <place> side of town" or similar.
 
-It must be a place a resident would recognise instantly and that appears on a
-map. If ${location} is too small for you to name one confidently, widen the
-radius rather than going vague — name the nearest recognisable town, or a
-highway that runs through the area. Only as a last resort describe the area
-without a name at all.
+IT MUST BE WITHIN A FEW MINUTES OF ${location}
+The sentence says the job was minutes away from this place, so the place has to
+BE there. It must sit inside ${location} or close enough that a resident would
+drive it without thinking about it.
 
-"An older part of ${location}" is NOT good enough. That is the answer to give
-when you know nothing about the place, and it makes the paragraph read like it
-was written by someone who has never been there.
+A famous landmark IS the right answer when it is genuinely in ${location} — a
+concreter in San Antonio really can be minutes from the Alamo. What is wrong is
+borrowing a famous landmark from a DIFFERENT city because it is the one you can
+name. That reads as true and is not, which a local catches in a second.
+
+If you cannot name a place inside ${location} itself, use a road or highway
+that actually runs through it, or the adjoining town people there commute to.
+Those are still a few minutes away. Anything further is not.
+
+"An older part of ${location}" is NOT good enough. That is what you write when
+you know nothing about the place, and it reads that way.
 
 WHAT YOU MUST NOT INVENT
 This describes a typical job, not a particular one that happened. So:
@@ -149,8 +162,10 @@ This describes a typical job, not a particular one that happened. So:
   a household and is not. A highway or a major road is a landmark, not an
   address, and is fine.
 - Do NOT invent a place. A landmark that does not exist is spotted instantly by
-  a local reader, and they stop believing the rest of the page. If you are
-  guessing at the name, widen the radius until you are not.
+  a local reader, and they stop believing the rest of the page.
+- Do NOT name a place that exists somewhere else. A real landmark in the wrong
+  city is worse than an invented one, because it proves the page was written
+  about nowhere in particular.
 - Do NOT give a date, a month, or a year.
 - Do NOT state a price, a cost, a saving, or a percentage.
 - Do NOT quote anybody, and do NOT write a testimonial.

@@ -59,7 +59,7 @@ function page({ title, body, status = 200 }) {
   <title>${title}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="bg-dark text-white">
+<body style="background: #082d5b;" class="text-white">
   <div class="container py-5" style="max-width: 900px;">
     ${body}
   </div>
@@ -83,11 +83,11 @@ router.get('/buy-credits', requireAuth, async (req, res) => {
 
   const cards = PACKS.map(pack => `
     <div class="col-md-4">
-      <div class="card h-100 ${pack.popular ? 'border-success border-3' : 'border-secondary'} bg-dark text-white">
+      <div class="card h-100 ${pack.popular ? 'border-success border-3' : 'border-secondary'} bg-secondary-subtle text-dark">
         <div class="card-body d-flex flex-column">
           ${pack.badge ? `<span class="badge text-bg-success align-self-start mb-2">${pack.badge}</span>` : ''}
           <h4 class="card-title">${pack.name}</h4>
-          <p class="text-white-50 mb-3">${pack.blurb}</p>
+          <p class="text-dark mb-3">${pack.blurb}</p>
           <p class="display-6 mb-3">${formatPrice(pack.priceCents)}</p>
 
           <form action="/api/checkout" method="POST" class="mt-auto">
@@ -103,14 +103,14 @@ router.get('/buy-credits', requireAuth, async (req, res) => {
     title: 'Buy Credits',
     body: `
       <h1 class="mb-2">Buy Credits</h1>
-      <p class="text-white-50">
+      <p class="text-white">
         You have <strong>${balance.toLocaleString()}</strong> credits.
         A typical website uses about 1,100.
       </p>
 
       <div class="row g-3 mt-3">${cards}</div>
 
-      <p class="text-white-50 small mt-4">
+      <p class="text-white small mt-4">
         Payments are handled by Stripe. Your card details never touch our servers.
       </p>
 

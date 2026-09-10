@@ -60,7 +60,7 @@ router.get('/plugin/download', requireAuth, async (req, res) => {
   <title>Download failed</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="bg-dark text-white">
+<body style="background:#082d5b;" class=" text-white">
   <div class="container py-5" style="max-width: 700px;">
     <h1>We could not build the plugin download</h1>
     <p class="lead">This is our problem, not yours. Please try again in a moment.</p>

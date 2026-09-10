@@ -1,0 +1,31 @@
+# Paths rsync must never send to the server.
+#
+# One file rather than a pile of --exclude flags, so the excludes cannot drift
+# between the command you ran last time and the one you run today.
+
+# Holds the OpenAI key and the Atlas connection string. The server keeps its
+# own copy; overwriting it from a laptop is how a deploy takes the app down.
+.env
+
+# Rebuilt on the server. Sending it is slow and can mix architectures for any
+# package with a native binary.
+node_modules/
+
+.git/
+.DS_Store
+
+# Per-user generated sites and zipped themes. These belong to the server's
+# filesystem, not to the repo.
+dist/
+builds/
+logs/
+
+# Working files from a Claude session — mockups, old plugin ZIPs. A copy of
+# this got onto the server once already.
+Claude outputs/
+
+# Archives. A tarball is not part of the running app, and stripe.tar.gz alone
+# is most of this tree's size.
+*.tar.gz
+*.tgz
+*.zip

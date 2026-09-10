@@ -83,7 +83,7 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
     return res.status(404).send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Not found</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head><body class="bg-dark text-white">
+</head><body style="background:#082d5b;" class="text-white">
   <div class="container py-5" style="max-width:600px;">
     <h1>We could not find that build</h1>
     <a href="/dashboard" class="btn btn-primary mt-3">My Dashboard</a>
@@ -115,7 +115,7 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
   <title>${copy.title}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="bg-dark text-white">
+<body style="background:#082d5b;" class=" text-white">
   <div class="container py-5" style="max-width: 720px;">
 
     <h1 id="title" class="mb-2">${copy.title}</h1>

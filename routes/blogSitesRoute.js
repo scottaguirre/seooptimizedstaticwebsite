@@ -56,7 +56,7 @@ function page({ title, body, status = 200 }) {
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
 </head>
-<body class="bg-dark text-white">
+<body style="background:#082d5b;" class="text-white">
   <div class="container py-5" style="max-width: 900px;">
     ${body}
   </div>
@@ -95,7 +95,7 @@ function statusBadge(status) {
 }
 
 function when(date) {
-  if (!date) return '<span class="text-white-50">never</span>';
+  if (!date) return '<span class="text-dark">never</span>';
 
   const days = Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
   const text = new Date(date).toLocaleDateString();
@@ -130,7 +130,7 @@ function downloadButton() {
     <a href="/plugin/download" class="btn btn-primary">
       <i class="bi bi-download me-1"></i> Download the plugin
     </a>
-    <span class="small text-white-50 ms-2">version ${esc(version)}</span>`;
+    <span class="small text-dark ms-2">version ${esc(version)}</span>`;
 }
 
 /**
@@ -143,7 +143,7 @@ function downloadButton() {
 function setupSteps(req, res, { withKeyButton = true } = {}) {
   const csrfField = res.locals.csrfField || '';
   return `
-    <div class="card bg-secondary text-white mt-4">
+    <div class="card bg-secondary-subtle text-dark mt-4">
       <div class="card-body">
         <h5 class="card-title mb-3">Connect a WordPress site</h5>
 
@@ -151,7 +151,7 @@ function setupSteps(req, res, { withKeyButton = true } = {}) {
           <li>
             <strong>Install the plugin.</strong>
             <div class="my-2">${downloadButton()}</div>
-            <div class="small text-white-50 mb-3">
+            <div class="small text-dark mb-3">
               In WordPress: <strong>Plugins &rarr; Add New &rarr; Upload Plugin</strong>,
               choose the file, then Install and Activate. Updating later works the
               same way — upload the newer file and choose
@@ -162,13 +162,13 @@ function setupSteps(req, res, { withKeyButton = true } = {}) {
           ${withKeyButton ? `
           <li>
             <strong>Create a licence key.</strong>
-            <div class="small text-white-50 mt-1 mb-2">
+            <div class="small text-dark mt-1 mb-2">
               One key per site. You will see it once, so create it when you are
               ready to paste it.
             </div>
             <form action="/blog-sites" method="POST" class="mb-3">
               ${csrfField}
-              <button type="submit" class="btn btn-outline-light btn-sm">
+              <button type="submit" class="btn btn-outline-dark btn-sm">
                 <i class="bi bi-key me-1"></i> Create a licence key
               </button>
             </form>
@@ -182,7 +182,7 @@ function setupSteps(req, res, { withKeyButton = true } = {}) {
 
           <li>
             <strong>Connect.</strong>
-            <div class="small text-white-50 mt-1">
+            <div class="small text-dark mt-1">
               In WordPress: <strong>Settings &rarr; Interlink Engine</strong>. Paste
               the key, set the server address to
               <code class="user-select-all">${esc(baseUrl(req))}</code>,
@@ -215,9 +215,9 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
         <td>
           ${s.siteUrl
             ? `<strong>${esc(s.siteUrl)}</strong>`
-            : '<span class="text-white-50">not connected yet</span>'}
+            : '<span class="text-dark">not connected yet</span>'}
           ${s.licenceKeyLast4
-            ? `<div class="small text-white-50">key ending ${esc(s.licenceKeyLast4)}</div>`
+            ? `<div class="small text-dark">key ending ${esc(s.licenceKeyLast4)}</div>`
             : ''}
         </td>
         <td>${statusBadge(s.status)}</td>
@@ -237,7 +237,7 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
       title: 'Blog Automation — Sites',
       body: `
         <h1 class="mb-2">Blog Automation</h1>
-        <p class="text-white-50">
+        <p class="text-white">
           Each WordPress site running the Interlink Engine plugin needs its own
           licence key. You have <strong>${Number(req.user.credits || 0).toLocaleString()}</strong>
           credits; each published post costs <strong>${CREDITS_PER_POST}</strong>.

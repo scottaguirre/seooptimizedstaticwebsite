@@ -279,10 +279,10 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     }
 
     const blogCard = `
-      <div class="card bg-dark border-secondary text-white mb-4">
+      <div class="card bg-secondary-subtle border-secondary text-dark mb-4">
         <div class="card-body">
           <h5 class="card-title mb-1">Blog Automation</h5>
-          <p class="card-subtitle text-white-50 mb-0">
+          <p class="card-subtitle text-dark mb-0">
             ${connectedSites
               ? `${connectedSites} WordPress site${connectedSites === 1 ? '' : 's'} connected`
               : 'Publish a planned run of posts to a WordPress site, on a schedule'}
@@ -290,7 +290,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
           </p>
 
           <div class="d-flex flex-wrap gap-2 mt-3">
-            <a href="/blog-sites" class="btn btn-outline-light">
+            <a href="/blog-sites" class="btn btn-outline-dark">
               ${connectedSites ? 'Manage sites' : 'Set it up'}
             </a>
           </div>
@@ -355,14 +355,14 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
           #overlay {
-            position: fixed; inset: 0; background: rgba(0,0,0,.8);
+            position: fixed; inset: 0; background: rgba(228, 219, 219, 0.8);
             display: none; flex-direction: column; align-items: center;
             justify-content: center; z-index: 9999; color: #fff;
           }
           #overlay.show { display: flex; }
         </style>
       </head>
-      <body class="bg-dark text-white">
+      <body style="background:#082d5b;" class=" text-white">
         <div class="container mt-5 mb-5" style="max-width: 820px;">
           <h1 class="mb-4">Dashboard</h1>
 
@@ -374,7 +374,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
                color: var(--bs-body-color), which is dark, and that overrides
                the text-white inherited from <body>. Without it the contents
                are dark text on a dark card — present, but invisible. -->
-          <div class="card bg-dark border-secondary text-white mb-4">
+          <div class="card border-secondary bg-secondary-subtle text-dark mb-4">
             <div class="card-body">
               <p class="mb-1"><strong>Email:</strong> ${user.email}</p>
               <p class="mb-1"><strong>Role:</strong> ${user.role}</p>

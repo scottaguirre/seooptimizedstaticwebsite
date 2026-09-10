@@ -136,7 +136,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
         <title>Admin - Users</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
       </head>
-      <body class="bg-dark text-white">
+      <body style="background:#082d5b;" class=" text-white">
         <div class="container mt-5 mb-5">
           <h1 class="mb-3">Admin - Users</h1>
           <p class="mb-3">Logged in as: <strong>${req.user.email}</strong> (${req.user.role})</p>

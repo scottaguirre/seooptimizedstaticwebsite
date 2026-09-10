@@ -1016,26 +1016,39 @@ test('the case study is anchored in the area but not at a street', () => {
   }
 });
 
-test('the fallback widens the radius rather than going vague', () => {
-  // The first version told the model to "describe the area in terms needing no
-  // local knowledge" if unsure. It took that exit every time and produced "a
-  // home in an older part of Leander, TX" — what someone writes when they have
-  // never been there. The escape is now a bigger radius, which still names a
-  // real place.
+test('the landmark has to be near the business, not merely famous', () => {
+  // One live failure, and one guard added on top of it.
+  //
+  //   v1  "describe the area in terms needing no local knowledge" if unsure
+  //       -> "a home in an older part of Leander, TX". Empty, and it took that
+  //          exit every time.
+  //   v2  named the kinds of place wanted and ruled out the vague answer
+  //       -> "a home a few minutes from the Alamo" for a SAN ANTONIO build,
+  //          which is correct. The Alamo is in San Antonio.
+  //
+  // The distance rule is a guard rather than a fix: "widen the radius" has no
+  // natural stopping point, and borrowing a famous landmark from another city
+  // reads as true while being false. Not observed, cheap to rule out.
   const prompt = caseStudyPrompt({
     businessType: 'Concrete Contractor', businessName: 'Acme', location: 'Leander, TX',
   });
 
-  assert.ok(/widen the\s+radius rather than going vague/.test(prompt),
-    'the fallback no longer keeps a real place name');
-  assert.ok(/nearest recognisable town, or a\s+highway/.test(prompt));
-
-  // Named outright, because it is the exact output that prompted the change.
+  assert.ok(/IT MUST BE WITHIN A FEW MINUTES OF Leander, TX/.test(prompt),
+    'nothing constrains the landmark to the service area');
   assert.ok(/"An older part of Leander, TX" is NOT good enough/.test(prompt),
-    'nothing rules out the vague answer the first version produced');
+    'the vague failure is no longer named as an example');
 
-  assert.ok(/Do NOT invent a place/.test(prompt),
-    'the ban on inventing a landmark was lost while loosening the instruction');
+  // A famous landmark is not the problem — a borrowed one is.
+  assert.ok(/A famous landmark IS the right answer when it is genuinely in/.test(prompt),
+    'the prompt now discourages famous landmarks even in the right city');
+
+  // The fallback still yields a real place rather than a shrug.
+  assert.ok(/use a road or highway\s+that actually runs through it/.test(prompt),
+    'the fallback no longer keeps a real place name');
+
+  assert.ok(/Do NOT invent a place/.test(prompt));
+  assert.ok(/Do NOT name a place that exists somewhere else/.test(prompt),
+    'a real landmark in the wrong city is still allowed');
 });
 
 test('the prompt forbids everything that would make it a real record', () => {

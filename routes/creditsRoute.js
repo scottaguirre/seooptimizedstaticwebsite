@@ -19,7 +19,7 @@ router.get("/buy-credits", (req, res) => {
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
       <style>
         body {
-          background: #082d5b;
+          background: #082d5b !important;
           color: #fff;
         }
         .card {
@@ -30,7 +30,7 @@ router.get("/buy-credits", (req, res) => {
         }
       </style>
     </head>
-    <body class="d-flex align-items-center justify-content-center min-vh-100">
+    <body style="background: #082d5b;" class="d-flex align-items-center justify-content-center min-vh-100">
       <div class="container" style="max-width: 700px;">
         <div class="card p-4">
           <h1 class="h3 mb-3">

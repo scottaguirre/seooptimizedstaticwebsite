@@ -52,7 +52,7 @@ function page({ title, heading, body, status = 200, csrfField = '' }) {
   <title>${title}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="bg-dark text-white">
+<body style="background:#082d5b;" class=" text-white">
   <div class="container mt-5">
     <div class="row justify-content-center">
       <div class="col-md-5">
@@ -115,7 +115,7 @@ router.post('/forgot-password', async (req, res) => {
     heading: 'Check your email',
     body: `
       ${alert('info', `If an account exists for <strong>${email.replace(/[<>&"]/g, '')}</strong>, we've sent a link to reset the password.`)}
-      <p class="text-white-50 small">
+      <p class="text-dark small">
         The link works for 30 minutes. Check your spam folder if it does not
         arrive shortly.
       </p>
@@ -288,7 +288,7 @@ router.post('/reset-password', async (req, res) => {
       heading: 'Password updated',
       body: `
         ${alert('success', 'Your password has been changed.')}
-        <p class="text-white-50 small">
+        <p class="text-darksmall">
           For your security you have been signed out on all devices.
         </p>
         <a href="/login" class="btn btn-primary w-100">Log in</a>`,
@@ -320,7 +320,7 @@ router.get('/resend-verification', (req, res) => {
     title: 'Resend verification',
     heading: 'Resend verification',
     body: `
-      <p class="text-white-50">
+      <p class="dark">
         Enter your email address and we'll send a new confirmation link.
       </p>
       <form action="/resend-verification" method="POST">
