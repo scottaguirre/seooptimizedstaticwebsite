@@ -868,10 +868,10 @@ footer a {
    ========================================================================== */
 
    .faq-section {
-    --faq-bar-bg:        rgba(0, 0, 0, .04);
-    --faq-bar-bg-hover:  rgba(0, 0, 0, .07);
+    --faq-bar-bg:        #c10a0a;
+    --faq-bar-bg-hover:  #8c0a0a;
     --faq-bar-bg-open:   rgba(0, 0, 0, .07);
-    --faq-accent:        currentColor;   /* +/x icon */
+    --faq-accent:        black;   /* +/x icon */
     --faq-gap:           10px;
     --faq-radius:        6px;
 }
@@ -895,7 +895,7 @@ footer a {
 
 .faq-section .accordion-button {
     background: var(--faq-bar-bg);
-    color: inherit;
+    color: white;
     font-size: 17px;
     line-height: 1.4;
     font-weight: 500;
@@ -911,7 +911,7 @@ footer a {
 }
 
 .faq-section .accordion-button:not(.collapsed) {
-    background: var(--faq-bar-bg-open);
+    background: var(--faq-bar-bg-open); 
     color: inherit;
     box-shadow: none;
     border-bottom-left-radius: 0 !important;
@@ -957,7 +957,7 @@ footer a {
 /* ---- the answer ---- */
 
 .faq-section .accordion-body {
-    background: var(--faq-bar-bg);
+    background: var(--faq-bar-bg-open);
     padding: 4px 18px 18px 46px;
     border-radius: 0 0 var(--faq-radius) var(--faq-radius);
 }
