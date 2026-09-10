@@ -457,6 +457,158 @@ function ${funcPrefix}_noindex_legal_pages() {
 add_action( 'wp_head', '${funcPrefix}_noindex_legal_pages', 1 );
 
 /**
+ * SEO: a canonical on the pages WordPress core does not give one to.
+ *
+ * THE BUG THIS FIXES
+ *
+ * Search Console reported "Duplicate without user-selected canonical" across a
+ * live site. That label means one specific thing: Google found the URL
+ * duplicative of another AND the page declared no canonical at all. It is not
+ * the bucket for "you declared one and we disagreed" — that is reported
+ * separately as "Google chose a different canonical than user".
+ *
+ * The theme calls wp_head(), so core's rel_canonical() runs. But core's
+ * function opens with:
+ *
+ *     if ( ! is_singular() ) { return; }
+ *
+ * Pages, posts and service pages therefore get a canonical, and NOTHING ELSE
+ * DOES. WordPress silently mints a pile of non-singular URLs that all show the
+ * same post excerpts as each other:
+ *
+ *     /category/uncategorized/      /tag/water-heaters/
+ *     /author/admin/                /2026/09/   /2026/
+ *     the posts index, when the front page is a static page
+ *     page/2/, page/3/ ... of every one of the above
+ *
+ * Each is a duplicate of its siblings with no canonical. That is precisely the
+ * reported condition, and every campaign the Interlink Engine publishes adds
+ * more of them.
+ *
+ * PAGE 2 CANONICALISES TO PAGE 2
+ *
+ * get_pagenum_link( $paged ), not the archive's first page. Pointing every
+ * paginated page at page 1 is the common mistake and it is worse than doing
+ * nothing: Google then treats pages 2..n as duplicates of page 1 and drops
+ * them, taking the only crawl path to the older posts with them. Each page of
+ * a series is its own set of posts and its own canonical.
+ *
+ * Runs at priority 1, before core's rel_canonical at 10 — is_singular() is
+ * false here, so the two can never both fire on one request.
+ */
+function ${funcPrefix}_archive_canonical() {
+    // Singular pages already have one from core. Emitting a second would give
+    // the crawler two conflicting instructions on one page.
+    if ( is_singular() ) {
+        return;
+    }
+
+    // A 404 or a search results page must not declare itself canonical: it has
+    // no stable content, and search URLs are unbounded — anyone can mint a new
+    // one by typing. Both should stay out of the index entirely.
+    if ( is_404() || is_search() ) {
+        return;
+    }
+
+    $paged = max( 1, (int) get_query_var( 'paged' ) );
+
+    if ( is_home() ) {
+        $link = get_pagenum_link( $paged );
+    } elseif ( is_category() || is_tag() || is_tax() ) {
+        $link = get_pagenum_link( $paged );
+    } elseif ( is_author() || is_date() || is_post_type_archive() ) {
+        $link = get_pagenum_link( $paged );
+    } else {
+        return;
+    }
+
+    if ( ! $link ) {
+        return;
+    }
+
+    // Query strings are stripped. get_pagenum_link() carries through whatever
+    // was on the request, so /category/news/?utm_source=facebook would
+    // canonicalise to itself and split the page in two. The pagination lives
+    // in the path under a default permalink structure, so removing the query
+    // keeps the page number.
+    $clean = strtok( $link, '?' );
+    if ( ! $clean ) {
+        return;
+    }
+
+    echo '<link rel="canonical" href="' . esc_url( $clean ) . '">' . "\n";
+}
+add_action( 'wp_head', '${funcPrefix}_archive_canonical', 1 );
+
+/**
+ * SEO: keep out of the index the archives WordPress invents.
+ *
+ * Category and tag archives are deliberately NOT here. Those group posts by
+ * something a visitor might actually search for, and with the canonical above
+ * they are legitimate pages.
+ *
+ * These three are different — they exist because WordPress creates them, not
+ * because anyone wanted them:
+ *
+ *   author   on a one-author site this is a byte-for-byte copy of the blog
+ *            index, and it publishes the login name of an account that can
+ *            edit the site.
+ *   date     /2026/09/ is a slice of the same posts by a criterion nobody
+ *            searches by.
+ *   attachment  one page per uploaded image, carrying a title and an image.
+ *            Handled below by a redirect as well: a thin page that 301s is
+ *            better than a thin page that lingers with a noindex on it.
+ *
+ * "noindex, follow" rather than "noindex, nofollow": the links out of these
+ * pages point at real posts, and following them is a crawl path worth keeping.
+ */
+function ${funcPrefix}_noindex_thin_archives() {
+    if ( is_author() || is_date() || is_attachment() ) {
+        echo '<meta name="robots" content="noindex, follow">' . "\n";
+        return;
+    }
+
+    // Paginated archives past page 1 stay indexable — see the canonical above
+    // — but a search results page never should be.
+    if ( is_search() || is_404() ) {
+        echo '<meta name="robots" content="noindex, follow">' . "\n";
+    }
+}
+add_action( 'wp_head', '${funcPrefix}_noindex_thin_archives', 1 );
+
+/**
+ * Send attachment pages to the post that uses the image.
+ *
+ * Every uploaded image gets a URL of its own with a title, the image, and
+ * nothing else. There are more of them than there are real pages on a site
+ * with a running blog campaign, and each one is a thin near-duplicate of the
+ * others.
+ *
+ * Redirect rather than noindex alone, and 301 rather than 302: the attachment
+ * page is never coming back, so the permanent status consolidates any link
+ * value onto the parent instead of parking it.
+ *
+ * Falls back to the home page when an image has no parent — an image uploaded
+ * through the media library directly rather than into a post.
+ */
+function ${funcPrefix}_redirect_attachments() {
+    if ( ! is_attachment() ) {
+        return;
+    }
+
+    $post = get_queried_object();
+    $target = ( $post && ! empty( $post->post_parent ) )
+        ? get_permalink( $post->post_parent )
+        : home_url( '/' );
+
+    if ( $target ) {
+        wp_safe_redirect( $target, 301 );
+        exit;
+    }
+}
+add_action( 'template_redirect', '${funcPrefix}_redirect_attachments' );
+
+/**
  * NOTE: this file used to define ${funcPrefix}_filter_meta_content(), hooked to
  * get_post_metadata, which eval()'d any meta value containing PHP tags.
  *

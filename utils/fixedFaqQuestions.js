@@ -9,43 +9,21 @@
 // and wrong for a law firm, where nobody is dispatched to an emergency, and
 // nonsense for a web designer, where the honest answer is "six weeks".
 //
-// NOTE: this repeats the categoryMap that also lives in createAboutUsPrompt,
-// createPagesPrompt and createLocationPagesPrompt. Four copies is one too
-// many and they will drift — worth centralising into a single
-// businessCategories module, but as its own change rather than folded into
-// this one.
+// The three type lists and the businessShape() that read them used to live in
+// this file — the fourth copy of a mapping that also existed in
+// createAboutUsPrompt, createPagesPrompt and createLocationPagesPrompt, and
+// had already drifted from all three. They now come from
+// utils/businessShape.js.
+//
+// One behavioural change came with the move: an UNRECOGNISED business type
+// used to fall through to 'home'. That default is why a dentist — a type that
+// was not in the dropdown at all, and could only arrive through the WordPress
+// free-text field — was asked "How do I book a job with Smile Dental?" and
+// promised "a written estimate before any work starts". Unknown types now
+// resolve to 'generic', which claims nothing.
 
-const HOME_SERVICES = [
-    'plumbing', 'electrician', 'roofing', 'concrete contractor', 'hvac',
-    'air conditioning', 'landscaping', 'fencing', 'junk removal',
-    'tree removal', 'paving', 'swimming pool contractor',
-    'water damage restoration', 'french drain installation',
-  ];
-  
-  const PROFESSIONAL_SERVICES = [
-    'law firm', 'accounting', 'insurance', 'real estate',
-  ];
-  
-  const PROJECT_BASED = [
-    'web design', 'web development', 'marketing agency', 'seo agency',
-  ];
-  
-  /**
-   * Which of the three shapes a business type takes.
-   * Defaults to home services: every type currently supported except law firm
-   * is one, so an unmapped value is far more likely to be a new trade than a
-   * new professional service.
-   */
-  function businessShape(businessType = '') {
-    const type = String(businessType).toLowerCase().trim();
-  
-    if (PROFESSIONAL_SERVICES.some(t => type.includes(t))) return 'professional';
-    if (PROJECT_BASED.some(t => type.includes(t))) return 'project';
-    if (HOME_SERVICES.some(t => type.includes(t))) return 'home';
-  
-    return 'home';
-  }
-  
+const { businessShape } = require('./businessShape');
+
   /**
    * The same two slots — "how do I begin" and "how fast" — worded for the trade.
    */
@@ -65,6 +43,19 @@ const HOME_SERVICES = [
     project: (businessName, service) => ([
       `How do I get started with ${businessName}?`,
       `How long does a typical ${service} project take?`,
+    ]),
+  
+    // "book a job" is what a contractor's customer does; a patient books an
+    // appointment. The second slot asks about getting seen rather than about
+    // an emergency callout, because a practice does not dispatch anyone.
+    medical: (businessName) => ([
+      `How do I become a patient at ${businessName}?`,
+      `How soon can I get an appointment?`,
+    ]),
+  
+    generic: (businessName) => ([
+      `How do I get started with ${businessName}?`,
+      `How quickly can you get back to me?`,
     ]),
   };
   
@@ -97,6 +88,20 @@ const HOME_SERVICES = [
       ];
     }
   
+    if (shape === 'medical') {
+      return [
+        `Call the practice or use the contact form and we will book you in. New patients are asked for a short medical history and any records from a previous provider, and we will confirm what to bring before your first visit.`,
+        `We keep appointments open each week for new and urgent cases, so most people are seen within a few days. When you get in touch we will tell you the soonest slot available and what the first appointment will cover.`,
+      ];
+    }
+  
+    if (shape === 'generic') {
+      return [
+        `Get in touch by phone or through the contact form and we will talk through what you need. We will explain the options, agree what the work involves, and confirm the cost with you before anything starts.`,
+        `We aim to respond to new enquiries within one business day. Once we understand what you are after we will give you a realistic timeframe rather than a guess.`,
+      ];
+    }
+  
     if (shape === 'project') {
       return [
         `Start with a short call or the contact form. We will discuss what you need, agree the scope and deliverables, and send a written proposal covering timeline and cost before work begins.`,
@@ -113,8 +118,7 @@ const HOME_SERVICES = [
   module.exports = {
     getFixedFaqQuestions,
     getFixedFaqFallbacks,
+    // Re-exported so the handful of callers that imported businessShape from
+    // here keep working. New code should require it from ./businessShape.
     businessShape,
-    HOME_SERVICES,
-    PROFESSIONAL_SERVICES,
-    PROJECT_BASED,
   };

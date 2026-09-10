@@ -4,6 +4,19 @@ function stripMarkdownLinks(paragraph) {
   return paragraph.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
 }
 
+/**
+ * Tidy a paragraph so another sentence can follow it.
+ *
+ * Trailing whitespace goes, and a full stop is added when the paragraph does
+ * not already end in terminating punctuation — otherwise the appended sentence
+ * runs straight on from the last word.
+ */
+function appendSentence(paragraph) {
+  const text = String(paragraph || '').trim();
+  if (!text) return '';
+  return /[.!?:;]$/.test(text) ? text : `${text}.`;
+}
+
 function injectIndexInterlinks(globalValues, pages, indexInterlinks, sections) {
   const usedSlugs = new Set(); // ✅ Tracks which slugs we've already injected
   const usedAnchorTexts = new Set(); // ✅ Prevents duplicate exact match
@@ -58,8 +71,18 @@ function injectIndexInterlinks(globalValues, pages, indexInterlinks, sections) {
             break;
                                    // ✅ Stop scanning this paragraph
           } else{
-            // No match, but fallback allowed
-            paragraph = `${originalParagraph}<p>Learn more about our <a href="${href}">${baseAnchorText}</a> services.</p>`;
+            // No match, so the link is appended as a SENTENCE, not a new
+            // paragraph.
+            //
+            // This used to append `<p>Learn more...</p>`. Every consumer of
+            // these strings already wraps them — the template writes
+            // <p>{{SECTION2_P2}}</p> — so the result was
+            // <p>text<p>Learn more...</p></p>: a block element nested inside a
+            // paragraph, which is invalid HTML. Browsers "repair" it by
+            // closing the outer <p> early, so the markup a validator sees, the
+            // DOM a browser builds and the tree the WordPress exporter walks
+            // are three different shapes.
+            paragraph = `${appendSentence(originalParagraph)} Learn more about our <a href="${href}">${baseAnchorText}</a> services.`;
             usedSlugs.add(normalizedSlug);
             usedAnchorTexts.add(lowerText);
             totalLinksInjected++;
@@ -79,4 +102,4 @@ function injectIndexInterlinks(globalValues, pages, indexInterlinks, sections) {
   return sections;
 }
 
-module.exports = { injectIndexInterlinks };
+module.exports = { injectIndexInterlinks, appendSentence };

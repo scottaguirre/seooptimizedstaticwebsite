@@ -17,16 +17,18 @@
 // which would stop the server booting instead of skipping one section.
 const { getOpenAI } = require('./openaiClient');
 const { parseModelJson } = require('./parseModelJson');
+const { capabilities, HOME_NOTICE, PROJECT_NOTICE } = require('./businessShape');
 
 const ROW_COUNT = 6;
 
 // The notice deliberately avoids the word "depend" and names the actual
 // drivers of price instead, which reads as more concrete anyway.
-const DEFAULT_NOTICE =
-  'The figures above are typical ranges for this area and are provided for ' +
-  'planning purposes only. Final cost varies with the size of the job, the ' +
-  'materials selected, access and site conditions, and current supply prices. ' +
-  'Contact us for a free, no-obligation quote for your property.';
+//
+// It now lives in businessShape.js alongside the project-work variant, because
+// the home wording ends "...for your property" — which assumes a building, and
+// a web design studio does not have one to quote on. Re-exported here so
+// nothing that already imports DEFAULT_NOTICE from this file breaks.
+const DEFAULT_NOTICE = HOME_NOTICE;
 
 function escapeHtml(str = '') {
   return String(str)
@@ -49,16 +51,24 @@ function money(value) {
  * ---------------------------------------------------------------------- */
 
 function buildPrompt({ businessType, location }) {
+  // "per sq ft" and "per linear ft" are meaningless for project work, and
+  // "per job" is the wrong noun for it. The units offered follow the shape.
+  const units = capabilities(businessType).pricingUnits;
+  const unitList = (units.length ? units : ['per job']).map(u => `"${u}"`).join(', ');
+  const example = units.includes('per project')
+    ? '"Five-Page Marketing Site"'
+    : '"Water Heater Installation"';
+
   return `
 You are producing a typical price guide for a local ${businessType} business serving ${location}.
 
 List the ${ROW_COUNT} services customers most often ask about pricing for.
 
 For each service give:
-- "name": the service, 2-5 words, title case (e.g. "Water Heater Installation")
+- "name": the service, 2-5 words, title case (e.g. ${example})
 - "low":  the low end of a typical price, a whole number in US dollars, no symbols or commas
 - "high": the high end of a typical price, a whole number in US dollars, no symbols or commas
-- "unit": how the price is charged — one of "per job", "per hour", "per unit", "per sq ft", "per linear ft"
+- "unit": how the price is charged — one of ${unitList}
 - "note": one short clause, 4-9 words, naming what moves the price within that range
           (e.g. "tank size and venting requirements")
 
@@ -81,7 +91,13 @@ Return ONLY a JSON array of ${ROW_COUNT} objects:
  * Generation
  * ---------------------------------------------------------------------- */
 
-const VALID_UNITS = ['per job', 'per hour', 'per unit', 'per sq ft', 'per linear ft'];
+// Kept as the union of every shape's units so an existing caller that imports
+// this constant still sees a superset. The per-request whitelist below comes
+// from the shape, not from here.
+const VALID_UNITS = [
+  'per job', 'per hour', 'per unit', 'per sq ft', 'per linear ft',
+  'per project', 'per page', 'per month',
+];
 
 /**
  * @returns {Promise<Array<{name,low,high,unit,note}>>}
@@ -90,6 +106,18 @@ const VALID_UNITS = ['per job', 'per hour', 'per unit', 'per sq ft', 'per linear
  */
 async function generatePricing({ businessType, location }) {
   if (!businessType) return [];
+
+  // Medical, professional and unrecognised business types get no price table
+  // at all, so there is nothing to generate. Returning early rather than
+  // generating and discarding also saves the API call.
+  const caps = capabilities(businessType);
+  if (!caps.pricingTable) {
+    console.log(`   Pricing table skipped: not offered for this business type`);
+    return [];
+  }
+
+  const allowedUnits = caps.pricingUnits;
+  const fallbackUnit = allowedUnits[0] || 'per job';
 
   try {
     // buildPrompt() has to actually run and be assigned. Passing
@@ -137,7 +165,7 @@ async function generatePricing({ businessType, location }) {
           name: String((item && item.name) || '').trim(),
           low,
           high,
-          unit: VALID_UNITS.includes(unit) ? unit : 'per job',
+          unit: allowedUnits.includes(unit) ? unit : fallbackUnit,
           // belt and braces: the prompt forbids "depend", strip it if it slips through
           note: String((item && item.note) || '').trim().replace(/\bdepends?\b/gi, 'varies'),
         };
@@ -229,5 +257,8 @@ module.exports = {
   buildPricingTable,
   buildPrompt,
   DEFAULT_NOTICE,
+  HOME_NOTICE,
+  PROJECT_NOTICE,
+  VALID_UNITS,
   ROW_COUNT,
 };

@@ -1,5 +1,26 @@
 // utils/injectPagesInterlinks.js
 const { slugify } = require('./slugify');
+const { appendSentence } = require('./injectIndexInterlinks');
+const { businessShape } = require('./businessShape');
+
+/**
+ * How the appended contact sentence ends.
+ *
+ * The trades wording — "for a free, no-obligation quote" — was applied to
+ * every business type. A quote is not what someone books with a dentist, and
+ * on an attorney's page "free" is a fee claim.
+ */
+const CONTACT_TAIL = {
+  home: 'for a free, no-obligation quote.',
+  medical: 'to ask a question or book an appointment.',
+  professional: 'to arrange an initial consultation.',
+  project: 'to talk through your project.',
+  generic: 'to talk through what you need.',
+};
+
+function contactTailFor(businessType) {
+  return CONTACT_TAIL[businessShape(businessType)] || CONTACT_TAIL.generic;
+}
 
 function stripMarkdownLinks(paragraph) {
   return paragraph.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
@@ -93,6 +114,9 @@ function injectPagesInterlinks(
   const usedAnchorTexts = new Set();
   let totalLinksInjected = 0;
 
+  // Resolved once: it cannot vary between paragraphs of the same page.
+  const contactTail = contactTailFor(globalValues && globalValues.businessType);
+
   const uniqueInterlinks = normaliseTargets(pagesInterlinks);
   const MAX_BACKLINKS = Math.min(3, uniqueInterlinks.length);
 
@@ -138,8 +162,9 @@ function injectPagesInterlinks(
                 return `${leadingSpace}<a href="${homeHref}">${matchedText}</a>`;
               });
             } else {
-              // Fallback: append a short line carrying the link
-              paragraph = `${originalParagraph}<p>${homeFallbackSentence(homeHref, homeAnchorText)}</p>`;
+              // Fallback: append a short line carrying the link.
+              // A sentence, not a <p> — see appendSentence.
+              paragraph = `${appendSentence(originalParagraph)} ${homeFallbackSentence(homeHref, homeAnchorText)}`;
             }
 
             usedSlugs.add(normalizedSlug);
@@ -149,6 +174,10 @@ function injectPagesInterlinks(
           }
 
           // ----- Special case: contact -----
+          //
+          // "for a free, no-obligation quote" is a trades sentence. On a
+          // dental practice or a law firm it is a fee claim nobody made, so
+          // the tail follows the shape like everything else on the page.
           //
           // Contact is neither a service page nor a location. Without this it
           // falls through to the location branch below and produces
@@ -170,7 +199,7 @@ function injectPagesInterlinks(
                     `${leadingSpace}<a href="${contactHref}">${matchedText}</a>`
                 );
               } else {
-                paragraph = `${originalParagraph}<p><a href="${contactHref}">${entry.anchor}</a> for a free, no-obligation quote.</p>`;
+                paragraph = `${appendSentence(originalParagraph)} <a href="${contactHref}">${entry.anchor}</a> ${contactTail}`;
               }
 
             } else {
@@ -184,7 +213,7 @@ function injectPagesInterlinks(
                     `${leadingSpace}<a href="${contactHref}">${matchedText}</a>`
                 );
               } else {
-                paragraph = `${originalParagraph}<p><a href="${contactHref}">Contact us</a> to talk through your project.</p>`;
+                paragraph = `${appendSentence(originalParagraph)} <a href="${contactHref}">Contact us</a> ${contactTail}`;
               }
             }
 
@@ -219,10 +248,17 @@ function injectPagesInterlinks(
               (match, leadingSpace, matchedText) => `${leadingSpace}<a href="${href}">${matchedText}</a>`
             );
           } else {
-            // No natural match — append a small sentence
+            // No natural match — append a small sentence.
+            //
+            // A SENTENCE, not a paragraph. This used to append
+            // `<p>Learn more...</p>` onto a string every caller already wraps
+            // in <p>, producing <p>text<p>Learn more...</p></p> — a block
+            // element inside a paragraph, which no browser keeps as written.
+            // Same bug lived in injectIndexInterlinks; both are fixed, and
+            // appendSentence is shared so they cannot drift apart again.
             const visible = entry.anchor || slug.replace(/-/g, ' ');
             const noun = isService ? 'services' : 'location';
-            paragraph = `${originalParagraph}<p>Learn more about our ${isService ? 'expert ' : ''}<a href="${href}">${visible}</a> ${noun}.</p>`;
+            paragraph = `${appendSentence(originalParagraph)} Learn more about our ${isService ? 'expert ' : ''}<a href="${href}">${visible}</a> ${noun}.`;
           }
 
           usedSlugs.add(normalizedSlug);

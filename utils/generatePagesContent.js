@@ -5,12 +5,16 @@ const { getOpenAI } = require('./openaiClient');
 const { withRetry } = require('./withRetry');
 const { parseModelJson } = require('./parseModelJson'); 
 
-async function generatePagesContent(globalValues, page, pagesInterlinks, attempt = 1) {
-  
+async function generatePagesContent(globalValues, page, pagesInterlinks, pageIndex = 0, attempt = 1) {
+
+  // pageIndex decides which section topics and heading style this page gets.
+  // Without it every service page would be built from the same four briefs in
+  // the same order — see the pool in createPagesPrompt.js.
   const prompt = createPagesPrompt({
     globalValues,
     page,
-    keywords: pagesInterlinks
+    keywords: pagesInterlinks,
+    pageIndex,
   });
 
   // Wrapped: a dropped connection ("terminated") used to lose this call
@@ -87,7 +91,7 @@ async function generatePagesContent(globalValues, page, pagesInterlinks, attempt
       // pagesInterlinks as `page`, so the second attempt built a prompt for
       // the wrong thing entirely — and any content it produced belonged to
       // no page. The same bug was fixed in generateLocationPagesContent.
-      return await generatePagesContent(globalValues, page, pagesInterlinks, attempt + 1);
+      return await generatePagesContent(globalValues, page, pagesInterlinks, pageIndex, attempt + 1);
     }
 
     // null, not {}. An empty object looks like success to the caller, which

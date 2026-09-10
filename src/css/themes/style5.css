@@ -448,6 +448,10 @@ img.award, img.licensed {
     padding-bottom: 20px;;
 }
 
+.service-cards .col-md-6 {
+    margin-bottom: 1.5rem;
+  }
+
 .service-card-icon svg {
     color: #0d6efd;
 }

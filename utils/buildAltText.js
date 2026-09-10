@@ -1,4 +1,4 @@
-const { slugify } = require('./slugify');
+const { imageFolderFor } = require('./businessShape');
 const imageDesc = require('./altText');
 const { getPreset } = require('./seoPresets');
 
@@ -31,7 +31,14 @@ const { getPreset } = require('./seoPresets');
  */
 function buildAltText(globalValues, index) {
   const location = globalValues.location;
-  const businessType = slugify(globalValues.businessType);
+
+  // imageFolderFor, not slugify(): the alt text describes the PHOTOGRAPHS, so
+  // it has to come from whichever folder the photographs came from. Lemon Law
+  // reuses the law-firm images, and with a bare slugify() it looked for
+  // altText/lemon-law.js, found nothing, and every image on the site shipped
+  // with alt="" — silently, because the warning below scrolls past in a build
+  // log.
+  const businessType = imageFolderFor(globalValues.businessType);
   const imageSets = imageDesc[businessType];
 
   if (!imageSets) {

@@ -93,6 +93,8 @@ function getOpenAI() {
   return openaiClient;
 }
 
+const { businessShape } = require('./businessShape');
+
 const QUESTIONS_WANTED = 4;
 // Over-generate. The dedupe filter discards on average one or two per town on
 // a multi-location site, and asking for four to keep four leaves nothing in
@@ -121,6 +123,54 @@ const ANGLE_QUESTION_THEMES = [
   // 5 — accessibility and getting to the job
   'site access, parking and driveways, whether permits are needed locally, how scheduling and communication work',
 ];
+
+/**
+ * The six above are a TRADE's questions — arrival windows, driveways, permits.
+ * Asked about a dental practice they produce nonsense, and they were being
+ * asked about every business type, because nothing here looked at what the
+ * business actually was.
+ *
+ * Indexed identically to LOCATION_ANGLES_BY_SHAPE in createLocationPagesPrompt,
+ * so a town's FAQ stays about the same thing its page copy is about.
+ */
+const ANGLE_QUESTION_THEMES_BY_SHAPE = {
+  medical: [
+    'how soon a new patient can be seen, what counts as urgent, evening and weekend availability, how far people travel to the practice',
+    'who the practice sees locally, what people most often come in for, what a first appointment involves',
+    'what the local seasons mean for this kind of care, what to watch for at which time of year, what helps between appointments',
+    'what a treatment plan covers, how cover and billing generally work, what to ask before agreeing to treatment',
+    'the treatments requested most often locally, what a first visit covers, what equipment or methods are used and why',
+    'getting to the practice, parking and access, appointment times, how the practice stays in touch between visits',
+  ],
+
+  professional: [
+    'how soon a new enquiry is looked at, how to make first contact, whether an initial conversation costs anything',
+    'the kinds of matter handled for people locally, what an initial consultation covers, what to bring to it',
+    'what tends to be time-limited in this kind of matter, why acting early matters, what not to do while waiting',
+    'how fees are structured and agreed, what a written agreement covers, what costs sit outside it',
+    'the local courts, agencies or processes involved, how a matter typically progresses, what the firm handles directly',
+    'meetings and remote consultations, how documents are exchanged, how clients are kept informed',
+  ],
+
+  project: [
+    'how quickly a project can start, how first contact works, whether an initial conversation costs anything',
+    'the kinds of business served locally, what they typically need built, what a discovery conversation covers',
+    'what makes one project take longer than another, what a client can prepare in advance, what causes delays',
+    'how work is scoped and quoted, what a written proposal covers, what sits outside it',
+    'the work requested most often locally, the tools or platforms used and why, what a client sees during the build',
+    'handover and training, who owns the accounts and the code, how support works after launch',
+  ],
+};
+
+// Same reasoning as the angles themselves: an unrecognised business type gets
+// the professional set, which assumes no property and no patient.
+ANGLE_QUESTION_THEMES_BY_SHAPE.generic = ANGLE_QUESTION_THEMES_BY_SHAPE.professional;
+ANGLE_QUESTION_THEMES_BY_SHAPE.home = ANGLE_QUESTION_THEMES;
+
+/** The question themes that suit a given business type. */
+function themesFor(businessType) {
+  return ANGLE_QUESTION_THEMES_BY_SHAPE[businessShape(businessType)] || ANGLE_QUESTION_THEMES;
+}
 
 /**
  * Every string that names a place on this site, longest first.
@@ -300,7 +350,10 @@ async function generateLocationFaq({
   placeNames = [],
   count = QUESTIONS_WANTED,
 }) {
-  const theme = ANGLE_QUESTION_THEMES[angleIndex % ANGLE_QUESTION_THEMES.length];
+  // Which set of themes, then which theme. Picking from the trades list for
+  // a dental practice is how a patient ended up being asked about driveways.
+  const themes = themesFor(businessType);
+  const theme = themes[angleIndex % themes.length];
 
   // The readable questions, for the model to steer away from. The keys are
   // what the filter below uses; they would be meaningless to show the model.
@@ -410,5 +463,7 @@ module.exports = {
   shapeKey,
   placeStrings,
   ANGLE_QUESTION_THEMES,
+  ANGLE_QUESTION_THEMES_BY_SHAPE,
+  themesFor,
   QUESTIONS_WANTED,
 };

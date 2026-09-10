@@ -1004,6 +1004,10 @@ footer a {
     margin-top: 40px;
 }
 
+.service-cards .col-md-6 {
+    margin-bottom: 1.5rem;
+  }
+
 .service-card {
     text-align: center; 
     border-radius: var(--card-radius);

@@ -7,6 +7,12 @@ const fsp = fs.promises;
 const { formatCityForSchema } = require('../utils/formatCityForSchema'); // city only  :contentReference[oaicite:3]{index=3}
 const { formatCityState }     = require('../utils/formatCityState');     // "City, ST"  :contentReference[oaicite:4]{index=4}
 const { slugify }             = require('../utils/slugify');
+const {
+  slugCollisions,
+  similarServices,
+  collisionMessage,
+  overlapMessage,
+} = require('../utils/serviceNames');
 function truthy(v){ return v === true || v === 'true' || v === 'on' || v === '1'; }
 
 const US = new Set(['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME',
@@ -180,27 +186,53 @@ const validateEachPageInputs = function (pages) {
     };
   }
 
-  // 6.1 (Optional) server-side duplicate filename check (case-insensitive)
-  const names = Object.entries(pages).map(([_, p]) => (p?.filename || '').toString().trim().toLowerCase());
-  const seen = new Set();
-  const dupFields = [];
-  names.forEach((name, i) => {
-    if (!name) return;
-    if (seen.has(name)) {
-      dupFields.push({ name: `pages[${i}][filename]`, message: 'Duplicate filename' });
-    } else {
-      seen.add(name);
-    }
-  });
-  if (dupFields.length) {
+  /**
+   * 6.1 Two services that would write to the same file.
+   *
+   * This compared the LOWERCASED TEXT, which is not the same question. The
+   * filename comes from slugify(), which also strips commas and punctuation —
+   * so "Drain Cleaning" and "Drain, Cleaning" are two different strings, pass
+   * this check, and then both write drain-cleaning-austin-tx.html. The second
+   * silently overwrites the first, and the customer has paid 100 credits for a
+   * page that no longer exists. Nothing reported it.
+   *
+   * Comparing slugs asks the question that actually matters: will these two
+   * end up as one file? Identical text still collides, so this is strictly
+   * broader than the check it replaces.
+   */
+  const names = Object.entries(pages).map(([_, p]) => (p?.filename || '').toString().trim());
+  const collisions = slugCollisions(names);
+
+  if (collisions.length) {
+    const dupFields = [];
+    collisions.forEach(collision => {
+      // Every name in the group is flagged, not just the later ones: the
+      // customer has to choose which to rename, and highlighting one of a
+      // pair implies the other is the correct one.
+      collision.indexes.forEach(i => {
+        dupFields.push({ name: `pages[${i}][filename]`, message: 'Would become the same page as another service' });
+      });
+    });
+
     return {
       ok: false,
-      error: '❌ Duplicate page filenames detected. Filenames must be unique.',
+      error: `❌ ${collisionMessage(collisions)}`,
       fields: dupFields
     };
   }
 
-  return { ok: true };
+  /**
+   * 6.2 Services that are not the same page, but are arguably the same thing.
+   *
+   * A warning, deliberately: "Water Heater Repair" and "Tankless Water Heater
+   * Repair" score as similar and are a reasonable pair of pages to want. This
+   * returns ok:true and lets the caller decide what to do about it.
+   */
+  const overlaps = similarServices(names);
+
+  return overlaps.length
+    ? { ok: true, warnings: overlaps, warning: overlapMessage(overlaps) }
+    : { ok: true };
 };
 
 

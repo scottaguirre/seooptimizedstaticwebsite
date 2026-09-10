@@ -546,6 +546,183 @@
     },
   ];
 
+
+  // ---------------------------------------------------------------------
+  // Business types, and the trust claims each kind of business may make.
+  //
+  // MIRRORS utils/businessShape.js. It has to live here as well because the
+  // form is a real multipart POST carrying an uploaded logo, so the wizard
+  // cannot ask the server what to render without either a second round trip
+  // or losing the file input.
+  //
+  // Two copies is where drift lives, so test-business-shape.js reads these
+  // three constants back OUT of this file and asserts they match the registry
+  // exactly. Add a business type on the server and this fails until it is
+  // added here too.
+  // ---------------------------------------------------------------------
+
+  var BUSINESS_TYPE_LABELS = [
+    "Plumbing",
+    "Fencing",
+    "Painter",
+    "Paving",
+    "Swimming Pool Contractor",
+    "Junk Removal",
+    "Appliance Repair",
+    "Water Damage Restoration",
+    "Tree Removal",
+    "Electrician",
+    "Concrete Contractor",
+    "French Drain Installation",
+    "Roofing",
+    "HVAC",
+    "Air Conditioning",
+    "Landscaping",
+    "Dentist",
+    "Doctor",
+    "Chiropractor",
+    "Physical Therapy",
+    "Lemon Law",
+    "Web Design",
+    "Coding"
+  ];
+
+  var BUSINESS_TYPE_SHAPES = {
+    "Plumbing": "home",
+    "Fencing": "home",
+    "Painter": "home",
+    "Paving": "home",
+    "Swimming Pool Contractor": "home",
+    "Junk Removal": "home",
+    "Appliance Repair": "home",
+    "Water Damage Restoration": "home",
+    "Tree Removal": "home",
+    "Electrician": "home",
+    "Concrete Contractor": "home",
+    "French Drain Installation": "home",
+    "Roofing": "home",
+    "HVAC": "home",
+    "Air Conditioning": "home",
+    "Landscaping": "home",
+    "Dentist": "medical",
+    "Doctor": "medical",
+    "Chiropractor": "medical",
+    "Physical Therapy": "medical",
+    "Lemon Law": "professional",
+    "Web Design": "project",
+    "Coding": "project"
+  };
+
+  // Claim-bearing trust points, by shape. Anything NOT ticked here is never
+  // offered to the model, so an unticked claim cannot appear on the page.
+  // "Open 24 hours" is deliberately absent: it is already driven by the Open
+  // 24 Hours toggle further down this same step.
+  var TRUST_CLAIMS_BY_SHAPE = {
+    "home": [
+      {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": true},
+      {"id": "licensed", "label": "licensed, insured and bonded", "default": true},
+      {"id": "accredited", "label": "accredited by local authorities", "default": true},
+      {"id": "fiveStar", "label": "5-star rated by local customers", "default": true},
+      {"id": "sameDay", "label": "same-day service available", "default": true},
+      {"id": "estimates", "label": "free onsite estimates", "default": true},
+      {"id": "warranty", "label": "workmanship warranty", "default": true},
+      {"id": "upfront", "label": "upfront pricing, no hidden fees", "default": true},
+      {"id": "familyOwned", "label": "family owned and operated", "default": true}
+    ],
+    "medical": [
+      {"id": "insurance", "label": "most insurance plans accepted", "default": false},
+      {"id": "evenings", "label": "evening and Saturday appointments", "default": false},
+      {"id": "sameWeek", "label": "same-week appointments available", "default": false},
+      {"id": "emergency", "label": "emergency appointments available", "default": false},
+      {"id": "financing", "label": "payment plans and financing available", "default": false},
+      {"id": "parking", "label": "free parking and step-free access", "default": false},
+      {"id": "licensed", "label": "licensed and state-registered", "default": false},
+      {"id": "family", "label": "family and children's care welcome", "default": false},
+      {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": false}
+    ],
+    "professional": [
+      {"id": "freeConsult", "label": "free initial consultation", "default": false},
+      {"id": "licensed", "label": "licensed to practice in this state", "default": false},
+      {"id": "evenings", "label": "evening and weekend consultations", "default": false},
+      {"id": "plans", "label": "payment plans available", "default": false},
+      {"id": "spanish", "label": "se habla espa\u00f1ol", "default": false},
+      {"id": "contingency", "label": "no fee unless we recover", "default": false, "note": "Most states require a costs disclaimer alongside this claim. Check your bar rules before enabling it."}
+    ],
+    "project": [
+      {"id": "freeDiscovery", "label": "free discovery call", "default": false},
+      {"id": "fixedPrice", "label": "fixed-price proposals, no hourly surprises", "default": false},
+      {"id": "accessible", "label": "mobile-first, accessible builds", "default": false},
+      {"id": "support", "label": "ongoing support and maintenance available", "default": false},
+      {"id": "noContract", "label": "no long-term contracts", "default": false},
+      {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": false}
+    ],
+    "generic": [
+      {"id": "freeConsult", "label": "free initial consultation", "default": false},
+      {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": false},
+      {"id": "evenings", "label": "evening and weekend availability", "default": false}
+    ]
+  };
+
+  function shapeForType(label) {
+    return BUSINESS_TYPE_SHAPES[label] || 'generic';
+  }
+
+  /**
+   * Draw the trust claim checkboxes for the chosen business type and keep the
+   * hidden global[trustClaims] field in step with them.
+   *
+   * On a first visit the shape's defaults decide what is ticked — every
+   * historical claim for home services, nothing for anyone else. On a return
+   * visit the hidden field wins, so an owner who deliberately unticked
+   * something does not find it ticked again.
+   */
+  function renderTrustClaims(container, form) {
+    const list   = container.querySelector('#trustClaimsList');
+    const hidden = container.querySelector('#trustClaims');
+    if (!list || !hidden) return;
+
+    const shape  = shapeForType(state.businessType);
+    const claims = TRUST_CLAIMS_BY_SHAPE[shape] || TRUST_CLAIMS_BY_SHAPE.generic;
+
+    // '' means "never posted" — a first visit. An explicit list means the
+    // owner has been here, and an EMPTY explicit list is a real answer
+    // (nothing is true of us) rather than a missing one, which is why the
+    // sentinel below is '-' and not ''.
+    const posted = String(hidden.value || '');
+    const seen   = posted !== '';
+    const ticked = new Set(
+      posted === '-' ? [] : posted.split(',').map(s => s.trim()).filter(Boolean)
+    );
+
+    list.innerHTML = claims.map((claim, i) => {
+      const on = seen ? ticked.has(claim.id) : claim.default;
+      return `
+          <div class="col-12 col-md-6">
+            <div class="form-check">
+              <input class="form-check-input js-trust-claim" type="checkbox"
+                     id="trustClaim-${i}" data-claim-id="${claim.id}" ${on ? 'checked' : ''}>
+              <label class="form-check-label" for="trustClaim-${i}">
+                ${claim.label}
+              </label>
+              ${claim.note ? `<div class="form-text text-warning-emphasis">${claim.note}</div>` : ''}
+            </div>
+          </div>`;
+    }).join('');
+
+    const sync = () => {
+      const on = Array.from(list.querySelectorAll('.js-trust-claim'))
+        .filter(box => box.checked)
+        .map(box => box.getAttribute('data-claim-id'));
+
+      // '-' rather than '': see above. An empty string would read as "the
+      // owner has not answered yet" and silently restore the defaults.
+      hidden.value = on.length ? on.join(',') : '-';
+    };
+
+    list.addEventListener('change', sync);
+    sync();
+  }
+
   function renderSiteModeStep() {
     container.innerHTML = '';
 
@@ -614,7 +791,7 @@
           <div class="col-12">
             <select class="form-select" id="businessType" required>
               <option value="">Choose...</option>
-              ${['Plumbing', 'Fencing', 'Painter', 'Paving', 'Swimming Pool Contractor', 'Junk Removal', 'Appliance Repair', 'Water Damage Restoration', 'Tree Removal','Electrician', 'Coding', 'Concrete Contractor', 'French Drain Installation', 'Roofing','HVAC', 'Air Conditioning','Landscaping','Law Firm', "Web Design"]
+              ${BUSINESS_TYPE_LABELS
                 .map(bt => `<option ${state.businessType===bt?'selected':''}>${bt}</option>`).join('')}
             </select>
             <div class="form-text">You can adjust this later.</div>
@@ -835,11 +1012,26 @@
   // -----------------------------
   // Duplicate detection
   // -----------------------------
-  // Compares case-insensitively and ignores surrounding/repeated whitespace,
-  // because "Austin, TX" and "austin,  tx" both end up as the same slug and
-  // would otherwise generate two pages writing to one file.
+  // Two entries collide when they produce the same FILENAME, so that is what
+  // gets compared. Lowercasing and collapsing whitespace — which is what this
+  // used to do — asks a different and weaker question: slugify also strips
+  // commas and punctuation, so "Drain Cleaning" and "Drain, Cleaning" are two
+  // different strings that write to one file, and the second silently
+  // overwrites the first. The comment here already claimed slug behaviour;
+  // now the code does it.
+  //
+  // MUST MATCH utils/slugify.js. test-service-names.js reads this function out
+  // of this file and runs it against the server's, so the two cannot drift
+  // apart unnoticed.
   function normaliseForCompare(value) {
-    return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    return String(value || '')
+      .toLowerCase()
+      .trim()
+      .replace(/,/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9\-]/g, '')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
   }
 
   function findDuplicates(inputs) {
@@ -862,6 +1054,81 @@
     });
 
     return { dupes, labels: [...labels] };
+  }
+
+  // -----------------------------
+  // Services that are different pages, but arguably the same page
+  // -----------------------------
+  //
+  // A collision above is refused: two names, one file, work destroyed. This is
+  // softer. "Water Heater Repair" and "Water Heater Repairs" are two files and
+  // two charges, and they compete with each other in search — Google folds
+  // near-identical pages together and shows one — so the second is money spent
+  // on a page that cannot rank.
+  //
+  // It only WARNS, because "Water Heater Repair" and "Tankless Water Heater
+  // Repair" score as similar and are a perfectly reasonable pair to want. The
+  // customer knows their trade; this does not.
+  //
+  // MIRRORS utils/blog/planCampaign.js — the same comparison the blog engine
+  // uses to stop two posts chasing one search. Here rather than on the server
+  // because the form is a real multipart POST carrying an uploaded logo: a
+  // server-side "are you sure?" would mean sending the file, refusing it, and
+  // asking for it again, and browsers cannot refill a file input.
+  //
+  // test-service-names.js reads these two functions out of this file and runs
+  // them against the server's, so a change to one that is not made to the
+  // other fails a test rather than quietly disagreeing.
+  var COMPARE_STOPWORDS = [
+    'a', 'an', 'the', 'my', 'your', 'our', 'is', 'are', 'was', 'be', 'to', 'for',
+    'of', 'in', 'on', 'at', 'and', 'or', 'do', 'does', 'did', 'why', 'how',
+    'what', 'when', 'where', 'should', 'it', 'that', 'this', 'with', 'from',
+    'you', 'i', 'me', 'can', 'will', 'get', 'got', 'so', 'if', 'vs'
+  ];
+
+  function compareTokens(value) {
+    var stop = {};
+    COMPARE_STOPWORDS.forEach(function (w) { stop[w] = true; });
+
+    var seen = {};
+    String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(function (w) { return w.replace(/(ies)$/, 'y').replace(/(es|s)$/, ''); })
+      .forEach(function (w) { if (w && !stop[w]) { seen[w] = true; } });
+
+    return Object.keys(seen);
+  }
+
+  // Jaccard overlap, plus subset containment — "Leak Detection" inside
+  // "Slab Leak Detection" is the common shape and does not always clear 0.6.
+  function findSimilarPairs(values, threshold) {
+    var limit = typeof threshold === 'number' ? threshold : 0.6;
+    var pairs = [];
+
+    var tokenised = values.map(function (v) { return { value: v, tokens: compareTokens(v) }; })
+                          .filter(function (t) { return t.tokens.length; });
+
+    for (var i = 0; i < tokenised.length; i++) {
+      for (var j = i + 1; j < tokenised.length; j++) {
+        var a = tokenised[i].tokens;
+        var b = tokenised[j].tokens;
+
+        var shared = a.filter(function (t) { return b.indexOf(t) !== -1; }).length;
+        var union = a.concat(b.filter(function (t) { return a.indexOf(t) === -1; })).length;
+        var score = union ? shared / union : 0;
+
+        var subset = (shared === a.length) || (shared === b.length);
+
+        if (subset || score >= limit) {
+          pairs.push([tokenised[i].value, tokenised[j].value]);
+        }
+      }
+    }
+
+    return pairs;
   }
 
   // -----------------------------
@@ -1016,6 +1283,25 @@
         <hr>
 
 
+        <!-- What this business can claim.
+             Everything here is a statement of FACT about the business, so the
+             owner ticks what is true rather than the generator asserting it.
+             Home services arrive pre-ticked, which is what the page said
+             before this existed; every other kind of business starts empty.
+             Nothing unticked is ever offered to the model. -->
+        <div class="mb-3" id="trustClaimsBlock">
+          <label class="form-label">What can this business claim?</label>
+          <div class="form-text mb-2">
+            Only tick what is actually true. These appear on the About page as
+            statements of fact, and anything left unticked is never written.
+          </div>
+          <input type="hidden" id="trustClaims" name="global[trustClaims]" value="">
+          <div class="row g-2" id="trustClaimsList"></div>
+        </div>
+
+        <hr>
+
+
         <!-- Business Hours-->
         <div class="mb-3">
           <label class="form-label">Business Hours</label>
@@ -1107,6 +1393,18 @@
 
     // Hours hookup (from hoursOfOperation.js)
     if (window.attachHours) window.attachHours();
+
+    // Trust claims. Built from the business type chosen back on the type step,
+    // so a dentist is never shown "workmanship warranty" — it is not in their
+    // shape's list at all.
+    //
+    // Rendered AFTER restoreFormValues, because the boxes do not exist until
+    // this runs and the snapshot carries only the hidden field. The hidden
+    // field is the single source of truth for what gets posted: a checkbox
+    // array arrives nested through one body parser and flat through another,
+    // and this route already carries a `body.global?.x ?? body['global[x]']`
+    // dance because of exactly that.
+    renderTrustClaims(container, form);
 
     // Owner name field: only shown when the box is ticked. Runs after
     // restoreFormValues so a previously ticked box reopens with its value.
@@ -2124,6 +2422,41 @@
         submitPageDupes.dupes[0]?.focus();
         showAlert(container, `Duplicate service page: ${submitPageDupes.labels.join(', ')}. Each page needs a different name.`);
         return;
+      }
+
+      // Guard: services that are not the same page but read as the same
+      // service. Asked once — a second refusal on a decision already made
+      // would be the form arguing with someone who has understood it.
+      if (!state.confirmedSimilarServices) {
+        const similar = findSimilarPairs(pagesVals);
+
+        if (similar.length) {
+          e.preventDefault();
+          e.stopImmediatePropagation(); // stop spinner.js submitting anyway
+
+          const first = similar[0];
+          const more = similar.length > 1
+            ? `\n\n(and ${similar.length - 1} other similar ${similar.length - 1 === 1 ? 'pair' : 'pairs'})`
+            : '';
+
+          const proceed = window.confirm(
+            `"${first[0]}" and "${first[1]}" look like the same service.${more}\n\n`
+            + `Two pages about one thing compete with each other in search, so usually only `
+            + `one of them ranks — and you would be paying for both.\n\n`
+            + `Generate anyway?`
+          );
+
+          if (!proceed) {
+            go(STEP.PAGES);
+            return;
+          }
+
+          // Remembered, so the resubmit below is not stopped by this guard
+          // again. Reset by the same code that resets the rest of the wizard.
+          state.confirmedSimilarServices = true;
+          form.requestSubmit ? form.requestSubmit() : form.submit();
+          return;
+        }
       }
 
       if (addLoc) {

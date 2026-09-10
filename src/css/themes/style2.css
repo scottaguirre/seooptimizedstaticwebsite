@@ -936,6 +936,10 @@ resize: vertical;
     margin-top: 40px;
 }
 
+.service-cards .col-md-6 {
+  margin-bottom: 1.5rem;
+}
+
 .service-card {
     background: var(--card-bg);
     border-radius: var(--card-radius);

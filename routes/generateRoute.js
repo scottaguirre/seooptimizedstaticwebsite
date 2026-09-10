@@ -195,6 +195,25 @@ router.post('/generate', upload.any(), async (req, res) => {
       return jsonValidationError(res, 400, validPages.error, validPages.fields);
     }
 
+    /**
+     * Near-duplicate services: recorded, not refused.
+     *
+     * The wizard warns about these before submitting and offers to carry on,
+     * because two similar-looking services are sometimes two real services.
+     * By the time a request arrives here that decision has been made — so
+     * this exists to make the pattern VISIBLE. Nothing else in the app would
+     * ever tell us that customers are routinely buying two pages that compete
+     * with each other, and that is worth knowing: it is a wasted 100 credits
+     * every time, and the customer blames the product when neither ranks.
+     */
+    if (validPages.warnings && validPages.warnings.length) {
+      log.info('generate.similarServices', {
+        requestId: req.id,
+        userId: String(req.user?._id || ''),
+        pairs: validPages.warnings.map(w => w.names),
+      });
+    }
+
     // LOCATION PAGES: read array from inputs named global[locationPages][]
     const wantsLocationPages = truthy(global.addLocations);
     const { ok: locOK, locations, fields: locFields, error: locError } =

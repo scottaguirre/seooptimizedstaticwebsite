@@ -9,10 +9,19 @@
 //
 // Missing files are warned about and skipped rather than thrown — a site
 // without badges is fine; a site with two broken image icons is not.
+//
+// HOME SERVICES ONLY. The two images assert "award winning" and "licensed and
+// insured" about a business nobody on this platform has verified. On a
+// plumber's site that is ordinary marketing. On a dental practice or a law
+// firm an unverified credential claim is a licensing-board matter, and the
+// board writes to the business owner rather than to us. buildAboutUsPage
+// already decides this before calling, but the guard is repeated here so that
+// a future second caller cannot reintroduce the problem by forgetting to ask.
 
 const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
+const { wantsBadges } = require('./businessShape');
 
 const BADGE_SRC_DIR = path.join(__dirname, '../src/predefined-images/badges');
 
@@ -45,6 +54,11 @@ function copyBadgeImages(distDir, globalValues = {}) {
   const businessName = globalValues.businessName || '';
   const businessType = globalValues.businessType || 'services';
   const location = globalValues.location || '';
+
+  if (!wantsBadges(businessType)) {
+    console.log(`   Hero badges skipped: not offered for this business type`);
+    return result;
+  }
 
   const assetsDir = path.join(distDir, 'assets');
 

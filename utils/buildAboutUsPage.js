@@ -21,6 +21,8 @@ const { copyBadgeImages, buildBadgesHtml } = require('./copyBadgeImages');
 const { copyPageImage, buildContactFormHtml } = require('./pageParts');
 const { getPreset, assetPath, imageAlt } = require('./seoPresets');
 const { canonicalTag } = require('./canonicalUrl');
+const { titleFor, capabilities, imageFolderFor } = require('./businessShape');
+const { buildCaseStudySection } = require('./generateCaseStudy');
 
 /**
  * The trust points under Section 1's opening paragraph.
@@ -66,28 +68,40 @@ const  buildAboutUsPage =  async function (
             pages,
             faqs = [],
             serviceCards = [],
-            pricing = []
+            pricing = [],
+            caseStudy = null
 
     ){
-        const categoryMap = {
-            'plumbing':        'Plumber',
-            'electrician':     'Electrician',
-            'roofing':         'Roofing Contractor',
-            'concrete-contractor': 'Concrete Contractor',
-            'hvac':            'Hvac Technician',
-            'air-conditioning': 'Air Conditioning Technician',
-            'landscaping':     'Landscaper',
-            'law-firm':        'Lawyer',
-            'junk-removal':    'Junk Removal',
-            'tree-removal':    'Tree Removal',
-            'paving':          'Paving',
-            'swimming pool contractor': 'Swimming Pool Contractor',
-            'water damage restoration': 'Water Damage Restoration'
-          };
+        // This file used to keep its own categoryMap, keyed on SLUGS while
+        // createAboutUsPrompt kept the same data keyed on SPACES. The two
+        // entries someone added in space form — 'swimming pool contractor' and
+        // 'water damage restoration' — could therefore never match the
+        // slugify() lookup below, and those sites fell through to the raw slug
+        // with nothing to show for it. titleFor() flattens both spellings to
+        // the same key, so that class of bug is gone rather than fixed.
+        //
+        // imageFolderFor, not slugify(): this names a folder under
+        // src/predefined-images/, and Lemon Law reuses the law firm photographs
+        // rather than duplicating them. With a bare slugify() it looked for
+        // predefined-images/lemon-law/aboutUs/hero, found nothing, and
+        // copyPageImage warned and skipped — while the template still wrote
+        // <img src="assets/heroLarge.webp"> for a file that was never created.
+        // A complete build, a clean log at a glance, and four broken images on
+        // the home page.
+        const businessType = imageFolderFor(globalValues.businessType);
 
-        const businessType = slugify(globalValues.businessType);
+        const category = titleFor(globalValues.businessType);
 
-        const category = categoryMap[businessType] || businessType;
+        // Badges and the pricing table are home-services features.
+        //
+        // The two badge images assert "award winning" and "licensed and
+        // insured" about a business nobody has checked, and a published price
+        // table for a physician or an attorney runs into insurance-disclosure
+        // and bar advertising rules. Both are suppressed for every other shape
+        // and the sections simply reflow — an empty gap beats a fabricated
+        // credential.
+        const caps = capabilities(globalValues.businessType);
+        const pricingRows = caps.pricingTable ? pricing : [];
 
         // Everything that differs between Rank Fast and Rank GBPs on this
         // page — the image prefix, the alt/title wording, whether the FAQPage
@@ -210,7 +224,7 @@ const  buildAboutUsPage =  async function (
             // Hero trust badges. About Us only — the other page types don't
             // use them. Returns empty strings if the files are missing, and
             // buildBadgesHtml() then renders nothing at all.
-            const badges = copyBadgeImages(distDir, globalValues);
+            const badges = caps.badges ? copyBadgeImages(distDir, globalValues) : {};
 
 
             // ✅ Build & inject Services / Locations menus (and remove wrappers if empty)
@@ -251,7 +265,10 @@ const  buildAboutUsPage =  async function (
                 .replace(/{{FAQ_SCHEMA}}/g, () => (preset.schema.faqPage ? buildFaqSchemaTag(faqs) : ''))
                 .replace(/{{FAQ_SECTION}}/g, () => (buildFaqSection(faqs)))
                 .replace(/{{SERVICE_CARDS}}/g, () => (buildServiceCards(serviceCards)))
-                .replace(/{{PRICING_TABLE}}/g, () => (buildPricingTable(pricing)))
+                .replace(/{{PRICING_TABLE}}/g, () => (buildPricingTable(pricingRows, { notice: caps.pricingNotice })))
+                // Returns '' when this business type gets no case study, or
+                // when the generation failed — the page reflows either way.
+                .replace(/{{CASE_STUDY}}/g, () => (buildCaseStudySection(caseStudy)))
                 .replace(/{{FAVICON_PATH}}/g, () => (globalValues.favicon))
                 .replace(/{{LOGO_PATH}}/g, () => (globalValues.logo))
                 .replace(/{{LOGO_ALT}}/g, () => (`Logo image of ${globalValues.businessName} in ${globalValues.location}. ${nearMeTerm}`))
@@ -490,12 +507,17 @@ const  buildAboutUsPage =  async function (
             // section in WordPress, in a different order to the static site.
             //
             // Order alone was not enough. {{SERVICE_CARDS}} is inside
-            // section-3's .container.section-padding, so the cards need to be
+            // section-2's .container.section-padding, so the cards need to be
             // nested, not merely adjacent: nestIn says so explicitly instead
             // of leaving the exporter to guess from position.
-            const serviceCardsSection = CM.serviceCardsSection(serviceCards, { nestIn: 'section3' });
+            //
+            // section-2, not section-3. The cards ARE the services, and they
+            // sat under "What Makes Us Stand Out?" — six answers to a question
+            // nobody asked. This has to move with the template placeholder or
+            // the exported theme and the downloaded site disagree.
+            const serviceCardsSection = CM.serviceCardsSection(serviceCards, { nestIn: 'section2' });
             if (serviceCardsSection) {
-                const afterServices = modelSections.findIndex(sec => sec.key === 'section3');
+                const afterServices = modelSections.findIndex(sec => sec.key === 'section2');
                 if (afterServices >= 0) {
                     modelSections.splice(afterServices + 1, 0, serviceCardsSection);
                 } else {
@@ -503,11 +525,37 @@ const  buildAboutUsPage =  async function (
                 }
             }
 
-            const pricingModelSection = CM.pricingSection(pricing, {
-                notice: require('./buildPricingTable').DEFAULT_NOTICE,
+            // pricingRows, not pricing: the WordPress model has to match the
+            // static HTML above. Passing the raw rows here is how the exported
+            // theme would end up carrying a price table the downloaded site
+            // does not have — the same class of drift the comments further up
+            // this file already warn about twice.
+            const pricingModelSection = CM.pricingSection(pricingRows, {
+                notice: caps.pricingNotice || require('./buildPricingTable').DEFAULT_NOTICE,
             });
             if (pricingModelSection) {
                 modelSections.push(pricingModelSection);
+            }
+
+            // The case study, immediately before the FAQ — the same order the
+            // static page above uses.
+            //
+            // A plain TEXT section rather than a type of its own: the
+            // WordPress renderer and the meta boxes already handle TEXT, so
+            // this needs no changes on that side and the owner can edit the
+            // paragraph in wp-admin like any other. A new section type would
+            // have meant touching the renderer, the meta boxes and the
+            // activation import for one heading and one paragraph.
+            if (caseStudy && caseStudy.heading && (caseStudy.paragraphs || []).length) {
+                modelSections.push(CM.section({
+                    key: 'caseStudy',
+                    label: 'Case Study',
+                    type: CM.SECTION_TYPES.TEXT,
+                    source: {
+                        heading: caseStudy.heading,
+                        paragraphs: caseStudy.paragraphs,
+                    },
+                }));
             }
 
             // The FAQ SECTION is kept in every mode — Rank Fast drops the

@@ -44,6 +44,7 @@ const { generateFaqAnswers } = require('./generateFaqAnswers');
 const { addUsedQuestions } = require('./generateLocationFaq');
 const { generateServiceCards } = require('./buildServiceCards');
 const { generatePricing } = require('./buildPricingTable');
+const { generateCaseStudy } = require('./generateCaseStudy');
 const { buildSitemap } = require('./buildSitemap');
 const { buildHtaccess } = require('./buildHtaccess');
 const { stripUnusedHero } = require('./stripUnusedHero');
@@ -56,6 +57,8 @@ const { buildContactFormHtml } = require('./pageParts');
 const { MODES, getPreset, normalizeSiteMode, assetFile, assetPath, imageAlt } = require('./seoPresets');
 const { buildRankFastInterlinksMap, interlinkSlugs } = require('./buildRankFastLinks');
 const { canonicalTag } = require('./canonicalUrl');
+const { siteBaseUrl } = require('./buildSitemap');
+const { imageExtension } = require('./uploadExtension');
 const CM = require('./contentModel');
 const {
     slugify,
@@ -220,7 +223,16 @@ async function runGeneration(ctx) {
 
     for (const file of files) {
       const globalMatch = file.fieldname.match(/global\[(.*?)\]/);
-      const ext = path.extname(file.originalname);
+
+      // Not path.extname(file.originalname).
+      //
+      // That returns '' for an upload whose name has no extension — a logo
+      // pasted from the clipboard, dragged from another tab, or picked on a
+      // phone. assetFile()'s '.webp' default does not rescue it, because a
+      // default only applies to `undefined` and '' is a value, so the site
+      // shipped <img src="assets/acme-logo"> and the logo silently did not
+      // load. imageExtension falls back to the MIME type.
+      const ext = imageExtension(file);
 
       // Logo and favicon naming, by mode:
       //
@@ -305,6 +317,13 @@ async function runGeneration(ctx) {
       hours: global.hours || {},
       styleKey: global.styleKey,
       is24Hours: global.is24Hours,    // ✅ store 24hr toggle (may be 'on' or undefined)
+      // Which trust points this business has confirmed are true of it, as a
+      // comma-separated list of claim ids. '-' means "none of them"; absent
+      // means the field was never posted (a job replayed from before this
+      // existed), which falls back to the shape's defaults — every historical
+      // claim for home services, nothing for anyone else.
+      // See utils/businessShape.js.
+      trustClaims: global.trustClaims ?? ctx.body['global[trustClaims]'],
       phone: global.phone?.trim(),
       domain: global.domain?.trim(),
       useNearMe: String(rawUseNearMe),
@@ -341,6 +360,36 @@ async function runGeneration(ctx) {
     const logoSize = LOGO_SIZES[globalValues.logoType] || LOGO_SIZES.rect;
     globalValues.logoWidth  = logoSize.width;
     globalValues.logoHeight = logoSize.height;
+
+
+    // The domain has to survive siteBaseUrl(), not merely be non-empty.
+    //
+    // siteBaseUrl() returns '' for anything that does not normalise to a
+    // hostname — "qualityplumberleander" with no TLD, a pasted path, a typo.
+    // Everything downstream then fails SOFT and SEPARATELY:
+    //
+    //   canonicalTag()   returns '' -> every page ships with no canonical,
+    //                    which is exactly the state Search Console reports as
+    //                    "Duplicate without user-selected canonical"
+    //   buildSitemap()   skips itself
+    //   buildHtaccess()  warns to the console and writes nothing
+    //
+    // Three warnings in a build log nobody reads, a generation that reports
+    // success, and a site with no canonical tags anywhere. Better to refuse:
+    // the customer has spent credits either way, and a site they have to
+    // rebuild is worse than a form they have to correct.
+    //
+    // Throws rather than returning a validation response for the same reason
+    // the logo check above does — there is no `res` in a background job. The
+    // runner catches this, marks the job failed and shows the message.
+    if (!siteBaseUrl(globalValues.domain)) {
+      throw new Error(
+        `"${globalValues.domain || ''}" is not a usable domain. ` +
+        'Enter it as example.com or www.example.com — no https://, no path, ' +
+        'and it must include a dot. Without one the site cannot have canonical ' +
+        'tags, a sitemap, or the redirects that keep its address consistent.'
+      );
+    }
 
 
     console.log(`🎨 Mode: ${siteMode}  |  Theme: ${globalValues.styleKey || '(none — will fall back to style.css)'}  |  Logo: ${globalValues.logoType} ${globalValues.logoWidth}x${globalValues.logoHeight}`);
@@ -494,7 +543,10 @@ async function runGeneration(ctx) {
 
 
       // Generate Page Sections Content
-      const sections = await generatePagesContent(globalValues, page, contentKeywords);
+      // Number(index) decides this page's section topics and heading style.
+      // Every service page used to get the same four briefs in the same order,
+      // which is how two related services came back near-identical.
+      const sections = await generatePagesContent(globalValues, page, contentKeywords, Number(index));
 
       // Skip this service page rather than failing the whole generation.
       // The same guard the location pages needed: unparseable model output
@@ -786,6 +838,23 @@ async function runGeneration(ctx) {
     });
 
 
+    // A short case study for the home page, above the FAQ.
+    //
+    // Describes a REPRESENTATIVE job rather than a particular one — no client
+    // name, no address, no date, no figures. A case study is a claim about
+    // work that was done, and left to itself the model invents the customer
+    // along with it. See utils/generateCaseStudy.js.
+    //
+    // Returns null for medical and legal practices, where a case study is a
+    // past-results claim.
+    console.log(isSample ? '📄 Skipping case study (design sample)' : '📄 Generating case study...');
+    const caseStudy = isSample ? null : await generateCaseStudy({
+      businessType: globalValues.businessType,
+      businessName: globalValues.businessName,
+      location: globalValues.location,
+    });
+
+
     // Create about-us.html, & save in dist
     await report({ stage: 'Writing the home page', current: 'About Us', done: pagesDone });
 
@@ -798,7 +867,8 @@ async function runGeneration(ctx) {
             pagesArray,   // array form: the interlink injectors call .find on it
             faqs,
             serviceCards,
-            pricing
+            pricing,
+            caseStudy
     );
 
 

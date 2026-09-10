@@ -254,6 +254,10 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     margin-bottom: 30px;
 }
 
+.service-cards .col-md-6 {
+    margin-bottom: 1.5rem;
+}
+
 .section-1 a, .section-2 a, .section-3 a, .section-4 a, .section-5 a {
     color:#cf3def;
 }

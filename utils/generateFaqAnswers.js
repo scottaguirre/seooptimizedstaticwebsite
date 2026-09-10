@@ -16,9 +16,7 @@
 // at all. Ten location pages would therefore carry the same two questions,
 // word for word, ten times — the clearest possible signal that the pages come
 // off a template.
-//
-// Location pages pass includeFixed:false and run on PAA questions only, which
-// differ per town because the SERP is queried per town.
+
 
 const { OpenAI } = require('openai');
 const { parseModelJson } = require('./parseModelJson');

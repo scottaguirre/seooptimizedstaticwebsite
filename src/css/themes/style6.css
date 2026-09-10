@@ -410,6 +410,10 @@ img.award, img.licensed {
     margin-top: 20px;
 }
 
+.service-cards .col-md-6 {
+    margin-bottom: 1.5rem;
+  }
+
 .service-card {
     padding-bottom: 20px;;
 }

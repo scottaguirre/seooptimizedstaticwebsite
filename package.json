@@ -7,7 +7,7 @@
     "dev": "node server.js",
     "start": "NODE_ENV=production node server.js",
     "build:webpack": "webpack --config webpack.config.js",
-    "test:blog": "node test-blog-api.js && node test-blog-plan.js && node test-plugin-download.js && node test-blog-pages.js",
+    "test:blog": "node test-blog-api.js && node test-blog-plan.js && node test-plugin-download.js && node test-blog-pages.js && node test-service-names.js",
     "test:plugin": "php wp-plugin/test-admin-tabs.php"
   },
   "dependencies": {

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
 const { assetFile, assetPath } = require('./seoPresets');
+const { imageFolderFor } = require('./businessShape');
 
 /**
  * Copy a single predefined image into the *per-user* distDir/assets folder,
@@ -87,9 +88,14 @@ function copyAllPredefinedImages({
   const folder = `page${imageIndex + 1}`;
   const businessType = slugify(globalValues.businessType);
 
+  // imageFolderFor, not slugify(): Lemon Law reuses the law firm photographs
+  // rather than needing a duplicate set of them, and a type whose folder is
+  // named differently from its label resolves here rather than silently
+  // matching nothing. copyPageImage warns and skips on a missing file, so a
+  // wrong folder name produces a complete build with no images in it.
   const baseDir = path.join(
     __dirname,
-    `../src/predefined-images/${businessType}/${folder}`
+    `../src/predefined-images/${imageFolderFor(globalValues.businessType)}/${folder}`
   );
   const heroDir = path.join(baseDir, 'hero');
   const section2Dir = path.join(baseDir, 'section2');
