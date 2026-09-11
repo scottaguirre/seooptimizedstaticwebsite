@@ -27,13 +27,61 @@ function getResend() {
 }
 
 /**
+ * The name shown in the recipient's inbox.
+ *
+ * Without it, a From header of `hello@fastwebsitegenerator.com` makes Gmail
+ * display the sender as "hello" — the local part, alone, above a password
+ * reset link. Overridable with EMAIL_FROM_NAME; the default lives here rather
+ * than only in .env so a deploy fixes it without also editing the server's
+ * environment.
+ */
+const DEFAULT_FROM_NAME = 'Fast Website Generator';
+const DEFAULT_FROM_ADDRESS = 'onboarding@resend.dev';
+
+// True for a value already written as `Name <addr>`.
+function hasDisplayName(value) {
+  return /<[^>]+>\s*$/.test(String(value).trim());
+}
+
+/**
+ * Make a display name safe to put in a From header.
+ *
+ * Two separate problems:
+ *
+ * 1. A CR or LF ends the header. Anything after it is read as a new header —
+ *    header injection. Hence stripping rather than trusting, even though the
+ *    value currently comes from our own .env.
+ * 2. RFC 5322 requires quoting around any of ()<>[]:;@,\ in a display name.
+ *    Unquoted, `Smith, John <a@b.c>` parses as two addresses and the send is
+ *    rejected or silently mangled.
+ */
+function quoteDisplayName(name) {
+  const clean = String(name == null ? '' : name).replace(/[\r\n"\\]/g, '').trim();
+  if (!clean) return '';
+  return /[(),:;<>@[\]]/.test(clean) ? `"${clean}"` : clean;
+}
+
+/**
  * Who the email comes from.
  *
- * Must be an address on a domain verified in Resend — they reject anything
- * else, which is what stops their platform being used to spoof senders.
+ * The address must be on a domain verified in Resend — they reject anything
+ * else, which is what stops their platform being used to spoof senders. The
+ * display name is cosmetic and unverified, so it is ours to choose.
+ *
+ * EMAIL_FROM may itself already be written as `Name <addr>`. That form wins:
+ * someone who spelled out a whole From header meant it, and wrapping it again
+ * would produce `Name <Other <addr>>`.
  */
 function fromAddress() {
-  return process.env.EMAIL_FROM || 'onboarding@resend.dev';
+  const address = process.env.EMAIL_FROM || DEFAULT_FROM_ADDRESS;
+  if (hasDisplayName(address)) return address;
+
+  // An explicitly empty EMAIL_FROM_NAME means "no name" — a bare address,
+  // which is what this did before. Only an unset variable takes the default.
+  const configured = process.env.EMAIL_FROM_NAME;
+  const name = quoteDisplayName(configured === undefined ? DEFAULT_FROM_NAME : configured);
+
+  return name ? `${name} <${address}>` : address;
 }
 
 // Re-exported rather than defined here.
@@ -48,6 +96,10 @@ function fromAddress() {
 // utils/baseUrl.js now owns the answer, and server.js refuses to boot in
 // production without BASE_URL set, so this cannot silently happen again.
 const { baseUrl } = require('./baseUrl');
+
+// The HTML half of each message. The text half stays inline below, so the two
+// can be read side by side and kept saying the same thing.
+const { emailLayout } = require('./emailLayout');
 
 /**
  * Print the message instead of sending it.
@@ -148,6 +200,10 @@ async function sendEmail({ to, subject, text, html, url }) {
  *
  * Kept here rather than inline in the routes so the wording is in one place
  * and every message has the same shape.
+ *
+ * Each carries both `text` and `html`. The text version is not a leftover:
+ * it is what plain-text clients, screen readers and some filters read, and
+ * it must say everything the HTML says. When one is edited, edit both.
  * ---------------------------------------------------------------------- */
 
 function verificationEmail({ to, token }) {
@@ -166,6 +222,17 @@ ${url}
 This link works for 24 hours. If it expires you can request a new one from the login page.
 
 If you did not create an account, you can ignore this message.`,
+    html: emailLayout({
+      heading: 'Confirm your email address',
+      preheader: 'One click activates your account.',
+      intro: 'Welcome. Confirm your email address to activate your account.',
+      buttonLabel: 'Confirm my email',
+      url,
+      after: [
+        'This link works for 24 hours. If it expires you can request a new one from the login page.',
+        'If you did not create an account, you can ignore this message.',
+      ],
+    }),
   };
 }
 
@@ -185,6 +252,17 @@ ${url}
 This link works for 30 minutes and can only be used once.
 
 If it was not you, you can ignore this message — your password has not changed.`,
+    html: emailLayout({
+      heading: 'Reset your password',
+      preheader: 'The link expires in 30 minutes.',
+      intro: 'Someone asked to reset the password for this account. If that was you, choose a new one.',
+      buttonLabel: 'Choose a new password',
+      url,
+      after: [
+        'This link works for 30 minutes and can only be used once.',
+        'If it was not you, you can ignore this message — your password has not changed.',
+      ],
+    }),
   };
 }
 
@@ -193,4 +271,7 @@ module.exports = {
   verificationEmail,
   passwordResetEmail,
   baseUrl,
+  // Exported for test-email-from.js. Nothing else should call it — the From
+  // header is sendViaProvider's business.
+  fromAddress,
 };

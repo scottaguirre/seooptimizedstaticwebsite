@@ -7,6 +7,12 @@
 # own copy; overwriting it from a laptop is how a deploy takes the app down.
 .env
 
+# And its backups. `.env` alone does not cover `.env.bak`, so --delete removed
+# the copy taken on the server before the EMAIL_FROM change — the deploy threw
+# away the rollback and said one word about it. A backup that only survives
+# until the next deploy is not a backup.
+.env.*
+
 # Rebuilt on the server. Sending it is slow and can mix architectures for any
 # package with a native binary.
 node_modules/

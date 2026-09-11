@@ -39,6 +39,8 @@ echo "Running tests..."
 node test-business-shape.js > /dev/null
 node test-blog-plan.js      > /dev/null
 node test-blog-states.js    > /dev/null
+node test-email-from.js     > /dev/null
+node test-email-html.js     > /dev/null
 # Skips cleanly when php is not installed; see the top of the file.
 node test-wp-canonical.js   > /dev/null
 echo "Tests passed."
