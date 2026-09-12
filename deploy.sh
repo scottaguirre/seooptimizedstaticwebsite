@@ -41,8 +41,11 @@ node test-blog-plan.js      > /dev/null
 node test-blog-states.js    > /dev/null
 node test-email-from.js     > /dev/null
 node test-email-html.js     > /dev/null
-# Skips cleanly when php is not installed; see the top of the file.
+node test-wp-screenshot.js  > /dev/null
+# Skip cleanly when php is not installed; see the top of each file.
 node test-wp-canonical.js   > /dev/null
+node test-wp-single.js      > /dev/null
+node test-ie-pause.js       > /dev/null
 echo "Tests passed."
 echo
 

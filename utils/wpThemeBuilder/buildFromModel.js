@@ -15,6 +15,7 @@ const {
   ensureDir,
   fileExists,
   copyDirRecursive,
+  copyFile,
   deleteFile,
 } = require('./wpHelpers/fileHelpers');
 
@@ -216,6 +217,26 @@ async function buildWordPressThemeFromModel(distDir, options = {}) {
     path.join(wpThemeRoot, 'style.css'),
     generateStyleCss({ themeName, themeSlug, themeAuthor, themeVersion })
   );
+
+  // 7b. screenshot.png — the tile in Appearance → Themes.
+  //
+  // WordPress looks for this exact filename beside style.css. Without it the
+  // picker shows a grey placeholder, which reads as a broken or half-finished
+  // theme sitting next to whatever else the customer has installed.
+  //
+  // One fixed image for every theme, deliberately. It is a wireframe of the
+  // layout this builder produces — nav, hero, three service cards, footer —
+  // rather than a photograph, because a photograph has to claim a trade and a
+  // plumbing picture on a dentist's theme is worse than no picture at all. It
+  // carries no text either, so nothing here depends on which fonts happen to
+  // be installed on the server.
+  //
+  // Missing file is not fatal. A theme without a screenshot is untidy; an
+  // export that threw is a customer with nothing.
+  const screenshotSrc = path.join(__dirname, 'assets', 'screenshot.png');
+  if (fileExists(screenshotSrc)) {
+    await copyFile(screenshotSrc, path.join(wpThemeRoot, 'screenshot.png'));
+  }
 
   // 8. The content model itself
   await writeFile(

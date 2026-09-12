@@ -74,6 +74,9 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 
     node test-business-shape.js    # business shapes, prompts, case study, wizard parity
     node test-wp-canonical.js      # runs the exported theme as real PHP; skips without php
+    node test-wp-single.js         # single.php incl. the featured image; skips without php
+    node test-ie-pause.js          # campaign pause/resume as real PHP; skips without php
+    node test-wp-screenshot.js     # the theme screenshot and its binary-safe copy
     node test-blog-plan.js
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
@@ -82,7 +85,20 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 `test-blog-api.js` and `test-blog-scheduler.js` need `MONGO_URI` and otherwise
 exit without running.
 
-`brew install php` makes the canonical suite runnable locally.
+**The two PHP suites cannot run on Edwin's Mac.** It is on macOS 12, which
+Homebrew no longer ships bottles for, so `brew install php` tries to compile
+from source. Do not suggest it again.
+
+They run on the VPS instead, which has `php-cli` 8.3.6 installed as of
+12 September:
+
+    ssh ubuntu@15.204.123.104 'cd ~/app && node test-wp-canonical.js && node test-wp-single.js'
+
+All 40 assertions passed there on 12 September. Note this runs *after* a
+deploy, so it reports rather than gates — `deploy.sh` still skips both suites
+locally. Do not wire the remote run into `deploy.sh` without solving that:
+turning a gate into a report quietly loses the property the script was built
+for.
 
 ## Where things are
 
@@ -115,6 +131,25 @@ settled rather than re-testing:
 - the case study names a real local landmark — a San Antonio build produced
   "a home a few minutes from the Alamo"
 
+## Verified working on 11 September 2026
+
+- transactional mail sends from `hello@fastwebsitegenerator.com` and arrives
+- the sender reads "Fast Website Generator", not "hello"
+- the HTML body renders — card, navy button, copyable fallback link
+
+## Verified working on 12 September 2026
+
+Theme re-exported and reinstalled on roofingamerica.xyz, which carried both of
+these to a live site for the first time:
+
+- a Featured Image set in wp-admin renders on the post, between the title and
+  the body
+- archive canonicals — `/category/uncategorized/` now declares itself
+  canonical, where every archive previously declared nothing. That was the
+  "Duplicate without user-selected canonical" report.
+
+Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
+
 ## Outstanding
 
 **Blocking the medical types**
@@ -126,10 +161,14 @@ settled rather than re-testing:
 
 **WordPress**
 
-- Re-export and reinstall the theme on roofingamerica.xyz. The archive
-  canonical fix only travels inside the theme, so the live site does not have
-  it until then.
-- Install plugin 0.3.2 there and review the four Campaigns tabs.
+- Install plugin 0.3.2 on roofingamerica.xyz and review the four Campaigns
+  tabs. (The *theme* re-export was done on 12 September — see above.)
+- Search Console: hit **Validate Fix** on "Duplicate without user-selected
+  canonical" now that the archives declare one. Google recrawls on its own
+  schedule, so a flat count a week later means nothing either way.
+- Any *other* site running an exported theme still has the old `single.php`
+  and the old archive behaviour. The fixes travel inside the theme ZIP, so
+  every site needs its own re-export and reinstall.
 
 **Law firm**
 
@@ -199,9 +238,131 @@ Worth knowing:
   the gateway" from "delivered but filtered". Check there before changing
   anything.
 
+**Theme screenshot — added 12 September**
+
+Exported themes used to show the grey placeholder tile in Appearance → Themes,
+because WordPress looks for `screenshot.png` beside `style.css` and the builder
+never wrote one.
+
+`utils/wpThemeBuilder/assets/screenshot.png` — 1200×900, the Fast Website
+Generator logo on its own navy, padded rather than cropped (the logo is
+1200×630, an Open Graph ratio, so cropping it to 4:3 would cut the sides).
+`buildFromModel.js` copies it into every theme root, guarded by `fileExists` so
+a missing image can never fail an export.
+
+Two things to keep in mind if this is ever changed:
+
+- **Use `copyFile()`, never `writeFile()`.** `writeFile` is utf8-only. A PNG
+  through it still appears, with a plausible size, and is no longer an image.
+  `copyFile` was added to `wpHelpers/fileHelpers.js` for exactly this.
+- One fixed image for every customer means **the Fast Website Generator logo
+  appears in the customer's own Appearance → Themes**, next to Twenty
+  Twenty-Four. Edwin chose that knowingly on 12 September. If a site is ever
+  sold as wholly the customer's own, this is the one place the vendor name
+  shows up uninvited.
+
+`test-wp-screenshot.js` checks the PNG signature, the IHDR dimensions and that
+the copied bytes are byte-identical — the last one specifically catches the
+utf8 corruption above.
+
+**Campaign pause — built 12 September, plugin 0.3.3, NOT yet tested on a site**
+
+"Stop publishing" / "Resume campaign" on each campaign card.
+
+The thing to keep hold of: **a campaign status alone does not stop anything the
+owner can see.** A post at `post_status = 'future'` is published by WordPress
+core on its date, and core has never heard of this plugin. So `IE_Publisher::
+pause()` has two halves — the status, which stops new posts being collected and
+written, and holding each scheduled post as a draft, which stops the ones
+already in the site. Remove either half and the feature does nothing useful.
+
+`resume()` moves every remaining date **forward by however long the campaign
+sat still**, rather than restoring the original dates. A three-week pause would
+otherwise end with three weeks of backdated posts appearing at once — the
+pattern that reads as automated, on a product sold for not reading as
+automated.
+
+Details that are load-bearing and all covered by `test-ie-pause.js` (20 cases):
+
+- Only posts carrying `_ie_held_until` are released. Without that marker there
+  is no way to tell a post *we* held from one the owner drafted by hand while
+  the campaign was stopped, and resume would undo their decision.
+- Published posts are never touched. Pause does not take live content down.
+- The same `_ie_campaign` refusal `activate_for_slot()` makes — a stale slot
+  record pointing at the customer's own page must never be edited.
+- A post already overdue at the moment of the pause is **published** on resume,
+  not written back as `future` with a past date. That is the classic
+  missed-schedule post: WordPress accepts it and then never publishes it.
+- `resume()` sets the campaign active BEFORE moving posts, because publishing
+  one fires `on_transition()`, which reads and writes the same campaign option.
+  Holding a copy in memory across that would overwrite the slot it just marked
+  published.
+- `upcoming()` and `collisions()` now ask `'active' !== status` instead of
+  naming `'cancelled'`. They named one dead status, so a paused campaign's
+  drafts would have shown as overdue — the alarm that means WP-Cron has died.
+
+Still open: this has never run on a real site. Install 0.3.3 on
+roofingamerica.xyz, stop a campaign, confirm the scheduled posts become drafts,
+resume, confirm the dates moved.
+
+The other half of the conversation — a softer "the customer stopped paying"
+stop that leaves already-scheduled posts to publish — was deliberately left
+undecided. Do not build it without asking.
+
+**Next — raised 11 September, for 12 September**
+
+*Stripe live keys.* Only two variables are involved: `STRIPE_SECRET_KEY` and
+`STRIPE_WEBHOOK_SECRET`. Edwin sets both on the server himself; a live secret
+key is never pasted into a session, committed, or written to a local file.
+
+The trap is the second one. **`STRIPE_WEBHOOK_SECRET` is different in live
+mode** — it belongs to a specific endpoint, and the live endpoint has to be
+created in the Stripe dashboard and its own signing secret copied out. Swap
+only the API key and checkout succeeds while every webhook fails signature
+verification, so customers are charged and credits are never granted, quietly.
+
+Two things that are *not* a problem here, worth knowing so nobody goes looking:
+`utils/creditPacks.js` passes inline `price_data` rather than stored price IDs,
+so there are no test-mode products to recreate in live; and there is no
+publishable key anywhere, because billing is a Checkout redirect and never
+touches Stripe.js on the client.
+
+*Blog hero image.* **Done on 12 September** — and it needed no custom post
+type. See "Deliberately dropped" for why the CPT was abandoned.
+
+The goal was "at least one main image so it doesn't look like plain text".
+Everything for that already existed: `functions.php` declares
+`post-thumbnails` support and registers four hero sizes, the blog card grid
+renders a thumbnail, and the `BlogPosting` schema publishes it as `image`.
+Only `single.php` left it out, so a Featured Image showed on the listing and
+vanished when you opened the post.
+
+`generateSinglePhp()` in `pageTemplatesPhp.js` now renders it, after the `<h1>`
+and before `the_content()`. Notes, all of them load-bearing and all covered by
+`test-wp-single.js`:
+
+- `loading="eager"` and `fetchpriority="high"`. WordPress lazy-loads
+  thumbnails by default, and this is the LCP element on a post page.
+- The theme's own `<prefix>-hero-desktop` size, not `full` — `full` ships the
+  customer's original upload, often several megabytes.
+- No `alt` is passed, so `the_post_thumbnail()` uses the attachment's own.
+  Forcing the post title in would make every hero announce the heading printed
+  directly above it.
+
+**Nothing was needed on the plugin side.** WordPress's Featured Image panel is
+already in the editor on these sites and is already one image per post. The
+customer sets it there.
+
+Still to do: this only reaches a live site on a theme re-export and reinstall,
+exactly like the archive canonical fix — see the WordPress section above.
+
 **Cleanup**
 
-- `brew install php` so the 27 canonical tests run locally instead of skipping.
+- ~~`brew install php`~~ — done differently on 12 September; the two PHP suites
+  run on the VPS. See the Tests section.
+- The server has 25 pending package updates, 11 of them security, and a kernel
+  upgrade waiting on a reboot. Noticed 12 September. Needs a quiet moment and
+  its own plan, not a ride-along with a deploy.
 - `test-blog-api.js` and `test-blog-scheduler.js` need `MONGO_URI` set. They
   exit without running, so they have never told anyone anything.
 
@@ -220,6 +381,16 @@ Edwin does.
   is blog-specific — it fails anything under 550 words, rejects "how to" titles
   and requires blog interlink tokens — so it would fail every service page for
   reasons unrelated to quality.
+- **A custom post type for generated blogs.** Raised 11 September, dropped on
+  the 12th. The goal turned out to be "the posts look like plain text", which
+  a featured image solves without moving anything. A CPT would have cost:
+  permalinks changing on already-indexed posts, the posts leaving the main
+  blog loop and the customer's blog page emptying, feeds and category/tag
+  archives needing explicit opt-in, and existing rows not migrating
+  themselves. None of that buys anything the product wants. If it is ever
+  raised again, note that generated posts already carry `_ie_campaign` post
+  meta (`class-ie-publisher.php:336`) — telling them apart in wp-admin is an
+  admin column and a filter, not a new post type.
 - **Per-service FAQ sections.** Considered for making service pages distinct;
   rejected because adding the same section to every service page makes them
   more alike, not less. The topic rotation was built instead.

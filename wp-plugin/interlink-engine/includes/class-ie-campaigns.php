@@ -148,6 +148,51 @@ class IE_Campaigns {
 		return self::save( $campaign );
 	}
 
+	/**
+	 * A campaign's status, and what each one stops.
+	 *
+	 *   active    the normal state. Posts are collected from the server,
+	 *             WordPress publishes them on their dates, and the catch-up
+	 *             sweep fixes missed schedules.
+	 *   paused    the emergency stop. Nothing new is collected and nothing
+	 *             publishes. Note that the status alone would NOT stop posts
+	 *             going live — WordPress publishes `future` posts itself and
+	 *             has never heard of this plugin — so IE_Publisher::pause()
+	 *             also holds each scheduled post as a draft. That is the half
+	 *             that does the actual stopping.
+	 *
+	 * There was a third, 'cancelled', read in two places and written in none.
+	 * It stays readable so a campaign stored by an older version still behaves,
+	 * but the guards below now ask "is this active?" rather than naming one
+	 * dead status — otherwise every state added later is silently treated as
+	 * running, which is how 'paused' would have leaked into the schedule
+	 * screens as a pile of overdue rows.
+	 */
+	public static function set_status( $id, $status, $extra = array() ) {
+		$campaign = self::get( $id );
+		if ( ! $campaign ) {
+			return null;
+		}
+
+		$campaign['status'] = $status;
+
+		// null removes a key rather than storing a null — 'paused_at' should
+		// not survive a resume as an empty string that still looks set.
+		foreach ( $extra as $key => $value ) {
+			if ( null === $value ) {
+				unset( $campaign[ $key ] );
+			} else {
+				$campaign[ $key ] = $value;
+			}
+		}
+
+		return self::save( $campaign );
+	}
+
+	public static function is_paused( $campaign ) {
+		return is_array( $campaign ) && isset( $campaign['status'] ) && 'paused' === $campaign['status'];
+	}
+
 	/** Find a slot by index. Returns [ position, slot ] or null. */
 	public static function find_slot( $campaign, $slot_index ) {
 		foreach ( $campaign['slots'] as $i => $slot ) {
@@ -289,7 +334,11 @@ class IE_Campaigns {
 		$rows = array();
 
 		foreach ( self::all() as $campaign ) {
-			if ( 'cancelled' === $campaign['status'] ) {
+			// "not active" rather than "cancelled". A paused campaign's posts
+			// are drafts with dates that keep receding into the past, so
+			// naming one dead status here would fill the screen with rows
+			// marked overdue — the alarm that means WP-Cron has stopped.
+			if ( 'active' !== $campaign['status'] ) {
 				continue;
 			}
 
@@ -347,7 +396,10 @@ class IE_Campaigns {
 		$by_day = array();
 
 		foreach ( self::all() as $campaign ) {
-			if ( 'cancelled' === $campaign['status'] ) {
+			// A paused campaign cannot collide with anything: its posts are
+			// drafts and no date they carry will be honoured until it resumes,
+			// at which point every one of them moves anyway.
+			if ( 'active' !== $campaign['status'] ) {
 				continue;
 			}
 

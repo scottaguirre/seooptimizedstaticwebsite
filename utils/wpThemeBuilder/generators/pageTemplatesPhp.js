@@ -157,6 +157,19 @@ get_footer();
  * Without this, posts fell through to index.php. They now use the same
  * container and spacing classes as the rest of the site, and any extra
  * sections the client appended are rendered after the post body.
+ *
+ * THE FEATURED IMAGE
+ *
+ * Every piece of this already existed except the four lines that draw it.
+ * functions.php declares `post-thumbnails` support and registers four hero
+ * sizes; the blog card grid renders a thumbnail when there is one; the
+ * BlogPosting schema publishes it as `image`. Only the post's own page left
+ * it out — so a customer could set a Featured Image, watch it appear on the
+ * blog listing, open the post, and find the wall of text they started with.
+ *
+ * Which also means there is nothing to build on the plugin side for this.
+ * WordPress's own Featured Image panel is already in the editor on these
+ * sites, and it is already one image per post.
  */
 function generateSinglePhp(options = {}) {
   const { themeSlug = 'local-business-theme' } = options;
@@ -177,6 +190,36 @@ function generateSinglePhp(options = {}) {
                     <?php echo esc_html( get_the_date() ); ?>
                   </time>
                 </p>
+
+                <?php if ( has_post_thumbnail() ) : ?>
+                  <figure class="post-hero mb-4">
+                    <?php
+                    // eager + fetchpriority, NOT lazy. This is the largest
+                    // element above the fold, so it is the LCP candidate on
+                    // every post page: lazy-loading it means the browser
+                    // discovers it late and the metric measures the delay.
+                    // WordPress lazy-loads thumbnails by default, so saying
+                    // nothing here is the same as opting into the slow path.
+                    //
+                    // No alt is passed. the_post_thumbnail() uses the
+                    // attachment's own alt text, which is what the customer
+                    // typed in the media library; overriding it with the post
+                    // title would make every hero announce the heading that is
+                    // already directly above it. Empty stays empty, which is
+                    // the correct reading of a decorative stock photo.
+                    the_post_thumbnail( '${p}-hero-desktop', array(
+                        'class'         => 'img-fluid w-100 rounded',
+                        'loading'       => 'eager',
+                        'fetchpriority' => 'high',
+                    ) );
+                    ?>
+                    <?php $hero_caption = get_the_post_thumbnail_caption(); ?>
+                    <?php if ( $hero_caption ) : ?>
+                      <figcaption class="text-muted small mt-2"><?php echo esc_html( $hero_caption ); ?></figcaption>
+                    <?php endif; ?>
+                  </figure>
+                <?php endif; ?>
+
                 <?php the_content(); ?>
               </div>
             </div>

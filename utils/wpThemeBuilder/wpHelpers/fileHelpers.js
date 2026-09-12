@@ -33,6 +33,21 @@ async function ensureDir(dirPath) {
 }
 
 /**
+ * Copy one file, creating the destination directory if needed.
+ *
+ * Binary-safe, which is the whole reason it exists: writeFile below is
+ * utf8-only, and pushing a PNG through it replaces every byte above 0x7F with
+ * the replacement character. The file still appears, still has a plausible
+ * size, and is not an image any more.
+ *
+ * Example: copyFile('/src/screenshot.png', '/theme/screenshot.png')
+ */
+async function copyFile(src, dest) {
+  await ensureDir(path.dirname(dest));
+  await fsp.copyFile(src, dest);
+}
+
+/**
  * Write content to a file, creating parent directories if needed
  * Example: writeFile('/theme/functions.php', phpContent)
  */
@@ -105,6 +120,7 @@ async function deleteDir(dirPath) {
 
 module.exports = {
   copyDirRecursive,
+  copyFile,
   ensureDir,
   writeFile,
   fileExists,

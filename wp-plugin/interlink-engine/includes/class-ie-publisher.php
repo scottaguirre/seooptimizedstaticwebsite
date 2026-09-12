@@ -562,6 +562,202 @@ class IE_Publisher {
 		), true );
 	}
 
+	/* ---------------------------------------------------------------------
+	 * Pause and resume
+	 *
+	 * THE THING THAT IS NOT OBVIOUS
+	 *
+	 * Setting a campaign's status to 'paused' stops this plugin. It does not
+	 * stop the posts. A post sitting at status 'future' is published by
+	 * WordPress core on its date, and core has never heard of a campaign — so
+	 * a pause that only wrote a status would leave the owner watching the
+	 * content they just stopped appear on schedule anyway.
+	 *
+	 * So a pause has two halves: the status, which stops new posts being
+	 * collected and written, and holding each scheduled post as a draft, which
+	 * stops the ones already here.
+	 *
+	 * WHY RESUME MOVES THE DATES
+	 *
+	 * Every remaining date moves forward by exactly as long as the campaign
+	 * sat still. Restoring the original dates after a three-week pause would
+	 * dump three weeks of backdated posts out at once — which is both the
+	 * pattern that reads as automated and the opposite of the weekly drip the
+	 * campaign was planned as.
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Marks a post THIS plugin moved to draft, and remembers the date it was
+	 * holding.
+	 *
+	 * Resume touches only posts carrying this. Without it there is no way to
+	 * tell a post we held from one the owner drafted by hand while the
+	 * campaign was stopped, and resume would publish something they had
+	 * deliberately pulled.
+	 */
+	const HELD_META = '_ie_held_until';
+
+	/**
+	 * Stop a campaign now.
+	 *
+	 * @return int|WP_Error how many scheduled posts were held as drafts
+	 */
+	public static function pause( $campaign_id ) {
+		$campaign = IE_Campaigns::get( $campaign_id );
+
+		if ( ! $campaign ) {
+			return new WP_Error( 'ie_no_campaign', __( 'That campaign could not be found.', 'interlink-engine' ) );
+		}
+
+		if ( IE_Campaigns::is_paused( $campaign ) ) {
+			return 0;
+		}
+
+		// The status goes first. Everything below can fail on one post without
+		// the campaign being left running, and a half-paused campaign that
+		// still thinks it is active would collect more posts on the next cron.
+		IE_Campaigns::set_status( $campaign_id, 'paused', array(
+			// ISO 8601 UTC, not 'mysql'. strtotime() reads a bare
+			// 'Y-m-d H:i:s' in whatever timezone PHP is set to, so a stored
+			// GMT string comes back shifted on any site not running UTC.
+			'paused_at' => gmdate( 'c' ),
+		) );
+
+		$held = 0;
+
+		foreach ( $campaign['slots'] as $slot ) {
+			$post_id = isset( $slot['post_id'] ) ? (int) $slot['post_id'] : 0;
+			if ( ! $post_id ) {
+				continue;
+			}
+
+			$post = get_post( $post_id );
+			if ( ! $post ) {
+				continue;
+			}
+
+			// The same refusal activate_for_slot() makes, for the same reason:
+			// a post id is a small integer and a stale slot record pointing at
+			// an unrelated page would be very hard to notice and impossible to
+			// undo.
+			if ( ! get_post_meta( $post_id, '_ie_campaign', true ) ) {
+				self::log( sprintf( 'refused to hold post %d: not created by this plugin', $post_id ) );
+				continue;
+			}
+
+			// Only posts WordPress is holding for a date. A draft is already
+			// stopped, and a published post is public — taking it down is not
+			// what anyone means by pause, and doing it silently would be worse
+			// than not pausing at all.
+			if ( 'future' !== $post->post_status ) {
+				continue;
+			}
+
+			update_post_meta( $post_id, self::HELD_META, get_post_time( 'c', true, $post_id ) );
+
+			wp_update_post( array(
+				'ID'          => $post_id,
+				'post_status' => 'draft',
+			) );
+
+			$held++;
+		}
+
+		self::log( sprintf( '%s paused, %d scheduled post(s) held as drafts', $campaign_id, $held ) );
+
+		return $held;
+	}
+
+	/**
+	 * Start a paused campaign again.
+	 *
+	 * @return int|WP_Error how many held posts were released
+	 */
+	public static function resume( $campaign_id ) {
+		$campaign = IE_Campaigns::get( $campaign_id );
+
+		if ( ! $campaign ) {
+			return new WP_Error( 'ie_no_campaign', __( 'That campaign could not be found.', 'interlink-engine' ) );
+		}
+
+		if ( ! IE_Campaigns::is_paused( $campaign ) ) {
+			return 0;
+		}
+
+		$paused_at = ! empty( $campaign['paused_at'] ) ? strtotime( $campaign['paused_at'] ) : 0;
+		$shift     = $paused_at ? max( 0, time() - $paused_at ) : 0;
+
+		// Active BEFORE the posts move, because publishing one fires
+		// on_transition(), which reads and writes this same campaign option.
+		// Holding a copy in memory across that and saving it afterwards would
+		// overwrite the slot it just marked published.
+		IE_Campaigns::set_status( $campaign_id, 'active', array( 'paused_at' => null ) );
+
+		$released = 0;
+
+		foreach ( $campaign['slots'] as $slot ) {
+			$post_id = isset( $slot['post_id'] ) ? (int) $slot['post_id'] : 0;
+			if ( ! $post_id ) {
+				continue;
+			}
+
+			$held = get_post_meta( $post_id, self::HELD_META, true );
+			if ( ! $held ) {
+				continue;
+			}
+
+			$post = get_post( $post_id );
+			if ( ! $post ) {
+				delete_post_meta( $post_id, self::HELD_META );
+				continue;
+			}
+
+			// The owner published it, rescheduled it, or deleted it to trash
+			// while the campaign was stopped. Whatever they did wins — this
+			// only undoes its own change.
+			if ( 'draft' !== $post->post_status ) {
+				delete_post_meta( $post_id, self::HELD_META );
+				continue;
+			}
+
+			$when = strtotime( $held ) + $shift;
+
+			if ( $when <= time() ) {
+				// Its turn came and went while the campaign was stopped, which
+				// happens when a post was already overdue at the moment of the
+				// pause. Writing it back as 'future' with a past date is the
+				// classic missed-schedule post: WordPress accepts it and then
+				// never publishes it.
+				self::publish_now( $post_id );
+			} else {
+				$gmt = gmdate( 'Y-m-d H:i:s', $when );
+
+				wp_update_post( array(
+					'ID'            => $post_id,
+					'post_status'   => 'future',
+					'post_date_gmt' => $gmt,
+					'post_date'     => get_date_from_gmt( $gmt ),
+				) );
+
+				// The schedule screens read the slot, not the post. Leaving
+				// these behind would show the owner the old dates for a
+				// campaign that is now running to new ones.
+				IE_Campaigns::update_slot( $campaign_id, $slot['index'], array(
+					'publish_at'    => gmdate( 'c', $when ),
+					'scheduled_for' => gmdate( 'c', $when ),
+				) );
+			}
+
+			delete_post_meta( $post_id, self::HELD_META );
+			$released++;
+		}
+
+		self::log( sprintf( '%s resumed after %d second(s), %d post(s) released',
+			$campaign_id, $shift, $released ) );
+
+		return $released;
+	}
+
 	/**
 	 * Publish scheduled posts whose time has come and gone.
 	 *

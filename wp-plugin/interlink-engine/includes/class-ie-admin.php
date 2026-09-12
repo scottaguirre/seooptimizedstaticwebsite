@@ -59,6 +59,8 @@ class IE_Admin {
 		add_action( 'admin_post_ie_create_campaign', array( __CLASS__, 'handle_create_campaign' ) );
 		add_action( 'admin_post_ie_run_now', array( __CLASS__, 'handle_run_now' ) );
 		add_action( 'admin_post_ie_publish_now', array( __CLASS__, 'handle_publish_now' ) );
+		add_action( 'admin_post_ie_pause_campaign', array( __CLASS__, 'handle_pause_campaign' ) );
+		add_action( 'admin_post_ie_resume_campaign', array( __CLASS__, 'handle_resume_campaign' ) );
 		add_action( 'admin_post_ie_delete_campaign', array( __CLASS__, 'handle_delete_campaign' ) );
 		add_action( 'admin_post_ie_discard_draft', array( __CLASS__, 'handle_discard_draft' ) );
 	}
@@ -968,6 +970,17 @@ class IE_Admin {
 			$approved = ! empty( $campaign['batch_started'] );
 
 			/**
+			 * A stopped campaign offers neither button.
+			 *
+			 * run_campaign() already refuses one that is not active, so pressing
+			 * it would be harmless — but it returns a skip rather than an error,
+			 * and the screen would report "0 posts added" to someone who had
+			 * just asked for posts. A button that appears to work and does
+			 * nothing is worse than no button.
+			 */
+			$paused = IE_Campaigns::is_paused( $campaign );
+
+			/**
 			 * Is the batch recent enough to be worth watching?
 			 *
 			 * Collection is automatic: the server pings the site and the
@@ -1006,7 +1019,7 @@ class IE_Admin {
 			<?php endif; ?>
 
 			<p style="margin-bottom:0;display:flex;gap:1rem;align-items:center;flex-wrap:wrap">
-				<?php if ( $pending && $approved ) : ?>
+				<?php if ( $pending && $approved && ! $paused ) : ?>
 					<?php
 					// Already paid for. No price, no confirmation — this only
 					// fetches posts the owner already owns, and it is a
@@ -1021,7 +1034,7 @@ class IE_Admin {
 						<?php esc_html_e( 'Already written and paid for. This only fetches them — it costs nothing.', 'interlink-engine' ); ?>
 					</span>
 
-				<?php elseif ( $pending ) : ?>
+				<?php elseif ( $pending && ! $paused ) : ?>
 					<a class="button button-primary"
 					   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_run_now&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_run_now' ) ); ?>"
 					   onclick="return confirm('<?php echo esc_js(
@@ -1054,6 +1067,22 @@ class IE_Admin {
 					<span class="description">
 						<?php esc_html_e( 'Every post is written now. They are added to your site dated, and publish on their own days.', 'interlink-engine' ); ?>
 					</span>
+				<?php endif; ?>
+
+				<?php if ( IE_Campaigns::is_paused( $campaign ) ) : ?>
+					<a class="button button-primary"
+					   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_resume_campaign&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_resume_campaign' ) ); ?>">
+						<?php esc_html_e( 'Resume campaign', 'interlink-engine' ); ?>
+					</a>
+					<span class="description">
+						<?php esc_html_e( 'Held posts go back on the schedule, each moved forward by however long the campaign was stopped.', 'interlink-engine' ); ?>
+					</span>
+				<?php else : ?>
+					<a class="button"
+					   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_pause_campaign&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_pause_campaign' ) ); ?>"
+					   onclick="return confirm('<?php echo esc_js( __( 'Stop this campaign? Scheduled posts are held back as drafts and nothing new is written. Posts already published stay up.', 'interlink-engine' ) ); ?>')">
+						<?php esc_html_e( 'Stop publishing', 'interlink-engine' ); ?>
+					</a>
 				<?php endif; ?>
 
 				<a class="button-link-delete" style="margin-left:auto"
@@ -1487,6 +1516,15 @@ class IE_Admin {
 			self::redirect_error( 'interlink-engine', $result, 'drafts' );
 		}
 
+		// A stopped campaign. run_campaign() returns a skip rather than an
+		// error, and the branches below would report "0 posts added" to
+		// somebody who had just asked for posts. The button is hidden while a
+		// campaign is stopped, so reaching here means a stale tab or a
+		// bookmarked URL — which is exactly when a clear sentence matters.
+		if ( ! empty( $result['skipped'] ) ) {
+			self::redirect( 'interlink-engine', 'error', __( 'That campaign is stopped. Resume it first.', 'interlink-engine' ) );
+		}
+
 		// Still writing. Not a failure, and said plainly so nobody presses the
 		// button again thinking nothing happened.
 		if ( ! empty( $result['writing'] ) ) {
@@ -1535,6 +1573,62 @@ class IE_Admin {
 		}
 
 		self::redirect( 'interlink-engine', 'published', '' );
+	}
+
+	/**
+	 * Stop a campaign now.
+	 *
+	 * The wording on the button and in the confirmation says "stops publishing"
+	 * rather than "pauses", because pausing a campaign sounds like it applies
+	 * to the next post rather than to the eleven already sitting in the site
+	 * with dates on them. Those are what the owner is actually trying to stop.
+	 */
+	public static function handle_pause_campaign() {
+		check_admin_referer( 'ie_pause_campaign' );
+		self::require_caps();
+
+		$campaign_id = isset( $_GET['campaign'] ) ? sanitize_text_field( wp_unslash( $_GET['campaign'] ) ) : '';
+
+		$held = IE_Publisher::pause( $campaign_id );
+
+		if ( is_wp_error( $held ) ) {
+			self::redirect( 'interlink-engine', 'error', $held->get_error_message() );
+		}
+
+		self::redirect( 'interlink-engine', 'paused', sprintf(
+			/* translators: %d: number of scheduled posts held back as drafts */
+			_n(
+				'Campaign stopped. %d scheduled post was held as a draft.',
+				'Campaign stopped. %d scheduled posts were held as drafts.',
+				(int) $held,
+				'interlink-engine'
+			),
+			(int) $held
+		) );
+	}
+
+	public static function handle_resume_campaign() {
+		check_admin_referer( 'ie_resume_campaign' );
+		self::require_caps();
+
+		$campaign_id = isset( $_GET['campaign'] ) ? sanitize_text_field( wp_unslash( $_GET['campaign'] ) ) : '';
+
+		$released = IE_Publisher::resume( $campaign_id );
+
+		if ( is_wp_error( $released ) ) {
+			self::redirect( 'interlink-engine', 'error', $released->get_error_message() );
+		}
+
+		self::redirect( 'interlink-engine', 'resumed', sprintf(
+			/* translators: %d: number of posts put back on the schedule */
+			_n(
+				'Campaign resumed. %d post is scheduled again, moved forward by the time it was stopped.',
+				'Campaign resumed. %d posts are scheduled again, moved forward by the time it was stopped.',
+				(int) $released,
+				'interlink-engine'
+			),
+			(int) $released
+		) );
 	}
 
 	public static function handle_delete_campaign() {
