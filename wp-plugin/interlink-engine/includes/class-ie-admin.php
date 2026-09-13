@@ -56,6 +56,7 @@ class IE_Admin {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_post_ie_connect', array( __CLASS__, 'handle_connect' ) );
 		add_action( 'admin_post_ie_suggest', array( __CLASS__, 'handle_suggest' ) );
+		add_action( 'admin_post_ie_review_topics', array( __CLASS__, 'handle_review_topics' ) );
 		add_action( 'admin_post_ie_create_campaign', array( __CLASS__, 'handle_create_campaign' ) );
 		add_action( 'admin_post_ie_run_now', array( __CLASS__, 'handle_run_now' ) );
 		add_action( 'admin_post_ie_publish_now', array( __CLASS__, 'handle_publish_now' ) );
@@ -1259,6 +1260,25 @@ class IE_Admin {
 						: esc_html__( 'Suggest topics for me', 'interlink-engine' ); ?>
 				</button>
 
+				<?php
+				/**
+				 * Turns typed lines into the same editable table the suggest
+				 * path produces — without calling the server, so it is free
+				 * and instant.
+				 *
+				 * Before this, writing your own topics meant skipping the
+				 * table entirely, and the table is the only place the search
+				 * query, the link phrase and the per-article video can be set.
+				 * A topic typed by hand therefore reached the server bare,
+				 * and the video column may as well not have existed.
+				 */
+				?>
+				<button type="submit" name="action" value="ie_review_topics" class="button">
+					<?php echo $topics
+						? esc_html__( 'Save these edits', 'interlink-engine' )
+						: esc_html__( 'Review these topics', 'interlink-engine' ); ?>
+				</button>
+
 				<button type="submit" name="action" value="ie_create_campaign" class="button button-primary">
 					<?php esc_html_e( 'Plan this campaign', 'interlink-engine' ); ?>
 				</button>
@@ -1318,6 +1338,60 @@ class IE_Admin {
 			'title'   => $form['title'],
 			'intent'  => $form['intent'],
 		);
+	}
+
+	/**
+	 * Put typed topics into the editable table, without asking the server.
+	 *
+	 * The suggest path replaces whatever is in the textarea with the server's
+	 * own ideas, so someone who arrives with a list of topics has no way to
+	 * reach the table — and the table is where the search query, the link
+	 * phrase and the per-article video live. This is the missing step: parse,
+	 * keep, re-render.
+	 *
+	 * Costs nothing and calls nothing. It is the same collect_topics() the
+	 * planning path uses, so the table and the textarea are read by one piece
+	 * of code and cannot drift apart.
+	 */
+	public static function handle_review_topics() {
+		check_admin_referer( 'ie_campaign_form' );
+		self::require_caps();
+
+		$form = self::read_form();
+		if ( ! $form ) {
+			self::redirect( 'interlink-engine', 'error', __( 'Choose a page for the campaign to feed.', 'interlink-engine' ), array( 'tab' => 'new' ) );
+		}
+
+		$topics = self::collect_topics();
+
+		if ( ! $topics ) {
+			self::redirect( 'interlink-engine', 'error', __( 'Type at least one topic, one per line.', 'interlink-engine' ), array( 'tab' => 'new' ) );
+		}
+
+		// Carry the videos back onto the rows, or pressing this twice would
+		// clear every URL already typed.
+		$videos = self::collect_topic_videos();
+		foreach ( $topics as $i => $topic ) {
+			$key = strtolower( $topic['topic'] );
+			$topics[ $i ]['video'] = isset( $videos[ $key ] ) ? $videos[ $key ] : '';
+		}
+
+		$draft = self::draft();
+
+		set_transient(
+			self::DRAFT_TRANSIENT . get_current_user_id(),
+			array(
+				'form'     => $form,
+				'topics'   => $topics,
+				// Warnings belong to the server's suggestions. These topics
+				// were never suggested, so there is nothing to carry unless a
+				// previous round produced some.
+				'warnings' => ( $draft && ! empty( $draft['warnings'] ) ) ? $draft['warnings'] : array(),
+			),
+			DAY_IN_SECONDS
+		);
+
+		self::redirect( 'interlink-engine', 'reviewing', '' );
 	}
 
 	public static function handle_suggest() {
@@ -1738,6 +1812,7 @@ class IE_Admin {
 	private static function tab_for_status( $status ) {
 		switch ( $status ) {
 			case 'suggested':
+			case 'reviewing':
 			case 'discarded':
 				return 'new';
 
@@ -1819,6 +1894,7 @@ class IE_Admin {
 			'server_saved' => array( 'success', __( 'Server address saved. Your connection was left alone.', 'interlink-engine' ) ),
 			'unchanged'    => array( 'info', __( 'Nothing to change — that is already the address.', 'interlink-engine' ) ),
 			'suggested' => array( 'success', __( 'Here are some topics. Edit anything, untick what you do not want, then plan the campaign.', 'interlink-engine' ) ),
+			'reviewing' => array( 'success', __( 'Your topics, ready to edit. Set the search each should win, how other posts refer to it, and a video if you want one — then plan the campaign.', 'interlink-engine' ) ),
 			// Does not name the button. The button carries the post count and
 			// the price ("Write all 3 posts — 225 credits"), so any wording
 			// here that tries to quote it goes stale the moment either changes

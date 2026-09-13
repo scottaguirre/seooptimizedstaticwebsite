@@ -3,7 +3,7 @@
  * Plugin Name:       Interlink Engine
  * Plugin URI:        https://example.com/interlink-engine
  * Description:       Plans a quarter of blog posts, writes them all at once, schedules them across the weeks, and wires every one into the service page you want to rank.
- * Version:           0.3.5
+ * Version:           0.3.6
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Quality Sites
@@ -138,7 +138,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'IE_VERSION', '0.3.5' );
+define( 'IE_VERSION', '0.3.6' );
 define( 'IE_FILE', __FILE__ );
 define( 'IE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IE_URL', plugin_dir_url( __FILE__ ) );

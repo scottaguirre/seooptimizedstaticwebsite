@@ -78,6 +78,7 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-ie-pause.js          # campaign pause/resume as real PHP; skips without php
     node test-wp-screenshot.js     # the theme screenshot and its binary-safe copy
     node test-ie-video.js          # the campaign video and where it lands; skips without php
+    node test-ie-topics.js         # the campaign form's topic/video readers; skips without php
     node test-blog-plan.js
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
@@ -239,7 +240,7 @@ Worth knowing:
   the gateway" from "delivered but filtered". Check there before changing
   anything.
 
-**Article video — built 13 September, plugin 0.3.5, NOT yet tested on a site**
+**Article video — built 13 September, plugin 0.3.6, NOT yet tested on a site**
 
 Two fields, and the relationship between them is the feature:
 
@@ -290,7 +291,28 @@ Known limitations, both deliberate:
   paste the URL on its own line — core oEmbed has always turned that into a
   player, with no plugin involved.
 
-Still open: never run on a real site. Install 0.3.5, create a campaign with a
+**"Review these topics" — 13 September, same release**
+
+The Video column went into the topics table, and the topics table only ever
+appeared after pressing *Suggest topics*. So anyone who typed their own topics
+never saw it, and `handle_suggest()` discards the textarea anyway — it asks the
+server for fresh topics. The column was unreachable for that whole path.
+
+It was worse than the video: a typed topic also never got its **search query**
+or **link phrase**, because those only exist as table columns. Typed topics
+reached the server bare.
+
+The new button parses the textarea into the same table without calling the
+server — free, instant, and it routes both paths through `collect_topics()` so
+they cannot drift apart again. With rows already on screen it reads "Save these
+edits" and keeps what is there, videos included.
+
+`test-ie-topics.js` (15 cases) reaches the private readers by reflection and
+covers both input shapes, the tick handling, and the URL scheme check — which
+is the last place a `javascript:` URL can be stopped before it is stored in a
+WordPress option.
+
+Still open: never run on a real site. Install 0.3.6, create a campaign with a
 campaign-level video and a different one on a single topic, write the posts,
 and confirm each article got the right one.
 
