@@ -280,7 +280,7 @@ class IE_Publisher {
 		$post = array(
 			'post_title'   => isset( $written['title'] ) ? $written['title'] : $slot['topic'],
 			'post_name'    => isset( $written['slug'] ) ? $written['slug'] : '',
-			'post_content' => $rendered['content'],
+			'post_content' => self::insert_video( $rendered['content'], self::video_for( $campaign, $slot ) ),
 			'post_type'    => 'post',
 			'post_author'  => self::author_id(),
 		);
@@ -560,6 +560,100 @@ class IE_Publisher {
 			'post_date'     => current_time( 'mysql' ),
 			'post_date_gmt' => current_time( 'mysql', 1 ),
 		), true );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * The campaign's video
+	 *
+	 * WHY [embed] AND NOT AN <iframe>
+	 *
+	 * `[embed]` is a WordPress CORE shortcode, not one of ours. That matters
+	 * for the same reason post_content holds finished HTML rather than our own
+	 * shortcodes: delete this plugin and the posts must survive intact. A core
+	 * shortcode keeps working; ours would leave `[interlink id="4"]` litter
+	 * across every article.
+	 *
+	 * It also gets core's oEmbed handling for free — the responsive wrapper,
+	 * the provider allow-list, and the `loading="lazy"` WordPress adds to embed
+	 * iframes. A hand-written <iframe> gets none of that, and is the kind of
+	 * markup security plugins strip.
+	 *
+	 * WHERE IT GOES
+	 *
+	 * Before the SECOND <h2>. That is a section boundary, so it never splits a
+	 * paragraph; it is past the opening, so the post still starts with prose;
+	 * and it is not at the end, where nobody scrolls to.
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Which video this article gets.
+	 *
+	 * The slot's own, when it has one; otherwise the campaign's. An empty slot
+	 * value means "nothing was chosen here", not "no video wanted" — there is
+	 * no way in the UI to say the second thing, and inventing one would mean a
+	 * checkbox next to every row to express something nobody has asked for.
+	 *
+	 * @return string possibly empty
+	 */
+	public static function video_for( $campaign, $slot ) {
+		if ( ! empty( $slot['video_url'] ) ) {
+			return $slot['video_url'];
+		}
+		return isset( $campaign['video_url'] ) ? $campaign['video_url'] : '';
+	}
+
+	/**
+	 * The block to insert, or '' when there is nothing usable.
+	 *
+	 * The scheme is checked again here even though the admin already ran
+	 * esc_url_raw. That validation happened once, to a value that has been
+	 * sitting in an option ever since — and options are edited by other
+	 * plugins, by WP-CLI, and by hand.
+	 */
+	private static function video_block( $url ) {
+		$url = trim( (string) $url );
+
+		if ( '' === $url || ! preg_match( '#^https?://#i', $url ) ) {
+			return '';
+		}
+
+		// Blank lines around it: autoembed and wpautop both work on block
+		// boundaries, and a shortcode glued to a </p> is not one.
+		return "\n\n[embed]" . esc_url_raw( $url ) . "[/embed]\n\n";
+	}
+
+	/**
+	 * @param string $content  finished post HTML
+	 * @param string $url      the campaign's video, possibly empty
+	 * @return string
+	 */
+	public static function insert_video( $content, $url ) {
+		$block = self::video_block( $url );
+
+		if ( '' === $block ) {
+			return $content;
+		}
+
+		// Idempotent. run_campaign() is safe to press repeatedly, and a post
+		// carrying the same video twice is the kind of thing nobody notices
+		// until a customer does.
+		if ( false !== strpos( $content, '[embed]' ) ) {
+			return $content;
+		}
+
+		$headings = array();
+		if ( preg_match_all( '#<h2[\s>]#i', $content, $m, PREG_OFFSET_CAPTURE ) ) {
+			$headings = $m[0];
+		}
+
+		if ( count( $headings ) >= 2 ) {
+			$at = $headings[1][1];
+			return substr( $content, 0, $at ) . $block . substr( $content, $at );
+		}
+
+		// A post too short to have two sections. Appending beats guessing at a
+		// midpoint and landing inside a sentence.
+		return rtrim( $content ) . $block;
 	}
 
 	/* ---------------------------------------------------------------------

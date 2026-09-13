@@ -46,6 +46,7 @@ node test-wp-screenshot.js  > /dev/null
 node test-wp-canonical.js   > /dev/null
 node test-wp-single.js      > /dev/null
 node test-ie-pause.js       > /dev/null
+node test-ie-video.js       > /dev/null
 echo "Tests passed."
 echo
 

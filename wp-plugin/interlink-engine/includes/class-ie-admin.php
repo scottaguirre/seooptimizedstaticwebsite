@@ -1164,6 +1164,17 @@ class IE_Admin {
 						<p class="description"><?php esc_html_e( 'A sentence, not a keyword. This is what stops half the posts arguing for the opposite service.', 'interlink-engine' ); ?></p>
 					</td>
 				</tr>
+				<tr>
+					<th scope="row"><label for="ie_video_url"><?php esc_html_e( 'Video to include (optional)', 'interlink-engine' ); ?></label></th>
+					<td>
+						<input name="video_url" id="ie_video_url" type="url" class="large-text"
+							value="<?php echo esc_attr( $value( 'video_url' ) ); ?>"
+							placeholder="https://www.youtube.com/watch?v=...">
+						<p class="description">
+							<?php esc_html_e( 'One YouTube or Vimeo link, used for any post that has no video of its own. Set a different one per article in the Video column below. Leave both empty for none.', 'interlink-engine' ); ?>
+						</p>
+					</td>
+				</tr>
 			</table>
 
 			<?php if ( $topics ) : ?>
@@ -1177,6 +1188,7 @@ class IE_Admin {
 							<th><?php esc_html_e( 'Topic', 'interlink-engine' ); ?></th>
 							<th><?php esc_html_e( 'Search it should win', 'interlink-engine' ); ?></th>
 							<th><?php esc_html_e( 'How other posts refer to it', 'interlink-engine' ); ?></th>
+							<th><?php esc_html_e( 'Video (optional)', 'interlink-engine' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1189,6 +1201,9 @@ class IE_Admin {
 								value="<?php echo esc_attr( isset( $topic['targetQuery'] ) ? $topic['targetQuery'] : '' ); ?>"></td>
 							<td><input type="text" class="regular-text" name="link_phrase[<?php echo (int) $i; ?>]"
 								value="<?php echo esc_attr( isset( $topic['linkPhrase'] ) ? $topic['linkPhrase'] : '' ); ?>"></td>
+							<td><input type="url" class="regular-text" name="video[<?php echo (int) $i; ?>]"
+								placeholder="<?php esc_attr_e( 'leave empty to use the campaign video', 'interlink-engine' ); ?>"
+								value="<?php echo esc_attr( isset( $topic['video'] ) ? $topic['video'] : '' ); ?>"></td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>
@@ -1280,6 +1295,11 @@ class IE_Admin {
 			'target_page_id' => $page_id,
 			'keyword'        => isset( $_POST['keyword'] ) ? sanitize_text_field( wp_unslash( $_POST['keyword'] ) ) : '',
 			'intent'         => isset( $_POST['intent'] ) ? sanitize_text_field( wp_unslash( $_POST['intent'] ) ) : '',
+			// esc_url_raw, not sanitize_text_field: it drops any scheme that is
+			// not on WordPress's allow list, so `javascript:` never survives to
+			// reach a post. The publisher checks for http(s) again before using
+			// it — this value is stored, and storage outlives validation.
+			'video_url'      => isset( $_POST['video_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['video_url'] ) ) ) : '',
 			'every_days'     => isset( $_POST['every_days'] ) ? max( 1, min( 90, (int) $_POST['every_days'] ) ) : 14,
 			'publish_time'   => isset( $_POST['publish_time'] ) ? sanitize_text_field( wp_unslash( $_POST['publish_time'] ) ) : '09:00',
 			// Anything that is not an explicit 'draft' means schedule them. The
@@ -1407,6 +1427,14 @@ class IE_Admin {
 			'label'        => $form['title'],
 			'every_days'   => $form['every_days'],
 			'publish_mode' => $form['publish_mode'],
+			// Neither of these is sent to the server. A video has nothing to do
+			// with planning or writing — it is placed into finished content at
+			// publish time — so it stays on the WordPress side, with the posts.
+			//
+			// The campaign one is the fallback; slot_videos overrides it per
+			// article.
+			'video_url'    => $form['video_url'],
+			'slot_videos'  => self::collect_topic_videos(),
 			'target_page'  => array(
 				'id'      => $form['target_page_id'],
 				'title'   => $form['title'],
@@ -1483,6 +1511,48 @@ class IE_Admin {
 		}
 
 		return $topics;
+	}
+
+	/**
+	 * The per-topic videos, keyed by TOPIC TEXT rather than by row number.
+	 *
+	 * Collected separately from collect_topics() because that array is the
+	 * payload sent to the server, and the video is not the server's business —
+	 * it is placed into finished content here, at publish time.
+	 *
+	 * Keyed by text, not index, because the index is ours and the slots come
+	 * back from the server. If it ever drops a topic or returns them in a
+	 * different order, an index map would silently attach each video to the
+	 * wrong article — the kind of wrong that looks fine until a customer
+	 * watches a video about water heaters on a post about slab leaks.
+	 *
+	 * @return array lowercased topic text => url
+	 */
+	private static function collect_topic_videos() {
+		$map = array();
+
+		if ( empty( $_POST['topic'] ) || ! is_array( $_POST['topic'] ) ) {
+			return $map;
+		}
+
+		$use = isset( $_POST['use'] ) && is_array( $_POST['use'] ) ? $_POST['use'] : array();
+
+		foreach ( $_POST['topic'] as $i => $raw ) {
+			if ( ! isset( $use[ $i ] ) ) {
+				continue;
+			}
+
+			$topic = sanitize_text_field( wp_unslash( $raw ) );
+			$url   = isset( $_POST['video'][ $i ] )
+				? esc_url_raw( trim( wp_unslash( $_POST['video'][ $i ] ) ) )
+				: '';
+
+			if ( '' !== $topic && '' !== $url ) {
+				$map[ strtolower( $topic ) ] = $url;
+			}
+		}
+
+		return $map;
 	}
 
 	public static function handle_discard_draft() {

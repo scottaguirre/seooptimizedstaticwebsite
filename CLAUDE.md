@@ -77,6 +77,7 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-wp-single.js         # single.php incl. the featured image; skips without php
     node test-ie-pause.js          # campaign pause/resume as real PHP; skips without php
     node test-wp-screenshot.js     # the theme screenshot and its binary-safe copy
+    node test-ie-video.js          # the campaign video and where it lands; skips without php
     node test-blog-plan.js
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
@@ -237,6 +238,61 @@ Worth knowing:
 - Resend's dashboard shows per-message status, which distinguishes "rejected at
   the gateway" from "delivered but filtered". Check there before changing
   anything.
+
+**Article video — built 13 September, plugin 0.3.5, NOT yet tested on a site**
+
+Two fields, and the relationship between them is the feature:
+
+- **"Video to include (optional)"** on the campaign form — the fallback, used
+  by any article without one of its own.
+- **A "Video" column in the Topics table** — one per article, overriding the
+  campaign's.
+
+An empty slot value means "nothing chosen here", not "no video wanted". There
+is no way in the UI to say the second thing, and adding one would mean a
+checkbox beside every row to express something nobody has asked for.
+
+**Slot videos are matched to slots by TOPIC TEXT, never by row number.** The
+rows belong to this form; the slots come back from the server. Index matching
+would look correct and be wrong the first time the server drops or reorders a
+topic — every video landing on its neighbour's article, silently. There are two
+tests for this, one of which feeds the slots back in reverse order.
+
+Neither field is sent to the server. A video has nothing to do with planning or
+writing.
+
+Load-bearing decisions, all covered by `test-ie-video.js` (26 cases):
+
+- **Core's `[embed]` shortcode, never a raw `<iframe>`.** `[embed]` belongs to
+  WordPress, not to us, so it keeps working after the plugin is deleted — the
+  same rule that makes `post_content` finished HTML instead of our shortcodes.
+  It also gets core's responsive wrapper, provider allow-list and automatic
+  `loading="lazy"` for free, and is not the kind of markup security plugins
+  strip.
+- **Before the second `<h2>`.** A section boundary, so it never splits a
+  paragraph; past the opening, so the post still starts with prose. Fewer than
+  two headings and it appends rather than guessing a midpoint.
+- **Blank lines around the shortcode.** `autoembed` and `wpautop` both work on
+  block boundaries; glued to a `</p>` it never becomes a player.
+- **The scheme is re-checked at insert time**, not just by the form.
+  `esc_url_raw` ran once, months ago, on a value that has been sitting in an
+  option ever since — and options get edited by other plugins, WP-CLI and hand.
+- **Idempotent.** `run_campaign()` is meant to be safe to press repeatedly.
+
+Known limitations, both deliberate:
+
+- An embed does **not** produce a video rich result in Google. That needs
+  `VideoObject` schema with a thumbnail, duration and upload date, none of
+  which a bare URL provides. Its own piece of work, not a bug.
+- **Both fields are creation-time only.** A campaign that already exists cannot
+  be given a video, because there is no edit screen for a campaign. For posts
+  that already exist the answer is simpler than a feature: open the post and
+  paste the URL on its own line — core oEmbed has always turned that into a
+  player, with no plugin involved.
+
+Still open: never run on a real site. Install 0.3.5, create a campaign with a
+campaign-level video and a different one on a single topic, write the posts,
+and confirm each article got the right one.
 
 **Theme screenshot — added 12 September**
 

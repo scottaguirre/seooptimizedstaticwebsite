@@ -82,13 +82,29 @@ class IE_Campaigns {
 		// duplicate that would fight with the original over the same slots.
 		$id = $server_id;
 
+		/**
+		 * Per-article videos, matched to slots by TOPIC TEXT.
+		 *
+		 * The owner typed these against rows on a form; the slots came back
+		 * from the server. Matching on row number would look correct and be
+		 * wrong the first time the server drops or reorders a topic — each
+		 * video would land on its neighbour's article, silently.
+		 */
+		$slot_videos = isset( $settings['slot_videos'] ) && is_array( $settings['slot_videos'] )
+			? $settings['slot_videos']
+			: array();
+
 		$slots = array();
 		foreach ( (array) ( isset( $plan['slots'] ) ? $plan['slots'] : array() ) as $i => $s ) {
 			$index = isset( $s['index'] ) ? (int) $s['index'] : $i;
+			$topic = isset( $s['topic'] ) ? $s['topic'] : '';
+			$key   = strtolower( sanitize_text_field( $topic ) );
 
 			$slots[] = array(
 				'index'        => $index,
-				'topic'        => isset( $s['topic'] ) ? $s['topic'] : '',
+				'topic'        => $topic,
+				// '' means "use the campaign's video", not "no video".
+				'video_url'    => isset( $slot_videos[ $key ] ) ? $slot_videos[ $key ] : '',
 				'target_query' => isset( $s['targetQuery'] ) ? $s['targetQuery'] : '',
 				'publish_at'   => isset( $s['publishAt'] ) ? $s['publishAt'] : '',
 
@@ -139,6 +155,14 @@ class IE_Campaigns {
 			 * which is what the owner meant by it.
 			 */
 			'publish_mode'       => ( isset( $settings['publish_mode'] ) && 'draft' === $settings['publish_mode'] ) ? 'draft' : 'future',
+			/**
+			 * One optional video, placed into every post in this campaign.
+			 *
+			 * Stored here rather than on each slot because it is a campaign
+			 * decision, not a per-post one — and because a field the owner has
+			 * to fill in twelve times is a field that ends up empty.
+			 */
+			'video_url'          => isset( $settings['video_url'] ) ? $settings['video_url'] : '',
 			'slots'              => $slots,
 			// Shown on the campaign card so the owner sees what a campaign will
 			// cost before its first post is written, not after.
