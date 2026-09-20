@@ -79,7 +79,11 @@ function check_admin_referer($a = '') { return true; }
 
 class WP_Error { public function get_error_message() { return ''; } }
 function is_wp_error($t) { return $t instanceof WP_Error; }
-class IE_Settings { public static function target_pages() { return array(); } public static function get($k, $d = null) { return $d; } }
+class IE_Settings {
+  public static function target_pages() { return array(); }
+  public static function get($k, $d = null) { return $d; }
+  public static function business() { return array('name'=>'Acme','trade'=>'plumber','town'=>'Leander, TX','phone'=>''); }
+}
 class IE_Campaigns { public static function all() { return array(); } }
 class IE_Publisher { public static function log($m) {} }
 class IE_Api {}
@@ -256,6 +260,166 @@ test('videos and topics agree on which rows are in', () => {
     ));`);
   assert.deepStrictEqual(r.topics, ['A', 'C']);
   assert.deepStrictEqual(r.videos, ['a', 'c']);
+});
+
+/* --- the search term, derived from the page title ------------------------- */
+
+const kw = (title, town = 'Leander, TX') =>
+  run(`out(IE_Admin::keyword_from_title(${JSON.stringify(title)}, ${JSON.stringify(town)}));`);
+
+test('a plain service title passes through, lower-cased', () => {
+  assert.strictEqual(kw('Residential Plumbing Services'), 'residential plumbing services');
+});
+
+test('the town and state are stripped', () => {
+  // anchorPool.js adds these back from the business settings. Left in, they
+  // produce "…services Leander, TX in Leander".
+  assert.strictEqual(kw('Residential Plumbing Services in Leander, TX'), 'residential plumbing services');
+  assert.strictEqual(kw('Residential Plumbing Services Leander, TX'), 'residential plumbing services');
+  assert.strictEqual(kw('Residential Plumbing Services, Leander'), 'residential plumbing services');
+});
+
+test('a brand suffix is stripped', () => {
+  // Otherwise the company name ends up inside every exact-match anchor.
+  assert.strictEqual(kw('Water Heater Repair | Acme Plumbing'), 'water heater repair');
+  assert.strictEqual(kw('Water Heater Repair - Acme Plumbing'), 'water heater repair');
+  assert.strictEqual(kw('Water Heater Repair – Acme Plumbing'), 'water heater repair');
+});
+
+test('a hyphen inside a word is NOT a separator', () => {
+  // "Whole-Home" and "24-Hour" are part of the phrase. Splitting on a bare
+  // hyphen would amputate them.
+  assert.strictEqual(kw('Whole-Home Repiping'), 'whole-home repiping');
+  assert.strictEqual(kw('24-Hour Emergency Plumbing'), '24-hour emergency plumbing');
+});
+
+test('the state is stripped when the town setting has no state', () => {
+  // The case the other tests masked. With town = "Leander, TX" the town pass
+  // cleans the state up as a side effect; with town = "Leander" it cannot,
+  // because "TX" sits between the town and the end of the string. This is
+  // what makes the state strip load-bearing — and it has to run FIRST.
+  assert.strictEqual(
+    kw('Residential Plumbing Services in Leander, TX', 'Leander'),
+    'residential plumbing services'
+  );
+});
+
+test('a town inside the service name survives', () => {
+  // Only a TRAILING town is stripped. This is the case that would silently
+  // mangle a legitimate name.
+  assert.strictEqual(kw('Leander Road Drain Clearing', 'Leander'), 'leander road drain clearing');
+});
+
+test('no town configured is handled', () => {
+  assert.strictEqual(kw('Residential Plumbing Services', ''), 'residential plumbing services');
+});
+
+test('trailing punctuation is cleaned off', () => {
+  assert.strictEqual(kw('Residential Plumbing Services -'), 'residential plumbing services');
+});
+
+test('whitespace is collapsed', () => {
+  assert.strictEqual(kw('  Residential   Plumbing  Services  '), 'residential plumbing services');
+});
+
+test('read_keyword prefers what was typed', () => {
+  const r = run(`${post({ keyword: 'slab leak detection' })}
+    out(call_private('read_keyword', array(null)));`);
+  assert.strictEqual(r, 'slab leak detection');
+});
+
+test('read_keyword falls back to the page title when the box is blank', () => {
+  // Empty is a valid answer, so the form does not mark the field required.
+  const r = run(`${post({ keyword: '   ' })}
+    out(call_private('read_keyword', array(null)));`);
+  assert.strictEqual(r, 'page');   // the stub's get_the_title() returns 'Page'
+});
+
+/* --- the intent dropdown -------------------------------------------------- */
+
+test('the dropdown value is used when nothing is typed', () => {
+  // The option values ARE sentences, so what is stored still reads as prose
+  // to the writer downstream.
+  const r = run(`${post({ intent_choice: 'have what they already own repaired, rather than replaced' })}
+    out(call_private('read_intent'));`);
+  assert.strictEqual(r, 'have what they already own repaired, rather than replaced');
+});
+
+test('typed text overrides the dropdown', () => {
+  const r = run(`${post({
+    intent_choice: 'get in touch about this service',
+    intent: 'find out where the leak is before anyone breaks concrete',
+  })}
+    out(call_private('read_intent'));`);
+  assert.strictEqual(r, 'find out where the leak is before anyone breaks concrete');
+});
+
+test('whitespace-only text does NOT override the dropdown', () => {
+  // A stray space in the box would otherwise silently wipe the choice.
+  const r = run(`${post({
+    intent_choice: 'book a consultation to talk through their situation',
+    intent: '   ',
+  })}
+    out(call_private('read_intent'));`);
+  assert.strictEqual(r, 'book a consultation to talk through their situation');
+});
+
+test('typed text is trimmed', () => {
+  // Note: sanitize_text_field() already trims, so this asserts the behaviour
+  // rather than the explicit trim() in read_intent(). Both would have to go
+  // for it to fail.
+  const r = run(`${post({ intent: '  book a consultation  ' })}
+    out(call_private('read_intent'));`);
+  assert.strictEqual(r, 'book a consultation');
+});
+
+test('nothing posted yields an empty string, not a notice', () => {
+  const r = run(`${post({})} out(call_private('read_intent'));`);
+  assert.strictEqual(r, '');
+});
+
+test('every dropdown option is a sentence, not a keyword', () => {
+  // The whole point. An option that reads as a noun phrase would reintroduce
+  // the bug the dropdown exists to prevent.
+  const src = fs.readFileSync(ADMIN, 'utf8');
+  const block = src.slice(src.indexOf('$intent_options = array('), src.indexOf('$current = (string)'));
+  // No length floor in the pattern: a short value is exactly the failure this
+  // is looking for, and a regex that skips it cannot see the bug.
+  const values = [...block.matchAll(/^\s*'([^']+)'\s*$/gm)].map(m => m[1]);
+  assert.ok(values.length >= 5, `found ${values.length} option values, expected the full list`);
+  for (const v of values) {
+    assert.ok(/^[a-z]/.test(v), `option should start lower case to finish the stem: "${v}"`);
+    assert.ok(/\s/.test(v), `option is a single word, not a sentence: "${v}"`);
+  }
+});
+
+/* --- the busy state on submit --------------------------------------------- */
+
+test('every submit button on the campaign form declares a busy label', () => {
+  const src = fs.readFileSync(ADMIN, 'utf8');
+  const form = src.slice(src.indexOf('id="ie-campaign-form"'), src.indexOf('</form>', src.indexOf('id="ie-campaign-form"')));
+  const buttons = form.match(/<button type="submit"[\s\S]*?>/g) || [];
+  assert.ok(buttons.length >= 3, `found ${buttons.length} submit buttons, expected 3`);
+  for (const b of buttons) {
+    assert.ok(/data-busy=/.test(b), `a submit button has no data-busy: ${b.slice(0, 70)}`);
+  }
+});
+
+test('the clicked button is NEVER disabled', () => {
+  // A disabled submit button is omitted from the POST, so `action=ie_suggest`
+  // would never arrive and admin-post.php would have nothing to dispatch on.
+  // The script must disable only the siblings.
+  const src = fs.readFileSync(ADMIN, 'utf8');
+  const script = src.slice(src.indexOf("getElementById('ie-campaign-form')"), src.indexOf('</script>', src.indexOf("getElementById('ie-campaign-form')")));
+  assert.ok(/!==\s*b/.test(script), 'nothing excludes the clicked button from being disabled');
+  assert.ok(!/\bb\.disabled\s*=/.test(script), 'the clicked button is disabled — its name/value will not post');
+});
+
+test('a second submit is blocked', () => {
+  const src = fs.readFileSync(ADMIN, 'utf8');
+  const script = src.slice(src.indexOf("getElementById('ie-campaign-form')"), src.indexOf('</script>', src.indexOf("getElementById('ie-campaign-form')")));
+  assert.ok(/if\s*\(\s*busy\s*\)/.test(script), 'no guard against a double submit');
+  assert.ok(/preventDefault/.test(script), 'the second submit is not prevented');
 });
 
 /* --- the review step is wired up ----------------------------------------- */

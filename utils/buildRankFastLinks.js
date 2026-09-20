@@ -17,17 +17,37 @@
 //   contact      is a TARGET in the ring but links only home. Nothing follows
 //                it, which is what stops the chain running off the end.
 //
-// WHAT VARIES WITH SITE SIZE
+// HOW THE LINK HOME IS WORDED
 //
-// Only the anchor text used for the link home:
+// The home page is the money page in this mode, and its keyword is the
+// BUSINESS NAME — "Emergency Plumber Round Rock" is both at once, which is the
+// whole reason the mode exists. So the set of links pointing at './' is the
+// inbound anchor profile of a single target, exactly like a blog campaign's,
+// and it is planned the same way: allocate the mix across the whole set up
+// front, then fill each slot from a pool.
+//
+//     exact        40%   the business name, verbatim
+//     semantic     40%   the query variations around it
+//     descriptive  20%   what the reader gets by clicking
+//
+// Allocated with allocateAnchorTypes() — the same largest-remainder function
+// the blog campaigns use, so the counts always total the number of links and
+// no bucket clumps. See utils/homeAnchorPool.js for where the phrases come
+// from, and why there is no `branded` bucket here when there is one there.
+//
+// WHAT THIS REPLACED, AND WHY
+//
+// The wording used to vary with SITE SIZE, and mostly meant a naked URL:
 //
 //   1-2 pages    every page uses the naked URL
 //   3-10 pages   the FIRST page uses the business name, the rest naked
 //   11+ pages    the first TWO use the business name, the rest naked
 //
-// "Pages" counts service pages AND location pages together. Services come
-// first in the ring, so the business-name anchor lands on a service page on
-// any site that has one.
+// Naked URLs are now 0%. Google's own link documentation names a bare URL as a
+// bad anchor, and on a site whose money page IS its home page that spent the
+// most valuable slot on the site saying nothing. businessNameAnchorCount() is
+// kept and still exported — the rule is worth being able to read, and
+// test-business-shape.js asserts on it — but nothing calls it any more.
 //
 // WHY THE ENTRIES ARE OBJECTS
 //
@@ -38,6 +58,8 @@
 
 const { slugify } = require('./slugify');
 const { siteBaseUrl } = require('./buildSitemap');
+const { allocateAnchorTypes, pickAnchors } = require('./blog/anchors');
+const { HOME_MIX, buildHomeAnchorPool } = require('./homeAnchorPool');
 
 /**
  * Where a home link POINTS. Always relative, like every other link on the site.
@@ -107,6 +129,49 @@ function businessNameAnchorCount(pageCount) {
 }
 
 /**
+ * Plan the anchor text for every link that points at the home page.
+ *
+ * Planned as a SET rather than per page, for the same reason a blog campaign
+ * is: choosing a bucket independently for each page is how a six-page site
+ * ends up with six exact-match anchors. Random is not varied. The counts are
+ * computed once from HOME_MIX and then spread so no bucket clumps.
+ *
+ * @param {number} count         how many links point home (every ring node,
+ *                               plus contact)
+ * @param {object} globalValues  needs .businessName and .location
+ * @returns {Array<{type: string, phrase: string}>} one entry per link, in ring
+ *          order, contact last
+ */
+function planHomeAnchors(count, globalValues = {}) {
+  if (!Number.isInteger(count) || count < 1) return [];
+
+  const businessName = String(globalValues.businessName || '').trim();
+
+  // No business name is not a Rank Fast site — it is a broken one. The pool
+  // would throw, and a throw here would fail the whole generation over anchor
+  // text. Fall back to the naked URL, which is exactly what this mode used to
+  // do everywhere, and let the site build.
+  if (!businessName) {
+    const fallback = homeUrl(globalValues) || 'our home page';
+    return Array.from({ length: count }, () => ({ type: 'exact', phrase: fallback }));
+  }
+
+  const { pool } = buildHomeAnchorPool({
+    businessName,
+    location: globalValues.location,
+  });
+
+  const types = allocateAnchorTypes(count, HOME_MIX);
+
+  // `used` is left empty on purpose. It exists so a SECOND campaign against the
+  // same URL avoids the first one's phrases; a generated site is built once, so
+  // there is no history to avoid. The exact bucket holds a single phrase and is
+  // meant to repeat — pickAnchors marks those `reused: true`, which is expected
+  // here rather than a warning.
+  return pickAnchors(types, pool);
+}
+
+/**
  * @param {Array}  pages          service pages
  * @param {Array}  locationPages
  * @param {object} globalValues   needs .domain and .businessName
@@ -131,14 +196,6 @@ async function buildRankFastInterlinksMap(pages, locationPages = [], globalValue
   const order = [...serviceSlugs, ...locationSlugs, 'contact'];
   const n = order.length;
 
-  const businessName = String(globalValues.businessName || '').trim();
-
-  // The text of a naked-URL link. Falls back to the business name when there
-  // is no usable domain to show.
-  const nakedText = homeUrl(globalValues) || businessName || 'our home page';
-
-  const named = businessNameAnchorCount(serviceSlugs.length + locationSlugs.length);
-
   const interlinkMap = {};
 
   // The home page. Unchanged from the classic ring: up to five SERVICE pages,
@@ -149,15 +206,26 @@ async function buildRankFastInterlinksMap(pages, locationPages = [], globalValue
   // Nothing but home links out of contact, so it is excluded from the walk.
   const walkable = order.slice(0, n - 1);
 
+  // Every ring node links home, and so does contact — so the number of links
+  // pointing at './' is the walk plus one. Planned as a single set, up front,
+  // because the mix describes the WHOLE set and cannot be decided one page at
+  // a time. Contact takes the last slot.
+  const homeAnchors = planHomeAnchors(walkable.length + 1, globalValues);
+
   walkable.forEach((curr, i) => {
     const links = [];
 
-    // 1. Home. The first `named` pages use the business name; everyone else
-    //    uses the naked URL. Same href either way.
+    // 1. Home. The phrase comes from the plan; the href never varies.
+    //
+    // `anchorType` is carried through so injectPagesInterlinks can pick a
+    // sentence that reads correctly around this KIND of phrase — "Learn more
+    // about our company X" is right for the business name and wrong for
+    // "see everything we do". It is metadata for the injector, not markup.
     links.push({
       slug: 'index',
       href: HOME_HREF,
-      anchor: (i < named && businessName) ? businessName : nakedText,
+      anchor: homeAnchors[i].phrase,
+      anchorType: homeAnchors[i].type,
     });
 
     // 2. The next two in the ring, wrapping.
@@ -182,8 +250,16 @@ async function buildRankFastInterlinksMap(pages, locationPages = [], globalValue
     interlinkMap[curr] = links;
   });
 
-  // Contact: home and nothing else, always the naked URL.
-  interlinkMap['contact'] = [{ slug: 'index', href: HOME_HREF, anchor: nakedText }];
+  // Contact: home and nothing else. It takes the last slot of the plan, so it
+  // is part of the mix rather than the exception it used to be — it was the
+  // one page hard-coded to the naked URL regardless of site size.
+  const last = homeAnchors[homeAnchors.length - 1];
+  interlinkMap['contact'] = [{
+    slug: 'index',
+    href: HOME_HREF,
+    anchor: last.phrase,
+    anchorType: last.type,
+  }];
 
   return { interlinkMap };
 }
@@ -192,6 +268,7 @@ module.exports = {
   buildRankFastInterlinksMap,
   interlinkSlugs,
   businessNameAnchorCount,
+  planHomeAnchors,
   homeUrl,
   HOME_HREF,
 };

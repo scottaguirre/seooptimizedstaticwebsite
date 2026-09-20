@@ -844,15 +844,15 @@
         <div class="d-flex gap-3 mb-3">
           <div class="form-check">
             <input class="form-check-input" type="radio" name="logoTypeStep" id="logoTypeSquare" value="square" ${state.logoType==='square'?'checked':''}>
-            <label class="form-check-label" for="logoTypeSquare">Square (recommended 250×250 px)</label>
+            <label class="form-check-label" for="logoTypeSquare"><span class="logo-shape-box" style="width:36px;height:36px;" aria-hidden="true"></span>Square (recommended 250×250 px)</label>
           </div>
           <div class="form-check">
             <input class="form-check-input" type="radio" name="logoTypeStep" id="logoTypeRect" value="rect" ${state.logoType==='rect'?'checked':''}>
-            <label class="form-check-label" for="logoTypeRect">Rectangular (recommended 260×200 px)</label>
+            <label class="form-check-label" for="logoTypeRect"><span class="logo-shape-box" style="width:47px;height:36px;" aria-hidden="true"></span>Rectangular (recommended 260×200 px)</label>
           </div>
           <div class="form-check">
             <input class="form-check-input" type="radio" name="logoTypeStep" id="logoTypeWide" value="wide" ${state.logoType==='wide'?'checked':''}>
-            <label class="form-check-label" for="logoTypeWide">Wide (recommended 500×200 px)</label>
+            <label class="form-check-label" for="logoTypeWide"><span class="logo-shape-box" style="width:90px;height:36px;" aria-hidden="true"></span>Wide (recommended 500×200 px)</label>
           </div>
         </div>
 
@@ -2285,8 +2285,10 @@
     // Clear visible file inputs if they’re present in the current step
     const square = container?.querySelector('#logoSquare');
     const rect   = container?.querySelector('#logoRect');
+    const wide   = container?.querySelector('#logoWide');
     if (square) square.value = '';
     if (rect)   rect.value   = '';
+    if (wide)   wide.value   = '';
 
     // Hide/reset the preview UI if it exists
     const previewWrap = container?.querySelector('#logoPreview');

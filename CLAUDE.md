@@ -80,12 +80,26 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-ie-video.js          # the campaign video and where it lands; skips without php
     node test-ie-topics.js         # the campaign form's topic/video readers; skips without php
     node test-blog-plan.js
+    node test-anchor-pool.js       # what each anchor bucket may contain; needs no php
+    node test-home-anchors.js      # the generated SITE's home-page anchors; needs no php
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
     node test-email-html.js        # the HTML email body and its escaping
 
-`test-blog-api.js` and `test-blog-scheduler.js` need `MONGO_URI` and otherwise
-exit without running.
+    node test-blog-api.js          # needs NOTHING — no database, no network
+    node test-blog-scheduler.js    # runs; only its findWork section needs MONGO_URI
+
+An earlier version of this file said both of those "need `MONGO_URI` and
+otherwise exit without running". **That was wrong**, and it kept them from
+being run for weeks. `test-blog-api.js` touches no database at all — the
+signature scheme and the claim logic are pure functions. `test-blog-scheduler.js`
+runs everything except `findWork`, and prints a line saying so.
+
+**If you do set `MONGO_URI` for `findWork`, point it at a scratch database, not
+at Atlas.** Those tests `BlogCampaign.create()` and `deleteMany()` real
+documents. The cleanup is scoped to a random site id and looks careful, but a
+crash mid-run leaves rows behind — in the live collection, if that is what you
+pointed it at.
 
 **The two PHP suites cannot run on Edwin's Mac.** It is on macOS 12, which
 Homebrew no longer ships bottles for, so `brew install php` tries to compile
@@ -316,6 +330,143 @@ Still open: never run on a real site. Install 0.3.6, create a campaign with a
 campaign-level video and a different one on a single topic, write the posts,
 and confirm each article got the right one.
 
+**Anchor phrases — 19 September, server-side**
+
+A live post read *"a **plumber near mes** can test the flow…"*. `pluralise()`
+appends an s to the last word of a phrase, which is right only when the last
+word is the head noun. Three classes of keyword broke it:
+
+    plumber near me      → plumber near mes       (preposition)
+    plumber in Leander   → plumber in Leanders    (preposition)
+    emergency plumbing   → emergency plumbings    (gerund / mass noun)
+
+It now returns the phrase UNCHANGED for any of those, and every caller passes
+the result through `unique()`, so an unchanged value disappears instead of
+becoming a second broken anchor.
+
+Chasing that turned up two more, both live:
+
+- **"residential plumbing services services"** — the `${keyword} services`
+  template fired on a keyword already ending in it.
+- **A search-query keyword breaks every suffix template.** "plumber near me"
+  produced "plumber near me services", "booking plumber near me", "plumber
+  near me near Leander". A `suffixable` flag now gates the templates that
+  append; the ones that prefix ("local plumber near me") still run.
+
+`test-anchor-pool.js` reads the actual phrases. The suites that existed
+checked the SHAPE of the pool — four buckets, non-empty, no reuse — and never
+looked at a single string, which is why all three shipped.
+
+**If a keyword is really a search query rather than a service name, say so.**
+"plumber near me" is a poor target for this field: "near me" is a modifier
+Google supplies, not part of the service. The guards stop the output being
+embarrassing; they do not make it a good choice.
+
+## The generated site's home-page anchors — 20 September
+
+**Two different anchor systems now exist. They are not the same and must not
+be merged.**
+
+| | the PLUGIN's articles | the generated SITE |
+|---|---|---|
+| money page | a service page | the HOME page |
+| its keyword | a service phrase | the BUSINESS NAME |
+| mix | `DEFAULT_MIX` 30/40/20/10 | `HOME_MIX` 40/40/20 |
+| pool | `utils/blog/anchorPool.js` | `utils/homeAnchorPool.js` |
+
+**Why there is no `branded` bucket on the site side.** Rank Fast exists for
+businesses named after their keyword — "Emergency Plumber Round Rock" is the
+brand AND the target term. `branded` earns its place in the blog pool by being
+a DIFFERENT vocabulary from the keyword; here it is the same vocabulary, so it
+has no separate job and its 10% is folded into `exact`. That is why exact
+reads 40 on one side and 30 on the other. `test-home-anchors.js` asserts
+`DEFAULT_MIX` is still 30/40/20/10, so a site change leaking into the plugin
+fails the suite.
+
+**Naked URLs are 0%.** They were the Rank Fast default for every page after
+the first one or two, chosen by `businessNameAnchorCount()`. That function is
+kept and exported — the rule is worth reading and `test-business-shape.js`
+asserts on it — but nothing calls it.
+
+**You cannot feed a business name to the service pool.** This was tried first
+and every line below is real output, not a hypothetical:
+
+    Emergency Plumber Round Rocks                 pluralised the town
+    Emergency Plumber Round Rock in Round Rock    town twice
+    Round Rock Emergency Plumber Round Rock       town twice
+    Emergency Plumber Round Rock's Emergency Plumber Round Rock
+
+`pluralise()` guards a trailing modifier by looking for a preposition; a name
+ending in a place name has none, so the guard never fires. And every town
+template fires blind because the town is already inside the keyword.
+
+**The fix is to DECOMPOSE the name.** `serviceCore()` strips the town back out
+— "Emergency Plumber Round Rock" → core `"emergency plumber"` + `"Round Rock"`
+— and the templates build from the two separately. It returns
+`{ core, decomposed }`, and **`decomposed` is the half that matters**: false
+means the town was not in the name ("Bob's Plumbing"), the Rank Fast premise
+does not hold, and the core must NOT be treated as a service phrase. Decorate
+one anyway and you get "local bob's plumbing".
+
+**Two more template bugs, same family as `plumber near mes`:**
+
+- **Person vs job nouns.** "experienced water heater repair", "roof
+  replacements serving Austin", "trusted drain cleanings". Those templates
+  only work when the core is an agent noun. `isAgentNoun()` gates them on
+  the -er/-or/-ist/-ian/-man/-smith/-wright endings.
+- **A descriptive phrase has to survive its sentence.** They always land in
+  the appended line, because they contain no keyword and are never in the
+  copy already. "who we are and what we do" reads fine alone and gives "You
+  can also who we are and what we do." **Test the sentence, not the phrase.**
+
+**`normaliseTargets()` rebuilds entries field by field, deliberately.** So
+every field the injector reads must be listed there. `anchorType` was added
+and dropped there at first, which made the entire plan a no-op while every
+other part of it looked correctly wired up.
+
+**My own test harness reported green without asserting anything.** The
+synchronous `try { fn() } catch` that every other suite here uses does not
+catch an async test: `fn()` returns a Promise, which rejects rather than
+throws. Four tests passed while checking nothing. **Mutation testing is what
+found it** — two mutations that should have been impossible to miss survived,
+and both were covered only by async tests. `test-home-anchors.js` awaits.
+
+All 12 mutations against this feature are caught. One survived at first
+through **fixture masking**: "Bob's Plumbing" ends in -ing, so `pluralise()`
+declines on the gerund rule and the guard being tested was never what saved
+it. The fixture is now "Ace Roofer", which pluralises cleanly.
+
+**The intent field is a DROPDOWN now — 19 September, plugin 0.3.9**
+
+It has been rewritten three times. First it asked "What the reader should end
+up wanting". Then it became a sentence stem to finish, with three worked
+examples. Both versions were answered with the page's keyword — by Edwin, who
+commissioned the field and had had it explained to him twice. When the person
+who owns the product fills a field in wrong three times, the field is wrong.
+
+There were only ever about five real answers, so asking anyone to compose one
+was the mistake. It is now a `<select>` whose **option values are complete
+sentences**, so everything downstream still receives one prose string and never
+learns there was a list. `read_intent()` prefers the free-text box underneath
+when it has anything in it, and ignores whitespace — a stray space must not
+silently wipe the choice.
+
+**If you add an option, make it a sentence that finishes "After reading, the
+visitor should…"** — lower case, more than one word. `test-ie-topics.js` reads
+the option array out of the source and fails on anything shaped like a keyword.
+
+**Topics table column widths — 19 September, plugin 0.3.8**
+
+The Topic column had collapsed to about forty pixels and showed "Wh". Cause:
+WordPress's `regular-text` class is a **fixed 25em**. Three fixed columns and
+one flexible one means the flexible one absorbs every shortfall — and Topic,
+the longest value in the row, was the flexible one. Adding the Video column
+took another 25em from it.
+
+The table now sets percentage widths on the header cells and `width:100%` on
+each input, with no fixed-width classes. **If you add a fifth column, adjust
+the percentages — do not reach for `regular-text`.**
+
 **Theme screenshot — added 12 September**
 
 Exported themes used to show the grey placeholder tile in Appearance → Themes,
@@ -438,11 +589,16 @@ exactly like the archive canonical fix — see the WordPress section above.
 
 - ~~`brew install php`~~ — done differently on 12 September; the two PHP suites
   run on the VPS. See the Tests section.
+- ~~`MONGO_URI` for the blog suites~~ — mostly a non-issue; see the Tests
+  section. Only `findWork` needs a database, and it must be a scratch one.
 - The server has 25 pending package updates, 11 of them security, and a kernel
   upgrade waiting on a reboot. Noticed 12 September. Needs a quiet moment and
   its own plan, not a ride-along with a deploy.
-- `test-blog-api.js` and `test-blog-scheduler.js` need `MONGO_URI` set. They
-  exit without running, so they have never told anyone anything.
+- ~~`test-blog-api.js` and `test-blog-scheduler.js` need `MONGO_URI` set. They
+  exit without running, so they have never told anyone anything.~~ **Not true**
+  — corrected 13 September. One needs no database at all and the other only
+  skips a single section. See the Tests section. Neither is in `deploy.sh`,
+  though, which is the thing actually worth fixing.
 
 The dead files (`buildInterlinkMap.js`, `buildservicesNavMenu .js`,
 `wpThemeBuilderBackUp.js`, `wpThemeBuilderOriginal.js`) and the stale PAA

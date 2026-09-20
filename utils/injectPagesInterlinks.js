@@ -60,8 +60,18 @@ function normaliseTargets(list = []) {
   const out = [];
 
   for (const item of (list || [])) {
+    // Field by field, NOT a spread — an unknown key on a caller's object has
+    // no business reaching the injector. That means every field this file
+    // reads must be listed here: `anchorType` was added with the home-anchor
+    // plan and dropped silently at first, which made the whole plan a no-op
+    // while every other part of it looked correctly wired up.
     const entry = (item && typeof item === 'object')
-      ? { slug: String(item.slug || ''), href: item.href, anchor: item.anchor }
+      ? {
+          slug: String(item.slug || ''),
+          href: item.href,
+          anchor: item.anchor,
+          anchorType: item.anchorType,
+        }
       : { slug: String(item || '') };
 
     if (!entry.slug || seen.has(entry.slug)) continue;
@@ -80,16 +90,55 @@ function isUrlAnchor(text) {
 /**
  * The sentence appended when a link's anchor phrase is not already in the copy.
  *
- * A naked URL never appears in AI-written prose, so the home link on a Rank
- * Fast page ALWAYS lands here rather than being woven in. That makes the
- * wording worth caring about — it is what a visitor actually reads.
+ * MOST HOME LINKS LAND HERE, so this wording is not an edge case — it is what
+ * a visitor actually reads on most pages of the site.
+ *
+ * The home anchors are now planned across three buckets (see
+ * utils/homeAnchorPool.js), and they are three different parts of speech:
+ *
+ *   exact        a proper noun    "Emergency Plumber Round Rock"
+ *   semantic     a noun phrase    "emergency plumbers in Round Rock"
+ *   descriptive  a verb phrase    "see everything we do"
+ *
+ * One template cannot carry all three. The old single sentence — "Learn more
+ * about our company X." — gives "Learn more about our company see everything
+ * we do." the moment the anchor stops being a business name.
+ *
+ * A note on `our` in the semantic case: it is what makes the sentence work
+ * without an article. "Learn more about emergency plumber in Round Rock" is
+ * missing an "an", and which article depends on the phrase; "our emergency
+ * plumber in Round Rock" needs none and is right for singular, plural and mass
+ * nouns alike. It also matches the house pattern already used for service
+ * links further down this file.
+ *
+ * @param {string} [anchorType]  'exact' | 'semantic' | 'descriptive'. Absent
+ *        for the classic ring and for any caller that predates the plan, which
+ *        is why the business-name shape is the default rather than a branch.
  */
-function homeFallbackSentence(href, anchorText) {
+function homeFallbackSentence(href, anchorText, anchorType) {
   const link = `<a href="${href}">${anchorText}</a>`;
 
-  return isUrlAnchor(anchorText)
-    ? `Visit ${link} to see everything we do.`
-    : `Learn more about our company ${link}.`;
+  // Kept for safety rather than need: naked URLs are 0% of the plan now. A
+  // stored build record or a hand-edited map could still carry one, and
+  // "Learn more about https://www.example.com." reads like a bug.
+  if (isUrlAnchor(anchorText)) return `Visit ${link} to see everything we do.`;
+
+  switch (anchorType) {
+    // A verb phrase, written to complete this sentence exactly.
+    case 'descriptive':
+      return `You can also ${link}.`;
+
+    // A noun phrase describing the service.
+    case 'semantic':
+      return `Learn more about our ${link}.`;
+
+    // A proper noun. No "our" — it is a name, not a thing the business owns.
+    case 'exact':
+      return `Learn more about ${link}.`;
+
+    default:
+      return `Learn more about our company ${link}.`;
+  }
 }
 
 /**
@@ -164,7 +213,11 @@ function injectPagesInterlinks(
             } else {
               // Fallback: append a short line carrying the link.
               // A sentence, not a <p> — see appendSentence.
-              paragraph = `${appendSentence(originalParagraph)} ${homeFallbackSentence(homeHref, homeAnchorText)}`;
+              //
+              // entry.anchorType comes from the home-anchor plan in
+              // buildRankFastLinks. It is undefined for the classic ring,
+              // which falls through to the original wording.
+              paragraph = `${appendSentence(originalParagraph)} ${homeFallbackSentence(homeHref, homeAnchorText, entry.anchorType)}`;
             }
 
             usedSlugs.add(normalizedSlug);

@@ -1,0 +1,7 @@
+.logo-shape-box {
+    display: block;
+    margin-bottom: .4rem;
+    border: 2px dashed currentColor;
+    border-radius: 3px;
+    opacity: .55;
+  }

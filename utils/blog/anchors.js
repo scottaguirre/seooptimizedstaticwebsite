@@ -21,10 +21,33 @@
 /**
  * Target share of each anchor type, as percentages. Must total 100.
  */
+/**
+ * Raised exact from 15 to 30 on 19 September. The reasoning is worth keeping
+ * straight, because it is easy to import the wrong model from backlinks.
+ *
+ * For EXTERNAL links an unnatural anchor profile is evidence of manipulation:
+ * you are not supposed to control them, so controlling them shows. None of
+ * that applies here. Google knows you authored every link on your own site and
+ * reads internal anchors as you describing your own pages — which is what they
+ * are for.
+ *
+ * So the spread is NOT camouflage. Exact match describes the target most
+ * precisely. The reasons not to push it to 100 are mundane and real:
+ *
+ *   - Prose. Twelve posts dropping the same phrase mid-sentence read like a
+ *     machine wrote them, and content quality is what actually risks a site.
+ *   - Coverage. Semantic anchors teach Google the vocabulary AROUND the page,
+ *     not only the phrase it already has.
+ *
+ * The exact bucket in anchorPool.js had to be widened to feed 30%. At two
+ * phrases it could supply only 15% of a twelve-post campaign, so raising the
+ * share alone would have produced duplicate anchors — the one outcome this
+ * spread exists to prevent.
+ */
 const DEFAULT_MIX = {
-  exact:       15,
-  semantic:    50,
-  descriptive: 25,
+  exact:       30,
+  semantic:    40,
+  descriptive: 20,
   branded:     10,
 };
 

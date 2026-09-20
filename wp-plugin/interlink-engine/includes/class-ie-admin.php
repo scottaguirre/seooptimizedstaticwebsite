@@ -1130,7 +1130,7 @@ class IE_Admin {
 			</div>
 		<?php endif; ?>
 
-		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+		<form id="ie-campaign-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 			<?php wp_nonce_field( 'ie_campaign_form' ); ?>
 
 			<table class="form-table" role="presentation">
@@ -1139,8 +1139,12 @@ class IE_Admin {
 					<td>
 						<select name="target_page_id" id="ie_target" required>
 							<option value=""><?php esc_html_e( 'Choose a page…', 'interlink-engine' ); ?></option>
+							<?php $ie_town = IE_Settings::business(); $ie_town = isset( $ie_town['town'] ) ? $ie_town['town'] : ''; ?>
 							<?php foreach ( $pages as $id => $page ) : ?>
-								<option value="<?php echo esc_attr( $id ); ?>" <?php selected( (int) $value( 'target_page_id' ), (int) $id ); ?>>
+								<?php // The cleaned term travels with the option so the box can fill itself. ?>
+								<option value="<?php echo esc_attr( $id ); ?>"
+									data-keyword="<?php echo esc_attr( self::keyword_from_title( $page['title'], $ie_town ) ); ?>"
+									<?php selected( (int) $value( 'target_page_id' ), (int) $id ); ?>>
 									<?php echo esc_html( $page['title'] ); ?>
 								</option>
 							<?php endforeach; ?>
@@ -1151,18 +1155,107 @@ class IE_Admin {
 				<tr>
 					<th scope="row"><label for="ie_keyword"><?php esc_html_e( 'Its search term', 'interlink-engine' ); ?></label></th>
 					<td>
-						<input name="keyword" id="ie_keyword" type="text" class="regular-text" required
-							value="<?php echo esc_attr( $value( 'keyword' ) ); ?>" placeholder="water heater repair">
-						<p class="description"><?php esc_html_e( 'What someone types to find that page. No post will be allowed to compete with it.', 'interlink-engine' ); ?></p>
+						<?php
+						/**
+						 * NOT `required`, deliberately: empty is a valid answer
+						 * and means "use the page title". read_keyword() fills
+						 * it in server-side, so the form still works with
+						 * JavaScript off or blocked.
+						 */
+						?>
+						<input name="keyword" id="ie_keyword" type="text" class="regular-text"
+							value="<?php echo esc_attr( $value( 'keyword' ) ); ?>"
+							placeholder="<?php esc_attr_e( 'filled in from the page title — edit if it is wrong', 'interlink-engine' ); ?>">
+						<p class="description">
+							<?php esc_html_e( 'What someone types to find that page. No post will be allowed to compete with it. Leave the town and state out — those are added back automatically.', 'interlink-engine' ); ?>
+						</p>
+						<script>
+						/**
+						 * Fill the box from the chosen page, but never trample
+						 * a value someone typed. The `ieTouched` flag is set by
+						 * the first real keystroke and is the whole safeguard:
+						 * without it, changing the page dropdown after editing
+						 * the term would silently discard the edit.
+						 */
+						(function () {
+							var sel = document.getElementById('ie_target');
+							var box = document.getElementById('ie_keyword');
+							if (!sel || !box) { return; }
+
+							var touched = box.value.trim() !== '';
+							box.addEventListener('input', function () { touched = true; });
+
+							sel.addEventListener('change', function () {
+								if (touched) { return; }
+								var opt = sel.options[sel.selectedIndex];
+								box.value = (opt && opt.getAttribute('data-keyword')) || '';
+							});
+						}());
+						</script>
 					</td>
 				</tr>
 				<tr>
-					<th scope="row"><label for="ie_intent"><?php esc_html_e( 'What the reader should end up wanting', 'interlink-engine' ); ?></label></th>
+					<?php
+					/**
+					 * A dropdown, not a sentence to write.
+					 *
+					 * This field has been rewritten twice. First it asked "What the
+					 * reader should end up wanting"; then it became a sentence stem
+					 * to finish. Both were answered with the page's keyword, by the
+					 * person who WROTE the field — which is as clear a verdict as a
+					 * form ever gives.
+					 *
+					 * There were only ever about five real answers, so asking anyone
+					 * to compose one was the mistake. The option values ARE the
+					 * sentence, so whatever is stored still reads as prose to the
+					 * writer downstream and nothing below this file changed.
+					 *
+					 * The free-text box stays underneath for the case the list misses,
+					 * and overrides the dropdown when filled. No JavaScript: the two
+					 * inputs are independent and read_form() prefers the text.
+					 */
+					$intent_options = array(
+						'get in touch about this service'
+							=> __( 'Just get in touch about this service — no strong preference', 'interlink-engine' ),
+						'hire a professional for this rather than attempting it themselves'
+							=> __( 'Hire a professional rather than attempt it themselves', 'interlink-engine' ),
+						'have what they already own repaired, rather than replaced'
+							=> __( 'Repair what they have — not replace it', 'interlink-engine' ),
+						'replace or upgrade what they have, rather than keep repairing it'
+							=> __( 'Replace or upgrade — not keep repairing', 'interlink-engine' ),
+						'have the problem properly diagnosed before committing to any work'
+							=> __( 'Get it diagnosed first — before committing to any work', 'interlink-engine' ),
+						'book a consultation to talk through their situation'
+							=> __( 'Book a consultation to talk it through', 'interlink-engine' ),
+					);
+
+					$current = (string) $value( 'intent' );
+					$is_listed = isset( $intent_options[ $current ] );
+					?>
+					<th scope="row"><label for="ie_intent_choice"><?php esc_html_e( 'After reading, the visitor should…', 'interlink-engine' ); ?></label></th>
 					<td>
-						<input name="intent" id="ie_intent" type="text" class="large-text"
-							value="<?php echo esc_attr( $value( 'intent' ) ); ?>"
-							placeholder="have an existing water heater repaired, rather than replaced">
-						<p class="description"><?php esc_html_e( 'A sentence, not a keyword. This is what stops half the posts arguing for the opposite service.', 'interlink-engine' ); ?></p>
+						<select name="intent_choice" id="ie_intent_choice" class="regular-text">
+							<?php foreach ( $intent_options as $sentence => $label ) : ?>
+								<option value="<?php echo esc_attr( $sentence ); ?>" <?php selected( $is_listed && $current === $sentence ); ?>>
+									<?php echo esc_html( $label ); ?>
+								</option>
+							<?php endforeach; ?>
+						</select>
+						<p class="description">
+							<?php esc_html_e( 'Most trades sell one of two nearby things — repair or replacement, diagnosing a problem or fixing it. This stops half your posts recommending the one you do not sell. If none of them is obviously right, leave the first option.', 'interlink-engine' ); ?>
+						</p>
+
+						<p style="margin-top:1rem">
+							<label for="ie_intent">
+								<?php esc_html_e( 'Or say it in your own words (optional):', 'interlink-engine' ); ?>
+							</label><br>
+							<input name="intent" id="ie_intent" type="text" class="large-text"
+								value="<?php echo esc_attr( $is_listed ? '' : $current ); ?>"
+								placeholder="<?php esc_attr_e( 'e.g. find out where the leak is before anyone breaks concrete', 'interlink-engine' ); ?>">
+						</p>
+						<p class="description">
+							<?php esc_html_e( 'Only if the list misses your case. Anything here wins over the dropdown. It finishes the sentence “After reading, the visitor should…”, so write an action, not a keyword.', 'interlink-engine' ); ?>
+						</p>
 					</td>
 				</tr>
 				<tr>
@@ -1185,24 +1278,43 @@ class IE_Admin {
 				<table class="widefat striped" style="margin-bottom:1rem">
 					<thead>
 						<tr>
+							<?php
+							/**
+							 * Explicit column widths, because the default was
+							 * unreadable.
+							 *
+							 * WordPress's `regular-text` is a FIXED 25em. Three
+							 * fixed columns plus one flexible one means the
+							 * flexible one absorbs every shortfall — so Topic,
+							 * the longest and most important value here, was
+							 * squeezed to about forty pixels and showed "Wh".
+							 * Adding the Video column took another 25em from it.
+							 *
+							 * Percentages on the header cells, width:100% on the
+							 * inputs, and no fixed-width classes anywhere.
+							 */
+							?>
 							<th style="width:2rem"></th>
-							<th><?php esc_html_e( 'Topic', 'interlink-engine' ); ?></th>
-							<th><?php esc_html_e( 'Search it should win', 'interlink-engine' ); ?></th>
-							<th><?php esc_html_e( 'How other posts refer to it', 'interlink-engine' ); ?></th>
-							<th><?php esc_html_e( 'Video (optional)', 'interlink-engine' ); ?></th>
+							<th style="width:36%"><?php esc_html_e( 'Topic', 'interlink-engine' ); ?></th>
+							<th style="width:19%"><?php esc_html_e( 'Search it should win', 'interlink-engine' ); ?></th>
+							<th style="width:22%"><?php esc_html_e( 'How other posts refer to it', 'interlink-engine' ); ?></th>
+							<th style="width:21%"><?php esc_html_e( 'Video (optional)', 'interlink-engine' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
 					<?php foreach ( $topics as $i => $topic ) : ?>
 						<tr>
 							<td><input type="checkbox" name="use[<?php echo (int) $i; ?>]" value="1" checked></td>
-							<td><input type="text" class="large-text" name="topic[<?php echo (int) $i; ?>]"
-								value="<?php echo esc_attr( isset( $topic['topic'] ) ? $topic['topic'] : '' ); ?>"></td>
-							<td><input type="text" class="regular-text" name="target_query[<?php echo (int) $i; ?>]"
+							<?php $topic_text = isset( $topic['topic'] ) ? $topic['topic'] : ''; ?>
+							<td><input type="text" style="width:100%" name="topic[<?php echo (int) $i; ?>]"
+								<?php // The full text on hover, for the one that still will not fit. ?>
+								title="<?php echo esc_attr( $topic_text ); ?>"
+								value="<?php echo esc_attr( $topic_text ); ?>"></td>
+							<td><input type="text" style="width:100%" name="target_query[<?php echo (int) $i; ?>]"
 								value="<?php echo esc_attr( isset( $topic['targetQuery'] ) ? $topic['targetQuery'] : '' ); ?>"></td>
-							<td><input type="text" class="regular-text" name="link_phrase[<?php echo (int) $i; ?>]"
+							<td><input type="text" style="width:100%" name="link_phrase[<?php echo (int) $i; ?>]"
 								value="<?php echo esc_attr( isset( $topic['linkPhrase'] ) ? $topic['linkPhrase'] : '' ); ?>"></td>
-							<td><input type="url" class="regular-text" name="video[<?php echo (int) $i; ?>]"
+							<td><input type="url" style="width:100%" name="video[<?php echo (int) $i; ?>]"
 								placeholder="<?php esc_attr_e( 'leave empty to use the campaign video', 'interlink-engine' ); ?>"
 								value="<?php echo esc_attr( isset( $topic['video'] ) ? $topic['video'] : '' ); ?>"></td>
 						</tr>
@@ -1254,7 +1366,8 @@ class IE_Admin {
 			</table>
 
 			<p class="submit">
-				<button type="submit" name="action" value="ie_suggest" class="button">
+				<button type="submit" name="action" value="ie_suggest" class="button"
+					data-busy="<?php esc_attr_e( 'Asking for topics…', 'interlink-engine' ); ?>">
 					<?php echo $topics
 						? esc_html__( 'Suggest different topics', 'interlink-engine' )
 						: esc_html__( 'Suggest topics for me', 'interlink-engine' ); ?>
@@ -1273,13 +1386,15 @@ class IE_Admin {
 				 * and the video column may as well not have existed.
 				 */
 				?>
-				<button type="submit" name="action" value="ie_review_topics" class="button">
+				<button type="submit" name="action" value="ie_review_topics" class="button"
+					data-busy="<?php esc_attr_e( 'Building the table…', 'interlink-engine' ); ?>">
 					<?php echo $topics
 						? esc_html__( 'Save these edits', 'interlink-engine' )
 						: esc_html__( 'Review these topics', 'interlink-engine' ); ?>
 				</button>
 
-				<button type="submit" name="action" value="ie_create_campaign" class="button button-primary">
+				<button type="submit" name="action" value="ie_create_campaign" class="button button-primary"
+					data-busy="<?php esc_attr_e( 'Planning the campaign…', 'interlink-engine' ); ?>">
 					<?php esc_html_e( 'Plan this campaign', 'interlink-engine' ); ?>
 				</button>
 
@@ -1294,6 +1409,60 @@ class IE_Admin {
 			<p class="description">
 				<?php esc_html_e( 'Suggesting topics is free. Nothing is charged until a post is actually written.', 'interlink-engine' ); ?>
 			</p>
+
+			<?php
+			/**
+			 * Busy state for the three submit buttons.
+			 *
+			 * "Suggest topics" goes to the server and then to the model, with a
+			 * 90-second timeout at the far end. On a slow call the page sits
+			 * there looking untouched, and the natural response is to press it
+			 * again — which spends a second API call on a request already in
+			 * flight.
+			 *
+			 * THE TRAP, for whoever edits this next: the clicked button is NOT
+			 * disabled. A disabled submit button is omitted from the POST, so
+			 * `action=ie_suggest` would never arrive and admin-post.php would
+			 * have nothing to dispatch on. Its siblings are disabled; it just
+			 * changes its own label.
+			 */
+			?>
+			<script>
+			(function () {
+				var form = document.getElementById('ie-campaign-form');
+				if (!form) { return; }
+
+				var busy = false;
+				var clicked = null;
+
+				form.addEventListener('click', function (e) {
+					var b = e.target.closest ? e.target.closest('button[type="submit"]') : null;
+					if (b) { clicked = b; }
+				});
+
+				form.addEventListener('submit', function (e) {
+					if (busy) { e.preventDefault(); return; }
+					busy = true;
+
+					var b = clicked || form.querySelector('button[type="submit"]');
+					if (!b) { return; }
+
+					var label = b.getAttribute('data-busy') || b.textContent.trim();
+					var spin = document.createElement('span');
+					spin.className = 'spinner is-active';
+					spin.style.cssText = 'float:none;margin:0 6px 0 0;vertical-align:middle';
+
+					b.textContent = ' ' + label;
+					b.insertBefore(spin, b.firstChild);
+
+					// Everything else goes dead. Not this one — see above.
+					var all = form.querySelectorAll('button[type="submit"]');
+					for (var i = 0; i < all.length; i++) {
+						if (all[i] !== b) { all[i].disabled = true; }
+					}
+				});
+			}());
+			</script>
 		</form>
 		<?php
 	}
@@ -1301,6 +1470,80 @@ class IE_Admin {
 	/* --------------------------------------------------------------------
 	 * Handlers
 	 * ----------------------------------------------------------------- */
+
+	/**
+	 * A search term derived from the page's own title.
+	 *
+	 * The two are usually the same phrase, so making someone retype it was
+	 * busywork — but not ALWAYS the same, which is why the field survives as
+	 * an editable default rather than disappearing. A page titled "Plumbing
+	 * You Can Trust" or "Whole-Home Repiping" would give anchors that describe
+	 * nothing, and only a human knows the phrase people actually search.
+	 *
+	 * What this strips, and why each one matters downstream:
+	 *
+	 *   - a brand suffix after | – — or " - ". "…Services | Acme Plumbing"
+	 *     would otherwise put the company name inside every exact-match anchor.
+	 *   - the town and state. anchorPool.js ADDS those back from the business
+	 *     settings, so leaving them in produces "…services Leander, TX in
+	 *     Leander". It also loosens the cannibalisation check, which works by
+	 *     substring: a longer term matches fewer topics.
+	 *   - capitals. Anchors land mid-sentence and IE_Links only fixes the case
+	 *     at the START of one.
+	 */
+	public static function keyword_from_title( $title, $town = '' ) {
+		$text = (string) $title;
+
+		// Brand suffix. " - " with spaces, never a bare hyphen — "Whole-Home"
+		// and "24-Hour" are part of the phrase, not a separator.
+		$text = preg_split( '/\s+[|–—]\s+|\s+-\s+/u', $text )[0];
+
+		$text = trim( $text );
+
+		// Trailing state, with or without a comma: ", TX" / " Texas".
+		$text = preg_replace( '/[,\s]+[A-Z]{2}\s*$/', '', $text );
+
+		// Trailing town, however it is joined on: " in Leander", ", Leander",
+		// " Leander". Anchored to the END so a town inside the service name
+		// survives.
+		$town = trim( (string) $town );
+		if ( '' !== $town ) {
+			// The town setting may itself carry the state.
+			$town_only = trim( preg_replace( '/[,\s]+[A-Z]{2}\s*$/', '', $town ) );
+			foreach ( array_unique( array( $town, $town_only ) ) as $needle ) {
+				if ( '' === $needle ) {
+					continue;
+				}
+				$text = preg_replace(
+					'/\s*(?:,|\bin\b|\bnear\b)?\s*' . preg_quote( $needle, '/' ) . '\s*$/i',
+					'',
+					$text
+				);
+			}
+		}
+
+		$text = preg_replace( '/[\s,\-–—|]+$/u', '', trim( $text ) );
+
+		// Lower case, because the anchor goes mid-sentence. A keyword with a
+		// genuine proper noun in it — "Trane AC repair" — is exactly why this
+		// stays editable.
+		return trim( preg_replace( '/\s+/', ' ', strtolower( $text ) ) );
+	}
+
+	/** The typed search term, or one derived from the page title. */
+	private static function read_keyword( $page ) {
+		$typed = isset( $_POST['keyword'] ) ? sanitize_text_field( wp_unslash( $_POST['keyword'] ) ) : '';
+
+		if ( '' !== trim( $typed ) ) {
+			return trim( $typed );
+		}
+
+		$business = IE_Settings::business();
+		return self::keyword_from_title(
+			get_the_title( $page ),
+			isset( $business['town'] ) ? $business['town'] : ''
+		);
+	}
 
 	/** The shared part of both submit buttons: what the form said about the page. */
 	private static function read_form() {
@@ -1313,8 +1556,13 @@ class IE_Admin {
 
 		return array(
 			'target_page_id' => $page_id,
-			'keyword'        => isset( $_POST['keyword'] ) ? sanitize_text_field( wp_unslash( $_POST['keyword'] ) ) : '',
-			'intent'         => isset( $_POST['intent'] ) ? sanitize_text_field( wp_unslash( $_POST['intent'] ) ) : '',
+			// Empty means "use the page's own title", cleaned. Nobody should
+			// have to retype a phrase the plugin can already see.
+			'keyword'        => self::read_keyword( $page ),
+			// The dropdown carries a full sentence as its value; the text box
+			// wins when it has anything in it. Everything downstream still
+			// receives one prose string and never learns there was a list.
+			'intent'         => self::read_intent(),
 			// esc_url_raw, not sanitize_text_field: it drops any scheme that is
 			// not on WordPress's allow list, so `javascript:` never survives to
 			// reach a post. The publisher checks for http(s) again before using
@@ -1329,6 +1577,15 @@ class IE_Admin {
 			'title'          => get_the_title( $page ),
 			'url'            => get_permalink( $page ),
 		);
+	}
+
+	/** The dropdown, unless the free-text box overrides it. */
+	private static function read_intent() {
+		$typed = isset( $_POST['intent'] ) ? sanitize_text_field( wp_unslash( $_POST['intent'] ) ) : '';
+		if ( '' !== trim( $typed ) ) {
+			return trim( $typed );
+		}
+		return isset( $_POST['intent_choice'] ) ? sanitize_text_field( wp_unslash( $_POST['intent_choice'] ) ) : '';
 	}
 
 	private static function target_page_payload( $form ) {
