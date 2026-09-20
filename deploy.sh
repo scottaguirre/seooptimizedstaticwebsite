@@ -37,6 +37,7 @@ fi
 # refuses. `set -e` means a failing suite stops the script here.
 echo "Running tests..."
 node test-business-shape.js > /dev/null
+node test-page-meta.js      > /dev/null
 node test-blog-plan.js      > /dev/null
 node test-anchor-pool.js    > /dev/null
 node test-home-anchors.js   > /dev/null

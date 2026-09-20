@@ -42,6 +42,11 @@ function clean(value) {
     .trim();
 }
 
+// Unused since 20 September, when rankFastIndexMeta stopped checking whether
+// the business name already contained the city. Kept because it is three
+// lines, correct, and the next person needing to build a pattern from a
+// customer-supplied string will otherwise write a version without it.
+// eslint-disable-next-line no-unused-vars
 function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -115,9 +120,25 @@ const ACRONYMS = ['hvac', 'ac', 'seo', 'it'];
 /**
  * @param {string} businessType  e.g. "Plumbing", "Law Firm", "HVAC"
  * @returns {string}             e.g. "plumbing services", "legal services"
+ *
+ * clean(), NOT String(). The unmatched branch below returns the business type
+ * verbatim, and that string lands in a meta description which the static site
+ * substitutes into an HTML attribute WITHOUT escaping:
+ *
+ *     .replace(/{{META_DESCRIPTION}}/g, () => (meta.description))
+ *     <meta name="description" content="{{META_DESCRIPTION}}">
+ *
+ * So a business type containing a double quote ended the attribute early:
+ *
+ *     content="... to get plumbing" onload=alert(1) x=" services.">
+ *
+ * Every other field reaching these strings — name, location, phone — is passed
+ * through clean() by its caller. This one was not, and was the only way an
+ * unescaped quote could reach the page. The exported WordPress theme was never
+ * affected: functionsPhp.js wraps it in esc_attr( wp_strip_all_tags() ).
  */
 function serviceNoun(businessType = '') {
-  const type = String(businessType).toLowerCase().trim();
+  const type = clean(businessType).toLowerCase().trim();
 
   if (!type) return 'our services';
 
@@ -162,14 +183,39 @@ function leadIndexMeta(globalValues = {}) {
 /**
  * Rank Fast.
  *
- *   title        Emergency Plumber Leander, TX. Call (512) 894-6167
- *   description  Call Emergency Plumber Leander, TX at (512) 894-6167 to get
- *                plumbing services.
+ *   title        Emergency Plumber Round Rock in Round Rock, TX | Call (512) 894-6167
+ *   description  Call Emergency Plumber Round Rock in Round Rock, TX at
+ *                (512) 894-6167 to get plumbing services.
  *
- * The business name carries the place, so the title adds the state alone:
- * "Emergency Plumber Leander" + ", TX". A name that does not already say
- * where it is gets the city too — "Acme Plumbing, Leander, TX" — because
- * otherwise the title names a state and no town.
+ * THE TOWN IS NAMED TWICE ON PURPOSE — 20 September.
+ *
+ * This used to detect whether the business name already contained the city and
+ * append the state alone if so, to avoid "Emergency Plumber Round Rock, Round
+ * Rock, TX". That reads badly, and the conclusion drawn was that the town must
+ * not repeat.
+ *
+ * The real problem was the comma, not the repetition. "in Round Rock, TX" is a
+ * phrase rather than a list, so the name and the place stop running together:
+ *
+ *     Emergency Plumber Round Rock, Round Rock, TX      three list items
+ *     Emergency Plumber Round Rock in Round Rock, TX    a sentence
+ *
+ * And the repetition earns its place. A Rank Fast business is named after its
+ * keyword, so the name is a SERVICE phrase that happens to contain a town —
+ * "in Round Rock, TX" is then the first thing in the title that unambiguously
+ * says where the business operates, rather than what it is called.
+ *
+ * So the city and state are now always added, whatever the name says. A name
+ * that does not carry the town reads identically: "Acme Plumbing in Round
+ * Rock, TX".
+ *
+ * The separator is " | " rather than ". " to match the service pages, which
+ * have used a pipe since they were written.
+ *
+ * LENGTH: this runs to about 68 characters for a typical name, past the ~60
+ * Google shows, so the phone number is sometimes cut from the result. Accepted
+ * deliberately — the same trade-off serviceMeta() already makes, and the name
+ * and the town lead, which are the words a searcher typed.
  *
  * No "Contact" prefix and no 24/7 prefix here: both were spending characters
  * before the words a searcher is scanning for.
@@ -179,20 +225,14 @@ function rankFastIndexMeta(globalValues = {}) {
   const phone = clean(globalValues.phone);
   const { city, state } = splitLocation(globalValues.location);
 
-  const nameHasCity =
-    !!city && new RegExp(`\\b${escapeRegex(city)}\\b`, 'i').test(name);
+  const place = [city, state].filter(Boolean).join(', ');
 
-  // State alone when the name already says the city, otherwise city + state.
-  // With no state on record, fall back to whatever place we do have.
-  const place = nameHasCity
-    ? (state || '')
-    : [city, state].filter(Boolean).join(', ');
+  // "Emergency Plumber Round Rock in Round Rock, TX" — reused by both the
+  // title and the description, so they can never disagree about the business's
+  // name or where it is.
+  const subject = place ? `${name} in ${place}` : name;
 
-  // "Emergency Plumber Leander, TX" — reused by both the title and the
-  // description, so they can never disagree about the business's name.
-  const subject = [name, place].filter(Boolean).join(', ');
-
-  const title = phone ? `${subject}. Call ${phone}` : subject;
+  const title = phone ? `${subject} | Call ${phone}` : subject;
 
   const services = serviceNoun(globalValues.businessType);
   const description = phone

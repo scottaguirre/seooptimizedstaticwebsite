@@ -54,7 +54,10 @@ const BUSINESS_NOUNS = [
  * Prefix with "our" at the call site: `our ${businessNoun(type)}`.
  */
 function businessNoun(businessType = '') {
-  const type = String(businessType).toLowerCase().trim();
+  // clean(), not String() — same reason as serviceNoun() in seoPresets.js: the
+  // unmatched branch returns the business type verbatim, and these strings are
+  // substituted into HTML attributes unescaped by the static-site builder.
+  const type = clean(businessType).toLowerCase().trim();
 
   if (!type) return 'team';
 

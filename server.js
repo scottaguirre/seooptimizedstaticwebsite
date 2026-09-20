@@ -56,10 +56,25 @@ const pluginDownloadRoute = require('./routes/pluginDownloadRoute');
 
 
 // Connecting to Mongo
-mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-}).then(() => {
+//
+// NO OPTIONS OBJECT, and do not add one back with useNewUrlParser /
+// useUnifiedTopology. Both were removed on 20 September.
+//
+// They have done NOTHING since driver 4.0.0 — we are on mongoose 8 — and the
+// driver warned about them on every single boot:
+//
+//     [MONGODB DRIVER] Warning: useNewUrlParser is a deprecated option:
+//     useNewUrlParser has no effect ... and will be removed in the next
+//     major version
+//
+// "Removed" there means passing them will THROW, not warn. So this was a
+// future crash sitting behind two lines that already did nothing, and six
+// warning lines per restart making the error log harder to read — which is
+// the more immediate cost, because a noisy log is one you stop reading.
+//
+// Every tutorial written before 2022 includes them. That is why they are here,
+// and why this comment is longer than the change.
+mongoose.connect(process.env.MONGO_URI).then(() => {
     console.log('✅ Connected to MongoDB');
 }).catch((err) => {
     console.error('❌ MongoDB connection error:', err);

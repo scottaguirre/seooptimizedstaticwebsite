@@ -73,6 +73,7 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 ## Tests
 
     node test-business-shape.js    # business shapes, prompts, case study, wizard parity
+    node test-page-meta.js         # every page's <title> and description; needs no php
     node test-wp-canonical.js      # runs the exported theme as real PHP; skips without php
     node test-wp-single.js         # single.php incl. the featured image; skips without php
     node test-ie-pause.js          # campaign pause/resume as real PHP; skips without php
@@ -361,6 +362,49 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## Page titles — 20 September
+
+**The Rank Fast home title now names the town twice, on purpose:**
+
+    Emergency Plumber Round Rock in Round Rock, TX | Call (512) 894-6167
+
+It used to detect the city inside the business name and append the state
+alone, to avoid "Emergency Plumber Round Rock, Round Rock, TX". **The fault
+there was the comma, not the repetition** — with a comma it is a three-item
+list, with "in" it is a sentence. And the repetition earns its place: a Rank
+Fast name is a SERVICE phrase that happens to contain a town, so "in Round
+Rock, TX" is the first part of the title that says where the business is
+rather than what it is called. `test-page-meta.js` asserts the town appears
+twice, because otherwise it looks like a bug and gets "fixed" back.
+
+Only Rank Fast moved. One-Page Design is `Object.assign({}, LEAD, ...)` and
+shares the Rank GBPs format, so there is no third copy to drift.
+
+**Nothing asserted on a page title before this date.** The formats were
+centralised into `utils/pageMeta.js` precisely because four copies had drifted
+apart — but centralising them stopped the drift between files, not the drift
+inside the one file. `test-page-meta.js` covers all five page types.
+
+**An attribute injection, found by writing that suite:**
+
+    <meta name="description" content="... to get plumbing" onload=alert(1) x=" services.">
+
+`serviceNoun()` and `businessNoun()` used `String(businessType)` where every
+other field — name, location, phone — goes through `clean()`, which strips
+`" < >`. Their unmatched branch returns the business type verbatim, and the
+static builder substitutes it raw:
+
+    .replace(/{{META_DESCRIPTION}}/g, () => (meta.description))
+
+**The exported WordPress theme was never affected** — `functionsPhp.js` wraps
+it in `esc_attr( wp_strip_all_tags() )`. Only the static HTML path was
+unescaped, so `clean()` was the whole defence and one input skipped it.
+
+`businessNoun()` feeds PROSE rather than meta, so the meta invariants in that
+suite never reach it — a mutation reverting its `clean()` survived until a
+test aimed at it directly was added. **When two functions share a fix, they
+need two tests.**
 
 ## The generated site's home-page anchors — 20 September
 
