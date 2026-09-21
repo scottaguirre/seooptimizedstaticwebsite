@@ -549,7 +549,7 @@ test('the arithmetic uses the real prices, not copies of them', () => {
  * the real arithmetic.
  * ---------------------------------------------------------------------- */
 
-function loadRoute({ suggest }) {
+function loadRoute({ suggest, onLog }) {
   const Module = require('module');
   const path = require('path');
   const real = Module._load;
@@ -567,7 +567,14 @@ function loadRoute({ suggest }) {
     if (/suggestServices$/.test(request) && parent && /routes/.test(parent.filename || '')) {
       return { suggestServices: suggest };
     }
-    if (/logger$/.test(request)) return { log: { info() {}, error() {} } };
+    if (/logger$/.test(request)) {
+      return {
+        log: {
+          info: (event, fields) => { if (onLog) onLog(event, fields); },
+          error() {},
+        },
+      };
+    }
     return real.apply(this, arguments);
   };
 
@@ -773,7 +780,7 @@ test('bulk-added rows do not steal focus', () => {
   // to the last field while the customer is still reading the list.
   const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
   assert.ok(/opts\.focus !== false/.test(js), 'addPageRow always focuses');
-  assert.ok(/addPageRow\(pagesList, name, \{ focus: false \}\)/.test(js),
+  assert.ok(/addPageRow\(pagesList, '', \{ focus: false \}\)/.test(js),
     'the suggestion path does not suppress focus');
 });
 
@@ -781,6 +788,326 @@ test('unticking a box takes its row away again', () => {
   const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
   assert.ok(/if \(!box\.checked\) \{\s*removePageRow/.test(js),
     'unticking does not remove the row');
+});
+
+test('deleting a row unticks the box that put it there', () => {
+  // Otherwise the tick sits over a row that no longer exists, and the
+  // customer cannot get it back — ticking an already-ticked box fires
+  // nothing, so they have to untick and re-tick to work out what happened.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const handler = js.slice(js.indexOf("classList.contains('btn-remove-page')"));
+  const body = handler.slice(0, 600);
+
+  assert.ok(/untickSuggestionFor\(row\)/.test(body), 'the delete button leaves the box ticked');
+  assert.ok(body.indexOf('untickSuggestionFor') < body.indexOf('row?.remove()'),
+    'the box is cleared after the row is gone, so there is nothing left to find it by');
+});
+
+test('the box and its row are linked by an id, not by the text in the field', () => {
+  // Rename a suggested row — "Drain Cleaning" to "Drain Cleaning and
+  // Jetting" — and a text match stops finding it. Unticking would then do
+  // nothing, and deleting would leave the box ticked. The id survives an
+  // edit; the words in the field do not.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+
+  const create = js.slice(js.indexOf('function addOrFillPageRow'));
+  assert.ok(/if \(key\) row\.dataset\.suggested = key;/.test(create.slice(0, 600)),
+    'a row created from a suggestion is not tagged with it');
+
+  assert.ok(/data-key="\$\{escapeHtml\(key\)\}"/.test(js),
+    'boxes do not carry the id their row is tagged with');
+
+  const remove = js.slice(js.indexOf('function removePageRow'));
+  assert.ok(/rowForSuggestion\(pagesList, key\)/.test(remove.slice(0, 400)),
+    'removePageRow still hunts for the row by its text');
+
+  const change = js.slice(js.indexOf("box.addEventListener('change'"));
+  assert.ok(/addOrFillPageRow\(pagesList, name, key\)/.test(change.slice(0, 1400)),
+    'a row added by ticking a box is not tagged, so unticking cannot find it');
+});
+
+test('the id ignores case, spacing and punctuation', () => {
+  // Pulled out of the browser file and run, rather than grepped: the whole
+  // point of the id is that two spellings of one service reach it as one
+  // string, and only running it proves that.
+  const js = sourceOf('public/js/generateDinamycForm.js');
+  const src = js.match(/function suggestionKey\([\s\S]*?\n {2}\}/);
+  assert.ok(src, 'suggestionKey has been renamed or reshaped');
+
+  const suggestionKey = new Function(`${src[0]}; return suggestionKey;`)();
+
+  assert.strictEqual(suggestionKey('  water heater REPAIR '),
+                     suggestionKey('Water Heater Repair'));
+  assert.strictEqual(suggestionKey('Heating & Cooling'), 'heating-cooling');
+  assert.strictEqual(suggestionKey(''), '');
+  assert.strictEqual(suggestionKey(null), '');
+});
+
+test('a suggestion the customer already typed adopts their row', () => {
+  // Rather than adding a second row for the same service — which they would
+  // pay for twice and get one page from.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const render = js.slice(js.indexOf('function renderBatch'));
+  const body = render.slice(0, render.indexOf('block.querySelectorAll'));
+
+  assert.ok(/suggestionKey\(input\.value\) === key/.test(body),
+    'the list does not look for rows the customer has already typed');
+  assert.ok(/mine\.closest\('\.page-row'\)\.dataset\.suggested = key/.test(body),
+    "their row is not tagged, so unticking the box will not remove it");
+  assert.ok(/if \(!already\) addOrFillPageRow/.test(body),
+    'a service already on the form gains a second row');
+});
+
+/* -------------------------------------------------------------------------
+ * A second list, and no third
+ * ---------------------------------------------------------------------- */
+
+test('a second batch is ADDED below the first, not swapped for it', () => {
+  // The first version replaced the whole panel, so the second press left the
+  // rows from the first batch with no box above them — ticked services the
+  // customer could no longer untick. That is the bug Edwin reported.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const render = js.slice(js.indexOf('function renderBatch'));
+  const head = render.slice(0, 700);
+
+  assert.ok(/panel\.appendChild\(block\)/.test(head),
+    'the batch is not appended to the panel');
+  assert.ok(!/panel\.innerHTML\s*=/.test(render.slice(0, render.indexOf('function mountSuggestPanel'))),
+    'something still overwrites the whole panel');
+});
+
+test('each batch writes into its own block, not over the last one', () => {
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const render = js.slice(js.indexOf('function renderBatch'));
+  assert.ok(/block\.innerHTML = /.test(render.slice(0, 3000)));
+});
+
+test('two batches cannot give two boxes the same id', () => {
+  // A <label for> pointing at a duplicate id ticks the wrong box.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  assert.ok(/id: `suggest-\$\{batchNumber\}-\$\{i\}`/.test(js),
+    'checkbox ids do not include the batch they came from');
+});
+
+test('the button stops after two batches', () => {
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+
+  assert.ok(/const MAX_SUGGESTION_BATCHES = 2;/.test(js), 'the cap is not 2');
+
+  const sync = js.slice(js.indexOf('function syncButton'));
+  assert.ok(/used >= MAX_SUGGESTION_BATCHES/.test(sync.slice(0, 500)),
+    'the button is never disabled');
+  assert.ok(/button\.disabled = true/.test(sync.slice(0, 500)));
+
+  // And the handler refuses too, so a stale enabled button cannot spend a
+  // third call.
+  const click = js.slice(js.indexOf("button.addEventListener('click'"));
+  assert.ok(/length >= MAX_SUGGESTION_BATCHES\) return;/.test(click.slice(0, 700)),
+    'the click handler does not enforce the cap itself');
+});
+
+test('a restored batch does not resurrect a row that was unticked', () => {
+  // Stepping away and back rebuilds this step from scratch. Re-running the
+  // "tick the first N" logic would put back every row the customer had
+  // deliberately removed.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const render = js.slice(js.indexOf('function renderBatch'));
+  const body = render.slice(0, render.indexOf('block.querySelectorAll'));
+
+  assert.ok(/if \(fresh\) \{/.test(body), 'rows are created regardless of how the batch got here');
+
+  const mount = js.slice(js.indexOf('function mountSuggestPanel'));
+  assert.ok(/renderBatch\(panel, pagesList, batch, i, false\)/.test(mount),
+    'restored batches are rendered as if they were fresh');
+});
+
+test('a box is ticked because its row exists, not because of the budget', () => {
+  // One rule for a fresh batch and a restored one. The budget decides which
+  // rows get CREATED; after that the form is the truth.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const render = js.slice(js.indexOf('function renderBatch'));
+  assert.ok(/\$\{onForm \? 'checked' : ''\}/.test(render.slice(0, 3500)),
+    'the ticks are derived from something other than the rows on the form');
+});
+
+test('changing the business type clears the lists and their rows', () => {
+  // A plumber's services are wrong for a dentist, and so are the rows they
+  // created. Rows typed by hand survive, because nothing made them wrong.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const mount = js.slice(js.indexOf('function mountSuggestPanel'));
+  const body = mount.slice(0, 1600);
+
+  assert.ok(/state\.suggestionsFor !== state\.businessType/.test(body),
+    'nothing notices that the business type changed');
+  assert.ok(/dropSuggestedRows\(pagesList, state\.suggestionBatches\)/.test(body),
+    'the rows from the old business type are left behind');
+  assert.ok(/state\.suggestionBatches = \[\];/.test(body),
+    'the two presses are not given back');
+});
+
+test('clearing suggested rows leaves the ones they typed', () => {
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const drop = js.slice(js.indexOf('function dropSuggestedRows'));
+  const body = drop.slice(0, 700);
+
+  assert.ok(/if \(!keys\.has\(suggestionKey\(input\.value\)\)\) return;/.test(body),
+    'it removes rows it did not put there');
+  assert.ok(/length === 1/.test(body),
+    'it can empty the list entirely, leaving nothing to type into');
+});
+
+test('a new batch is added to the stored ones, not put in their place', () => {
+  // Storing only the latest would make the cap unenforceable and would drop
+  // the first list on the way back to this step — rows with no box again.
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const click = js.slice(js.indexOf("button.addEventListener('click'"));
+  const body = click.slice(0, 1200);
+
+  assert.ok(/suggestionBatches = \(state\.suggestionBatches \|\| \[\]\)\.concat\(\[data\]\)/.test(body),
+    'a new batch replaces the stored ones instead of joining them');
+  assert.ok(/state\.suggestionsFor = state\.businessType;/.test(body),
+    'nothing records which business type this list was for, so changing it is never noticed');
+  assert.ok(/suggestionBatches: \[\]/.test(js), 'the batches do not start as a list');
+});
+
+test("a new site starts with none of the last one's suggestions", () => {
+  const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
+  const reset = js.slice(js.indexOf('state.mainFormSnapshot  = null;'));
+  const body = reset.slice(0, 700);
+
+  assert.ok(/state\.suggestionBatches = \[\];/.test(body),
+    "the last site's suggestion lists survive into the next one");
+  assert.ok(/state\.suggestionsFor\s*=\s*''/.test(body),
+    'the business type they were for survives, so the next site never clears them');
+});
+
+/* -------------------------------------------------------------------------
+ * Hitting the rate limit
+ * ---------------------------------------------------------------------- */
+
+test('a rate-limited reply is JSON, so the customer reads the real reason', () => {
+  // express-rate-limit sends a string as plain text; the wizard reads the
+  // reply with res.json() and falls back to its own generic wording. So
+  // somebody who had used this a lot was told the feature was broken.
+  const limits = withoutComments(sourceOf('middleware/rateLimits.js'));
+
+  assert.ok(/function retryJson/.test(limits), 'there is no JSON form of the message');
+  assert.ok(/return \{ error: retryMessage\(req, res, what\) \};/.test(limits),
+    'the JSON does not use the key the wizard reads');
+
+  const suggest = limits.slice(limits.indexOf('const suggestServicesLimiter'));
+  assert.ok(/retryJson\(req, res, 'service suggestions'\)/.test(suggest.slice(0, 500)),
+    'the suggest limiter still replies in plain text');
+});
+
+test("the blog limiters' replies are left alone", () => {
+  // The WordPress plugin already handles what they send. Changing it belongs
+  // in a pass where the plugin can be tested alongside.
+  const limits = withoutComments(sourceOf('middleware/rateLimits.js'));
+  const blog = limits.slice(
+    limits.indexOf('const blogApiLimiter'),
+    limits.indexOf('const suggestServicesLimiter'));
+
+  assert.ok(blog.length > 200, 'the slice missed the blog limiters entirely');
+  assert.ok(!/retryJson/.test(blog), 'a blog limiter had its reply shape changed');
+});
+
+test('the hourly allowance is still 15, and still overridable', () => {
+  // Lowered to 6 at one point, which would have blocked an agency building
+  // five sites in an afternoon — the best customer there is. The two-press
+  // cap does the job this was aiming at.
+  const limits = withoutComments(sourceOf('middleware/rateLimits.js'));
+  const suggest = limits.slice(limits.indexOf('const suggestServicesLimiter'));
+
+  assert.ok(/Number\(process\.env\.SUGGEST_SERVICES_RATE_LIMIT\) \|\| 15/.test(suggest.slice(0, 400)),
+    'the allowance or its environment variable changed');
+});
+
+/* -------------------------------------------------------------------------
+ * What it costs to run
+ * ---------------------------------------------------------------------- */
+
+test('the token counts come back with the suggestions', async () => {
+  const fakeClient = {
+    responses: {
+      create: async () => ({
+        output_text: '{"services": ["Drain Cleaning"]}',
+        usage: { input_tokens: 310, output_tokens: 90, total_tokens: 400 },
+      }),
+    },
+  };
+
+  const out = await suggestServices({ businessType: 'Plumbing', location: 'Austin, TX' },
+    { client: fakeClient });
+
+  assert.deepStrictEqual(out.usage, { input: 310, output: 90, total: 400 });
+});
+
+test('a reply with no usage block is not a failure', async () => {
+  const fakeClient = {
+    responses: { create: async () => ({ output_text: '{"services": ["Drain Cleaning"]}' }) },
+  };
+
+  const out = await suggestServices({ businessType: 'Plumbing', location: 'Austin, TX' },
+    { client: fakeClient });
+
+  assert.deepStrictEqual(out.services, ['Drain Cleaning']);
+  assert.strictEqual(out.usage, null);
+});
+
+test('a total is worked out when the reply only gives the two halves', async () => {
+  const fakeClient = {
+    responses: {
+      create: async () => ({
+        output_text: '{"services": ["Drain Cleaning"]}',
+        usage: { prompt_tokens: 200, completion_tokens: 50 },
+      }),
+    },
+  };
+
+  const out = await suggestServices({ businessType: 'Plumbing', location: 'Austin, TX' },
+    { client: fakeClient });
+
+  assert.deepStrictEqual(out.usage, { input: 200, output: 50, total: 250 });
+});
+
+test('the cost of the call reaches the log', async () => {
+  // Without this the only answer to "is this costing me money?" is a guess.
+  let logged = null;
+  const handler = loadRoute({
+    suggest: async () => ({
+      services: ['Drain Cleaning'],
+      dropped: [],
+      usage: { input: 310, output: 90, total: 400 },
+    }),
+    onLog: (event, fields) => { if (event === 'services.suggested') logged = fields; },
+  });
+
+  await handler({
+    body: { businessType: 'Plumbing', location: 'Austin, TX' },
+    user: { credits: 1000 },
+  }, fakeRes());
+
+  assert.ok(logged, 'nothing was logged');
+  assert.strictEqual(logged.totalTokens, 400, JSON.stringify(logged));
+  assert.strictEqual(logged.inputTokens, 310);
+  assert.strictEqual(logged.outputTokens, 90);
+});
+
+test('a missing usage block does not break the log line', async () => {
+  let logged = null;
+  const handler = loadRoute({
+    suggest: async () => ({ services: ['Drain Cleaning'], dropped: [] }),
+    onLog: (event, fields) => { if (event === 'services.suggested') logged = fields; },
+  });
+
+  await handler({
+    body: { businessType: 'Plumbing', location: 'Austin, TX' },
+    user: { credits: 1000 },
+  }, fakeRes());
+
+  assert.ok(logged);
+  assert.ok(!logged.totalTokens);
 });
 
 test('ticking beyond the budget goes through the same gate as Add page', () => {

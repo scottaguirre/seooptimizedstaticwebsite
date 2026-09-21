@@ -59,6 +59,24 @@ function retryMessage(req, res, what = 'requests') {
   return `Too many ${what}. Please try again in ${wait}.`;
 }
 
+/**
+ * The same sentence, shaped as JSON.
+ *
+ * express-rate-limit sends a string message as plain text. Anything that
+ * reads the reply with res.json() then gets a parse error and falls back to
+ * its own generic wording — so the wizard told a rate-limited customer
+ * "Could not come up with service ideas just now", which reads like a broken
+ * feature rather than "you have used this a lot today".
+ *
+ * Only the limiters whose callers expect JSON use this. The blog ones are
+ * deliberately left as they are: the WordPress plugin already handles their
+ * current replies, and changing what it receives belongs in a pass where the
+ * plugin can be tested alongside.
+ */
+function retryJson(req, res, what = 'requests') {
+  return { error: retryMessage(req, res, what) };
+}
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -225,7 +243,7 @@ const suggestServicesLimiter = rateLimit({
   keyGenerator: userOrIp,
   standardHeaders: true,
   legacyHeaders: false,
-  message: (req, res) => retryMessage(req, res, 'service suggestions'),
+  message: (req, res) => retryJson(req, res, 'service suggestions'),
 });
 
 module.exports = {

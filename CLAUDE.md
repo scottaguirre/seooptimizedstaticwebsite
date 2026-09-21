@@ -173,6 +173,31 @@ Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
 
 ## Outstanding
 
+**NEXT UP — split the locations out into their own step**
+
+Edwin, 21 September: service pages and location pages share one step and it
+now looks crowded, especially since the suggestion panel went in above the
+rows. Locations should become a step of their own, after services.
+
+Things to check when doing it, because none of them are just moving markup:
+
+- The step numbers are COMPUTED by `stepNumber()`, and they differ by site
+  mode — a Design Sample skips steps a Rank Fast site has. Edwin calls the
+  current one "step 6"; the constant is `STEP.PAGES`. Inserting a step means
+  every later number moves.
+- The review card's **change** buttons carry `data-step`, so they have to
+  follow the renumbering or they send people to the wrong screen.
+- `currentLocationNames()` reads locations out of the DOM, and the credit
+  quote uses it. Once the locations live on a step that is not on screen, it
+  falls back to `state.locations` — which is only written when a step is
+  LEFT. Check that the fallback is actually correct now, because the whole
+  reason that function reads the DOM is that state lags behind.
+- The location credit gate intercepts `#addLocationBtn` in the CAPTURE phase
+  because the real handler lives in `locationPages.js`. That wiring has to
+  move with the button.
+- `test-app-header.js` and `test-location-pages.js` both touch this area.
+
+
 **The rename to Three Comets — when threecomets.com goes live**
 
 The header is already the Three Comets logo. Three things still carry the old
@@ -442,6 +467,94 @@ and an `<h1>`. `cleanServices()` drops:
   so a suggestion is never offered back to them and never displaces their own
   typing. They are also named in the prompt, which is cheaper than asking for
   extra and throwing the repeats away.
+
+### The tick box and the row are one thing
+
+Edwin, the day it shipped: unticking removes the row, but pressing **Delete**
+on a suggested row left its box ticked over a row that no longer existed — and
+there was no way back, because ticking an already-ticked box fires no event.
+
+He offered two fixes: disable Delete on suggested rows, or tie the two
+together. **Tied together.** Disabling Delete takes away a control that works,
+in the one place everybody looks for it, and it traps anyone who EDITS a
+suggested row — rename "Drain Cleaning" to "Drain Cleaning and Jetting" and the
+only way to remove it is a box whose label no longer matches.
+
+**They are linked by an id, not by the text in the field.** Each row carries
+`data-suggested="<key>"` and each box `data-key="<key>"`, where the key is the
+name lowercased and reduced to `[a-z0-9-]`. Matching on the text was the first
+version and it breaks the moment somebody edits a row. It is also why the key
+is normalised: it goes straight into an attribute selector.
+
+A suggestion the customer has already typed **adopts their row** rather than
+adding a second one, so from that point it behaves like any other pair.
+
+### Two lists, and no third — 21 September
+
+Pressing Suggest a second time used to REPLACE the panel, so the rows from the
+first batch were left with no box above them: ticked services the customer
+could no longer untick. Edwin found it the same day. A second batch is now
+**appended below the first**, under "A few more:".
+
+**Two batches, then the button stops.** Forty names is more than any business
+has; past that somebody is browsing rather than building, and each press is a
+model call that costs money and produces nothing. The rest get typed in, which
+is what the form was always for.
+
+**This cap is in the browser, so it is an interface decision, not a spending
+control.** Anyone who can press the button can call the endpoint directly and
+ignore it. The thing that binds is `suggestServicesLimiter`.
+
+**Changing the business type gives the two presses back** and takes away the
+rows those suggestions created, keeping anything typed by hand. Plumbing
+services are wrong for an HVAC company and so are the rows they made.
+`dropSuggestedRows` works off the STORED BATCHES, not off the rows' own tags:
+this step is rebuilt from scratch every time it is shown, so the rows come back
+from `state.pages` carrying no tag at all.
+
+### A box is ticked because its row exists
+
+Not because of the budget. The budget decides which rows get CREATED, once,
+when a batch first arrives; after that the form is the truth.
+
+That is one rule instead of two, and it fixes a bug the two-rule version had:
+stepping away from the step and back re-ran "tick the first N", which put back
+every row the customer had deliberately unticked. Only a `fresh` batch creates
+rows — a restored one just reads the form.
+
+### Why the hourly limit stayed at 15
+
+It was going to drop to 6. With the two-press cap a site costs 2 calls, so 6 an
+hour is three sites — and an agency building five in an afternoon would have
+been told "too many requests". That is the best customer there is.
+
+The cost difference between 6 and 15 is pennies; the cost of blocking a paying
+customer mid-batch is not. **Asymmetric, so the number errs high.** A daily cap
+is the right shape if one is ever needed, because it catches a script without
+punishing a busy Tuesday — deferred until the logging below says whether any of
+this matters.
+
+### The rate-limit message never reached anyone
+
+`express-rate-limit` sends a string message as plain text. The wizard reads the
+reply with `res.json()`, which then throws, so it fell back to its own wording
+and a rate-limited customer was told "Could not come up with service ideas just
+now" — a broken feature rather than "you have used this a lot today".
+
+`retryJson()` wraps the same sentence in `{ error }`. **Only the suggest
+limiter uses it.** The blog ones still send text: the WordPress plugin already
+handles what they send, and changing that belongs in a pass where the plugin
+can be tested alongside.
+
+### What a suggestion costs, measured rather than guessed
+
+`suggestServices()` returns `usage` alongside the list and the route logs
+`inputTokens` / `outputTokens` / `totalTokens`. The endpoint is not billed, so
+this is the only record of what it costs to run — and the only honest basis for
+deciding whether the limits above need tightening.
+
+It is optional on purpose: a stubbed or injected client need not provide it,
+and a missing usage block must never fail a call that otherwise worked.
 
 ### Two bugs mutation testing found here
 

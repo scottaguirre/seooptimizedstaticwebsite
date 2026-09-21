@@ -77,7 +77,7 @@ router.post('/api/suggest-services', suggestServicesLimiter, async (req, res) =>
   const existing = formRows(req.body.existing);
 
   try {
-    const { services, dropped } = await withTimeout(
+    const { services, dropped, usage } = await withTimeout(
       suggestServices({ businessType, location }, { exclude: existing }),
       CALL_TIMEOUT_MS,
       'service suggestion'
@@ -92,6 +92,9 @@ router.post('/api/suggest-services', suggestServicesLimiter, async (req, res) =>
       locationPages: Number(req.body.locationPages) || 0,
     });
 
+    // The token counts are here so that "is this costing me money?" can be
+    // answered from the logs rather than estimated. The endpoint is free to
+    // the customer, so this is the only record of what it costs to run.
     log.info('services.suggested', {
       requestId: req.id,
       userId: String(req.user && req.user._id || ''),
@@ -99,6 +102,9 @@ router.post('/api/suggest-services', suggestServicesLimiter, async (req, res) =>
       count: services.length,
       dropped: dropped.length,
       affordable,
+      inputTokens: usage && usage.input,
+      outputTokens: usage && usage.output,
+      totalTokens: usage && usage.total,
     });
 
     res.json({

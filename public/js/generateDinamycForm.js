@@ -484,9 +484,14 @@
     addLocations: true,   // toggle default ON
     locations: [],        // array of strings
 
-    // The last reply from /api/suggest-services, so stepping back to this
-    // step shows the same list instead of paying for another model call.
-    suggestions: null
+    // The replies from /api/suggest-services, newest last, so stepping back
+    // to this step shows the same lists instead of paying for another model
+    // call. Capped at MAX_SUGGESTION_BATCHES.
+    suggestionBatches: [],
+
+    // Which business type those batches were asked for. When it changes they
+    // are thrown away, because a plumber's services are wrong for a dentist.
+    suggestionsFor: ''
   };
 
   // DOM refs
@@ -1607,8 +1612,21 @@
     svcWrap.addEventListener('click', (e) => {
       if (e.target && e.target.classList.contains('btn-remove-page')) {
         e.preventDefault(); e.stopPropagation();
-        e.target.closest('.page-row')?.remove();
+
+        const row = e.target.closest('.page-row');
+
+        // A row that came from a ticked box takes the tick with it.
+        //
+        // Without this the box stays ticked over a row that is gone, and the
+        // customer cannot get it back: ticking an already-ticked box fires
+        // nothing, so they have to untick and re-tick to work out what
+        // happened. The box and the row are two views of one thing and both
+        // controls have to say the same thing about it.
+        untickSuggestionFor(row);
+
+        row?.remove();
         reindexPageRows(pagesList);
+        refreshCredits();
       }
     });
     // THE GATE.
@@ -2061,6 +2079,8 @@
     // list: each one would yank the page down to the newest field while they
     // are still reading the list they just ticked.
     if (opts.focus !== false) row.querySelector('input')?.focus();
+
+    return row;
   }
 
   /* ------------------------------------------------------------------
@@ -2088,33 +2108,62 @@
     return [...pagesList.querySelectorAll('.page-row input[type="text"]')];
   }
 
-  /** Fill the blank row if there is one, rather than leaving it stranded. */
-  function addOrFillPageRow(pagesList, name) {
-    const blank = pageRowInputs(pagesList).find(input => !input.value.trim());
-
-    if (blank) {
-      blank.value = name;
-      return;
-    }
-    addPageRow(pagesList, name, { focus: false });
+  /**
+   * What a tick box and its row share.
+   *
+   * NOT the text in the field. Matching on that was the first version and it
+   * breaks the moment somebody edits a row: rename "Drain Cleaning" to
+   * "Drain Cleaning and Jetting" and unticking the box stops finding the row
+   * it created. An id survives editing; the words in the field do not.
+   */
+  function suggestionKey(name) {
+    return String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
   }
 
-  function removePageRow(pagesList, name) {
-    const wanted = name.trim().toLowerCase();
-    const input = pageRowInputs(pagesList)
-      .find(field => field.value.trim().toLowerCase() === wanted);
+  function rowForSuggestion(pagesList, key) {
+    return key ? pagesList.querySelector(`.page-row[data-suggested="${key}"]`) : null;
+  }
 
-    if (!input) return;   // they renamed or deleted it themselves
+  function boxForSuggestion(key) {
+    return key ? document.querySelector(`.js-suggested[data-key="${key}"]`) : null;
+  }
+
+  /** Clear the tick over a row that is about to be deleted. */
+  function untickSuggestionFor(row) {
+    const box = boxForSuggestion(row && row.dataset && row.dataset.suggested);
+    if (box) box.checked = false;
+  }
+
+  /** Fill the blank row if there is one, rather than leaving it stranded. */
+  function addOrFillPageRow(pagesList, name, key) {
+    const blank = pageRowInputs(pagesList).find(input => !input.value.trim());
+    const row = blank
+      ? blank.closest('.page-row')
+      : addPageRow(pagesList, '', { focus: false });
+
+    const input = row.querySelector('input[type="text"]');
+    if (input) input.value = name;
+    if (key) row.dataset.suggested = key;
+
+    return row;
+  }
+
+  function removePageRow(pagesList, key) {
+    const row = rowForSuggestion(pagesList, key);
+
+    if (!row) return;   // they deleted it themselves
 
     // The form requires at least one service page, so the last row is
     // emptied rather than removed — deleting it would leave the step with no
     // input at all and the customer with nothing to type into.
     if (pageRowInputs(pagesList).length === 1) {
-      input.value = '';
+      const input = row.querySelector('input[type="text"]');
+      if (input) input.value = '';
+      delete row.dataset.suggested;
       return;
     }
 
-    input.closest('.page-row')?.remove();
+    row.remove();
     reindexPageRows(pagesList);
   }
 
@@ -2157,45 +2206,136 @@
          + 'Tick more and we will help you top up.';
   }
 
-  function renderSuggestions(panel, pagesList, data) {
+  /**
+   * How many times the suggestion list may be asked for, per business type.
+   *
+   * Two batches is forty names, which is more than any business has. Past
+   * that somebody is browsing rather than building, and each press is a model
+   * call that costs money and produces nothing. The remaining services get
+   * typed in, which is what the form was always for.
+   *
+   * This lives in the browser, so it is a decision about the interface and
+   * NOT a spending control. The one that binds is suggestServicesLimiter on
+   * the server: anyone who can press the button can also call the endpoint
+   * directly and ignore this number entirely.
+   */
+  const MAX_SUGGESTION_BATCHES = 2;
+
+  /** Every suggestion across every batch, as ids. */
+  function suggestedKeys(batches) {
+    return new Set(
+      (batches || []).flatMap(batch =>
+        (Array.isArray(batch.services) ? batch.services : []).map(suggestionKey))
+    );
+  }
+
+  /**
+   * Take away the rows that came from a suggestion, keeping what they typed.
+   *
+   * Used when the business type changes: a list of plumbing services is
+   * wrong for an HVAC company, and so are the rows it created. Anything
+   * typed by hand stays, because nothing about it has become wrong.
+   *
+   * It works off the stored batches rather than off the rows' own tags,
+   * because this step is rebuilt from scratch every time it is shown — the
+   * rows come back from state.pages carrying no tag at all.
+   */
+  function dropSuggestedRows(pagesList, batches) {
+    const keys = suggestedKeys(batches);
+
+    pageRowInputs(pagesList).forEach(input => {
+      if (!keys.has(suggestionKey(input.value))) return;
+
+      if (pageRowInputs(pagesList).length === 1) {
+        input.value = '';
+        delete input.closest('.page-row').dataset.suggested;
+        return;
+      }
+      input.closest('.page-row')?.remove();
+    });
+
+    reindexPageRows(pagesList);
+  }
+
+  /**
+   * One batch of suggestions, as its own block.
+   *
+   * APPENDED, never replacing what is already on screen. The first version
+   * replaced the panel, so pressing the button a second time left the rows
+   * from the first batch with no box above them — ticked services the
+   * customer could no longer untick. Edwin found that within a day.
+   *
+   * @param {boolean} fresh  true when this batch has just come back from the
+   *   server, false when the step is being rebuilt from what was stored.
+   *   Only a fresh batch creates rows; re-rendering one must not resurrect a
+   *   row the customer has since unticked.
+   */
+  function renderBatch(panel, pagesList, data, batchNumber, fresh) {
     const services = Array.isArray(data.services) ? data.services : [];
+    const block = el('div', { class: 'mb-2 js-suggest-batch' });
+    panel.appendChild(block);
 
     if (!services.length) {
-      panel.innerHTML =
+      block.innerHTML =
         '<div class="form-text">No suggestions came back. Add your services below.</div>';
       return;
     }
 
-    const already = new Set(currentPageNames().map(n => n.toLowerCase()));
     const checked = Math.max(0, Math.min(Number(data.checked) || 0, services.length));
 
-    panel.innerHTML = `
+    // Rows first, ticks second. A box is ticked when its service has a row —
+    // one rule for both cases, rather than one rule for a fresh batch and
+    // another for a restored one.
+    if (fresh) {
+      services.slice(0, checked).forEach(name => {
+        const key = suggestionKey(name);
+        const already = pageRowInputs(pagesList)
+          .some(input => suggestionKey(input.value) === key);
+
+        if (!already) addOrFillPageRow(pagesList, name, key);
+      });
+    }
+
+    const items = services.map((name, i) => {
+      const key = suggestionKey(name);
+
+      // A service the customer has already typed adopts THEIR row rather
+      // than adding a second one, and the row is tagged so the box can
+      // control it from here on.
+      const mine = pageRowInputs(pagesList)
+        .find(input => suggestionKey(input.value) === key);
+
+      if (mine) mine.closest('.page-row').dataset.suggested = key;
+
+      return { name, key, id: `suggest-${batchNumber}-${i}`, onForm: !!mine };
+    });
+
+    block.innerHTML = `
+      ${batchNumber > 0 ? '<div class="form-text mt-2 mb-1">A few more:</div>' : ''}
       <div class="row row-cols-1 row-cols-md-2 g-2 mb-2">
-        ${services.map((name, i) => `
+        ${items.map(({ name, key, id, onForm }) => `
           <div class="col">
             <div class="form-check">
               <input class="form-check-input js-suggested" type="checkbox"
-                     id="suggest-${i}" value="${escapeHtml(name)}"
-                     ${i < checked || already.has(name.toLowerCase()) ? 'checked' : ''}>
-              <label class="form-check-label" for="suggest-${i}">${escapeHtml(name)}</label>
+                     id="${id}" value="${escapeHtml(name)}"
+                     data-key="${escapeHtml(key)}"
+                     ${onForm ? 'checked' : ''}>
+              <label class="form-check-label" for="${id}">${escapeHtml(name)}</label>
             </div>
           </div>`).join('')}
       </div>
-      <div class="form-text">${escapeHtml(budgetNote(checked, services.length))}</div>
+      ${fresh
+        ? `<div class="form-text">${escapeHtml(budgetNote(checked, services.length))}</div>`
+        : ''}
     `;
 
-    // The ticked ones become rows straight away. Anything already on the
-    // form keeps its row rather than gaining a second one.
-    services.slice(0, checked).forEach(name => {
-      if (!already.has(name.toLowerCase())) addOrFillPageRow(pagesList, name);
-    });
-
-    panel.querySelectorAll('.js-suggested').forEach(box => {
+    block.querySelectorAll('.js-suggested').forEach(box => {
       box.addEventListener('change', async () => {
         const name = box.value;
+        const key = box.dataset.key;
 
         if (!box.checked) {
-          removePageRow(pagesList, name);
+          removePageRow(pagesList, key);
           refreshCredits();
           return;
         }
@@ -2220,7 +2360,7 @@
           box.disabled = false;
         }
 
-        addOrFillPageRow(pagesList, name);
+        addOrFillPageRow(pagesList, name, key);
       });
     });
   }
@@ -2235,38 +2375,66 @@
       + 'is usually hired for, most common first.');
 
     const panel = el('div', { class: 'mt-3' });
+    const note = el('div', { class: 'form-text mt-2' });
 
-    wrap.append(intro, button, panel);
+    wrap.append(intro, button, panel, note);
+
+    // A different business now. Plumbing services are wrong for an HVAC
+    // company, so the old list goes and the two presses come back.
+    if (state.suggestionsFor && state.suggestionsFor !== state.businessType) {
+      dropSuggestedRows(pagesList, state.suggestionBatches);
+      state.suggestionBatches = [];
+      state.suggestionsFor = '';
+    }
+
+    function syncButton() {
+      const used = (state.suggestionBatches || []).length;
+
+      if (used >= MAX_SUGGESTION_BATCHES) {
+        button.disabled = true;
+        button.textContent = 'No more suggestions';
+        note.textContent =
+          'That is everything we would suggest for this kind of business. '
+          + 'Add any others with "+ Add page" below.';
+        return;
+      }
+
+      button.disabled = false;
+      button.textContent = used ? 'Suggest a few more' : 'Suggest services for me';
+      note.textContent = '';
+    }
 
     // Suggestions survive stepping back and forth, because this step is
     // rebuilt from scratch each time it is shown and re-asking would mean
     // another model call for a list the customer has already seen.
-    if (state.suggestions) {
-      renderSuggestions(panel, pagesList, state.suggestions);
-    }
+    (state.suggestionBatches || []).forEach((batch, i) =>
+      renderBatch(panel, pagesList, batch, i, false));
+
+    syncButton();
 
     button.addEventListener('click', async () => {
       if (!state.businessType) {
-        panel.innerHTML =
-          '<div class="form-text">Choose a business type first and we can suggest services.</div>';
+        note.textContent = 'Choose a business type first and we can suggest services.';
         return;
       }
+      if ((state.suggestionBatches || []).length >= MAX_SUGGESTION_BATCHES) return;
 
       button.disabled = true;
-      const label = button.textContent;
       button.innerHTML =
         '<span class="spinner-border spinner-border-sm me-2"></span>Thinking…';
+      note.textContent = '';
 
       try {
         const data = await fetchSuggestions();
-        state.suggestions = data;
-        renderSuggestions(panel, pagesList, data);
+
+        state.suggestionBatches = (state.suggestionBatches || []).concat([data]);
+        state.suggestionsFor = state.businessType;
+
+        renderBatch(panel, pagesList, data, state.suggestionBatches.length - 1, true);
       } catch (err) {
-        panel.innerHTML =
-          `<div class="form-text">${escapeHtml(err.message)}</div>`;
+        note.textContent = err.message;
       } finally {
-        button.disabled = false;
-        button.textContent = label;
+        syncButton();
       }
     });
   }
@@ -2581,7 +2749,8 @@
   state.addLocations      = true;
   state.styleKey = 'style';
   // A new site is a new business; last one's services must not carry over.
-  state.suggestions       = null;
+  state.suggestionBatches = [];
+  state.suggestionsFor    = '';
 
 
   // 6) Jump back to the first step (Business Type)

@@ -404,7 +404,37 @@ async function suggestServices(ctx = {}, opts = {}) {
     throw new Error('service suggestions: model returned no services array');
   }
 
-  return cleanServices(parsed.data.services, { limit: count, businessType, exclude });
+  const result = cleanServices(parsed.data.services, { limit: count, businessType, exclude });
+
+  // What the call actually cost, passed back for the log line.
+  //
+  // This endpoint is not billed, so the only way to know whether that is
+  // affordable is to measure it. A guess about token counts is not a number
+  // anyone should set a rate limit from.
+  //
+  // Optional on purpose: a stubbed or injected client need not provide it,
+  // and a missing usage block must not fail a call that otherwise worked.
+  result.usage = readUsage(response);
+
+  return result;
+}
+
+/** The token counts, whatever shape the SDK puts them in. */
+function readUsage(response) {
+  const usage = response && response.usage;
+  if (!usage) return null;
+
+  const input = Number(usage.input_tokens ?? usage.prompt_tokens);
+  const output = Number(usage.output_tokens ?? usage.completion_tokens);
+  const total = Number(usage.total_tokens);
+
+  return {
+    input: Number.isFinite(input) ? input : null,
+    output: Number.isFinite(output) ? output : null,
+    total: Number.isFinite(total)
+      ? total
+      : (Number.isFinite(input) && Number.isFinite(output) ? input + output : null),
+  };
 }
 
 /**
