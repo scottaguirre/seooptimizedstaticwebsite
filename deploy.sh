@@ -38,6 +38,10 @@ fi
 echo "Running tests..."
 node test-business-shape.js > /dev/null
 node test-page-meta.js      > /dev/null
+node test-location-pages.js > /dev/null
+node test-phone.js          > /dev/null
+node test-app-header.js     > /dev/null
+node test-suggest-services.js > /dev/null
 node test-blog-plan.js      > /dev/null
 node test-anchor-pool.js    > /dev/null
 node test-home-anchors.js   > /dev/null

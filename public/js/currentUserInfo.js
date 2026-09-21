@@ -36,11 +36,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         Credits: ${user.credits}
       </span>
 
-      <a href="/buy-credits" class="btn btn-warning btn-sm ms-2">
+      <a href="/buy-credits" class="btn btn-outline-warning btn-sm ms-2">
         <i class="bi bi-cart-plus me-1"></i>
         Buy Credits
       </a>
     `;
+    // OUTLINE, not solid warning — 21 September.
+    //
+    // This was btn-warning, a filled yellow button, which made it the loudest
+    // thing in the header. That hierarchy was backwards: buying credits is a
+    // means to an end and building a website is the end. Once "Build a
+    // Website" became a solid button the two competed, and the shout belongs
+    // to the action the product exists for.
+    //
+    // Still fully visible and one click away; just no longer shouting over
+    // the primary action.
 
     // Admin badge + dropdown with down arrow
     if (isAdmin) {

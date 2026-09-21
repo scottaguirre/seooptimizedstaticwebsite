@@ -21,7 +21,14 @@ const {
   contactMeta,
   locationMeta,
   businessNoun,
+  serviceList,
 } = require('./utils/pageMeta');
+
+/** n service pages, in the shape buildLocationPages passes them. */
+const SERVICE_PAGES = n =>
+  ['water-heater-repair', 'drain-cleaning', 'slab-leak-repair', 'emergency-plumbing']
+    .slice(0, n)
+    .map(f => ({ filename: `${f}.html` }));
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -151,6 +158,125 @@ test('a location page names the business and THAT location', () => {
   );
 });
 
+/* -------------------------------------------------------------------------
+ * The location description — 21 September
+ *
+ * It used to be `description: title`: 42 characters of a ~155 budget, on a
+ * page whose whole job is to rank for a town with no service page of its own.
+ * ---------------------------------------------------------------------- */
+
+test('a location description names the trade, the town and real services', () => {
+  const { description } = locationMeta('Austin, TX', BASE, SERVICE_PAGES(4));
+  assert.strictEqual(
+    description,
+    'Plumbing services in Austin, TX — water heater repair, drain cleaning and slab leak repair. Call (512) 894-6167.'
+  );
+});
+
+test('a location description is no longer a copy of the title', () => {
+  const meta = locationMeta('Austin, TX', BASE, SERVICE_PAGES(3));
+  assert.notStrictEqual(meta.description, meta.title);
+  assert.ok(meta.description.length > meta.title.length * 2, meta.description);
+});
+
+test('the location description does NOT contain the business name', () => {
+  // Same reasoning as serviceMeta: on these sites the name carries the primary
+  // keyword, so repeating it everywhere aims every page at the home page's
+  // term instead of its own. It is also already the whole title, one line up
+  // in the same search result.
+  const { description } = locationMeta('Austin, TX', BASE, SERVICE_PAGES(3));
+  assert.ok(!description.includes(BASE.businessName), description);
+});
+
+test('at most three services are named', () => {
+  const { description } = locationMeta('Austin, TX', BASE, SERVICE_PAGES(4));
+  assert.ok(!/emergency plumbing/.test(description), `a fourth service got in: ${description}`);
+});
+
+test('fewer than three services degrades cleanly', () => {
+  const desc = n => locationMeta('Austin, TX', BASE, SERVICE_PAGES(n)).description;
+
+  assert.strictEqual(desc(2),
+    'Plumbing services in Austin, TX — water heater repair and drain cleaning. Call (512) 894-6167.');
+  assert.strictEqual(desc(1),
+    'Plumbing services in Austin, TX — water heater repair. Call (512) 894-6167.');
+});
+
+test('no service pages drops the clause rather than dangling a dash', () => {
+  // One-Page Design sites have no service pages at all, and an older caller
+  // passes no `pages` argument. Neither may produce "… in Austin, TX — . Call".
+  for (const pages of [[], undefined]) {
+    const { description } = locationMeta('Austin, TX', BASE, pages);
+    assert.strictEqual(description, 'Plumbing services in Austin, TX. Call (512) 894-6167.');
+    assert.ok(!/—/.test(description), description);
+  }
+});
+
+test('no phone leaves no dangling "Call"', () => {
+  const { description } = locationMeta('Austin, TX', { ...BASE, phone: '' }, SERVICE_PAGES(3));
+  assert.ok(!/Call/.test(description), description);
+  assert.ok(description.endsWith('.'), description);
+});
+
+test('the trade noun is the shared one, so awkward types stay correct', () => {
+  // "Law firm services" is the mistake serviceNoun() exists to prevent, and
+  // the home page and service pages already use it. All three must agree.
+  const { description } = locationMeta(
+    'Austin, TX',
+    { ...BASE, businessType: 'Lemon Law Firm' },
+    [{ filename: 'wrongful-termination.html' }]
+  );
+  assert.ok(description.startsWith('Legal services in Austin, TX'), description);
+});
+
+test('every location description fits a search result', () => {
+  // ~155 characters is what Google shows. Three services plus the longest
+  // realistic town must still fit.
+  const { description } = locationMeta('Dripping Springs, TX', BASE, SERVICE_PAGES(3));
+  assert.ok(description.length <= 155, `${description.length}: ${description}`);
+});
+
+test('serviceList joins without a serial comma and lower-cases', () => {
+  assert.strictEqual(serviceList(SERVICE_PAGES(3)),
+    'water heater repair, drain cleaning and slab leak repair');
+  assert.strictEqual(serviceList(SERVICE_PAGES(2)), 'water heater repair and drain cleaning');
+  assert.strictEqual(serviceList(SERVICE_PAGES(1)), 'water heater repair');
+  assert.strictEqual(serviceList([]), '');
+  assert.strictEqual(serviceList(), '');
+  assert.strictEqual(serviceList([{ filename: 'Water-Heater-Repair.html' }]), 'water heater repair');
+});
+
+test('serviceList survives junk in the page list', () => {
+  // These come from user-supplied filenames.
+  assert.strictEqual(serviceList([null, undefined, {}, { filename: '' }]), '');
+  assert.strictEqual(
+    serviceList([{ filename: '' }, { filename: 'drain-cleaning.html' }]),
+    'drain cleaning'
+  );
+});
+
+test('buildLocationPages actually passes the service pages', () => {
+  // Everything above tests locationMeta DIRECTLY, so all of it stays green
+  // while the caller quietly stops handing over `pages` — the function would
+  // be perfect and the feature a no-op on every real site, falling back to
+  // "Plumbing services in Austin, TX. Call …" with no services named.
+  //
+  // A mutation dropping the argument survived until this test existed. It is
+  // the same failure as anchorType being dropped in normaliseTargets: the unit
+  // is right, the wiring is not, and only the wiring ships.
+  const fs = require('fs');
+  const path = require('path');
+
+  const src = fs.readFileSync(path.join(__dirname, 'utils/buildLocationPages.js'), 'utf8');
+  const call = src.match(/locationMeta\(([^)]*)\)/);
+
+  assert.ok(call, 'buildLocationPages no longer calls locationMeta');
+  const args = call[1].split(',').map(s => s.trim());
+  assert.strictEqual(args.length, 3,
+    `locationMeta is called with ${args.length} arguments: ${call[1]}`);
+  assert.strictEqual(args[2], 'pages', `third argument is "${args[2]}", not the service pages`);
+});
+
 test('the contact page is the trade and the place', () => {
   assert.strictEqual(contactMeta(BASE).title, 'Plumbing in Round Rock, TX');
 });
@@ -163,7 +289,7 @@ const everyPage = (globalValues = BASE) => [
   ['rankfast home', indexMeta({ ...globalValues, siteMode: 'rankfast' })],
   ['lead home',     indexMeta({ ...globalValues, siteMode: 'lead' })],
   ['service',       serviceMeta('Water Heater Repair', globalValues)],
-  ['location',      locationMeta('Austin, TX', globalValues)],
+  ['location',      locationMeta('Austin, TX', globalValues, SERVICE_PAGES(3))],
   ['contact',       contactMeta(globalValues)],
 ];
 
@@ -207,15 +333,22 @@ test('title and description never disagree about the business name', () => {
 });
 
 test('a description is longer than its title, on the pages that bother', () => {
-  // Location and contact deliberately reuse the title; the rest should not,
-  // because an identical description wastes most of a ~155-character budget.
+  // Only CONTACT still reuses its title. Location stopped on 21 September —
+  // if it is ever excluded from this loop again, that has regressed.
   for (const [label, meta] of everyPage()) {
-    if (label === 'location' || label === 'contact') continue;
+    if (label === 'contact') continue;
     assert.ok(
       meta.description.length > meta.title.length,
       `${label}: description is not longer than the title`
     );
   }
+});
+
+test('the contact page is the last one still reusing its title', () => {
+  // Recorded rather than asserted as correct: it is the remaining instance of
+  // the thing this file exists to stop, and it is on the list to fix.
+  const meta = contactMeta(BASE);
+  assert.strictEqual(meta.description, meta.title);
 });
 
 test('businessNoun picks a noun that is not "company" for professionals', () => {

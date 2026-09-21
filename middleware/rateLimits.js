@@ -207,6 +207,27 @@ const blogSuggestLimiter = rateLimit({
   message: (req, res) => retryMessage(req, res, 'topic requests'),
 });
 
+/**
+ * Service page suggestions for the wizard.
+ *
+ * Also not billed, for the same reason: someone working out how big a site to
+ * buy should not be charged to find out. One model call each, so this limit is
+ * the only thing between a login and a free list generator.
+ *
+ * Fifteen an hour. Filling in one site needs one, maybe two if they change the
+ * business type; fifteen leaves room for a customer exploring several trades
+ * and still refuses anyone mining the endpoint. Keyed by user, so one person's
+ * exploring never blocks another's.
+ */
+const suggestServicesLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.SUGGEST_SERVICES_RATE_LIMIT) || 15,
+  keyGenerator: userOrIp,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: (req, res) => retryMessage(req, res, 'service suggestions'),
+});
+
 module.exports = {
   authLimiter,
   emailLimiter,
@@ -215,4 +236,5 @@ module.exports = {
   blogApiLimiter,
   blogActivateLimiter,
   blogSuggestLimiter,
+  suggestServicesLimiter,
 };

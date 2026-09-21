@@ -11,6 +11,7 @@ const { cleanDirectory } = require('../utils/helpers');
 const BlogSite = require('../models/BlogSite');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
+const { withAppHeader } = require('../utils/appHeader');
 
 const projectRoot = path.join(__dirname, '..');
 const baseDistDir = path.join(projectRoot, 'dist');
@@ -57,8 +58,10 @@ function page({ title, heading, body, actions, status = 200, csrfToken = '' }) {
   <title>${title}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+{{HEADER_ASSETS}}
 </head>
 <body style="background:#082d5b;">
+{{HEADER}}
   <div class="container py-5" style="max-width: 800px;">
     <div class="card shadow-lg"><div class="card-body p-5">
       <h1 class="h3 mb-3">${heading}</h1>
@@ -134,12 +137,17 @@ function page({ title, heading, body, actions, status = 200, csrfToken = '' }) {
       });
     })();
   </script>
+{{HEADER_SCRIPTS}}
 </body>
 </html>` };
 }
 
 function send(res, spec) {
-  return res.status(spec.status).send(spec.html);
+  // withAppHeader fills {{HEADER_ASSETS}}, {{HEADER}} and {{HEADER_SCRIPTS}}
+  // that page() wrote. It happens HERE rather than in page() because the
+  // logout form needs res.locals.csrfField and page() never receives res —
+  // one line instead of threading a token through every page() call site.
+  return res.status(spec.status).send(withAppHeader(spec.html, res));
 }
 
 

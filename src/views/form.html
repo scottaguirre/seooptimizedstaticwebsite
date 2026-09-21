@@ -6,7 +6,14 @@
   <title>Generate Website Pages</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <link rel="stylesheet" href="/logo-shape-picker.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+
+  <!-- The header's stylesheet and CSS. Filled by routes/formRoute.js from
+       utils/appHeader.js — the SAME source the dashboard and the build page
+       use, so there is exactly one place to edit the header.
+
+       This is where the bootstrap-icons link and the .header-background /
+       .padding-right-header rules used to be written out by hand. -->
+  {{HEADER_ASSETS}}
 
  
   <style>
@@ -14,18 +21,17 @@
       background: #082d5b;;
     }
 
-    header {
-      border-bottom: 2px #171717 solid;
-      box-shadow: 1px 8px 5px #171717;
-    }
+    /* The header's own rules moved to utils/appHeader.js on 21 September and
+       arrive from the assets placeholder near the top of this head. They were
+       the bare "header" rule, ".padding-right-header" and
+       ".header-background". Do not add header styling back here — it would
+       apply to this page only, and the dashboard and the build page would
+       quietly look different.
 
-    .padding-right-header {
-      padding-right:50px !important;
-    }
-
-    .header-background {
-      background: #082d5b !important;
-    }
+       NOTE: do not write a placeholder name in a comment. The substitution in
+       formRoute.js is a global regex, so a mention inside a comment is filled
+       in too — which is how this very comment once injected a second copy of
+       the whole header stylesheet into the middle of this <style> block. */
 
     .card {
       border: none;
@@ -88,42 +94,13 @@
 
 </head>
 <body>
-  <header class="d-flex justify-content-between align-items-center p-3 bg-dark text-white header-background padding-right-header">
-    <div>
-      <strong>SEO Site Generator</strong>
-      <span id="user-info" class="ms-3 small"></span>
-    </div>
-  
-    <div class="d-flex align-items-center gap-3">
-  
-      <!-- Actions area (Buy credits + Admin menu) -->
-      <div id="user-actions"></div>
-  
-      <!-- Profile Icon + Dropdown -->
-      <div class="dropdown">
-        <i class="bi bi-person-circle fs-4 dropdown-toggle" 
-           role="button"
-           id="profileMenuButton"
-           data-bs-toggle="dropdown"
-           aria-expanded="false"
-           style="cursor: pointer;">
-        </i>
-  
-        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark" aria-labelledby="profileMenuButton">
-          <li><a class="dropdown-item" href="/dashboard">My Dashboard</a></li>
-          <li><a class="dropdown-item" href="/buy-credits">Buy Credits</a></li>
-          <li><hr class="dropdown-divider"></li>
-          <li>
-            <form action="/logout" method="POST" class="px-3">
-              {{CSRF}}
-              <button class="btn btn-danger btn-sm w-100">Logout</button>
-            </form>
-          </li>
-        </ul>
-      </div>
-      
-    </div>
-  </header>
+  <!-- The app header. Filled by routes/formRoute.js from utils/appHeader.js,
+       which is the SAME source the dashboard and the build page use.
+
+       There is now exactly ONE place the header exists. Do not paste markup
+       back in here: it would change this page only, and the other two would
+       silently fall behind. -->
+  {{HEADER}}
   
   
   
@@ -183,12 +160,19 @@
   </div>
 
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- The header's scripts: bootstrap.bundle (the profile dropdown will not
+       open without it) and currentUserInfo.js (fills the credits badge).
+       Both used to be written out here by hand — bootstrap on this line,
+       currentUserInfo at the bottom of the list.
+
+       It stays FIRST because bootstrap.bundle is not deferred and the page's
+       own scripts below are, so this preserves the original execution order. -->
+  {{HEADER_SCRIPTS}}
+
   <script src="/js/hoursOfOperation.js" defer></script>
   <!-- load before your dynamic form builder so helpers are ready -->
   <script src="/js/locationPages.js" defer></script>
   <script src="/js/generateDinamycForm.js" defer></script>
   <script src="/js/spinner.js" defer></script>
-  <script src="/js/currentUserInfo.js" defer></script> 
 </body>
 </html>

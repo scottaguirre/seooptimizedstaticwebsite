@@ -158,20 +158,93 @@ function serviceMeta(serviceName, globalValues = {}) {
 }
 
 /**
- * A location page, named for the business and that location.
+ * Up to three service names, read off the site's own service pages.
  *
- *   Quality Plumbing Leander in Austin, TX
+ *   [{ filename: 'water-heater-repair.html' }, ...]  ->  'water heater repair,
+ *   drain cleaning and slab leak repair'
+ *
+ * Lower case, because the result sits mid-sentence in a meta description.
+ * Serial comma deliberately absent: "a, b and c" is how the rest of the copy
+ * in this app reads.
+ *
+ * Three is a judgement, not a constraint — it fills roughly 45 characters of
+ * a ~155 budget and leaves room for the town and the phone number. A site with
+ * fewer service pages simply names fewer; One-Page Design sites have none at
+ * all and get ''.
+ */
+function serviceList(pages = [], limit = 3) {
+  const names = (Array.isArray(pages) ? pages : [])
+    .map(p => clean(p && p.filename).replace(/\.html$/i, '').replace(/-/g, ' ').toLowerCase())
+    .filter(Boolean)
+    .slice(0, limit);
+
+  if (!names.length) return '';
+  if (names.length === 1) return names[0];
+
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * A location page.
+ *
+ *   title        Emergency Plumber Round Rock in Austin, TX
+ *   description  Plumbing services in Austin, TX — water heater repair, drain
+ *                cleaning and slab leak repair. Call (512) 894-6167.
+ *
+ * THE DESCRIPTION IS NO LONGER A COPY OF THE TITLE — 21 September.
+ *
+ * It was `description: title` — 42 characters of a ~155 budget, on a page
+ * whose entire job is to rank for a town that has no service page of its own.
+ * The comment on leadIndexMeta already made this argument ("an identical one
+ * wastes most of the space"); it had simply never been applied here.
+ *
+ * WHY THE DESCRIPTION LEADS WITH THE SERVICE AND THE TITLE LEADS WITH THE NAME
+ *
+ * They are two lines of one search result, so repeating the business name in
+ * both spends the description's opening words on something the searcher has
+ * already read. Leading with the trade and the town instead puts the words
+ * they actually typed into the snippet twice across the two lines.
+ *
+ * NO BUSINESS NAME IN THE DESCRIPTION, for the same reason serviceMeta leaves
+ * it off: on these sites the name contains the primary keyword, so repeating
+ * it everywhere aims every page at the home page's term rather than its own.
+ *
+ * A NOTE ON WHAT THIS DOES NOT FIX. Every location page still says the same
+ * thing with a different town, because the business offers the same services
+ * everywhere. That is expected of location pages and is not what this changes.
+ * What it changes is a description that said nothing.
  *
  * @param {string} locationDisplay  e.g. "Austin, TX" — NOT the site's main
  *                                  location, but the one this page covers
+ * @param {object} globalValues
+ * @param {Array}  [pages]          the site's service pages. Absent on a
+ *                                  One-Page Design site, and absent from any
+ *                                  caller that predates this change, which is
+ *                                  why the clause is dropped rather than the
+ *                                  description being wrong.
  */
-function locationMeta(locationDisplay, globalValues = {}) {
+function locationMeta(locationDisplay, globalValues = {}, pages = []) {
   const name = clean(globalValues.businessName);
   const place = clean(locationDisplay);
+  const phone = clean(globalValues.phone);
 
   const title = place ? `${name} in ${place}` : name;
 
-  return { title, description: title };
+  // "plumbing services", "legal services" — the same helper the home page and
+  // the service pages use, so the three never disagree about what the business
+  // sells. It knows the awkward ones: Law Firm is not "law firm services".
+  const services = serviceNoun(globalValues.businessType);
+
+  // Capitalised because it opens the sentence.
+  const opener = services.charAt(0).toUpperCase() + services.slice(1);
+
+  const subject = place ? `${opener} in ${place}` : opener;
+  const list = serviceList(pages);
+
+  const parts = [list ? `${subject} — ${list}.` : `${subject}.`];
+  if (phone) parts.push(`Call ${phone}.`);
+
+  return { title, description: parts.join(' ') };
 }
 
 module.exports = {
@@ -180,5 +253,6 @@ module.exports = {
   contactMeta,
   serviceMeta,
   locationMeta,
+  serviceList,
   emergencyPrefix,
 };

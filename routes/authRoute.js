@@ -11,6 +11,7 @@ const { getCurrentSite } = require('../utils/currentSite');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { renderAuthPage } = require('../utils/renderAuthPage');
+const { appHeader, appHeaderAssets, appHeaderScripts } = require('../utils/appHeader');
 const { createVerificationToken, hashToken, notExpired } = require('../utils/authTokens');
 const { sendEmail, verificationEmail } = require('../utils/sendEmail');
 
@@ -353,6 +354,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Dashboard</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        ${appHeaderAssets()}
         <style>
           #overlay {
             position: fixed; inset: 0; background: rgba(228, 219, 219, 0.8);
@@ -363,6 +365,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         </style>
       </head>
       <body style="background:#082d5b;" class=" text-white">
+        ${appHeader(res.locals.csrfField || '')}
         <div class="container mt-5 mb-5" style="max-width: 820px;">
           <h1 class="mb-4">Dashboard</h1>
 
@@ -382,14 +385,23 @@ router.get('/dashboard', requireAuth, async (req, res) => {
             </div>
           </div>
 
-          <div class="d-flex gap-2">
-            <a href="/" class="btn btn-primary">Go to Generator</a>
-            <a href="/buy-credits" class="btn btn-warning">Buy Credits</a>
-            <form action="/logout" method="POST" class="m-0">
-              ${res.locals.csrfField || ''}
-              <button type="submit" class="btn btn-danger">Logout</button>
-            </form>
-          </div>
+          <!-- The bottom button row is GONE — 21 September.
+               It was: Go to Generator / Buy Credits / Logout.
+
+               All three are in the header now, on every page rather than only
+               this one. Buy Credits and Logout moved there when the header was
+               shared out; "Go to Generator" became the header's "Build a
+               Website" button, which is the same destination with a better
+               label.
+
+               They were left in place at first on the reasoning that a body
+               CTA does a different job from a nav link — true while it WAS a
+               link, and false once it became a button. Keeping them would be
+               the same three actions twice on one page.
+
+               The dashboard still has its real actions: Preview, Download,
+               Convert to WordPress and Manage sites, all on the cards above.
+               Do not add a navigation row back here. -->
         </div>
 
         <div id="overlay">
@@ -471,6 +483,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
             }
           })();
         </script>
+        ${appHeaderScripts()}
       </body>
       </html>
     `);

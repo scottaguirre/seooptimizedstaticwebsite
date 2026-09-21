@@ -15,6 +15,7 @@ const formRoute = require('./routes/formRoute');
 const authRoute = require('./routes/authRoute');
 const adminRoute = require('./routes/adminRoute');
 const creditsRoute = require('./routes/creditsRoute');
+const suggestServicesRoute = require('./routes/suggestServicesRoute');
 const requireAuth = require('./middleware/requireAuth');
 const { requireOwnDist } = require('./middleware/requireOwnDist');
 const helmet = require('helmet');
@@ -302,6 +303,7 @@ app.use('/', authRoute);
 
 // ===== PROTECTED ROUTES (requireAuth) =====
 app.use('/', requireAuth, creditsRoute);      // /api/check-credits
+app.use('/', requireAuth, suggestServicesRoute); // /api/suggest-services
 app.use('/', requireAuth, adminRoute);        // /admin section
 app.use('/', requireAuth, formRoute);         // /
 app.use('/', requireAuth, generateRoute);     // /generate

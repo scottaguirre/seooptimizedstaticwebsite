@@ -87,6 +87,49 @@ function copyDirRecursive(src, dest) {
 
 
 
+/**
+ * Is this a dialable North American phone number?
+ *
+ * WHY A FORMAT CHECK EXISTS AT ALL — 21 September
+ *
+ * `phone` was in requiredGlobalFields, so a BLANK one was rejected. Nothing
+ * checked the format, and `<input type="tel">` does no format validation in
+ * browsers — unlike type="email", it accepts any string. So "x", "555" and
+ * "call me" all passed every layer and generated a complete site:
+ *
+ *     title   Acme Plumbing in Austin, TX | Call call me
+ *     link    tel:+1
+ *
+ * That string goes into every page title, every meta description, the
+ * LocalBusiness schema and every click-to-call link, and the build charges
+ * 500 credits. The customer finds out when nobody rings.
+ *
+ * WHAT COUNTS AS VALID
+ *
+ * Ten digits, or eleven beginning with 1. Punctuation and spaces are ignored
+ * entirely — "(512) 894-6167", "512-894-6167", "512.894.6167" and
+ * "+1 512 894 6167" are the same number, and rejecting a customer's preferred
+ * formatting would be a worse bug than the one this fixes.
+ *
+ * A leading + is allowed and stripped. Anything else non-numeric is allowed in
+ * the input and ignored; what matters is the digit count, because that is what
+ * decides whether tel: produces a working link.
+ *
+ * NOT an E.164 or international validator. This product sells US local-SEO
+ * sites and every other part of it assumes that — formatPhoneForHref() hard-
+ * codes +1, and the state list in validateAndNormalizeLocationPages is US
+ * only. If that ever changes, this is one of the places that has to change
+ * with it.
+ */
+function isDialablePhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+
+  if (digits.length === 10) return true;
+  if (digits.length === 11 && digits.startsWith('1')) return true;
+
+  return false;
+}
+
 // 3. Validate Global Fields
 function validateGlobalFields(global) {
   const requiredGlobalFields = [
@@ -107,12 +150,35 @@ function validateGlobalFields(global) {
     fields.push({ name: `global[${f}]`, message: 'Required' });
   }
 
+  // A phone that is present but not dialable. Only checked when one was
+  // supplied — a blank phone is already reported as Required above, and two
+  // messages on one field would be noise.
+  const phone = (global.phone || '').toString().trim();
+  if (phone && !isDialablePhone(phone)) {
+    fields.push({
+      name: 'global[phone]',
+      message: 'Enter a 10-digit phone number, e.g. (512) 894-6167',
+    });
+  }
+
 
   // 4. Validate business hours input
+  //
+  // `hourFields`, NOT `fields`. This block used to declare its own
+  // `const fields = []`, which SHADOWED the outer array — so when the hours
+  // were wrong, the early return below sent back only the hours problems and
+  // silently discarded every field error collected above it.
+  //
+  // A customer with a missing business name AND a bad closing time was told
+  // about the closing time, fixed it, resubmitted, and only then learned about
+  // the business name. Two round-trips for one form.
+  //
+  // It also swallowed the phone check added directly above, which is how this
+  // was noticed.
   if (!global.is24Hours) {
     const hours = global.hours || {};
     const days = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
-    const fields = [];
+    const hourFields = [];
 
     const truthy = v => v === true || v === 'true' || v === 'on' || v === '1';
 
@@ -123,17 +189,20 @@ function validateGlobalFields(global) {
       const close = (day.close || '').toString().trim();
 
       if (!isClosed) {
-        if (!open)  fields.push({ name: `global[hours][${d}][open]`,  message: 'Required' });
-        if (!close) fields.push({ name: `global[hours][${d}][close]`, message: 'Required' });
+        if (!open)  hourFields.push({ name: `global[hours][${d}][open]`,  message: 'Required' });
+        if (!close) hourFields.push({ name: `global[hours][${d}][close]`, message: 'Required' });
 
         // Optional sanity: open must be before close (both "HH:MM" 24h)
         if (open && close && open >= close) {
-          fields.push({ name: `global[hours][${d}][close]`, message: 'Must be after open' });
+          hourFields.push({ name: `global[hours][${d}][close]`, message: 'Must be after open' });
         }
       }
     }
 
-    if (fields.length) {
+    if (hourFields.length) {
+      // Everything wrong with the form, in one response. The error line still
+      // names the hours because that is the headline when they are broken.
+      fields.push(...hourFields);
       return { ok: false, error: '❌ Missing/invalid business hours.', fields };
     }
   }
@@ -237,7 +306,65 @@ const validateEachPageInputs = function (pages) {
 
 
 // 7. === Location Pages helpers
-function validateAndNormalizeLocationPages(rawList, toggleValue) {
+
+/**
+ * Split "Austin, TX", "Austin TX" or bare "Austin" into comparable parts.
+ *
+ * Lower-cased with whitespace collapsed, because this is only ever used for
+ * comparison — never for display. Returns null for anything with no city.
+ */
+function parsePlace(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+
+  const m = text.match(/^(.+?)[,\s]+([A-Za-z]{2})$/);
+  const city = (m ? m[1] : text).toLowerCase().replace(/\s+/g, ' ').trim();
+  const state = m ? m[2].toLowerCase() : '';
+
+  return city ? { city, state } : null;
+}
+
+/**
+ * Are these the same town?
+ *
+ * The state is compared only when BOTH sides have one. "Round Rock" and
+ * "Round Rock, TX" are the same place typed two ways, and a customer who
+ * entered their main location without a state should still be stopped from
+ * adding it again as a location page.
+ *
+ * Two towns with the same name in different states — Austin, TX and Austin,
+ * MN — are correctly treated as different.
+ */
+function samePlace(a, b) {
+  if (!a || !b || a.city !== b.city) return false;
+  return !a.state || !b.state || a.state === b.state;
+}
+
+/**
+ * @param {Array}  rawList       the location page entries
+ * @param {*}      toggleValue   global.addLocations
+ * @param {string} [mainLocation] global.location — the site's own town
+ *
+ * WHY mainLocation IS CHECKED — 21 September
+ *
+ * A location page for the site's OWN town duplicates the home page. It always
+ * did on content; what made it worth blocking was the Rank Fast home title
+ * changing to "{name} in {city, state}", which made the location page's title
+ * an exact prefix of it:
+ *
+ *     home      Emergency Plumber Round Rock in Round Rock, TX | Call (512) 894-6167
+ *     location  Emergency Plumber Round Rock in Round Rock, TX
+ *
+ * Two pages, near-identical titles, near-identical content, no canonical
+ * saying which wins — which is the "Duplicate without user-selected canonical"
+ * report in Search Console, self-inflicted.
+ *
+ * The existing dedupe below compares entries against EACH OTHER. It never
+ * looked at the site's own location, so this was reachable by a customer
+ * typing their own town in the list — an easy thing to do, since the field
+ * does not say not to.
+ */
+function validateAndNormalizeLocationPages(rawList, toggleValue, mainLocation = '') {
   if (!truthy(toggleValue)) return { ok: true, locations: [], fields: [] };
 
   const arr = Array.isArray(rawList) ? rawList : (rawList ? [rawList] : []);
@@ -250,6 +377,10 @@ function validateAndNormalizeLocationPages(rawList, toggleValue) {
   const locations = [];
   const seen = new Set();
 
+  // The site's own town, parsed once. null when no main location was supplied,
+  // which disables the check rather than rejecting everything.
+  const mainPlace = parsePlace(mainLocation);
+
   arr.forEach((raw, i) => {
     const s = (raw || '').trim();
     const m = s.match(/^(.+?)[,\s]+([A-Za-z]{2})$/); // "City, ST" or "City ST"
@@ -261,6 +392,18 @@ function validateAndNormalizeLocationPages(rawList, toggleValue) {
     const state    = m[2].toUpperCase();
     if (!US.has(state)) {
       fields.push({ name:`global[locationPages][${i}]`, message:'Invalid state code' });
+      return;
+    }
+
+    // The site's own town. A page for it duplicates the home page — same
+    // content, and since 20 September a title that is a prefix of the home
+    // page's. Checked before the dedupe below, which only ever compared
+    // entries against each other.
+    if (samePlace(parsePlace(`${cityRaw} ${state}`), mainPlace)) {
+      fields.push({
+        name: `global[locationPages][${i}]`,
+        message: 'Your home page already covers this town — remove it, or use a different one',
+      });
       return;
     }
 
@@ -455,5 +598,10 @@ module.exports = {
   buildYouTubeEmbedHtml,
   buildAboutMediaHtml,
   validateEachPageInputs,
-  validateAndNormalizeLocationPages
+  validateAndNormalizeLocationPages,
+  // Exported for test-location-pages.js, which tests the town comparison
+  // directly rather than only through the validator.
+  parsePlace,
+  samePlace,
+  isDialablePhone
 };

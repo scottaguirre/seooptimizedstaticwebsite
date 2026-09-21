@@ -482,7 +482,11 @@
     // Final step data
     pages: [],            // service pages strings 
     addLocations: true,   // toggle default ON
-    locations: []         // array of strings
+    locations: [],        // array of strings
+
+    // The last reply from /api/suggest-services, so stepping back to this
+    // step shows the same list instead of paying for another model call.
+    suggestions: null
   };
 
   // DOM refs
@@ -1232,9 +1236,21 @@
 
 
         <!-- Phone -->
+        <!--
+          type="tel" validates NOTHING. Unlike type="email", a browser accepts
+          any string in a tel input, so "call me" satisfied the required
+          attribute and
+          generated a whole site with that text in every title, every meta
+          description and every click-to-call link.
+
+          The placeholder shows the expected shape. The actual check is
+          isPhoneLike() in the step validator below, backed by
+          isDialablePhone() on the server, which is the one that counts.
+        -->
         <div class="mb-3">
           <label class="form-label">Phone</label>
-          <input type="tel" name="global[phone]" class="form-control" required />
+          <input type="tel" name="global[phone]" class="form-control"
+                 placeholder="(512) 894-6167" required />
         </div>
 
 
@@ -1444,11 +1460,35 @@
       ];
       const inputs = requiredFields.map(name => container.querySelector(`[name="${name}"]`));
 
+      /**
+       * Ten digits, or eleven starting with 1 — the same rule as
+       * isDialablePhone() in utils/helpers.js.
+       *
+       * Deliberately duplicated rather than shared: this file is served to the
+       * browser and helpers.js is not, and a build step to share one function
+       * is not worth it for four lines. The SERVER is the authority; this only
+       * saves the customer a round-trip. If the rule changes, change both —
+       * test-phone.js asserts they agree by reading this file.
+       */
+      const isPhoneLike = (value) => {
+        const digits = String(value || '').replace(/\D/g, '');
+        return digits.length === 10 || (digits.length === 11 && digits.startsWith('1'));
+      };
+
       let firstInvalid = null;
+      let phoneBadFormat = false;
+
       inputs.forEach(input => {
         if (!input) return;
         const val = String(input.value || '').trim();
-        const ok = input.checkValidity() && val !== '';
+        let ok = input.checkValidity() && val !== '';
+
+        // type="tel" accepts any string, so checkValidity() passes "call me".
+        if (ok && input.getAttribute('name') === 'global[phone]' && !isPhoneLike(val)) {
+          ok = false;
+          phoneBadFormat = true;
+        }
+
         if (!ok) {
           if (!firstInvalid) firstInvalid = input;
           input.classList.add('is-invalid');
@@ -1456,6 +1496,14 @@
           input.classList.remove('is-invalid');
         }
       });
+
+      // A filled-but-malformed phone needs its own message: "Please fill out
+      // Phone" is wrong and confusing when the box visibly has something in it.
+      if (phoneBadFormat && firstInvalid?.getAttribute('name') === 'global[phone]') {
+        firstInvalid.focus();
+        showAlert(container, 'Enter a 10-digit phone number, e.g. (512) 894-6167.');
+        return;
+      }
 
       if (firstInvalid) {
         firstInvalid.focus();
@@ -1535,6 +1583,13 @@
 
     // ===== SERVICE PAGES =====
     const svcWrap = el('div', { class: 'mb-4' });
+
+    // The suggestion panel sits ABOVE the rows, because it is what most
+    // people will use to fill them — twenty-five services typed by hand is
+    // why most sites here end up with five.
+    const suggestWrap = el('div', { id: 'suggestBlock', class: 'mb-3' });
+    svcWrap.appendChild(suggestWrap);
+
     const pagesList = el('div', { id: 'pagesList' });
     svcWrap.appendChild(pagesList);
 
@@ -1546,6 +1601,8 @@
 
     const addRow = (val='') => addPageRow(pagesList, val);
     if (state.pages.length) state.pages.forEach(p => addRow(p)); else addRow('');
+
+    mountSuggestPanel(suggestWrap, pagesList);
 
     svcWrap.addEventListener('click', (e) => {
       if (e.target && e.target.classList.contains('btn-remove-page')) {
@@ -1984,7 +2041,7 @@
       if (lab) lab.textContent = `Page ${idx + 1}`;
     });
   }
-  function addPageRow(container, initialValue = '') {
+  function addPageRow(container, initialValue = '', opts = {}) {
     const row = el('div', { class: 'row g-2 align-items-end page-row mb-2' });
     row.innerHTML = `
       <div class="col-8">
@@ -1998,7 +2055,220 @@
     container.appendChild(row);
     if (initialValue) row.querySelector('input').value = initialValue;
     reindexPageRows(container);
-    row.querySelector('input')?.focus();
+
+    // Focus is right when the customer pressed "Add page" and is about to
+    // type. It is wrong when eight rows arrive at once from the suggestion
+    // list: each one would yank the page down to the newest field while they
+    // are still reading the list they just ticked.
+    if (opts.focus !== false) row.querySelector('input')?.focus();
+  }
+
+  /* ------------------------------------------------------------------
+   * Suggested service pages
+   * ------------------------------------------------------------------
+   * A Rank Fast site wants twenty-odd service pages and, until this, every
+   * one of them was a row somebody typed. Most people stopped at five —
+   * not because five is what their business does, but because the form was
+   * long. The site they paid for came out smaller than it should have been.
+   *
+   * WHY THE TICKED ONES ARE ADDED WITHOUT A CREDIT CHECK
+   *
+   * Because the server already did it. /api/suggest-services returns how
+   * many boxes the balance covers and ticks exactly that many; re-checking
+   * each one here would be the same arithmetic done twice, and the second
+   * copy is how a quote and a charge drift apart.
+   *
+   * Every box BELOW that line is still tickable, and ticking one goes
+   * through the same gate "Add page" does — the modal, the saved draft, the
+   * trip to buy credits. Somebody who wants a ninth page can have it; they
+   * are just told the price before they have typed it out.
+   * ---------------------------------------------------------------- */
+
+  function pageRowInputs(pagesList) {
+    return [...pagesList.querySelectorAll('.page-row input[type="text"]')];
+  }
+
+  /** Fill the blank row if there is one, rather than leaving it stranded. */
+  function addOrFillPageRow(pagesList, name) {
+    const blank = pageRowInputs(pagesList).find(input => !input.value.trim());
+
+    if (blank) {
+      blank.value = name;
+      return;
+    }
+    addPageRow(pagesList, name, { focus: false });
+  }
+
+  function removePageRow(pagesList, name) {
+    const wanted = name.trim().toLowerCase();
+    const input = pageRowInputs(pagesList)
+      .find(field => field.value.trim().toLowerCase() === wanted);
+
+    if (!input) return;   // they renamed or deleted it themselves
+
+    // The form requires at least one service page, so the last row is
+    // emptied rather than removed — deleting it would leave the step with no
+    // input at all and the customer with nothing to type into.
+    if (pageRowInputs(pagesList).length === 1) {
+      input.value = '';
+      return;
+    }
+
+    input.closest('.page-row')?.remove();
+    reindexPageRows(pagesList);
+  }
+
+  async function fetchSuggestions() {
+    const csrf = document
+      .querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+    const res = await fetch('/api/suggest-services', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+      body: JSON.stringify({
+        businessType: state.businessType,
+        location: (state.mainFormSnapshot || {})['global[location]'] || '',
+        siteMode: state.siteMode,
+        // Locations and the rows already typed both change what the balance
+        // covers, so the server needs them to tick the right number.
+        locationPages: currentLocationNames().length,
+        existing: currentPageNames(),
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not suggest services just now.');
+    }
+    return data;
+  }
+
+  /** The line under the list explaining why some boxes are ticked. */
+  function budgetNote(checked, total) {
+    if (checked >= total && total > 0) {
+      return 'Your credits cover all of these. Untick anything you do not want.';
+    }
+    if (checked === 0) {
+      return 'None are ticked because your credits are already spoken for. '
+           + 'Tick any you want and we will help you top up.';
+    }
+    return `The first ${checked} are ticked — that is what your credits cover. `
+         + 'Tick more and we will help you top up.';
+  }
+
+  function renderSuggestions(panel, pagesList, data) {
+    const services = Array.isArray(data.services) ? data.services : [];
+
+    if (!services.length) {
+      panel.innerHTML =
+        '<div class="form-text">No suggestions came back. Add your services below.</div>';
+      return;
+    }
+
+    const already = new Set(currentPageNames().map(n => n.toLowerCase()));
+    const checked = Math.max(0, Math.min(Number(data.checked) || 0, services.length));
+
+    panel.innerHTML = `
+      <div class="row row-cols-1 row-cols-md-2 g-2 mb-2">
+        ${services.map((name, i) => `
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input js-suggested" type="checkbox"
+                     id="suggest-${i}" value="${escapeHtml(name)}"
+                     ${i < checked || already.has(name.toLowerCase()) ? 'checked' : ''}>
+              <label class="form-check-label" for="suggest-${i}">${escapeHtml(name)}</label>
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="form-text">${escapeHtml(budgetNote(checked, services.length))}</div>
+    `;
+
+    // The ticked ones become rows straight away. Anything already on the
+    // form keeps its row rather than gaining a second one.
+    services.slice(0, checked).forEach(name => {
+      if (!already.has(name.toLowerCase())) addOrFillPageRow(pagesList, name);
+    });
+
+    panel.querySelectorAll('.js-suggested').forEach(box => {
+      box.addEventListener('change', async () => {
+        const name = box.value;
+
+        if (!box.checked) {
+          removePageRow(pagesList, name);
+          refreshCredits();
+          return;
+        }
+
+        // The same gate "Add page" runs, for the same reason.
+        box.disabled = true;
+        try {
+          const q = await fetchQuote({ extraPages: 1 });
+          credits.total = q.totalCost;
+          credits.available = q.available;
+          credits.loaded = true;
+
+          if (!q.affordable) {
+            box.checked = false;
+            showCreditsModal(q);
+            return;
+          }
+        } catch (_) {
+          // A blip must not block the customer; the server checks again
+          // before any work is done.
+        } finally {
+          box.disabled = false;
+        }
+
+        addOrFillPageRow(pagesList, name);
+      });
+    });
+  }
+
+  function mountSuggestPanel(wrap, pagesList) {
+    const button = el('button',
+      { type: 'button', class: 'btn btn-primary btn-sm' },
+      'Suggest services for me');
+
+    const intro = el('div', { class: 'form-text mb-2' },
+      'Not sure what to list? We can suggest the services this kind of business '
+      + 'is usually hired for, most common first.');
+
+    const panel = el('div', { class: 'mt-3' });
+
+    wrap.append(intro, button, panel);
+
+    // Suggestions survive stepping back and forth, because this step is
+    // rebuilt from scratch each time it is shown and re-asking would mean
+    // another model call for a list the customer has already seen.
+    if (state.suggestions) {
+      renderSuggestions(panel, pagesList, state.suggestions);
+    }
+
+    button.addEventListener('click', async () => {
+      if (!state.businessType) {
+        panel.innerHTML =
+          '<div class="form-text">Choose a business type first and we can suggest services.</div>';
+        return;
+      }
+
+      button.disabled = true;
+      const label = button.textContent;
+      button.innerHTML =
+        '<span class="spinner-border spinner-border-sm me-2"></span>Thinking…';
+
+      try {
+        const data = await fetchSuggestions();
+        state.suggestions = data;
+        renderSuggestions(panel, pagesList, data);
+      } catch (err) {
+        panel.innerHTML =
+          `<div class="form-text">${escapeHtml(err.message)}</div>`;
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    });
   }
 
   // -----------------------------
@@ -2310,6 +2580,8 @@
   state.locations         = [];
   state.addLocations      = true;
   state.styleKey = 'style';
+  // A new site is a new business; last one's services must not carry over.
+  state.suggestions       = null;
 
 
   // 6) Jump back to the first step (Business Type)

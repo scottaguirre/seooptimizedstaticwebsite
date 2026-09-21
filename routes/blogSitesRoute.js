@@ -42,6 +42,7 @@ const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { versionOrNull } = require('../utils/pluginPackage');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
+const { withAppHeader } = require('../utils/appHeader');
 
 /** The same shell billingRoute and creditsRoute use, so this does not look bolted on. */
 function page({ title, body, status = 200 }) {
@@ -54,19 +55,25 @@ function page({ title, body, status = 200 }) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${title}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+{{HEADER_ASSETS}}
 </head>
 <body style="background:#082d5b;" class="text-white">
+{{HEADER}}
   <div class="container py-5" style="max-width: 900px;">
     ${body}
   </div>
+{{HEADER_SCRIPTS}}
 </body>
 </html>`,
   };
 }
 
 function send(res, spec) {
-  return res.status(spec.status).send(spec.html);
+  // withAppHeader fills {{HEADER_ASSETS}}, {{HEADER}} and {{HEADER_SCRIPTS}}
+  // that page() wrote. It happens HERE rather than in page() because the
+  // logout form needs res.locals.csrfField and page() never receives res —
+  // one line instead of threading a token through every page() call site.
+  return res.status(spec.status).send(withAppHeader(spec.html, res));
 }
 
 /**

@@ -150,7 +150,18 @@ async function runGeneration(ctx) {
   const isSample = siteMode === MODES.SAMPLE;
 
   const wantsLocationPages = truthy(global.addLocations);
-  const { locations } = validateAndNormalizeLocationPages(global.locationPages, global.addLocations);
+
+  // Same three arguments as the route. This call only destructures `locations`
+  // and ignores `ok`, so a town matching the site's own is silently DROPPED
+  // here rather than reported — which is the right outcome for a job already
+  // in the queue, and is also why the route must pass global.location too. If
+  // only this call had it, an older queued job would lose a page with no
+  // explanation anywhere.
+  const { locations } = validateAndNormalizeLocationPages(
+    global.locationPages,
+    global.addLocations,
+    global.location
+  );
 
   const locationCount = (isSample || !wantsLocationPages)
     ? 0

@@ -215,9 +215,14 @@ router.post('/generate', upload.any(), async (req, res) => {
     }
 
     // LOCATION PAGES: read array from inputs named global[locationPages][]
+    //
+    // global.location is the third argument so a page for the site's OWN town
+    // is rejected — it duplicates the home page. This is the call site that
+    // reports the problem to the customer; runGeneration.js passes it too, but
+    // by then the job is queued and nobody is watching.
     const wantsLocationPages = truthy(global.addLocations);
     const { ok: locOK, locations, fields: locFields, error: locError } =
-      validateAndNormalizeLocationPages(global.locationPages, global.addLocations);
+      validateAndNormalizeLocationPages(global.locationPages, global.addLocations, global.location);
     if (!locOK) return jsonValidationError(res, 400, locError, locFields);
 
 

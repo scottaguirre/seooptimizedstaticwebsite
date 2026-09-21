@@ -1,0 +1,614 @@
+// test-app-header.js
+//
+// The logged-in header, and the fact that there are TWO copies of it.
+//
+// WHY THIS EXISTS
+//
+// The app had three navigation patterns, one per page — a real header on the
+// generator, three buttons at the bottom of the dashboard, and nothing at all
+// on the build progress page. utils/appHeader.js gives /dashboard and
+// /jobs/:id the same header the generator has.
+//
+// The generator form was out of scope, so src/views/form.html keeps its own
+// inline copy of that markup. TWO COPIES DRIFT. An item added to one profile
+// menu and not the other is exactly the kind of thing nobody notices until a
+// customer asks why Logout is missing on one page.
+//
+// So the test below reads both and asserts they offer the same links and the
+// same actions. It deliberately does NOT compare markup character by
+// character: classes, indentation and attribute order are allowed to differ.
+// What must not differ is what the header DOES.
+//
+// When form.html is eventually switched over to call appHeader(), the drift
+// test has nothing left to compare and should be replaced with a plain
+// assertion that form.html contains no inline <header>.
+//
+//   node test-app-header.js
+
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { appHeader, appHeaderAssets, appHeaderScripts } = require('./utils/appHeader');
+
+let passed = 0, failed = 0;
+function test(name, fn) {
+  try { fn(); console.log(`  ok    ${name}`); passed++; }
+  catch (err) { console.log(`  FAIL  ${name}\n        ${err.message}`); failed++; }
+}
+
+const read = rel => fs.readFileSync(path.join(__dirname, rel), 'utf8');
+
+const CSRF = '<input type="hidden" name="_csrf" value="tok">';
+
+/**
+ * The generator page as a browser receives it.
+ *
+ * Mirrors what routes/formRoute.js does, in the same order. The order matters:
+ * appHeader() puts the CSRF token in the logout form itself, so filling
+ * {{CSRF}} before {{HEADER}} would leave the logout button posting without one.
+ */
+function renderFormPage() {
+  return read('src/views/form.html')
+    .replace(/{{HEADER_ASSETS}}/g, appHeaderAssets())
+    .replace(/{{HEADER_SCRIPTS}}/g, appHeaderScripts())
+    .replace(/{{HEADER}}/g, appHeader(CSRF))
+    .replace(/{{CSRF}}/g, CSRF);
+}
+
+/** Markup with comments removed, so a comment cannot be mistaken for a tag. */
+function withoutComments(html) {
+  return html.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/**
+ * The header as a browser sees it, comments stripped.
+ *
+ * USE THIS, NOT appHeader() DIRECTLY, for anything asserting that a piece of
+ * markup EXISTS. The comments in appHeader.js quote the markup they explain —
+ * one of them literally reads `KEEP id="user-info"` — so a plain
+ * `includes('id="user-info"')` matches the explanation and passes while the
+ * element itself is gone. Three mutations survived that way before this
+ * existed, in three separate sittings.
+ */
+function headerMarkup() {
+  return withoutComments(appHeader(CSRF));
+}
+
+/**
+ * JavaScript source with comments removed.
+ *
+ * Every assertion below that greps a .js file MUST go through this. Two
+ * mutations survived without it: formRoute.js's comment explains the ordering
+ * and in doing so writes both "appHeader()" and "{{HEADER}}" in prose, so a
+ * plain source search found the explanation rather than the code and passed
+ * while the code was gone.
+ */
+function jsWithoutComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+console.log('\nApp header\n');
+
+/* -------------------------------------------------------------------------
+ * What the header contains
+ * ---------------------------------------------------------------------- */
+
+test('the header offers exactly the destinations it should', () => {
+  // "/" TWICE is deliberate: the logo and the visible "Build a Website" link
+  // go to the same place. The convention that a wordmark links home is real
+  // but invisible, and the thing customers came to do should not be invisible.
+  const html = appHeader(CSRF);
+  assert.deepStrictEqual(
+    [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]),
+    ['/', '/', '/dashboard', '/buy-credits']
+  );
+  assert.deepStrictEqual(
+    [...html.matchAll(/action="([^"]+)"/g)].map(m => m[1]),
+    ['/logout']
+  );
+});
+
+/* -------------------------------------------------------------------------
+ * The primary action
+ * ---------------------------------------------------------------------- */
+
+test('the header shows a visible link to build a website', () => {
+  const html = headerMarkup();
+  const link = html.match(/<a href="\/"[^>]*>Build a Website<\/a>/);
+  assert.ok(link, 'the "Build a Website" link is gone from the header');
+});
+
+test('the primary action is not called "Generator"', () => {
+  // "Generator" is our internal name for the tool. A customer is thinking
+  // about the outcome, and "Build" is the brand's own verb — it is the first
+  // word of the logo's strapline.
+  //
+  // withoutComments, because the comments in appHeader.js explain the naming
+  // decision and therefore contain the word. They ship to the browser but no
+  // one reads them; this is about what a CUSTOMER sees.
+  const visible = withoutComments(appHeader(CSRF));
+  assert.ok(!/Generator/i.test(visible), 'the header says "Generator" somewhere');
+});
+
+test('the build action is a BUTTON, not a plain link', () => {
+  // It shipped as a plain text link for about an hour, so that it would not
+  // compete with the yellow Buy Credits button. Wrong thing to optimise — it
+  // read as a phrase rather than something clickable, and an affordance
+  // nobody recognises is worth nothing however tidy the hierarchy.
+  const html = headerMarkup();
+  const el = html.match(/<a [^>]*>Build a Website<\/a>/)[0];
+  assert.ok(/\bbtn\b/.test(el), `it is back to a plain link: ${el}`);
+  assert.ok(/btn-primary/.test(el), `it is not the primary button: ${el}`);
+});
+
+test('Build a Website outranks Buy Credits visually', () => {
+  // Buying credits is a means to an end; building a website is the end. Buy
+  // Credits was a filled yellow button — the loudest thing in the header —
+  // which put the hierarchy backwards. It is an OUTLINE button now.
+  //
+  // The two live in different files: the build button in appHeader.js, Buy
+  // Credits in public/js/currentUserInfo.js, which renders it at runtime. So
+  // this is the only place the pair can be compared.
+  const build = headerMarkup().match(/<a [^>]*>Build a Website<\/a>/)[0];
+  const script = read('public/js/currentUserInfo.js');
+  const buy = script.match(/<a href="\/buy-credits"[^>]*>/)[0];
+
+  assert.ok(/btn-primary/.test(build), 'the build button is not solid');
+  assert.ok(/btn-outline-/.test(buy), `Buy Credits is solid again: ${buy}`);
+  assert.ok(!/btn-warning(?!-)/.test(buy.replace('btn-outline-warning', '')),
+    `Buy Credits is a filled warning button again: ${buy}`);
+});
+
+test('the dashboard has no navigation row of its own', () => {
+  // Go to Generator / Buy Credits / Logout were removed on 21 September.
+  // All three are in the header now, on every page rather than only this one,
+  // and "Go to Generator" became the header's "Build a Website" button.
+  // Keeping them would be the same three actions twice on one page.
+  const src = read('routes/authRoute.js').replace(/<!--[\s\S]*?-->/g, '');
+
+  assert.ok(!/Go to Generator/.test(src), 'the Go to Generator button is back');
+  assert.ok(!/btn-warning">Buy Credits/.test(src), 'the Buy Credits button is back');
+  assert.ok(!/btn-danger">Logout/.test(src), 'the Logout button is back');
+});
+
+test('the build link sits on the LEFT, beside the logo', () => {
+  // Navigation belongs on the left, where people look. On the right it would
+  // read as one more account action.
+  const html = headerMarkup();
+  const leftHalf = html.slice(0, html.indexOf('id="user-actions"'));
+  assert.ok(leftHalf.includes('Build a Website'),
+    'the build link moved to the right-hand actions area');
+});
+
+/* -------------------------------------------------------------------------
+ * The logo
+ *
+ * It replaced inert <strong>SEO Site Generator</strong> text on 21 September,
+ * when the product was renamed to Three Comets.
+ * ---------------------------------------------------------------------- */
+
+test('the wordmark is a link to the generator', () => {
+  // The name in the top-left going home is the one navigation convention
+  // every visitor already knows, and it was previously not a link at all.
+  // It also fixes a real dead end: from the build page, starting a second
+  // site was finish -> dashboard -> Go to Generator.
+  const html = headerMarkup();
+  const link = html.match(/<a href="\/"[^>]*>\s*<img[^>]*>\s*<\/a>/s);
+  assert.ok(link, 'the logo is not wrapped in a link to "/"');
+});
+
+test('the logo file referenced by the header actually exists', () => {
+  // A broken <img> in the header is on every page of the app at once.
+  const src = appHeader(CSRF).match(/<img[^>]*src="([^"]+)"/)[1];
+  const onDisk = path.join(__dirname, 'public', src.replace(/^\//, ''));
+  assert.ok(fs.existsSync(onDisk), `${src} is not in public/ (looked for ${onDisk})`);
+});
+
+test('the logo carries the brand name as alt text', () => {
+  // The alt is the only thing a screen reader, or anyone with images off,
+  // gets — the header has no text name any more. "logo" would say nothing.
+  const alt = appHeader(CSRF).match(/<img[^>]*alt="([^"]*)"/)[1];
+  assert.strictEqual(alt, 'Three Comets');
+});
+
+test('the old wordmark text is gone from the header', () => {
+  assert.ok(!/SEO Site Generator/.test(appHeader(CSRF)),
+    'the header still says "SEO Site Generator"');
+});
+
+test('the logo is sized to its real aspect ratio', () => {
+  // width and height are set to stop the header jumping while the image
+  // loads, which only works if they match the file. A mismatch squashes the
+  // logo — and it is on every page, so it would be squashed everywhere.
+  const img = appHeader(CSRF).match(/<img[^>]*>/s)[0];
+  const w = Number(img.match(/width="(\d+)"/)[1]);
+  const h = Number(img.match(/height="(\d+)"/)[1]);
+
+  // The file is 452x162. Read from disk rather than hard-coded here, so
+  // replacing the logo with a different shape fails this instead of shipping
+  // a distorted one.
+  const src = img.match(/src="([^"]+)"/)[1];
+  const buf = fs.readFileSync(path.join(__dirname, 'public', src.replace(/^\//, '')));
+  // PNG: width and height are big-endian uint32 at bytes 16 and 20.
+  const realW = buf.readUInt32BE(16);
+  const realH = buf.readUInt32BE(20);
+
+  const drift = Math.abs((w / h) - (realW / realH));
+  assert.ok(drift < 0.05,
+    `displayed ${w}x${h} (${(w / h).toFixed(2)}:1) but the file is ` +
+    `${realW}x${realH} (${(realW / realH).toFixed(2)}:1) — the logo is distorted`);
+});
+
+test('the logo is not displayed larger than its own pixels', () => {
+  // Upscaling a raster logo makes it blurry on every page. The file is 452px
+  // wide and shown at 112, which also covers retina.
+  const img = appHeader(CSRF).match(/<img[^>]*>/s)[0];
+  const w = Number(img.match(/width="(\d+)"/)[1]);
+  const src = img.match(/src="([^"]+)"/)[1];
+  const buf = fs.readFileSync(path.join(__dirname, 'public', src.replace(/^\//, '')));
+  assert.ok(buf.readUInt32BE(16) >= w * 2,
+    `shown at ${w}px from a ${buf.readUInt32BE(16)}px file — too soft on a retina screen`);
+});
+
+test('the dynamic slots the credits script fills are present', () => {
+  // currentUserInfo.js returns silently unless BOTH exist, so a missing one
+  // costs the credits badge, the Buy Credits button and the Admin menu — with
+  // no error anywhere.
+  const html = headerMarkup();
+  for (const id of ['user-info', 'user-actions', 'profileMenuButton']) {
+    assert.ok(html.includes(`id="${id}"`), `#${id} is missing`);
+  }
+});
+
+test('the signed-in email sits inside the profile menu', () => {
+  // Moved out of the header's left slot on 21 September. It is identity, not
+  // navigation, it was occupying the space "Build a Website" needed, and it
+  // was the widest thing in the header.
+  const html = headerMarkup();
+  const menu = html.match(/<ul class="dropdown-menu[\s\S]*?<\/ul>/)[0];
+  assert.ok(menu.includes('id="user-info"'),
+    '#user-info is not inside the profile dropdown');
+});
+
+test('the email slot keeps the id the credits script looks for', () => {
+  // currentUserInfo.js fills #user-info from /api/me and does not care where
+  // the element sits — which is why moving it needed no JavaScript change.
+  // Renaming the id would silently leave it empty: the script returns early
+  // when the id is missing, with no error anywhere.
+  const script = read('public/js/currentUserInfo.js');
+  const wanted = [...script.matchAll(/getElementById\('([^']+)'\)/g)].map(m => m[1]);
+  const html = headerMarkup();
+
+  assert.ok(wanted.includes('user-info'), 'the script no longer looks for #user-info');
+  for (const id of wanted) {
+    assert.ok(html.includes(`id="${id}"`),
+      `currentUserInfo.js fills #${id} but the header has no such element`);
+  }
+});
+
+test('the email is NOT in the visible part of the header', () => {
+  const html = headerMarkup();
+  const beforeMenu = html.slice(0, html.indexOf('<ul class="dropdown-menu'));
+  assert.ok(!beforeMenu.includes('id="user-info"'),
+    'the email slot is back in the always-visible header');
+});
+
+test('the logout form carries the CSRF field it is given', () => {
+  // The logout form POSTs. Without the token the POST is rejected and Logout
+  // silently does nothing.
+  assert.ok(appHeader(CSRF).includes('name="_csrf"'));
+});
+
+test('a missing CSRF field renders the header rather than throwing', () => {
+  // Matches how the dashboard already writes `${res.locals.csrfField || ''}`.
+  // A header that throws would take the whole page down over a logout button.
+  for (const arg of [undefined, '', null]) {
+    const html = appHeader(arg);
+    assert.ok(html.includes('<header'), `threw or emptied for ${JSON.stringify(arg)}`);
+    assert.ok(!html.includes('undefined'), `"undefined" leaked into the markup`);
+    assert.ok(!html.includes('null'), `"null" leaked into the markup`);
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * The assets, which are the easy half to forget
+ * ---------------------------------------------------------------------- */
+
+test('the icon font is loaded, or the profile menu is invisible', () => {
+  // The profile control is <i class="bi bi-person-circle">. Without the icon
+  // font it renders as nothing at all — an invisible control that still opens
+  // a menu when clicked.
+  assert.ok(/bootstrap-icons/.test(appHeaderAssets()), appHeaderAssets());
+});
+
+test('the header supplies its own colour, so both headers look the same', () => {
+  // .header-background lives in form.html's inline <style>. Without it the
+  // header falls back to Bootstrap's bg-dark — nearly black, against the navy
+  // the rest of the app uses.
+  const css = appHeaderAssets();
+  assert.ok(/\.header-background/.test(css), css);
+  assert.ok(/#082d5b/i.test(css), css);
+});
+
+test('Bootstrap CSS is NOT re-included', () => {
+  // Both pages that use this already load it; twice is a wasted request.
+  assert.ok(!/bootstrap@[\d.]+\/dist\/css/.test(appHeaderAssets()), appHeaderAssets());
+});
+
+test('the dropdown JS and the credits script are both loaded', () => {
+  const js = appHeaderScripts();
+  assert.ok(/bootstrap\.bundle/.test(js), 'the dropdown will not open');
+  assert.ok(/currentUserInfo\.js/.test(js), 'credits and Buy Credits will never appear');
+});
+
+/* -------------------------------------------------------------------------
+ * ONE header, for the whole app
+ *
+ * There used to be two: this module, and an inline copy in form.html. The
+ * test here compared them and failed when they drifted — a warning, not a
+ * fix. On 21 September form.html was switched to placeholders, so there is
+ * nothing left to compare and nothing left to drift.
+ *
+ * These tests guard that state: form.html must hold NO header of its own.
+ * ---------------------------------------------------------------------- */
+
+test('form.html contains no header markup of its own', () => {
+  const src = read('src/views/form.html');
+  assert.ok(!/<header[\s>]/.test(src),
+    'form.html has an inline <header> again — there are two copies once more');
+  assert.ok(src.includes('{{HEADER}}'), 'form.html lost its {{HEADER}} placeholder');
+});
+
+test('form.html contains no header styling or scripts of its own', () => {
+  // The bare `header` rule is the easy one to miss: it carries the border and
+  // drop shadow, and while it lived here the generator's header had them and
+  // the other two pages did not.
+  const src = withoutComments(read('src/views/form.html'));
+
+  for (const [label, re] of [
+    ['the bare header rule',   /(^|\})\s*header\s*\{/m],
+    ['.header-background',     /\.header-background\s*\{/],
+    ['.padding-right-header',  /\.padding-right-header\s*\{/],
+    ['the icon font',          /<link[^>]*bootstrap-icons/],
+    ['the dropdown JS',        /<script[^>]*bootstrap\.bundle/],
+    ['the credits script',     /<script[^>]*currentUserInfo/],
+  ]) {
+    assert.ok(!re.test(src), `form.html still declares ${label} itself`);
+  }
+
+  assert.ok(src.includes('{{HEADER_ASSETS}}'), 'lost the assets placeholder');
+  assert.ok(src.includes('{{HEADER_SCRIPTS}}'), 'lost the scripts placeholder');
+});
+
+test('the rendered generator page has exactly one of each header piece', () => {
+  // The real check: after substitution, nothing is missing and nothing is
+  // doubled. A doubled <style> or a second <header> is invisible in the
+  // source and obvious in a browser.
+  const html = withoutComments(renderFormPage());
+  const count = re => (html.match(re) || []).length;
+
+  for (const [label, re] of [
+    ['<header> element',          /<header[\s>]/g],
+    ['bootstrap-icons link',      /<link[^>]*bootstrap-icons/g],
+    ['bootstrap.bundle script',   /<script[^>]*bootstrap\.bundle/g],
+    ['currentUserInfo script',    /<script[^>]*currentUserInfo/g],
+    ['.header-background rule',   /\.header-background\s*\{/g],
+    ['.padding-right-header rule',/\.padding-right-header\s*\{/g],
+    ['bare header rule',          /(^|\})\s*header\s*\{/gm],
+    ['logout form',               /action="\/logout"/g],
+  ]) {
+    assert.strictEqual(count(re), 1, `${label}: found ${count(re)}, expected exactly 1`);
+  }
+});
+
+test('no placeholder survives into the rendered page', () => {
+  assert.deepStrictEqual(renderFormPage().match(/{{[A-Z_]+}}/g), null);
+});
+
+test('a placeholder name is never written inside a comment', () => {
+  // The substitution is a global regex, so a placeholder MENTIONED in a
+  // comment is filled in too. A comment here explaining where the CSS went
+  // said "{{HEADER_ASSETS}}" and injected a second copy of the entire header
+  // stylesheet into the middle of the <style> block.
+  const src = read('src/views/form.html');
+  for (const comment of [...src.matchAll(/<!--[\s\S]*?-->/g), ...src.matchAll(/\/\*[\s\S]*?\*\//g)]) {
+    assert.ok(
+      !/{{[A-Z_]+}}/.test(comment[0]),
+      `a comment names a placeholder, which will be substituted:\n        ${comment[0].slice(0, 120)}`
+    );
+  }
+});
+
+test('the logout form on the generator page carries a CSRF token', () => {
+  // {{HEADER}} must be filled BEFORE {{CSRF}}: appHeader() puts the token in
+  // the logout form itself, so the reverse order leaves the button posting
+  // without one and Logout silently fails with "Session expired".
+  const html = renderFormPage();
+  const form = html.match(/<form action="\/logout"[\s\S]*?<\/form>/);
+  assert.ok(form, 'the logout form is gone from the generator page');
+  assert.ok(/name="_csrf"/.test(form[0]), `no token in the logout form:\n        ${form[0]}`);
+});
+
+test('formRoute fills all three placeholders, header before CSRF', () => {
+  const src = jsWithoutComments(read('routes/formRoute.js'));
+
+  for (const placeholder of ['{{HEADER_ASSETS}}', '{{HEADER_SCRIPTS}}', '{{HEADER}}']) {
+    assert.ok(
+      src.includes(`.replace(/${placeholder}/g`),
+      `formRoute.js never fills ${placeholder}`
+    );
+  }
+
+  // {{HEADER}} must be filled BEFORE {{CSRF}}: appHeader() puts the token into
+  // the logout form itself, so the reverse order leaves the button posting
+  // without one.
+  assert.ok(
+    src.indexOf('.replace(/{{HEADER}}/g') < src.indexOf('.replace(/{{CSRF}}/g'),
+    '{{CSRF}} is filled before {{HEADER}}, so the logout token is lost'
+  );
+});
+
+/* -------------------------------------------------------------------------
+ * Both pages actually use it
+ *
+ * appHeader() can be perfect while no page calls it. That is the failure that
+ * got through twice this week — anchorType dropped in normaliseTargets, and
+ * the service pages dropped at the locationMeta call site.
+ * ---------------------------------------------------------------------- */
+
+test('the dashboard renders the header, its assets and its scripts', () => {
+  const src = jsWithoutComments(read('routes/authRoute.js'));
+  for (const call of ['appHeaderAssets()', 'appHeader(', 'appHeaderScripts()']) {
+    assert.ok(src.includes(call), `authRoute.js never calls ${call}`);
+  }
+  assert.ok(/require\(['"]\.\.\/utils\/appHeader['"]\)/.test(src), 'no require');
+});
+
+test('the job progress page renders the header, its assets and its scripts', () => {
+  const src = jsWithoutComments(read('routes/jobRoute.js'));
+  for (const call of ['appHeaderAssets()', 'appHeader(', 'appHeaderScripts()']) {
+    assert.ok(src.includes(call), `jobRoute.js never calls ${call}`);
+  }
+  assert.ok(/require\(['"]\.\.\/utils\/appHeader['"]\)/.test(src), 'no require');
+});
+
+test('the job 404 gets the header too', () => {
+  // Reached by an expired or mistyped job id. Without the header its only way
+  // out is the single link in the body — the dead end this work exists to fix.
+  const src = jsWithoutComments(read('routes/jobRoute.js'));
+  const notFound = src.match(/status\(404\)\.send\(`[\s\S]*?`\)/);
+  assert.ok(notFound, 'the 404 branch is gone');
+  assert.ok(notFound[0].includes('appHeader('), 'the 404 has no header');
+});
+
+test('the header is inside <body>, not <head>', () => {
+  // A template-literal edit in the wrong place puts markup in <head>, where
+  // browsers hoist it and the layout silently breaks.
+  for (const file of ['routes/authRoute.js', 'routes/jobRoute.js']) {
+    const src = read(file);
+    for (const m of src.matchAll(/<head>([\s\S]*?)<\/head>/g)) {
+      assert.ok(!/\$\{appHeader\(/.test(m[1]), `${file}: appHeader() is inside <head>`);
+    }
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * EVERY logged-in page, and only those
+ *
+ * The header shows a credit balance and a Logout button, so it belongs on a
+ * page only when there is a session. On a signed-out page currentUserInfo.js
+ * calls /api/me, gets a 401, and renders "Not logged in" in the chrome —
+ * worse than no header at all.
+ * ---------------------------------------------------------------------- */
+
+// Behind requireAuth or requireAdmin. Every one of these must have it.
+const SIGNED_IN_PAGES = [
+  'routes/formRoute.js',            // the generator
+  'routes/authRoute.js',            // /dashboard
+  'routes/jobRoute.js',             // /jobs/:id and its 404
+  'routes/billingRoute.js',         // /buy-credits, /credits/success, /credits/cancelled
+  'routes/adminRoute.js',           // /admin
+  'routes/blogSitesRoute.js',       // /blog-sites
+  'routes/exportWpThemeRoute.js',   // /download-wp-theme
+  'routes/pluginDownloadRoute.js',  // /plugin/download failure page
+];
+
+// Reached WITHOUT a session — from a link in an email, or before signing in.
+const SIGNED_OUT_PAGES = [
+  'routes/passwordRoute.js',        // forgot / reset / resend-verification
+  'routes/downloadZipRoute.js',     // no guard on the route
+];
+
+test('every signed-in page uses the shared header', () => {
+  // If any of these stops requiring appHeader.js, that page has gone back to
+  // having no header — or its own — and updating the others leaves it behind.
+  for (const file of SIGNED_IN_PAGES) {
+    assert.ok(
+      /require\(['"]\.\.\/utils\/appHeader['"]\)/.test(jsWithoutComments(read(file))),
+      `${file} no longer uses the shared header`
+    );
+  }
+});
+
+test('every signed-in page renders the header, its assets AND its scripts', () => {
+  // Forgetting one of the three is the realistic mistake: the markup alone
+  // gives an invisible profile icon opening a dead menu with no credits.
+  //
+  // Two shapes count as rendering them — calling the functions directly, or
+  // writing the placeholders that withAppHeader() fills in send().
+  for (const file of SIGNED_IN_PAGES) {
+    const src = jsWithoutComments(read(file));
+
+    const direct = ['appHeaderAssets()', 'appHeader(', 'appHeaderScripts()']
+      .every(call => src.includes(call));
+
+    const viaPlaceholders =
+      ['{{HEADER_ASSETS}}', '{{HEADER}}', '{{HEADER_SCRIPTS}}'].every(p => src.includes(p)) &&
+      /withAppHeader\(/.test(src);
+
+    assert.ok(direct || viaPlaceholders,
+      `${file} is missing one of the three header pieces`);
+  }
+});
+
+test('signed-out pages do NOT get the header', () => {
+  // The header would show a credit balance and a Logout button to someone
+  // with no session. currentUserInfo.js would render "Not logged in" into it.
+  for (const file of SIGNED_OUT_PAGES) {
+    assert.ok(
+      !/appHeader/.test(jsWithoutComments(read(file))),
+      `${file} renders the logged-in header on a signed-out page`
+    );
+  }
+});
+
+test('login and signup do not get the header', () => {
+  // These live in authRoute.js alongside /dashboard, which DOES have it, so
+  // the file-level check above cannot tell them apart. renderAuthPage() is
+  // the shared shell for signed-out pages and must stay header-free.
+  const src = jsWithoutComments(read('utils/renderAuthPage.js'));
+  assert.ok(!/appHeader/.test(src),
+    'renderAuthPage puts the logged-in header on login/signup');
+});
+
+test('no page fills the placeholders without the filler, or vice versa', () => {
+  // A page that writes {{HEADER}} but whose send() never calls withAppHeader
+  // ships the literal text "{{HEADER}}" to the customer.
+  for (const file of SIGNED_IN_PAGES) {
+    const src = jsWithoutComments(read(file));
+    const writes = src.includes('{{HEADER}}');
+    const fills = /withAppHeader\(/.test(src) || /\.replace\(\/\{\{HEADER\}\}/.test(src);
+
+    if (writes) {
+      assert.ok(fills, `${file} writes {{HEADER}} but nothing fills it`);
+    }
+  }
+});
+
+test('withAppHeader fills all three and leaves nothing behind', () => {
+  const { withAppHeader } = require('./utils/appHeader');
+  const res = { locals: { csrfField: CSRF } };
+  const page = '<head>{{HEADER_ASSETS}}</head><body>{{HEADER}}<h1>x</h1>{{HEADER_SCRIPTS}}</body>';
+  const out = withAppHeader(page, res);
+
+  assert.strictEqual(out.match(/{{[A-Z_]+}}/g), null, 'a placeholder survived');
+  assert.strictEqual(withoutComments(out).match(/<header[\s>]/g).length, 1);
+  assert.ok(/action="\/logout"[\s\S]*?name="_csrf"/.test(out), 'the logout token is missing');
+});
+
+test('withAppHeader survives a missing res rather than throwing', () => {
+  // A page that renders before the CSRF middleware, or an error path that
+  // hands it something unexpected, must not take the whole page down.
+  const { withAppHeader } = require('./utils/appHeader');
+  for (const res of [undefined, null, {}, { locals: {} }]) {
+    const out = withAppHeader('<body>{{HEADER}}</body>', res);
+    assert.ok(out.includes('<header'), `threw or emptied for ${JSON.stringify(res)}`);
+    assert.ok(!/undefined|null/.test(out.match(/<form action="\/logout"[\s\S]*?<\/form>/)[0]),
+      'undefined or null leaked into the logout form');
+  }
+});
+
+console.log('');
+console.log(`  ${passed} passed, ${failed} failed`);
+console.log('');
+process.exit(failed === 0 ? 0 : 1);

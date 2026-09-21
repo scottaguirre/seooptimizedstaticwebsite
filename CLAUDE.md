@@ -74,6 +74,10 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 
     node test-business-shape.js    # business shapes, prompts, case study, wizard parity
     node test-page-meta.js         # every page's <title> and description; needs no php
+    node test-location-pages.js    # which location pages are allowed; needs no php
+    node test-phone.js             # the phone format check, both sides; needs no php
+    node test-app-header.js        # the logged-in header and its two copies; needs no php
+    node test-suggest-services.js  # suggested service pages + the budget; needs no php
     node test-wp-canonical.js      # runs the exported theme as real PHP; skips without php
     node test-wp-single.js         # single.php incl. the featured image; skips without php
     node test-ie-pause.js          # campaign pause/resume as real PHP; skips without php
@@ -168,6 +172,19 @@ these to a live site for the first time:
 Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
 
 ## Outstanding
+
+**The rename to Three Comets — when threecomets.com goes live**
+
+The header is already the Three Comets logo. Three things still carry the old
+names and are deliberately left until the domain is in use:
+
+- `EMAIL_FROM_NAME` — emails still send as "Fast Website Generator".
+  `utils/sendEmail.js`; the default is `DEFAULT_FROM_NAME` in that file.
+  **The Resend sending domain has to be verified for threecomets.com first**,
+  or the From address and the domain disagree and deliverability suffers.
+- Page `<title>`s — "Generate Website Pages" in `src/views/form.html`,
+  "Dashboard" in `routes/authRoute.js`.
+- Any remaining "SEO Site Generator" strings outside the header.
 
 **Blocking the medical types**
 
@@ -362,6 +379,454 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## Suggested service pages — 21 September
+
+**The problem was the typing, not the ideas.** A Rank Fast site wants twenty-odd
+service pages and every one of them used to be a row somebody filled in by
+hand. Most people stopped at five. The site they paid for came out smaller
+than it should have been.
+
+Pressing **Suggest services for me** on step 3 calls `/api/suggest-services`,
+which asks the model for twenty names ordered by how commonly the trade is
+actually hired for them, and returns them as tick boxes above the rows.
+Ticking one calls the existing `addPageRow`, so nothing downstream changed.
+
+**Twenty, and no more.** Past that a model stops naming services and starts
+restating the ones it has already given. A longer list is a worse list.
+
+### How many boxes come back ticked
+
+`affordableServicePages()` in `utils/pricing.js`, from the SERVER's copy of the
+balance. Edwin's worked example: 300 credits ticks exactly one box — 200 for
+the website, 100 for the page.
+
+It is **not** `(credits - 200) / 100`. The website base is owed once, rows
+already on the form are already spoken for, and a location page costs the same
+as a service page out of the same balance. It lives in `pricing.js` with
+`quote()` for the reason that file exists at all: two places computing a price
+are two prices, and they only have to disagree once.
+
+**The balance is never read from the request body.** A client-supplied number
+would let anyone tick twenty boxes from the console and arrive at `/generate`
+owing credits they do not have. There is a test for this.
+
+### What Edwin asked for, in his words
+
+> "I want the list to show even if the user don't have the budget but if the
+> user tick a checkbox or manually type service in the input to add services it
+> should let the user know he doesn't have enough credit."
+
+So the full list is always shown and every box is tickable. Ticking one past
+the budget runs the same gate `+ Add page` runs — the credits modal, the saved
+draft, the trip to buy credits and back. Nobody is told what they cannot have
+before they have seen it.
+
+### The list is filtered before anyone sees it
+
+Every name becomes a page somebody PAYS 100 credits for, with a URL, a title
+and an `<h1>`. `cleanServices()` drops:
+
+- **the business's own category.** "Plumbing Services" on a plumber's site
+  competes with the home page for its own term — the cannibalisation this app
+  exists to avoid, and a model offers it constantly. An exact-match ban list
+  does NOT work here: the first version banned "Quality Service" and let
+  "Quality Workmanship" straight through. The rule is subtractive instead —
+  strip the empty words and see whether a job is left.
+- **names that become the same FILE**, via the form's own `slugCollisions`.
+- **names that merely mean the same thing**, via the form's own
+  `similarServices`. Reused rather than reimplemented, so the suggestion list
+  cannot contain a pair the very next screen would warn about.
+- **anything already on the form.** The rows the customer has typed ride
+  through both checks alongside the suggestions and are sliced off at the end,
+  so a suggestion is never offered back to them and never displaces their own
+  typing. They are also named in the prompt, which is cheaper than asking for
+  extra and throwing the repeats away.
+
+### Two bugs mutation testing found here
+
+**`parseModelJson` returns `{ok, data}`, not the data.** The code read
+`parsed.services` off the wrapper, so every reply — valid or not — fell through
+to the error branch. The test that should have caught it asserted a rejection
+and got one, for the wrong reason. **A rejection test needs a companion
+asserting the non-error path exists.**
+
+**"Leave any word carrying a capital alone"** was meant for AC and HVAC. It
+also meant a model returning `DRAIN CLEANING` put DRAIN CLEANING on the page.
+Length is what separates an abbreviation from shouting; four letters is where
+the two groups separate in this domain.
+
+### Three mutations that survive on purpose
+
+Recorded so nobody hunts them again:
+
+- seeding the duplicate check with the form's rows — the slug check catches an
+  exact repeat a few lines later with the same reason attached
+- title-casing the exclusions before comparing — every comparison downstream
+  is already case- and whitespace-insensitive
+- the label passed to `parseModelJson` — it only names the file in a warning
+
+The first two are deliberate belt-and-braces and are commented as such.
+
+## Which pages get the header — 21 September
+
+**Every signed-in page, and only those.** The header shows a credit balance
+and a Logout button, so on a page reached WITHOUT a session
+`currentUserInfo.js` calls `/api/me`, gets a 401 and renders **"Not logged
+in"** into the chrome — worse than no header.
+
+    HAS IT     formRoute          the generator
+               authRoute          /dashboard
+               jobRoute           /jobs/:id and its 404
+               billingRoute       /buy-credits, /credits/success, /credits/cancelled
+               adminRoute         /admin
+               blogSitesRoute     /blog-sites
+               exportWpThemeRoute /download-wp-theme
+               pluginDownloadRoute  the "Download failed" page
+
+    MUST NOT   passwordRoute      forgot / reset / resend-verification
+               downloadZipRoute   no guard on the route
+               renderAuthPage     login / signup
+               authRoute /verify  reached from an email link, no session
+
+`/verify` is the subtle one: it lives in authRoute.js next to /dashboard,
+which DOES have the header, so a file-level check cannot tell them apart.
+
+**TWO WAYS TO RENDER IT, and both are legitimate.**
+
+Pages built inline call the three functions directly, because `res` is in
+scope. Pages built through a `page({ title, body })` helper cannot —
+`page()` never receives `res`, and the logout form needs
+`res.locals.csrfField`. billingRoute, blogSitesRoute and exportWpThemeRoute
+have twenty `page()` call sites between them, so instead:
+
+    page()  writes  {{HEADER_ASSETS}} {{HEADER}} {{HEADER_SCRIPTS}}
+    send()  calls   withAppHeader(spec.html, res)
+
+One line changed per route file instead of twenty, and the token comes from
+the one function that has it. Same placeholder names as form.html on purpose.
+
+**A page that writes the placeholders but whose send() does not fill them
+ships the literal text "{{HEADER}}" to the customer.** `test-app-header.js`
+checks both halves are present together.
+
+**Still duplicated, and worth doing next:** billingRoute, blogSitesRoute and
+exportWpThemeRoute each carry their own near-identical `page()` and an
+IDENTICAL `send()`. They differ only in the container width and in
+exportWpThemeRoute's `<body>` lacking `text-white`. Extracting one shared
+shell is the same move that was made for the header, and that `text-white`
+difference is the one thing to resolve first.
+
+## The header's navigation — 21 September
+
+    [ THREE COMETS ]  Build a Website        [Credits] [Buy Credits] [person icon]
+                                                                          |
+                                                        scottaguirre@yahoo.com
+                                                        ------------------
+                                                        My Dashboard
+                                                        Buy Credits
+                                                        ------------------
+                                                        Logout
+
+**Left is navigation, right is account and actions.** Two changes made that
+split possible, both Edwin's suggestions and both better than what was
+proposed to him.
+
+**"Build a Website", NOT "Generator" and NOT "Website Builder".** Generator is
+the internal name for the tool. "Website Builder" is a NOUN that names a tool,
+so on a button it reads as a label — and it is the category name, which Wix
+and Squarespace also answer to. A button takes a VERB: it says what happens
+when you press it. "Build" is also the first word of the logo's own strapline,
+so the brand's verb and the app's primary action are the same word.
+
+**A BUTTON, on the LEFT.** It shipped as a plain text link for about an hour,
+reasoned as "a second button would compete with the yellow Buy Credits one".
+Wrong thing to optimise: Edwin looked at it and said it read as a phrase
+rather than something clickable. **An affordance nobody recognises is worth
+nothing however tidy the hierarchy — discoverability first.**
+
+**Buy Credits is an OUTLINE button because of that.** It was `btn-warning`,
+filled yellow, the loudest thing in the header — hierarchy backwards, since
+buying credits is a means and building a website is the end. It lives in
+`public/js/currentUserInfo.js`, not appHeader.js, so the two buttons are in
+different files and `test-app-header.js` is the only place the pair is
+compared.
+
+**The dashboard's bottom button row is GONE.** Go to Generator / Buy Credits /
+Logout are all in the header now, on every page rather than only that one. The
+row was kept at first on the reasoning that a body CTA does a different job
+from a nav link — true while it WAS a link, false once it became a button.
+The dashboard keeps its real actions (Preview, Download, Convert, Manage
+sites). **Do not add a navigation row back there.**
+
+**The signed-in email moved into the profile menu.** It is identity, not
+navigation, and it was occupying the slot navigation belongs in. Behind the
+profile icon is where every app puts the account address. It was also the
+widest element in the header, so the header no longer overflows on a phone —
+which retired a caveat raised earlier about the logo's width.
+
+**`id="user-info"` is unchanged and must stay unchanged.**
+`public/js/currentUserInfo.js` fills it from `/api/me` and does not care where
+the element sits, so moving it needed no JavaScript at all. Renaming the id
+would silently leave it empty: the script returns early when the id is
+missing, with no error anywhere. `test-app-header.js` reads the script's
+`getElementById` calls and asserts the header provides every id it asks for.
+
+## The logo and the wordmark link — 21 September
+
+The header's top-left was inert `<strong>SEO Site Generator</strong>`. It is
+now the Three Comets logo, wrapped in `<a href="/">`.
+
+**The link is the important half.** The name in the top-left going home is the
+one navigation convention every visitor already knows, and it was not a link
+at all. It also closed a real dead end: from the build progress page, starting
+a second site was finish → dashboard → Go to Generator. Three clicks for the
+action you most want someone to take right after one succeeds — and nothing
+was added to the header to fix it.
+
+**Do the link before the logo, not after.** The `<a>` wraps whatever is inside
+it, so swapping text for an image later is one line *inside* a link that
+already works. The other order touches the same markup twice.
+
+**THE HEADER USES A CROP, NOT THE FULL LOCKUP.**
+
+    public/img/three-comets-logo.png         452x162  the full artwork
+    public/img/three-comets-logo-header.png  452x127  strapline cropped off
+    shown at                                 178x50
+
+The artwork has two clean bands — y=4-122 is the comets and the name, y=131-149
+is "BUILD - OPTIMIZE - RANK FAST". In a header that strapline is texture (no
+one reads a positioning line in app chrome) and it was eating a third of the
+height. Cropping it gives the NAME that height instead:
+
+    full logo @ 50px tall  ->  name renders 37px,  header 82px
+    cropped   @ 50px tall  ->  name renders 47px,  header 82px
+    full logo @ 63px tall  ->  name renders 46px,  header 95px
+
+So the crop produces a bigger name than growing the header by 13px does.
+Ordinary brand practice: full lockup for the site and the deck, compact
+version for UI. The full file stays in public/img for everything else.
+
+**Sharpness headroom is now 2.54x** (452px file shown at 178px). Above the 2x
+retina needs, but the cropped version is wider per unit of height, so it burns
+headroom faster — about 56px tall is the practical ceiling for this PNG. Past
+that, re-export bigger or go SVG rather than scaling it up.
+
+**width and height are set explicitly** so the header does not jump while the
+image loads — which only helps if they match the file. `test-app-header.js`
+reads the PNG's real dimensions out of its header bytes and fails on a
+distorted ratio or an upscale, so replacing the logo with a different shape is
+caught rather than shipped.
+
+**Every size here was chosen by RENDERING it on the navy at true pixel size,
+not by guessing.** Do the same before changing it — the numbers alone do not
+tell you whether the strapline survives or the header reads as bloated.
+
+**Send the renders to Edwin.** Viewing an image in the workspace shows it to
+Claude, not to him. Three previews were referenced as "the render above"
+before he pointed out he could not see any of them. Use SendUserFile.
+
+**The alt text is the brand name, not "logo".** The header has no text name any
+more, so the alt is all a screen reader gets.
+
+**Three names for one product, and this fixes one of them.** The header said
+"SEO Site Generator", the emails say "Fast Website Generator", the domain is
+now threecomets.com. The header is done; `EMAIL_FROM_NAME` and the page titles
+are not.
+
+## The logged-in header — 21 September
+
+The app had THREE navigation patterns, one per page:
+
+    /            (form.html)  a real <header> with credits and a profile menu
+    /dashboard                no header; three buttons at the BOTTOM of the page
+    /jobs/:id                 nothing — an <h1> and one CTA when done
+
+`utils/appHeader.js` gives /dashboard and /jobs/:id (including its 404) the
+same header the generator has. **Nothing was added or removed** — same three
+menu items, same dynamic credits badge, same admin menu, all still filled by
+`/js/currentUserInfo.js` from `/api/me`.
+
+**The progress page mattered most.** It is shown immediately after a build
+charges 500 credits and it was the one page that never showed the balance —
+and it was a dead end, no way to reach the dashboard, buy credits or log out.
+Worth knowing: leaving that page does NOT cancel anything. The build runs in
+the server-side job queue, so the usual "strip the chrome so they don't wander
+off" argument does not apply here.
+
+**THREE EXPORTS, and forgetting one leaves a broken header:**
+
+    appHeaderAssets()   bootstrap-icons + the 3 CSS rules
+    appHeader(csrf)     the markup
+    appHeaderScripts()  bootstrap.bundle + currentUserInfo.js
+
+No page loaded the icon font, the Bootstrap JS bundle or the credits script on
+its own, so pasted markup alone renders an invisible control opening a dead
+menu with no credits in it. Bootstrap's own CSS is deliberately NOT
+re-included; every page already has it.
+
+**Three CSS rules, and the third is the one that gets missed.** Besides
+`.header-background` and `.padding-right-header` there is a bare `header {}`
+rule carrying the border and drop shadow. While it lived only in form.html the
+generator's header had them and the other two did not.
+
+**ONE COPY, FOR THE WHOLE APP — 21 September.** `src/views/form.html` holds
+three placeholders and no header of its own:
+
+    {{HEADER_ASSETS}}   in <head>
+    {{HEADER}}          first thing in <body>
+    {{HEADER_SCRIPTS}}  first of the script tags, so bootstrap still loads
+                        before the page's own deferred scripts
+
+`routes/formRoute.js` fills them beside the existing `{{CSRF}}` replace.
+**Order matters: {{HEADER}} is filled BEFORE {{CSRF}}** — `appHeader()` puts
+the token into the logout form itself, so the reverse order leaves the logout
+button posting without one.
+
+**NEVER WRITE A PLACEHOLDER NAME IN A COMMENT.** The substitution is a global
+regex, so a mention inside a comment is filled in too. A comment in form.html
+explaining where the CSS had gone said `{{HEADER_ASSETS}}` and injected a
+second copy of the whole header stylesheet into the middle of the `<style>`
+block. `test-app-header.js` asserts no comment names a placeholder.
+
+**COMMENTS THAT QUOTE THEIR OWN MARKUP ARE THE RECURRING TRAP HERE — it has
+now cost five surviving mutations across three sittings.** The comments in
+`appHeader.js` and `formRoute.js` explain decisions by quoting the thing they
+describe: one literally reads `KEEP id="user-info"`, another writes
+`appHeader()` and `{{HEADER}}` in prose. A plain `includes()` then matches the
+explanation and passes while the code is gone.
+
+Two helpers exist for this and every assertion must use one:
+
+    headerMarkup()        appHeader() with comments stripped — for anything
+                          asserting a piece of MARKUP exists
+    jsWithoutComments()   for anything grepping a .js source file
+
+The comments are worth keeping; the tests just must not read them.
+
+**A default parameter fires only for `undefined`.** `appHeader(null)`
+interpolated the literal string "null" into the logout form. Both call sites
+write `res.locals.csrfField || ''` so it could not happen today, but the guard
+is `csrfField == null ? '' : String(csrfField)` now.
+
+## The location-page description — 21 September
+
+It was `description: title` — 42 characters of a ~155 budget, on a page whose
+whole job is to rank for a town with no service page of its own. Now:
+
+    title        Emergency Plumber Round Rock in Austin, TX
+    description  Plumbing services in Austin, TX — water heater repair, drain
+                 cleaning and slab leak repair. Call (512) 894-6167.
+
+**The title leads with the NAME and the description leads with the SERVICE**,
+on purpose. They are two lines of one search result, so a brand-led
+description spends its opening words on something the searcher has already
+read. This way the trade and the town appear twice across the two lines.
+
+**No business name in the description**, for the same reason `serviceMeta`
+leaves it out: on these sites the name carries the primary keyword, so
+repeating it everywhere aims every page at the home page's term.
+
+`locationMeta(locationDisplay, globalValues, pages)` takes a third argument.
+`pages` was ALREADY a parameter of `buildLocationPages` — it is there for the
+Services dropdown — so this cost one argument at one call site.
+
+**Degrades by service count**, which is not hypothetical: One-Page Design
+sites have no service pages at all.
+
+    3+  … in Austin, TX — a, b and c. Call …
+    2   … in Austin, TX — a and b. Call …
+    1   … in Austin, TX — a. Call …
+    0   … in Austin, TX. Call …          (the dash clause disappears)
+
+**What it does NOT fix:** every location page still says the same thing with a
+different town, because the business offers the same services everywhere. That
+is expected of location pages. What changed is a description that said nothing.
+
+**The call-site mutation survived at first**, and this is the second time in
+two days: `test-page-meta.js` tests `locationMeta` directly, so dropping
+`pages` at the call site left every test green while the feature became a
+no-op on every real site. Identical to `anchorType` being dropped in
+`normaliseTargets`. **When a change adds an argument, one test must read the
+CALLER**, not just the function. Both suites now do.
+
+Contact is the last page still reusing its title as its description.
+
+## The phone number is now format-checked — 21 September
+
+**`type="tel"` VALIDATES NOTHING.** Unlike `type="email"`, a browser accepts
+any string in a tel input. `phone` was already in `requiredGlobalFields`, so
+a blank one was rejected at three layers — and that made the gap invisible,
+because the field *looked* validated. These generated complete sites and
+charged 500 credits:
+
+    phone "x"         title: Acme Plumbing in Austin, TX | Call x
+    phone "call me"   title: Acme Plumbing in Austin, TX | Call call me
+                      link:  tel:+1
+
+`isDialablePhone()` in helpers.js: ten digits, or eleven starting with 1, with
+all punctuation ignored. **Not an international validator** — this product
+sells US local-SEO sites, `formatPhoneForHref()` hard-codes +1 and the state
+list is US-only. If that changes, this changes with it.
+
+The rule is DUPLICATED as `isPhoneLike()` in `public/js/generateDinamycForm.js`
+because that file is served to the browser and helpers.js is not. The server
+is the authority; the client copy only saves a round-trip. `test-phone.js`
+reads the form script and asserts the two agree, because a duplicate that
+drifts is worse than no duplicate.
+
+**A shadowed `fields` array, found while adding that check.** The business-hours
+block in `validateGlobalFields` declared its own `const fields = []`, shadowing
+the outer one, so its early return sent back ONLY the hours problems and
+silently discarded everything collected before it. A customer with a missing
+business name AND a bad closing time was told about the closing time, fixed it,
+resubmitted, and only then learned about the name. Renamed to `hourFields`,
+merged into the outer array before returning.
+
+**A false alarm I raised and had to retract.** I reported that
+`formatPhoneForHref()` produced `tel:tel:+1…` in generated sites. It does not.
+The templates write `href="{{PHONE_RAW}}"` with no prefix of their own and the
+function returns the complete href. The doubling came from my own test snippet.
+The name is the trap — it returns an href, not a formatted phone — and
+`phoneHref()` would be the honest name if it is ever worth five call sites.
+
+## A location page for the site's own town is blocked — 21 September
+
+`validateAndNormalizeLocationPages(rawList, toggleValue, mainLocation)` now
+takes a third argument and rejects an entry matching the site's own location.
+
+**Why it became worth blocking.** That page always duplicated the home page on
+content. The Rank Fast title change of 20 September made the duplication
+visible to Google, because the location title became an exact PREFIX of the
+home title:
+
+    home      Emergency Plumber Round Rock in Round Rock, TX | Call (512) 894-6167
+    location  Emergency Plumber Round Rock in Round Rock, TX
+
+Two pages, near-identical titles and content, no canonical saying which wins —
+which is the "Duplicate without user-selected canonical" report, self-inflicted.
+The existing dedupe compared entries against EACH OTHER and never against the
+site's own town, so a customer typing their own town got the page.
+
+**BOTH call sites pass `global.location`** — `routes/generateRoute.js` and
+`utils/runGeneration.js`. The route is the one that reports the problem;
+runGeneration only destructures `locations`, so it silently DROPS the page.
+If only runGeneration had the argument, a customer would sail through the form
+and lose a page with no explanation anywhere. `test-location-pages.js` greps
+both files for the argument.
+
+**The state is compared only when both sides have one.** "Round Rock" and
+"Round Rock, TX" are the same place typed two ways, and the main-location field
+does not force "City, ST". Austin TX and Austin MN stay different towns.
+
+**Three mutations in a row missed their target here**, which is worth
+remembering: `parsePlace()` returns null at `if (!text) return null;`, *before*
+the `return city ? ... : null` line that looks like the empty-input guard. A
+mutation must change the line that actually implements the behaviour. The
+"no main location disables the check" test cannot be killed by any SINGLE
+mutation — three independent guards protect that path — and only fails when
+all three are removed at once. That is over-determination, not a vacuous test,
+but do not claim single-mutation coverage for it.
 
 ## Page titles — 20 September
 

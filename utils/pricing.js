@@ -90,4 +90,42 @@ const PRICING = {
     };
   }
   
-  module.exports = { PRICING, quote };
+  /**
+   * How many MORE service pages a balance can pay for.
+   *
+   * The suggestion list pre-ticks this many boxes, so the customer opens it
+   * already knowing what their balance buys instead of finding out when they
+   * tick the fourth one and a modal appears.
+   *
+   * It is not simply (credits - 200) / 100: the website base is owed only
+   * once, rows already on the form are already spoken for, and location pages
+   * cost the same as service pages out of the same balance. Getting any of
+   * those wrong pre-ticks boxes the customer cannot afford, which is the
+   * exact thing this exists to prevent.
+   *
+   * @param {object} opts
+   * @param {number} opts.credits         the balance
+   * @param {string} [opts.siteMode]      'lead' | 'sample'
+   * @param {number} [opts.servicePages]  service rows already on the form
+   * @param {number} [opts.locationPages] location rows already on the form
+   * @returns {number} how many more can be ticked, never below zero
+   */
+  function affordableServicePages({
+    credits = 0,
+    siteMode = 'lead',
+    servicePages = 0,
+    locationPages = 0,
+  } = {}) {
+    // A design sample generates no service pages at all, so ticked boxes
+    // would buy nothing and none should be offered.
+    if (siteMode === 'sample') return 0;
+
+    const committed = quote({ siteMode: 'lead', servicePages, locationPages }).total;
+    const spare = Number(credits || 0) - committed;
+
+    if (!(spare > 0)) return 0;
+
+    return Math.floor(spare / PRICING.SERVICE_PAGE);
+  }
+
+  module.exports = { PRICING, quote, affordableServicePages };

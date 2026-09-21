@@ -14,6 +14,7 @@ const router = express.Router();
 const Job = require('../models/Job');
 const requireAuth = require('../middleware/requireAuth');
 const { log } = require('../utils/logger');
+const { appHeader, appHeaderAssets, appHeaderScripts } = require('../utils/appHeader');
 
 /**
  * Load a job the current user is allowed to see.
@@ -80,14 +81,20 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
   const job = await loadOwnedJob(req);
 
   if (!job) {
+    // The header goes on the 404 too. This page is reached by an expired or
+    // mistyped job id, and without it the only way out is the one link in the
+    // body — which is the dead-end problem the header exists to fix.
     return res.status(404).send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Not found</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+${appHeaderAssets()}
 </head><body style="background:#082d5b;" class="text-white">
+${appHeader(res.locals.csrfField || '')}
   <div class="container py-5" style="max-width:600px;">
     <h1>We could not find that build</h1>
     <a href="/dashboard" class="btn btn-primary mt-3">My Dashboard</a>
   </div>
+${appHeaderScripts()}
 </body></html>`);
   }
 
@@ -114,8 +121,10 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${copy.title}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+${appHeaderAssets()}
 </head>
 <body style="background:#082d5b;" class=" text-white">
+${appHeader(res.locals.csrfField || '')}
   <div class="container py-5" style="max-width: 720px;">
 
     <h1 id="title" class="mb-2">${copy.title}</h1>
@@ -252,6 +261,7 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
       poll();
     })();
   </script>
+${appHeaderScripts()}
 </body>
 </html>`);
 });

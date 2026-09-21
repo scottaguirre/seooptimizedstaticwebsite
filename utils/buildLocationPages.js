@@ -124,8 +124,14 @@ const buildLocationPages = async function (
     //
     // The location-page format is the same in every mode; only the index
     // page's differs.
+    //
+    // `pages` is the site's service pages — already a parameter of this
+    // function, for the Services dropdown. The description names the first
+    // three of them, which is the point of the 21 September change: it is what
+    // lets a location page say what the business does rather than repeat its
+    // own title.
     const { title: metaTitle, description: metaDesc } =
-      locationMeta(globalForLoc.location, globalForLoc);
+      locationMeta(globalForLoc.location, globalForLoc, pages);
     const pagePath = `location-${slugify(locationPage.display)}.html`;
 
     const jsonLdString = buildLocationPagesSchema(

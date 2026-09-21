@@ -20,6 +20,7 @@ const express = require('express');
 const router = express.Router();
 
 const requireAuth = require('../middleware/requireAuth');
+const { appHeader, appHeaderAssets, appHeaderScripts } = require('../utils/appHeader');
 const { ensureZip } = require('../utils/pluginPackage');
 const { log } = require('../utils/logger');
 
@@ -59,14 +60,17 @@ router.get('/plugin/download', requireAuth, async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Download failed</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+${appHeaderAssets()}
 </head>
 <body style="background:#082d5b;" class=" text-white">
+${appHeader(res.locals.csrfField || '')}
   <div class="container py-5" style="max-width: 700px;">
     <h1>We could not build the plugin download</h1>
     <p class="lead">This is our problem, not yours. Please try again in a moment.</p>
     <p class="text-white-50 small">Reference: ${req.id || 'unknown'}</p>
     <a href="/blog-sites" class="btn btn-primary mt-3">Back to Blog Automation</a>
   </div>
+${appHeaderScripts()}
 </body>
 </html>`);
   }
