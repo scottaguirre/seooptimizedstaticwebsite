@@ -31,30 +31,75 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   echo
 fi
 
+# A MISSING PACKAGE LOOKS EXACTLY LIKE A FAILING TEST, and that cost a day.
+#
+# The location suggester arrived with a new dependency (all-the-cities, the
+# gazetteer). It was added to package.json but never installed here, so
+# `node test-nearby-places.js` threw "Cannot find module", `set -e` stopped
+# the script before the rsync, and the deploy did nothing at all. The server
+# went on serving the previous build; the feature was simply absent from the
+# page, with no error anywhere to explain why.
+#
+# The failure was on screen the whole time — buried in a stack trace among
+# twenty test runs. So: check what package.json declares is actually on disk,
+# first, and say plainly what to do about it.
+echo "Checking dependencies..."
+MISSING="$(node -e '
+  const fs = require("fs");
+  const path = require("path");
+  const deps = Object.keys(require("./package.json").dependencies || {});
+  const gone = deps.filter(name =>
+    !fs.existsSync(path.join("node_modules", name, "package.json")));
+  process.stdout.write(gone.join(" "));
+')"
+
+if [[ -n "$MISSING" ]]; then
+  echo
+  echo "Not installed here: ${MISSING}"
+  echo "Run this first, then deploy again:"
+  echo
+  echo "  npm install --legacy-peer-deps"
+  echo
+  exit 1
+fi
+
 # Tests before the push, not after.
 #
 # A deploy that ships a broken build and then tells you is worse than one that
-# refuses. `set -e` means a failing suite stops the script here.
+# refuses. The loop names the suite that failed instead of leaving you to find
+# it in the scrollback.
 echo "Running tests..."
-node test-business-shape.js > /dev/null
-node test-page-meta.js      > /dev/null
-node test-location-pages.js > /dev/null
-node test-phone.js          > /dev/null
-node test-app-header.js     > /dev/null
-node test-suggest-services.js > /dev/null
-node test-blog-plan.js      > /dev/null
-node test-anchor-pool.js    > /dev/null
-node test-home-anchors.js   > /dev/null
-node test-blog-states.js    > /dev/null
-node test-email-from.js     > /dev/null
-node test-email-html.js     > /dev/null
-node test-wp-screenshot.js  > /dev/null
-# Skip cleanly when php is not installed; see the top of each file.
-node test-wp-canonical.js   > /dev/null
-node test-wp-single.js      > /dev/null
-node test-ie-pause.js       > /dev/null
-node test-ie-video.js       > /dev/null
-node test-ie-topics.js      > /dev/null
+for suite in \
+  test-business-shape.js \
+  test-page-meta.js \
+  test-location-pages.js \
+  test-phone.js \
+  test-app-header.js \
+  test-suggest-services.js \
+  test-wizard-steps.js \
+  test-nearby-places.js \
+  test-blog-plan.js \
+  test-anchor-pool.js \
+  test-home-anchors.js \
+  test-blog-states.js \
+  test-email-from.js \
+  test-email-html.js \
+  test-wp-screenshot.js \
+  test-wp-canonical.js \
+  test-wp-single.js \
+  test-ie-pause.js \
+  test-ie-video.js \
+  test-ie-topics.js
+do
+  # The wp-* suites skip cleanly when php is not installed; see the top of
+  # each file.
+  if ! node "$suite" > /dev/null; then
+    echo
+    echo "FAILED: ${suite}"
+    echo "Nothing was deployed. The server is still running the previous build."
+    exit 1
+  fi
+done
 echo "Tests passed."
 echo
 

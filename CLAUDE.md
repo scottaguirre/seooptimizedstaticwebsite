@@ -64,6 +64,16 @@ writing the file from a session creates it fresh with default permissions.
 say so**, or the next deploy stops on a confusing error that has nothing to do
 with the change.
 
+**A new dependency has to be installed here before `./deploy.sh` will run.**
+The script runs the test suites first and `set -e` stops it on the first
+failure — and a package that is in `package.json` but not in `node_modules`
+fails a suite exactly like a broken test does. On 22 September that ate a whole
+deploy: `all-the-cities` was declared but not installed, `test-nearby-places.js`
+threw *Cannot find module*, the rsync never ran, and the server went on serving
+the previous build with no error to explain the missing feature. `deploy.sh`
+now checks the declared dependencies before the tests and says which to install;
+the fix is always `npm install --legacy-peer-deps`.
+
 **Do not add `--omit=dev` to the install step.** It looks obviously right for a
 production server and is wrong for this one: `utils/runProductionBuild.js` runs
 webpack at request time to build each customer's site, so webpack, babel-loader,
@@ -78,6 +88,8 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-phone.js             # the phone format check, both sides; needs no php
     node test-app-header.js        # the logged-in header and its two copies; needs no php
     node test-suggest-services.js  # suggested service pages + the budget; needs no php
+    node test-wizard-steps.js      # the wizard's steps and the draft; needs no php
+    node test-nearby-places.js     # suggested location pages, from real geography
     node test-wp-canonical.js      # runs the exported theme as real PHP; skips without php
     node test-wp-single.js         # single.php incl. the featured image; skips without php
     node test-ie-pause.js          # campaign pause/resume as real PHP; skips without php
@@ -173,30 +185,11 @@ Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
 
 ## Outstanding
 
-**NEXT UP — split the locations out into their own step**
+**Add tokens to the picture before tightening any limit**
 
-Edwin, 21 September: service pages and location pages share one step and it
-now looks crowded, especially since the suggestion panel went in above the
-rows. Locations should become a step of their own, after services.
-
-Things to check when doing it, because none of them are just moving markup:
-
-- The step numbers are COMPUTED by `stepNumber()`, and they differ by site
-  mode — a Design Sample skips steps a Rank Fast site has. Edwin calls the
-  current one "step 6"; the constant is `STEP.PAGES`. Inserting a step means
-  every later number moves.
-- The review card's **change** buttons carry `data-step`, so they have to
-  follow the renumbering or they send people to the wrong screen.
-- `currentLocationNames()` reads locations out of the DOM, and the credit
-  quote uses it. Once the locations live on a step that is not on screen, it
-  falls back to `state.locations` — which is only written when a step is
-  LEFT. Check that the fallback is actually correct now, because the whole
-  reason that function reads the DOM is that state lags behind.
-- The location credit gate intercepts `#addLocationBtn` in the CAPTURE phase
-  because the real handler lives in `locationPages.js`. That wiring has to
-  move with the button.
-- `test-app-header.js` and `test-location-pages.js` both touch this area.
-
+`services.suggested` now logs `inputTokens` / `outputTokens` / `totalTokens`.
+Leave it a week, then decide whether a daily cap is worth having. Until then
+there is no number, only a guess.
 
 **The rename to Three Comets — when threecomets.com goes live**
 
@@ -404,6 +397,180 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## Suggested location pages — 22 September
+
+The other half of the suggestion work. Same panel, same budget-driven
+pre-ticking, **completely different engine.**
+
+### It asks no model, and that is the whole point
+
+A model asked for the towns near Leander answers confidently and wrongly:
+places a hundred miles off, places in the next state, places that do not
+exist. The errors are the dangerous kind — plausible names nobody thinks to
+check, that become pages for a service area the business does not cover.
+Edwin's own screenshot made the case: a location page for Dallas on a site for
+a Round Rock business, 190 miles.
+
+So `utils/nearbyPlaces.js` reads a gazetteer and does trigonometry. No tokens,
+no rate limit, no network, same answer every time.
+
+**The data is `all-the-cities`** — the GeoNames cities1000 export, every
+populated place with 1,000+ people, with coordinates, population and state.
+16,677 US places after filtering. **The package is MIT; the DATA is GeoNames
+under CC BY 4.0 and wants attribution.**
+
+That credit is **under the suggestion panel on step 7**, appearing with the
+first list. Not a footer: a line where the data is used is seen by whoever is
+looking at the towns, and a footer credit is the version that satisfies the
+licence without satisfying the point of it. It stays hidden until a list
+exists, because crediting a dataset on a screen that has not used it is noise.
+
+It goes on the app, NOT on the generated sites. Those come out with a few town
+names in them, and a place name is a fact rather than somebody's dataset — the
+dataset is what the wizard uses.
+
+### What is and is not a town
+
+Feature codes PPL, PPLA, PPLA2, PPLA3, PPLC. Left out: **PPLX, which is a
+district inside a city.** A page for a district of Austin is a different play
+from one for a suburb, and mixing them makes the choice harder rather than
+richer. The test fixture for this is Bel Air, MD, whose nearest populated
+place is *North Bel Air* — with the filter gone it becomes suggestion number
+one, a location page for part of the town the home page already covers.
+
+**No population floor beyond the dataset's own 1,000.** Small nearby towns are
+often the best targets — low competition, real searches. What makes a place a
+bad target is nobody searching for it, which population only roughly predicts.
+So the list shows **distance and population on every row** and lets the
+customer judge; that call is theirs.
+
+### Ordered by distance, not by size
+
+The nearest town is the one the business most plausibly serves. Sorting by
+population would put the big city first and the actual neighbours below the
+fold.
+
+`DEFAULT_RADIUS_MILES = 60`, which only ever bites in the country: a suburban
+business fills its twenty long before reaching it, and Alpine, Texas has three
+towns inside it — which is the honest answer, not a reason to pad the list.
+
+### Pressing again is free, so there is no two-press cap
+
+The service suggester caps at two because each press is a model call. This one
+is a sort. The page sends back every town it has already **shown**, so the
+next press returns the next nearest ones.
+
+**`shown` and `existing` are different lists and must stay that way.** Rows on
+the form (`existing`) are excluded AND counted against the balance, because
+each is 100 credits committed. Towns merely displayed (`shown`) are excluded
+from the results only — an unticked box has bought nothing.
+
+### The rows belong to another file
+
+`locationPages.js` owns `addLocationInput()` and the delete button, and it
+listens on `document`. So the panel tags its rows and listens in the **CAPTURE
+phase** — the same trick the location credit gate uses, and for the same
+reason: to run before a handler in a file this one does not own, while the row
+still exists to be read.
+
+Turning the toggle off empties the list, so that handler unticks everything
+too.
+
+### Four things mutation testing found here
+
+- **The Austin–Dallas distance test proved nothing.** Flat trigonometry on
+  radians gets a north-south pair right to within a few miles. The cos(lat)
+  term only shows up east-west: Seattle to Spokane is 228 miles and comes out
+  at 338 without it. The fixture is that pair now.
+- **Three guards in `findPlace` were dead.** Stripping full stops, checking
+  the state code was two characters, checking it was non-empty — the catch-all
+  regex and the state filter already did all of it. Removed rather than
+  documented.
+- **A test slice found the wrong handler.** Two `button.addEventListener`
+  click handlers exist now; the service suite's assertions were reading the
+  locations one. They are scoped to their function.
+- **`affordableLocationPages` is untestable until the prices diverge.**
+  SERVICE_PAGE and LOCATION_PAGE are both 100, so swapping one for the other
+  changes no answer. Documented in place rather than papered over.
+
+## The draft after a trip to buy credits — 21 September
+
+Someone runs out of credits mid-form, buys more, and comes back. Two gaps,
+both there since the draft was built, both found while checking that the step
+split had not broken it.
+
+### It landed them on step 1
+
+The draft saved the answers but not the step, so they clicked Next through
+everything to get back.
+
+**It cannot simply return them to where they were, because THE LOGO CANNOT BE
+RESTORED.** Browsers do not let JavaScript set a file input's value. Dropping
+somebody back on the service pages would mean a refusal at submit for a field
+three steps behind them, with no hint of which one.
+
+So `draftResumeStep()` returns the LOGO step, or wherever they were if that is
+earlier — everything before it is already filled in, the logo is the one thing
+that has to be done again, and it is the last point from which the rest of the
+wizard still makes sense. Six clicks becomes three. The restore notice says so
+plainly, because landing on a screen asking for a file you thought you had
+chosen otherwise reads as the form having lost it.
+
+**`Math.min(was, STEP.LOGO)` is the whole upper bound.** An `was >= steps.length`
+check was there too; mutation testing showed it changed no outcome, because the
+floor already caps anything past the logo step. Removed rather than documented.
+
+**Start Over still goes to step 1.** It shares the job of choosing a step and
+must not follow this to the logo: starting over means starting over.
+
+### The suggestion lists were not saved
+
+`suggestionBatches` was not in the draft, so the ticked services came back as
+rows with no tick boxes above them — the orphaned-row problem the Delete button
+had, reached by a different route — and the two presses were silently handed
+back. Saved now, with `suggestionsFor` beside it: without that, the lists are
+cleared on arrival because the business type they were for looks like it
+changed.
+
+## Locations are their own step — 21 September
+
+Service pages and locations shared step 6. With the suggestion panel above the
+rows it read as a wall, so locations became **step 7**.
+
+**The step numbers do NOT differ by site mode.** An earlier note in this file
+said they did; that was wrong. `stepNumber()` is `step + 1`, `go()` skips
+nothing, and all three modes walk the same list — which is why the split was
+mostly mechanical.
+
+### The rule the whole split rests on
+
+**Every path out of a step writes that step's values into `state`, in both
+directions.** `savePages()` and `saveLocations()` exist for that and are called
+from Back as well as from Next.
+
+It matters because `currentPageNames()` and `currentLocationNames()` read the
+DOM first and fall back to `state`. While both lists shared a screen the
+fallback was a safety net. Now that only one is ever on screen, **it is the
+only source the other has** — and three things depend on it: the credit quote,
+the service-suggestion call, and the draft saved on the way to buy credits.
+
+`savePages()` returns early when the rows are not on screen. Without that it
+would read an empty NodeList and write it to `state.pages`, erasing the work in
+exactly the situation it exists to protect.
+
+### The parts that had to travel, not just the markup
+
+- **The location credit gate.** It intercepts `#addLocationBtn` in the CAPTURE
+  phase because the real handler lives in `locationPages.js`. Left behind it
+  would never fire and locations could be added past the balance in silence.
+- **The submit-time guards.** A duplicate city or an empty list used to call
+  `go(STEP.PAGES)`; they now go to `STEP.LOCATIONS`. Otherwise someone lands on
+  the service pages reading a complaint about a city they cannot see.
+- **The review card's locations row** and **Back from review**, both repointed.
+- **The hidden-mirror block**, which moved with the submit handler. Each list is
+  mirrored only when its inputs are NOT in the DOM — after the split that is
+  always, so what used to be the exception is now the normal path.
 
 ## Suggested service pages — 21 September
 
@@ -1231,6 +1398,11 @@ comment in `generateFaqAnswers.js` were removed on 10 September.
 These were raised, considered and set aside. Do not bring them up again unless
 Edwin does.
 
+- **Excluding Design Sample from the service suggester.** Edwin, 21 September:
+  "forget about this". The suggester has no mode check, so it appears in all
+  three modes; in a sample it returns a list with nothing ticked and a note
+  saying the credits are spoken for, and spends a model call doing it. He
+  knows, and decided it is not worth the code.
 - **The fabricated 5-star review** in the LocalBusiness JSON-LD
   (`utils/generateReview.js`). Edwin knows; he will say when.
 - **Wiring `utils/blog/qualityCheck.js` into service pages.** Its `checkPost()`

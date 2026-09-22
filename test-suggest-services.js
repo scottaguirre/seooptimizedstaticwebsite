@@ -901,7 +901,12 @@ test('the button stops after two batches', () => {
 
   // And the handler refuses too, so a stale enabled button cannot spend a
   // third call.
-  const click = js.slice(js.indexOf("button.addEventListener('click'"));
+  //
+  // SCOPED TO mountSuggestPanel. The locations panel has a button handler of
+  // its own now, and it is the one an unscoped search finds first — these two
+  // assertions started reading it and failed the moment it existed.
+  const panel = js.slice(js.indexOf('function mountSuggestPanel'));
+  const click = panel.slice(panel.indexOf("button.addEventListener('click'"));
   assert.ok(/length >= MAX_SUGGESTION_BATCHES\) return;/.test(click.slice(0, 700)),
     'the click handler does not enforce the cap itself');
 });
@@ -960,7 +965,8 @@ test('a new batch is added to the stored ones, not put in their place', () => {
   // Storing only the latest would make the cap unenforceable and would drop
   // the first list on the way back to this step — rows with no box again.
   const js = withoutComments(sourceOf('public/js/generateDinamycForm.js'));
-  const click = js.slice(js.indexOf("button.addEventListener('click'"));
+  const panel = js.slice(js.indexOf('function mountSuggestPanel'));
+  const click = panel.slice(panel.indexOf("button.addEventListener('click'"));
   const body = click.slice(0, 1200);
 
   assert.ok(/suggestionBatches = \(state\.suggestionBatches \|\| \[\]\)\.concat\(\[data\]\)/.test(body),

@@ -300,6 +300,18 @@
         pages: currentPageNames(),
         addLocations: state.addLocations,
         locations: currentLocationNames(),
+
+        // The suggestion lists, so the ticked services come back with their
+        // TICK BOXES. Without them the rows returned and the boxes did not —
+        // the same orphaned-row problem the Delete button had, reached by a
+        // different route, and the two presses were silently given back.
+        suggestionBatches: state.suggestionBatches,
+        suggestionsFor: state.suggestionsFor,
+        townBatches: state.townBatches,
+
+        // Where they were. See draftResumeStep() for why this is not where
+        // they are sent back to.
+        step: current,
       }));
     } catch (_) {
       // Private browsing, or storage full. Losing a draft is a nuisance;
@@ -345,6 +357,40 @@
     state.pages = Array.isArray(draft.pages) ? draft.pages : [];
     state.addLocations = draft.addLocations !== false;
     state.locations = Array.isArray(draft.locations) ? draft.locations : [];
+    state.suggestionBatches = Array.isArray(draft.suggestionBatches) ? draft.suggestionBatches : [];
+    state.suggestionsFor = String(draft.suggestionsFor || '');
+    state.townBatches = Array.isArray(draft.townBatches) ? draft.townBatches : [];
+  }
+
+  /**
+   * Where a restored draft picks up.
+   *
+   * NOT where they left off, and the reason is the logo: browsers do not let
+   * JavaScript set a file input's value, so it is the one answer a draft
+   * cannot carry. Dropping somebody straight back on the service pages would
+   * mean a refusal at submit for a field three steps behind them, with no
+   * hint of which one.
+   *
+   * So: the logo step, or wherever they were if that is earlier. Everything
+   * before it is already filled in, the logo is the one thing that has to be
+   * done again, and it is the last point from which the rest of the wizard
+   * still makes sense. Six clicks back becomes three.
+   */
+  function draftResumeStep(draft) {
+    // `draft && draft.step` was the first version, and a null draft became
+    // Number(null) === 0 — step one. Harmless today because the caller only
+    // asks when there IS a draft, but it made the one case with no answer
+    // give a different answer from every other case with no answer.
+    const was = draft ? Number(draft.step) : NaN;
+
+    if (!Number.isInteger(was) || was < 0) return STEP.LOGO;
+
+    // No upper bound is needed: the floor below caps anything past the logo
+    // step at the logo step, so a step number from the far end of the wizard
+    // — or from an edited sessionStorage — lands in the same place as one
+    // that is merely late. An `was >= steps.length` check here was dead code
+    // and mutation testing said so.
+    return Math.min(was, STEP.LOGO);
   }
 
   /** Tells the customer what came back, and what did not. */
@@ -366,8 +412,10 @@
     note.innerHTML = `
       <strong style="color:#0a3622;">Your details were kept.</strong>
       <span style="color:#0a3622;">
-        Everything you entered is still here — you will need to choose your logo
-        again, because browsers do not let a page refill a file field.
+        Everything you entered is still here, including your service pages and
+        any suggestions you ticked. We have brought you back to the logo step,
+        because choosing the file again is the one thing we cannot do for you —
+        browsers do not let a page refill a file field.
       </span>
       <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     `;
@@ -389,13 +437,14 @@
   }
 
   const STEP = {
-    MODE:   0,
-    TYPE:   1,
-    LOGO:   2,
-    DESIGN: 3,
-    MAIN:   4,
-    PAGES:  5,
-    REVIEW: 6,
+    MODE:      0,
+    TYPE:      1,
+    LOGO:      2,
+    DESIGN:    3,
+    MAIN:      4,
+    PAGES:     5,
+    LOCATIONS: 6,
+    REVIEW:    7,
   };
 
   /**
@@ -491,7 +540,14 @@
 
     // Which business type those batches were asked for. When it changes they
     // are thrown away, because a plumber's services are wrong for a dentist.
-    suggestionsFor: ''
+    suggestionsFor: '',
+
+    // The replies from /api/suggest-locations, newest last. Kept for the same
+    // reason as the service lists: re-fetching on the way back to this step
+    // would lose which towns they had unticked. There is no "which business
+    // type" twin, because the towns depend on the LOCATION, and changing that
+    // means going back to the main form.
+    townBatches: []
   };
 
   // DOM refs
@@ -1153,6 +1209,21 @@
     return (v === undefined || v === null) ? '' : String(v).trim();
   }
 
+  /**
+   * ONE COLOUR FOR ALL OF THEM, deliberately.
+   *
+   * They used to be four: light, blue, green, cyan. Four colours is four
+   * claims that these things differ in kind, and they do not — they are one
+   * sentence about the site being built, broken into chips. On the location
+   * step, where the header buttons, the delete button and three footer
+   * buttons are already competing, a row of coloured chips reads as six more
+   * things to press. Nothing here is pressable.
+   *
+   * White on the dark form, black text: the badges stay legible and stop
+   * pulling attention away from the controls that do something.
+   */
+  const BADGE_CLASS = 'text-bg-light text-dark';
+
   function contextBadges(extra = []) {
     const businessName = snapshotValue('businessName');
     const location     = snapshotValue('location');
@@ -1160,16 +1231,16 @@
     // Deliberately just these four. Logo filename and domain added noise
     // without helping anyone decide what to type next; the review step
     // shows the full picture.
-    const badges = [];
-    if (businessName) badges.push(['text-bg-light text-dark', `Business: ${businessName}`]);
-    if (state.businessType) badges.push(['text-bg-primary', `Type: ${state.businessType}`]);
-    if (location) badges.push(['text-bg-success', `Location: ${location}`]);
-    badges.push(['text-bg-info', themeLabel(state.styleKey)]);
+    const labels = [];
+    if (businessName) labels.push(`Business: ${businessName}`);
+    if (state.businessType) labels.push(`Type: ${state.businessType}`);
+    if (location) labels.push(`Location: ${location}`);
+    labels.push(themeLabel(state.styleKey));
 
-    extra.forEach(b => badges.push(b));
+    extra.forEach(text => labels.push(text));
 
-    return badges
-      .map(([cls, text]) => `<span class="badge ${cls}">${escapeHtml(text)}</span>`)
+    return labels
+      .map(text => `<span class="badge ${BADGE_CLASS}">${escapeHtml(text)}</span>`)
       .join('');
   }
 
@@ -1574,9 +1645,21 @@
 
 
   // -----------------------------
-  // Step 3 : Service Pages + Location Pages
+  // Step 6 : Service Pages
   // -----------------------------
-  function renderPagesAndLocationsStep() {
+  //
+  // Locations used to live on this step too. They were split out on
+  // 21 September: with the suggestion panel above the rows, one step was
+  // carrying a list somebody fills twenty times and a second list somebody
+  // fills twenty times, and it read as a wall.
+  //
+  // THE RULE THAT MAKES THE SPLIT SAFE: each step writes its values into
+  // `state` on the way out, in BOTH directions. currentPageNames() and
+  // currentLocationNames() read the DOM first and fall back to `state`, and
+  // once only one of the two lists is on screen that fallback is the only
+  // source the other has. The credit quote, the suggestion call and the
+  // saved draft all depend on it.
+  function renderPagesStep() {
     container.innerHTML = '';
 
     const header = el('div', { class: 'mb-3' });
@@ -1672,8 +1755,82 @@
     });
     container.appendChild(svcWrap);
 
-    // ===== LOCATION PAGES =====
-    const locToggleWrap = el('div', { class: 'form-check form-switch mb-2' });
+    const footer = el('div', { class: 'd-flex gap-2 mt-4' });
+    const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
+    const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px;' }, 'Start Over');
+    const nextBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Next →');
+    footer.append(backBtn, resetBtn, nextBtn);
+    container.appendChild(footer);
+
+    resetBtn.addEventListener('click', startOver);
+
+    backBtn.addEventListener('click', () => {
+      savePages();
+      go(STEP.MAIN);
+    });
+
+    nextBtn.addEventListener('click', () => {
+      const pi = container.querySelectorAll('#pagesList input[type="text"]');
+      const pagesVals = [...pi].map(i => i.value.trim()).filter(Boolean);
+
+      // Duplicate service pages would overwrite each other's HTML file
+      const pageDupes = findDuplicates([...pi]);
+      if (pageDupes.dupes.length) {
+        [...pi].forEach(i => i.classList.remove('is-invalid'));
+        pageDupes.dupes.forEach(i => i.classList.add('is-invalid'));
+        pageDupes.dupes[0]?.focus();
+        showAlert(container, `Duplicate service page: ${pageDupes.labels.join(', ')}. Each page needs a different name.`);
+        return false;
+      }
+
+      if (pagesVals.length === 0) {
+        pi[0]?.classList.add('is-invalid');
+        pi[0]?.focus();
+        showAlert(container, 'Please add at least one service page.');
+        return;
+      }
+
+      state.pages = pagesVals;
+      go(STEP.LOCATIONS);
+    });
+
+    container.addEventListener('input', (ev) => {
+      if (ev.target.classList?.contains('is-invalid')) ev.target.classList.remove('is-invalid');
+    }, { once: true });
+  }
+
+  /** The service rows, into state. Called on every way out of that step. */
+  function savePages() {
+    const pi = container.querySelectorAll('#pagesList input[type="text"]');
+    if (!pi.length) return;   // not on screen; state already holds the truth
+    state.pages = [...pi].map(i => i.value.trim()).filter(Boolean);
+  }
+
+  /** The locations and the toggle, into state. Same rule. */
+  function saveLocations(toggle) {
+    if (!toggle) return;
+    const li = container.querySelectorAll('#locationsList input[name="global[locationPages][]"]');
+    state.addLocations = !!toggle.checked;
+    state.locations = state.addLocations
+      ? [...li].map(i => i.value.trim()).filter(Boolean)
+      : [];
+  }
+
+
+  // -----------------------------
+  // Step 7 : Location Pages
+  // -----------------------------
+  function renderLocationsStep() {
+    container.innerHTML = '';
+
+    const header = el('div', { class: 'mb-3' });
+    header.innerHTML = `
+      <h4 class="mb-2">${stepNumber(STEP.LOCATIONS)}. Location Pages</h4>
+      <div class="d-flex flex-wrap gap-2">${contextBadges()}</div>
+    `;
+    container.appendChild(header);
+
+    const locToggleWrap = el('div', { class: 'form-check form-switch mb-3' });
     locToggleWrap.innerHTML = `
       <input class="form-check-input" type="checkbox"
        id="addLocations"
@@ -1681,15 +1838,20 @@
        value="true"
        ${state.addLocations ? 'checked' : ''}>
 
-      <label class="form-check-label" for="addLocations"><h4>Add location pages</h4></label>
+      <label class="form-check-label" for="addLocations" style="font-size:18px;">Add location pages</label>
     `;
     container.appendChild(locToggleWrap);
 
     const locBlock = el('div', { id: 'locationsBlock', class: ' p-3 mb-3' });
+
+    // The suggestion panel goes INSIDE locationsBlock, above the rows, so the
+    // toggle hides it along with everything else it governs.
+    const locSuggestWrap = el('div', { id: 'locSuggestBlock', class: 'mb-3' });
+
     const locList  = el('div', { id: 'locationsList', class: 'mb-2' });
     const addLocBtn = el('button', { type: 'button', class: 'btn btn-sm btn-success', id: 'addLocationBtn' }, '+ Add another location');
     const locHint = el('div', { class: 'form-text mt-2' }, 'Format: City, ST (e.g., Austin, TX). When toggle is ON, at least one location is required.');
-    locBlock.append(locList, addLocBtn, locHint);
+    locBlock.append(locSuggestWrap, locList, addLocBtn, locHint);
     container.appendChild(locBlock);
 
     const locToggle = locToggleWrap.querySelector('#addLocations');
@@ -1765,52 +1927,23 @@
     };
     ensureVisible(); seedLocations();
 
+    mountLocationSuggestPanel(locSuggestWrap, locList, locToggle);
 
-    // ===== NAV (Back to Main Form, Submit) =====
     const footer = el('div', { class: 'd-flex gap-2 mt-4' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
     const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px;' }, 'Start Over');
-    const submitBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Review →');
-    footer.append(backBtn, resetBtn, submitBtn);
+    const nextBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Review →');
+    footer.append(backBtn, resetBtn, nextBtn);
     container.appendChild(footer);
 
-    // Clean and start over
     resetBtn.addEventListener('click', startOver);
 
-
-
     backBtn.addEventListener('click', () => {
-      // save current edits in this step
-      const pi = container.querySelectorAll('#pagesList input[type="text"]');
-      state.pages = [...pi].map(i => i.value.trim()).filter(Boolean);
-
-      const li = container.querySelectorAll('#locationsList input[name="global[locationPages][]"]');
-      state.addLocations = !!locToggle.checked;
-      state.locations = state.addLocations ? [...li].map(i => i.value.trim()).filter(Boolean) : [];
-      go(STEP.MAIN);
+      saveLocations(locToggle);
+      go(STEP.PAGES);
     });
 
-    submitBtn.addEventListener('click', () => {
-      // capture values
-      const pi = container.querySelectorAll('#pagesList input[type="text"]');
-      const pagesVals = [...pi].map(i => i.value.trim()).filter(Boolean);
-
-      // Duplicate service pages would overwrite each other's HTML file
-      const pageDupes = findDuplicates([...pi]);
-      if (pageDupes.dupes.length) {
-        [...pi].forEach(i => i.classList.remove('is-invalid'));
-        pageDupes.dupes.forEach(i => i.classList.add('is-invalid'));
-        pageDupes.dupes[0]?.focus();
-        showAlert(container, `Duplicate service page: ${pageDupes.labels.join(', ')}. Each page needs a different name.`);
-        return false;
-      }
-
-      if (pagesVals.length === 0) {
-        pi[0]?.classList.add('is-invalid');
-        pi[0]?.focus();
-        showAlert(container, 'Please add at least one service page.');
-        return;
-      }
+    nextBtn.addEventListener('click', () => {
       const addLoc = !!locToggle.checked;
       const li = container.querySelectorAll('#locationsList input[name="global[locationPages][]"]');
       const locVals = addLoc ? [...li].map(i => i.value.trim()).filter(Boolean) : [];
@@ -1833,9 +1966,12 @@
         showAlert(container, 'Please add at least one location, or turn off “Add location pages”.');
         return;
       }
-      state.pages = pagesVals;
+
       state.addLocations = addLoc;
       state.locations = locVals;
+
+      // The service pages were written to state when that step was left, so
+      // there is nothing to read out of the DOM for them here.
 
       // ensure logo mirrored to backend field name="global[logo]"
       if (!state.logoFile) {
@@ -2365,6 +2501,288 @@
     });
   }
 
+  /* ------------------------------------------------------------------
+   * Suggested location pages
+   * ------------------------------------------------------------------
+   * The same idea as the service panel and deliberately NOT the same code,
+   * because the thing behind it is different in kind.
+   *
+   * Services come from a model, so each press costs money, the answer varies,
+   * and the presses are capped at two. Towns come from a gazetteer, so a
+   * press costs a sort: there is no cap, and pressing again gives the NEXT
+   * nearest towns because the page tells the server what it has already
+   * shown.
+   *
+   * THE ROWS BELONG TO ANOTHER FILE. locationPages.js owns
+   * addLocationInput() and the delete button, and it listens on `document`.
+   * So this tags the rows it creates and listens in the CAPTURE phase — the
+   * same trick the location credit gate uses, and for the same reason: to run
+   * before a handler in a file this one does not own.
+   * ---------------------------------------------------------------- */
+
+  /** Rows on the locations list, as elements. */
+  function locationRows(locList) {
+    return [...locList.querySelectorAll('input[name="global[locationPages][]"]')];
+  }
+
+  function rowForTown(locList, key) {
+    return key ? locList.querySelector(`.row[data-suggested="${key}"]`) : null;
+  }
+
+  function addLocationRow(locList, display, key) {
+    // Fill a blank row rather than stranding it — the toggle leaves one
+    // behind every time it is switched on.
+    const blank = locationRows(locList).find(input => !input.value.trim());
+
+    if (blank) {
+      blank.value = display;
+      blank.closest('.row').dataset.suggested = key;
+      return;
+    }
+
+    if (window.addLocationInput) window.addLocationInput(display);
+    else locList.appendChild(el('input', {
+      type: 'text', class: 'form-control mb-2', name: 'global[locationPages][]', value: display,
+    }));
+
+    const added = locList.lastElementChild;
+    if (added && added.dataset) added.dataset.suggested = key;
+  }
+
+  function removeLocationRow(locList, key) {
+    const row = rowForTown(locList, key);
+    if (!row) return;   // they deleted or renamed it themselves
+
+    // Unlike the service pages, an empty locations list is allowed — the
+    // toggle is what decides whether any are required — so the last row can
+    // go rather than being emptied.
+    row.remove();
+  }
+
+  async function fetchNearbyTowns(locList, shown) {
+    const csrf = document
+      .querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+    const res = await fetch('/api/suggest-locations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+      body: JSON.stringify({
+        location: (state.mainFormSnapshot || {})['global[location]'] || '',
+        siteMode: state.siteMode,
+        // Service pages are spoken for too — they come out of the same
+        // balance, and by this step they are in state, not on screen.
+        servicePages: (state.pages || []).filter(Boolean).length,
+        existing: locationRows(locList).map(i => i.value.trim()).filter(Boolean),
+        shown,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not work out the towns near you just now.');
+    }
+    return data;
+  }
+
+  /** The line under the list. */
+  function townsNote(data, batchCount) {
+    const { places = [], checked = 0, withinRadius = 0, radiusMiles = 0 } = data;
+
+    const found = batchCount > 1
+      ? `${places.length} more within ${radiusMiles} miles.`
+      : `${places.length} of ${withinRadius} towns within ${radiusMiles} miles, nearest first.`;
+
+    if (checked >= places.length && places.length) {
+      return `${found} Your credits cover all of them — untick any you do not serve.`;
+    }
+    if (checked === 0) {
+      return `${found} None are ticked because your credits are already spoken for.`;
+    }
+    return `${found} The nearest ${checked} are ticked — that is what your credits cover.`;
+  }
+
+  function renderTownBatch(panel, locList, data, batchNumber, batchCount) {
+    const places = Array.isArray(data.places) ? data.places : [];
+    const block = el('div', { class: 'mb-2 js-town-batch' });
+    panel.appendChild(block);
+
+    if (!places.length) {
+      block.innerHTML = `<div class="form-text">No more towns within ${
+        escapeHtml(String(data.radiusMiles || ''))} miles. Add any others below.</div>`;
+      return;
+    }
+
+    const checked = Math.max(0, Math.min(Number(data.checked) || 0, places.length));
+
+    // Rows first, ticks second — one rule, the same as the service panel: a
+    // box is ticked when its town has a row.
+    places.slice(0, checked).forEach(place => {
+      const key = suggestionKey(place.display);
+      const already = locationRows(locList)
+        .some(input => suggestionKey(input.value) === key);
+
+      if (!already) addLocationRow(locList, place.display, key);
+    });
+
+    const items = places.map((place, i) => {
+      const key = suggestionKey(place.display);
+      const mine = locationRows(locList)
+        .find(input => suggestionKey(input.value) === key);
+
+      if (mine) mine.closest('.row').dataset.suggested = key;
+
+      return { place, key, id: `town-${batchNumber}-${i}`, onForm: !!mine };
+    });
+
+    block.innerHTML = `
+      ${batchNumber > 0 ? '<div class="form-text mt-2 mb-1">Further out:</div>' : ''}
+      <div class="row row-cols-1 row-cols-md-2 g-2 mb-2">
+        ${items.map(({ place, key, id, onForm }) => `
+          <div class="col">
+            <div class="form-check">
+              <input class="form-check-input js-suggested-town" type="checkbox"
+                     id="${id}" value="${escapeHtml(place.display)}"
+                     data-key="${escapeHtml(key)}"
+                     ${onForm ? 'checked' : ''}>
+              <label class="form-check-label" for="${id}">
+                ${escapeHtml(place.display)}
+                <span class="text-white-50 small">
+                  &nbsp;${place.miles} mi · ${Number(place.population).toLocaleString()} people
+                </span>
+              </label>
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="form-text">${escapeHtml(townsNote(data, batchCount))}</div>
+    `;
+
+    block.querySelectorAll('.js-suggested-town').forEach(box => {
+      box.addEventListener('change', async () => {
+        const display = box.value;
+        const key = box.dataset.key;
+
+        if (!box.checked) {
+          removeLocationRow(locList, key);
+          refreshCredits();
+          return;
+        }
+
+        // The same gate "+ Add another location" runs.
+        box.disabled = true;
+        try {
+          const q = await fetchQuote({ extraLocations: 1 });
+          credits.total = q.totalCost;
+          credits.available = q.available;
+          credits.loaded = true;
+
+          if (!q.affordable) {
+            box.checked = false;
+            showCreditsModal(q);
+            return;
+          }
+        } catch (_) {
+          // A blip must not block the customer; the server checks again
+          // before any work is done.
+        } finally {
+          box.disabled = false;
+        }
+
+        addLocationRow(locList, display, key);
+      });
+    });
+  }
+
+  function mountLocationSuggestPanel(wrap, locList, locToggle) {
+    const button = el('button',
+      { type: 'button', class: 'btn btn-primary btn-sm' },
+      'Suggest nearby towns');
+
+    const intro = el('div', { class: 'form-text mb-2' },
+      'We can list the real towns around you, nearest first, with how far away '
+      + 'and how many people live there.');
+
+    const panel = el('div', { class: 'mt-3' });
+    const note = el('div', { class: 'form-text mt-2' });
+
+    // The gazetteer's credit. GeoNames publishes under CC BY 4.0, which asks
+    // for attribution, and this is where the data is used — a line here is
+    // seen by whoever is looking at the towns, which a footer credit is not.
+    //
+    // It appears once the first list does. Crediting a dataset on a screen
+    // that has not used it yet is noise.
+    const credit = el('div', { class: 'form-text mt-2 text-white-50', style: 'display:none;' });
+    credit.innerHTML = 'Place data from '
+      + '<a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer" '
+      + 'class="text-white-50">GeoNames</a>, CC BY 4.0.';
+
+    wrap.append(intro, button, panel, note, credit);
+
+    const showCredit = () => { credit.style.display = 'block'; };
+
+    /** Every town already on screen, so the next press returns different ones. */
+    const shownTowns = () =>
+      [...panel.querySelectorAll('.js-suggested-town')].map(box => box.value);
+
+    // DELETING A ROW CLEARS ITS BOX.
+    //
+    // Capture phase, because the delete button's real handler is the
+    // document-level one in locationPages.js. Capture runs first, so the row
+    // is still in the DOM and still carries the id that finds the box.
+    locList.addEventListener('click', (e) => {
+      if (!e.target.classList?.contains('remove-location')) return;
+
+      const key = e.target.closest('.row')?.dataset?.suggested;
+      const box = key && panel.querySelector(`.js-suggested-town[data-key="${key}"]`);
+      if (box) box.checked = false;
+
+      refreshCredits();
+    }, true);
+
+    // Turning the toggle OFF empties the list — locationPages.js does that —
+    // so every tick is now over a row that no longer exists.
+    locToggle.addEventListener('change', () => {
+      if (locToggle.checked) return;
+      panel.querySelectorAll('.js-suggested-town').forEach(box => { box.checked = false; });
+    });
+
+    // Suggestions survive stepping back and forth. They cost nothing to
+    // fetch again, but re-fetching would lose which ones they had unticked.
+    (state.townBatches || []).forEach((batch, i) =>
+      renderTownBatch(panel, locList, batch, i, state.townBatches.length));
+
+    if ((state.townBatches || []).length) showCredit();
+
+    button.addEventListener('click', async () => {
+      const home = (state.mainFormSnapshot || {})['global[location]'] || '';
+      if (!home) {
+        note.textContent = 'Fill in the business location first and we can suggest nearby towns.';
+        return;
+      }
+
+      button.disabled = true;
+      button.innerHTML =
+        '<span class="spinner-border spinner-border-sm me-2"></span>Looking…';
+      note.textContent = '';
+
+      try {
+        const data = await fetchNearbyTowns(locList, shownTowns());
+
+        state.townBatches = (state.townBatches || []).concat([data]);
+        renderTownBatch(panel, locList, data, state.townBatches.length - 1, state.townBatches.length);
+        showCredit();
+
+        button.textContent = 'Suggest towns further out';
+      } catch (err) {
+        note.textContent = err.message;
+        button.textContent = 'Suggest nearby towns';
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+
+
   function mountSuggestPanel(wrap, pagesList) {
     const button = el('button',
       { type: 'button', class: 'btn btn-primary btn-sm' },
@@ -2619,7 +3037,7 @@
         listSummary(pages, 'No service pages added.'), STEP.PAGES),
 
       reviewCard(`Location pages (${locations.length})`,
-        listSummary(locations, state.addLocations ? 'No locations added.' : 'Location pages are turned off.'), STEP.PAGES),
+        listSummary(locations, state.addLocations ? 'No locations added.' : 'Location pages are turned off.'), STEP.LOCATIONS),
     ].join('');
     container.appendChild(grid);
 
@@ -2635,7 +3053,7 @@
       showBack: true,
       backText: 'Back',
       nextText: generateLabel(creditsLabel()),
-      onBack: () => go(STEP.PAGES),
+      onBack: () => go(STEP.LOCATIONS),
       onNext: () => {
         // Hidden fields were injected on the previous step, so this only
         // needs to fire the submit that spinner.js listens for.
@@ -2675,13 +3093,14 @@
   }
 
   const steps = [
-    renderSiteModeStep,          // 0  lead generation or design sample
-    renderBusinessTypeStep,      // 1
-    renderLogoStep,              // 2
-    renderDesignStep,            // 3
-    renderMainForm,              // 4
-    renderPagesAndLocationsStep, // 5
-    renderReviewStep             // 6
+    renderSiteModeStep,      // 0  lead generation or design sample
+    renderBusinessTypeStep,  // 1
+    renderLogoStep,          // 2
+    renderDesignStep,        // 3
+    renderMainForm,          // 4
+    renderPagesStep,         // 5  service pages, and the suggestion list
+    renderLocationsStep,     // 6  location pages
+    renderReviewStep         // 7
   ];
   let current = 0;
   function go(index) {
@@ -2751,6 +3170,7 @@
   // A new site is a new business; last one's services must not carry over.
   state.suggestionBatches = [];
   state.suggestionsFor    = '';
+  state.townBatches       = [];
 
 
   // 6) Jump back to the first step (Business Type)
@@ -2770,8 +3190,11 @@
     // step renders, so the wizard comes up populated rather than flashing
     // empty and then filling in.
     const draft = loadDraft();
+    let resumeAt = STEP.MODE;
+
     if (draft) {
       applyDraft(draft);
+      resumeAt = draftResumeStep(draft);
       clearDraft();
       showDraftNotice();
     }
@@ -2907,7 +3330,10 @@
         if (submitLocDupes.dupes.length) {
           e.preventDefault();
           e.stopImmediatePropagation(); // stop spinner.js submitting anyway
-          go(STEP.PAGES);
+          // STEP.LOCATIONS, not STEP.PAGES: since the split these live on
+          // their own screen, and sending someone to the service pages to
+          // fix a duplicate city shows them nothing to fix.
+          go(STEP.LOCATIONS);
           [...locInputsDom].forEach(i => i.classList.remove('is-invalid'));
           submitLocDupes.dupes.forEach(i => i.classList.add('is-invalid'));
           submitLocDupes.dupes[0]?.focus();
@@ -2920,7 +3346,7 @@
       if (addLoc && locVals.length === 0) {
         e.preventDefault();
         e.stopImmediatePropagation(); // stop spinner.js submitting anyway
-        go(STEP.PAGES);
+        go(STEP.LOCATIONS);
         // highlight first location input if it's on screen
         locInputsDom[0]?.classList.add('is-invalid');
         locInputsDom[0]?.focus();
@@ -3038,6 +3464,6 @@
         }
       );
     });   
-    go(STEP.MODE);
+    go(resumeAt);
   });
 })();

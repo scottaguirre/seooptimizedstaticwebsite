@@ -110,14 +110,38 @@ const PRICING = {
    * @param {number} [opts.locationPages] location rows already on the form
    * @returns {number} how many more can be ticked, never below zero
    */
-  function affordableServicePages({
+  function affordableServicePages(opts = {}) {
+    return affordableExtraPages(PRICING.SERVICE_PAGE, opts);
+  }
+  
+  /**
+   * The same, for location pages.
+   *
+   * A separate function rather than a flag, because SERVICE_PAGE and
+   * LOCATION_PAGE are separate constants. They are both 100 today, so the two
+   * answers agree — but they are priced separately on purpose (the comment on
+   * LOCATION_PAGE explains why it is not half price), and the day one moves
+   * this must not quietly keep using the other.
+   *
+   * SO THIS IS UNTESTABLE UNTIL THE PRICES DIVERGE, and mutation testing says
+   * so: swapping LOCATION_PAGE for SERVICE_PAGE here changes no answer and
+   * fails no test. That is not a gap to paper over with a contrived fixture —
+   * it is the honest state of two constants that happen to be equal. The day
+   * one of them moves, the existing tests start telling them apart on their
+   * own.
+   */
+  function affordableLocationPages(opts = {}) {
+    return affordableExtraPages(PRICING.LOCATION_PAGE, opts);
+  }
+  
+  function affordableExtraPages(each, {
     credits = 0,
     siteMode = 'lead',
     servicePages = 0,
     locationPages = 0,
   } = {}) {
-    // A design sample generates no service pages at all, so ticked boxes
-    // would buy nothing and none should be offered.
+    // A design sample generates neither kind of page, so ticked boxes would
+    // buy nothing and none should be offered.
     if (siteMode === 'sample') return 0;
 
     const committed = quote({ siteMode: 'lead', servicePages, locationPages }).total;
@@ -125,7 +149,7 @@ const PRICING = {
 
     if (!(spare > 0)) return 0;
 
-    return Math.floor(spare / PRICING.SERVICE_PAGE);
+    return Math.floor(spare / each);
   }
 
-  module.exports = { PRICING, quote, affordableServicePages };
+  module.exports = { PRICING, quote, affordableServicePages, affordableLocationPages };

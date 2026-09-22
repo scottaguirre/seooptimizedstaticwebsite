@@ -10,6 +10,7 @@
     "test:blog": "node test-blog-api.js && node test-blog-plan.js && node test-plugin-download.js && node test-blog-pages.js"
   },
   "dependencies": {
+    "all-the-cities": "^3.1.0",
     "archiver": "^5.3.1",
     "axios": "^1.10.0",
     "bcrypt": "^6.0.0",
