@@ -63,6 +63,7 @@ function page({ title, body, status = 200 }) {
 </head>
 <body style="background: #082d5b;" class="text-white">
 {{HEADER}}
+{{SIDEBAR}}
   <div class="container py-5" style="max-width: 900px;">
     ${body}
   </div>

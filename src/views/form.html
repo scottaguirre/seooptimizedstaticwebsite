@@ -101,13 +101,19 @@
        back in here: it would change this page only, and the other two would
        silently fall behind. -->
   {{HEADER}}
+  {{SIDEBAR}}
   
   
   
 
-  <div class="container mt-2">
+  <!-- THE WIZARD CARD IS UNCHANGED. What changed is that it is no longer the
+       only thing on the page: the empty column to its left now holds the
+       tools nav from utils/appHeader.js, which is where Keyword Research and
+       Blog Automation are reachable from. The card keeps its width and its
+       markup; a column was added beside it. -->
+  <div class="container mt-3">
     <div class="row justify-content-center">
-      <div class="col-md-8">
+      <div class="col-12 col-xl-10">
         <div class="card border-card outer-card">
       
           <div class="card-body px-5 card-body-bottom">

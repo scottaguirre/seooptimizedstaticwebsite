@@ -45,6 +45,7 @@ const {
   keywordList,
   NOISE_FLOOR,
 } = require('../utils/keywordVolumes');
+const { metroFor } = require('../utils/nearbyPlaces');
 const { log } = require('../utils/logger');
 
 /** The most the page may ask about at once. A wizard step has twenty rows. */
@@ -104,6 +105,38 @@ const STATES = {
 };
 
 /**
+ * The two places to ask about, worked out from the one the customer typed.
+ *
+ * THE PAGE DOES NOT DO GEOGRAPHY. It knows the business is in "Cedar Park,
+ * TX"; it has no business knowing that Austin is the market that describes
+ * it. utils/nearbyPlaces.js already holds the gazetteer the location
+ * suggester uses, so the metro is a population lookup, not a new input on an
+ * already long form.
+ *
+ * When there is no metro — an isolated town, or one the gazetteer does not
+ * know — the town stands in for itself. That is the honest failure: fewer
+ * usable numbers, never numbers from a market the business does not serve.
+ */
+function placesFor(body) {
+  const typed = String((body && body.location) || '').trim();
+
+  // An explicit metro wins, so a caller that knows better can say so. Nothing
+  // in the app sends one today; it exists for the standalone research screen,
+  // where the customer picks the market deliberately.
+  const explicit = toLocationName(body && body.metro);
+  const city = toLocationName(typed);
+
+  if (explicit) return { metro: explicit, city };
+  if (!city) return { metro: '', city: '' };
+
+  const metro = metroFor(typed);
+
+  return metro
+    ? { metro: toLocationName(metro.display), city }
+    : { metro: city, city: '' };
+}
+
+/**
  * Run the limiter only when the answer will actually cost something.
  *
  * THE ORDERING IS THE WHOLE TRICK. A limiter runs before the handler, so by
@@ -119,8 +152,7 @@ function spendOnlyOnMisses(limiter) {
   return async (req, res, next) => {
     try {
       const keywords = requestedKeywords(req.body && req.body.keywords);
-      const metro = toLocationName(req.body && req.body.metro);
-      const city = toLocationName(req.body && req.body.city);
+      const { metro, city } = placesFor(req.body);
 
       if (keywords.length && metro) {
         const metroHit = await cachedVolumesFor(keywords, { location: metro });
@@ -153,8 +185,7 @@ router.post('/api/keyword-volumes', spendOnlyOnMisses(keywordVolumesLimiter), as
     });
   }
 
-  const metro = toLocationName(req.body && req.body.metro);
-  const city = toLocationName(req.body && req.body.city);
+  const { metro, city } = placesFor(req.body);
 
   if (!metro) {
     return res.status(400).json({
@@ -216,4 +247,5 @@ module.exports = router;
 module.exports.toLocationName = toLocationName;
 module.exports.requestedKeywords = requestedKeywords;
 module.exports.spendOnlyOnMisses = spendOnlyOnMisses;
+module.exports.placesFor = placesFor;
 module.exports.MAX_REQUESTED = MAX_REQUESTED;

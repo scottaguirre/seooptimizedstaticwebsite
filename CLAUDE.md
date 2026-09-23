@@ -342,8 +342,97 @@ nothing and comes back an error, so `toLocationName` converts the wizard's
 "City, ST" and REFUSES rather than guessing when it cannot — guessing would
 spend $0.09 to be told no.
 
-*Still to build:* the wizard wiring — volumes beside each suggested service on
-step 6, sorted by metro volume, brands filtered out.
+*Built 23 September — the standalone page, NOT the wizard.*
+
+Edwin's call, and the right one: `/keyword-research`, reached from a tools
+column on the left of `/`. Three inputs — **City, ST · Industry · Minimum
+searches** — and a table of the top 20 terms: **term · searches/month · CPC**.
+
+- `utils/appHeader.js` gained `appSidebar()` / `appSidebarAssets()`. It lives
+  beside the header for the header's own reason: **a nav in two files is a nav
+  where one copy falls behind.** It fills the empty column next to the wizard
+  card and stacks above the content under 992px.
+- `routes/keywordResearchRoute.js` — the page and `POST /api/keyword-ideas`.
+- `utils/keywordVolumes.js` gained `keywordIdeasFor()` against
+  `keywords_for_keywords`. **A different endpoint from the volumes one:**
+  search_volume answers "how often is this searched" and needs a list;
+  this answers "what else do people search around this" and needs a seed.
+  The research page's customer has a trade and a town, never a list.
+- `test-keyword-research.js` — 30 tests, mutation-checked.
+
+**The cache key is NAMESPACED (`kind: 'volumes' | 'ideas'`).** "plumbing" as a
+volume lookup and "plumbing" as an ideas lookup are different questions with
+the same words, same town, same month — without the namespace they shared an
+entry and served each other's answers. There are two tests: one that `cacheKey`
+*can* tell them apart, and one that `keywordIdeasFor` actually asks it to.
+Mutation testing showed the first passed with the bug in place.
+
+**The WHOLE set is cached, the minimum filters after.** Caching the filtered
+twenty would charge $0.09 again every time somebody lowered the minimum on
+keywords already bought.
+
+**An empty table means three different things** — the minimum is too high, the
+town has nothing, the lookup failed — and they are indistinguishable to look
+at. So the endpoint returns `total` and `aboveMinimum` alongside the rows, and
+the page says which one happened. Most of `public/js/keywordResearch.js` is
+that distinction.
+
+**The brand filter learned the difference between a fixture and a surname.**
+"toilet plumber" and "goettl plumbing" are the same shape — one word plus the
+trade, no verb — and the filter dropped both. A toilet is a thing a plumber
+works on; Goettl is a surname; no rule about word SHAPE can see that. So the
+nouns are listed in `SERVICE_WORDS`. It is a list, which the check was written
+to avoid, but fixtures and building parts are stable where the set of plumbing
+companies in America is not.
+
+**`metroFor()` in `utils/nearbyPlaces.js`** finds the city whose volumes
+describe a town's market — largest place within 75 miles clearing 250,000. **A
+town big enough is its own metro, and that check must come first:** without it
+"largest place within reach" sent AUSTIN to San Antonio, 74 miles away. It is
+used by `/api/keyword-volumes`, not by the research page, which asks about the
+town the customer typed.
+
+**The Build a Website button moved from the header to the sidebar, 23
+September.** It was blue and beside the logo from 21 September, and the
+reasoning for that is still in `appHeader.js` — it is the customer's own verb,
+it is the END that Buy Credits is a means to, and it must be a BUTTON because
+it shipped as a plain link for an hour and read as a phrase. None of that
+changed. What changed is that a tools column now sits on the same screen, so
+the same action was offered twice; Edwin spotted it within a minute. It kept
+its colour (`var(--bs-primary)`, via `.app-sidebar-cta`).
+
+*That cost was paid the same night:* every signed-in page now renders the
+column — `/dashboard`, `/buy-credits`, `/blog-sites`, `/admin`, `/jobs/:id`
+alongside `/` and `/keyword-research`.
+
+**The column is positioned by ONE CSS rule, not by each page's grid.** It
+started inside the two pages' Bootstrap rows, and the wizard's
+`justify-content-center` put its tools 250px right of the research page's —
+one nav in two places is two navs as far as the eye is concerned. Now every
+page drops `{{SIDEBAR}}` (or `${appSidebar(path)}`) immediately after the
+header, OUTSIDE its own container, and the stylesheet does the rest.
+
+*Why `position: absolute` and not fixed or sticky:* fixed needs a hard-coded
+top offset matching the header's height — a number that goes stale and leaves
+a gap once the page scrolls. Sticky needs every page's content wrapped in a
+flex parent, which is five hand-edited layouts built as strings. Absolute with
+no top offset keeps the vertical position the element would have had anyway,
+directly under the header, and `body:has(.app-sidebar-shell)` holds the
+content clear. No magic numbers, and it works on any page regardless of that
+page's own layout.
+
+**If you add a signed-in page, give it the column.** `withAppHeader()` fills
+`{{SIDEBAR}}` for free; routes that interpolate the header directly need
+`${appSidebar('/your-path')}` after it and `${appSidebarAssets()}` beside
+`${appHeaderAssets()}`. There is a test listing every such page.
+
+## Deliberately dropped — do not re-propose
+
+**Volumes beside each suggested service inside the wizard.** Designed, argued
+for, and dropped on 23 September at Edwin's instruction: *"I dont want to touch
+the form."* The wizard step was already crowded enough that its badges read as
+buttons. The standalone page answers the same question without adding anything
+to a form somebody is halfway through.
 
 **Add tokens to the picture before tightening any limit**
 

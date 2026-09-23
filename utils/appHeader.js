@@ -172,7 +172,21 @@ function appHeader(csrfField = '') {
 
            The logo links here too, by convention. This is the visible version
            of the same destination. -->
-      <a href="/" class="btn btn-primary ms-4">Build a Website</a>
+      <!-- THE BUILD BUTTON MOVED TO THE SIDEBAR on 23 September. It was here,
+           blue and beside the logo, until the tools column existed — and then
+           "Build a Website" appeared twice on the same screen, which Edwin
+           spotted immediately. One action, one place.
+
+           It kept its colour. appSidebar() renders it as the same solid blue
+           button, because the reasoning behind that colour did not change:
+           building a website is the end, buying credits is the means, and the
+           hierarchy has to say so.
+
+           THE COST, recorded rather than hidden: pages WITHOUT a sidebar —
+           /dashboard, /buy-credits, /blog-sites, /admin — now reach the
+           wizard only through the logo, and "the wordmark links home" is a
+           real convention but an invisible one. The fix is to give those
+           pages the sidebar too, not to put the button back. -->
     </div>
 
     <div class="d-flex align-items-center gap-3">
@@ -254,13 +268,195 @@ function appHeader(csrfField = '') {
  * @param {string} html  a page containing the placeholders
  * @param {object} res   Express response, for res.locals.csrfField
  */
+/**
+ * The tools a signed-in customer can reach, as a left-hand column.
+ *
+ * WHY THIS LIVES HERE, BESIDE THE HEADER
+ *
+ * For the reason the header does: the moment a nav exists in two files, one
+ * of them falls behind. A tool added to the sidebar has to appear on every
+ * page that has a sidebar, and the only way to guarantee that is for there to
+ * be one sidebar.
+ *
+ * WHY A SIDEBAR AT ALL
+ *
+ * Blog Automation spent weeks with no entry point anywhere in the app — it
+ * was reachable only by typing /blog-sites, which means for every customer
+ * who had not been told about it, the feature did not exist. The dashboard
+ * card fixed that one. This fixes the general case: a tool that is not linked
+ * from somewhere a customer looks is a tool nobody uses.
+ *
+ * It sits in the empty column beside the wizard card, which was dead space.
+ * On a phone it drops above the content rather than squeezing it.
+ *
+ * @param {string} current  the path of the page being rendered, so its own
+ *   entry is marked rather than offered as somewhere to go.
+ */
+function appSidebar(current = '') {
+  const here = String(current || '').split('?')[0].replace(/\/+$/, '') || '/';
+
+  const tools = [
+    // `cta` marks the primary action, which wears the solid blue the header
+    // used to. It is the END the other tools are means to.
+    { href: '/', icon: 'bi-magic', label: 'Build a Website', cta: true },
+    { href: '/keyword-research', icon: 'bi-search', label: 'Keyword Research' },
+    { href: '/blog-sites', icon: 'bi-journal-text', label: 'Blog Automation' },
+    { href: '/dashboard', icon: 'bi-speedometer2', label: 'Dashboard' },
+  ];
+
+  const items = tools.map(({ href, icon, label, cta }) => {
+    const active = here === href.replace(/\/+$/, '') || (href === '/' && here === '/');
+
+    const classes = ['app-sidebar-link'];
+    if (cta) classes.push('app-sidebar-cta');
+    if (active) classes.push('app-sidebar-link-active');
+
+    return `
+      <a href="${href}"
+         class="${classes.join(' ')}"
+         ${active ? 'aria-current="page"' : ''}>
+        <i class="bi ${icon}" aria-hidden="true"></i>
+        <span>${label}</span>
+      </a>`;
+  }).join('');
+
+  // Wrapped in a SHELL that the stylesheet positions. Every page includes the
+  // sidebar the same way — immediately after the header, outside its own
+  // content container — so the column lands in the same place whatever that
+  // page's layout is. Putting it inside each page's grid is what made the
+  // wizard's tools sit 250px right of the research page's.
+  return `
+    <div class="app-sidebar-shell">
+      <nav class="app-sidebar" aria-label="Tools">
+        <div class="app-sidebar-title">Tools</div>
+        ${items}
+      </nav>
+    </div>`;
+}
+
+/**
+ * The sidebar's styles, for pages that include one.
+ *
+ * Separate from appHeaderAssets so a page without a sidebar does not carry
+ * rules for one. Appended by the page's own route.
+ */
+function appSidebarAssets() {
+  return `
+  <style>
+    .app-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: .25rem;
+      padding: 1rem .75rem;
+    }
+
+    .app-sidebar-title {
+      color: rgba(255,255,255,.55);
+      font-size: .75rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 0 .75rem .5rem;
+    }
+
+    .app-sidebar-link {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      padding: .6rem .75rem;
+      border-radius: .5rem;
+      color: rgba(255,255,255,.8);
+      text-decoration: none;
+      font-size: 1rem;
+      line-height: 1.2;
+    }
+
+    .app-sidebar-link:hover {
+      background: rgba(255,255,255,.08);
+      color: #fff;
+    }
+
+    /* The page you are already on is marked, not offered. */
+    .app-sidebar-link-active {
+      background: rgba(255,255,255,.14);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .app-sidebar-link i { font-size: 1.05rem; opacity: .85; }
+
+    /* THE PRIMARY ACTION, in the blue it wore in the header. Bootstrap's own
+       --bs-primary, so it stays in step with the rest of the app rather than
+       being a hard-coded hex that drifts. */
+    .app-sidebar-cta {
+      background: var(--bs-primary, #0d6efd);
+      color: #fff;
+      font-weight: 600;
+      margin-bottom: .5rem;
+    }
+
+    .app-sidebar-cta:hover {
+      background: var(--bs-primary, #0b5ed7);
+      filter: brightness(1.08);
+      color: #fff;
+    }
+
+    .app-sidebar-cta i { opacity: 1; }
+
+    /* Being the current page must not make the button look disabled or grey,
+       which the plain active rule would do by overriding its background. */
+    .app-sidebar-cta.app-sidebar-link-active {
+      background: var(--bs-primary, #0d6efd);
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,.55);
+    }
+
+    /* ABSOLUTE, NOT FIXED, and not sticky either.
+       
+       Fixed would need a hard-coded top offset matching the header's height —
+       a number that goes stale the moment the header changes, and that leaves
+       a gap above the column once the page scrolls. Sticky would need every
+       page's content wrapped in a flex parent, which is five hand-edited
+       layouts.
+       
+       Absolute with no top offset keeps the vertical position the element would
+       have had anyway — directly under the header — and takes it out of the
+       horizontal flow. The body's padding then holds the content clear. One
+       rule, no magic numbers, works on any page that drops the shell in after
+       the header.
+       
+       Below 992px it stacks above the content in normal flow, because a
+       column that narrow is worse than no column. */
+    @media (min-width: 992px) {
+      body:has(.app-sidebar-shell) { padding-left: 232px; }
+
+      .app-sidebar-shell {
+        position: absolute;
+        left: 0;
+        width: 232px;
+      }
+    }
+  </style>`;
+}
+
 function withAppHeader(html, res) {
   const token = (res && res.locals && res.locals.csrfField) || '';
 
+  // The path being rendered, so the sidebar can mark its own entry. Express
+  // hangs the request off the response; a page rendered without one simply
+  // marks nothing, which is the right failure.
+  const here = (res && res.req && res.req.path) || '';
+
   return String(html == null ? '' : html)
-    .replace(/{{HEADER_ASSETS}}/g, appHeaderAssets())
+    .replace(/{{HEADER_ASSETS}}/g, appHeaderAssets() + appSidebarAssets())
     .replace(/{{HEADER_SCRIPTS}}/g, appHeaderScripts())
-    .replace(/{{HEADER}}/g, appHeader(token));
+    .replace(/{{HEADER}}/g, appHeader(token))
+    .replace(/{{SIDEBAR}}/g, appSidebar(here));
 }
 
-module.exports = { appHeader, appHeaderAssets, appHeaderScripts, withAppHeader };
+module.exports = {
+  appHeader,
+  appHeaderAssets,
+  appHeaderScripts,
+  appSidebar,
+  appSidebarAssets,
+  withAppHeader,
+};

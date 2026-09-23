@@ -79,6 +79,10 @@ for suite in \
   test-wizard-steps.js \
   test-nearby-places.js \
   test-keyword-volumes.js \
+  test-keyword-research.js \
+  test-keyword-seeds.js \
+  test-keyword-intent.js \
+  test-keyword-pairs.js \
   test-blog-plan.js \
   test-anchor-pool.js \
   test-home-anchors.js \

@@ -899,7 +899,7 @@
     const header = el('div', { class: 'd-flex align-items-center justify-content-between mb-3' });
     header.innerHTML = `
       <h4 class="m-0"><legend class="form-label mb-2">${stepNumber(STEP.LOGO)}. Choose logo shape &amp; upload</legend></h4>
-      <span class="badge text-bg-primary">Business Type: ${state.businessType}</span>
+      <span class="badge ${BADGE_CLASS}">Business Type: ${escapeHtml(state.businessType)}</span>
     `;
     container.appendChild(header);
 

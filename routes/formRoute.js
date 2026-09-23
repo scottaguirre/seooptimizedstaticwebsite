@@ -3,7 +3,9 @@ const path = require('path');
 const express = require('express');
 const router = express.Router();
 
-const { appHeader, appHeaderAssets, appHeaderScripts } = require('../utils/appHeader');
+const {
+  appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets,
+} = require('../utils/appHeader');
 
 const FORM_PATH = path.join(__dirname, '../src/views/form.html');
 
@@ -42,9 +44,10 @@ router.get('/', (req, res) => {
     res.send(
       formHtml
         .replace('</head>', `  ${meta}\n</head>`)
-        .replace(/{{HEADER_ASSETS}}/g, appHeaderAssets())
+        .replace(/{{HEADER_ASSETS}}/g, appHeaderAssets() + appSidebarAssets())
         .replace(/{{HEADER_SCRIPTS}}/g, appHeaderScripts())
         .replace(/{{HEADER}}/g, appHeader(csrfField))
+        .replace(/{{SIDEBAR}}/g, appSidebar('/'))
         .replace(/{{CSRF}}/g, csrfField)
     );
 

@@ -14,7 +14,7 @@ const router = express.Router();
 const Job = require('../models/Job');
 const requireAuth = require('../middleware/requireAuth');
 const { log } = require('../utils/logger');
-const { appHeader, appHeaderAssets, appHeaderScripts } = require('../utils/appHeader');
+const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets } = require('../utils/appHeader');
 
 /**
  * Load a job the current user is allowed to see.
@@ -87,9 +87,10 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
     return res.status(404).send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Not found</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-${appHeaderAssets()}
+${appHeaderAssets()}${appSidebarAssets()}
 </head><body style="background:#082d5b;" class="text-white">
 ${appHeader(res.locals.csrfField || '')}
+${appSidebar('/jobs')}
   <div class="container py-5" style="max-width:600px;">
     <h1>We could not find that build</h1>
     <a href="/dashboard" class="btn btn-primary mt-3">My Dashboard</a>
@@ -121,10 +122,11 @@ ${appHeaderScripts()}
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${copy.title}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-${appHeaderAssets()}
+${appHeaderAssets()}${appSidebarAssets()}
 </head>
 <body style="background:#082d5b;" class=" text-white">
 ${appHeader(res.locals.csrfField || '')}
+${appSidebar('/jobs')}
   <div class="container py-5" style="max-width: 720px;">
 
     <h1 id="title" class="mb-2">${copy.title}</h1>

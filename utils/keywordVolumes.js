@@ -55,6 +55,20 @@ function log() {
 const ENDPOINT =
   'https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live';
 
+/**
+ * The OTHER endpoint: discovery rather than lookup.
+ *
+ * search_volume answers "how often is this searched". This one answers "what
+ * else do people search around this" — you give it a seed and it hands back
+ * the terms Google associates with it, with the same metrics attached. It is
+ * what the keyword research page needs, because its customer has a trade and
+ * a town, not a list of keywords.
+ *
+ * Same price, same task shape, same reply shape.
+ */
+const IDEAS_ENDPOINT =
+  'https://api.dataforseo.com/v3/keywords_data/google_ads/keywords_for_keywords/live';
+
 /** DataForSEO's own cap per task. Sending more is an error, not a truncation. */
 const MAX_KEYWORDS = 1000;
 
@@ -93,6 +107,25 @@ const SERVICE_WORDS = new Set([
   'hour', 'hr', 'same', 'day', 'leak', 'detection', 'unclog', 'clogged',
   'blocked', 'broken', 'new', 'free', 'quote', 'estimate', 'prices',
   'pricing', 'rates', 'company', 'companies', 'contractor', 'contractors',
+
+  // THE THINGS THE TRADE WORKS ON, and they are here because of a real miss.
+  //
+  // "toilet plumber" and "goettl plumbing" are the same shape: one word plus
+  // the trade, no verb. The filter called both brands and dropped a service
+  // page somebody should have been offered. The difference is that a toilet
+  // is a thing a plumber works on and Goettl is a surname — which no rule
+  // about word SHAPE can see.
+  //
+  // So the nouns are listed. It is a list, which the brand check was written
+  // to avoid, but it is a short and stable one: the fixtures and parts of a
+  // building do not change, where the set of plumbing companies in America
+  // changes weekly.
+  'toilet', 'sink', 'shower', 'bath', 'bathtub', 'tub', 'faucet', 'tap',
+  'pipe', 'pipes', 'water', 'heater', 'boiler', 'furnace', 'ac', 'duct',
+  'garbage', 'disposal', 'septic', 'sump', 'pump', 'valve', 'line', 'lines',
+  'main', 'tank', 'well', 'gas', 'kitchen', 'bathroom', 'basement',
+  'roof', 'shingle', 'shingles', 'gutter', 'gutters', 'siding', 'window',
+  'windows', 'door', 'doors', 'floor', 'flooring', 'tile', 'wall',
 ]);
 
 /* ------------------------------------------------------------------ *
@@ -108,8 +141,15 @@ const SERVICE_WORDS = new Set([
  * which also means an entry cannot outlive its own accuracy even if the TTL
  * index were somehow not doing its job.
  */
-function cacheKey(keywords, { location, language, month }) {
+function cacheKey(keywords, { location, language, month, kind = 'volumes' }) {
   const parts = [
+    // NAMESPACED, because two different questions can carry the same words.
+    // "plumbing" asked as a VOLUME lookup means "how often is the word
+    // 'plumbing' searched"; asked as an IDEAS lookup it means "what else do
+    // people search around plumbing". Same seed, same town, same month, two
+    // entirely different answers — and without this they would share a key
+    // and serve each other's.
+    String(kind || 'volumes'),
     String(location || '').trim().toLowerCase(),
     String(language || '').trim().toLowerCase(),
     String(month || ''),
@@ -322,7 +362,9 @@ async function cachedVolumesFor(keywords, opts = {}) {
   const list = keywordList(keywords);
   if (!list.length) return null;
 
-  const key = cacheKey(list, { location, language, month: currentMonth(now) });
+  const key = cacheKey(list, {
+    location, language, month: currentMonth(now), kind: opts.kind,
+  });
 
   try {
     const hit = await Model.findOne({ key }).lean();
@@ -346,7 +388,9 @@ async function volumesFor(keywords, opts = {}) {
 
   if (!list.length) return { results: [], cached: false, costUsd: 0 };
 
-  const key = cacheKey(list, { location, language, month: currentMonth(now) });
+  const key = cacheKey(list, {
+    location, language, month: currentMonth(now), kind: opts.kind,
+  });
 
   const hit = await cachedVolumesFor(list, opts);
 
@@ -433,7 +477,336 @@ async function volumesForArea(keywords, opts = {}) {
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * Discovery: what else do people search around this
+ * ------------------------------------------------------------------ */
+
+/**
+ * The most a research page will show. Thirty — twenty first, then
+ * twenty-five once the buyer-intent filter stopped the list being padded
+ * with ten spellings of one product, then thirty because the filtered rows
+ * are all worth reading.
+ *
+ * DataForSEO returns thousands; the cut happens here rather than at the
+ * network, because the whole set is cached and a later request with a lower
+ * minimum can be served from it without paying again.
+ */
+const MAX_IDEAS = 30;
+
+/**
+ * The most seeds one discovery task may carry.
+ *
+ * DataForSEO's own cap for keywords_for_keywords is 20, and — this is the
+ * part that matters — the task is priced PER TASK, not per seed. One seed and
+ * twenty seeds cost the same $0.09. Sending one was leaving nineteen free
+ * questions on the table.
+ *
+ * Measured on 23 September: "plumbing" alone in Cedar Park returned 500
+ * ideas, three of them above 200 searches a month. Keyword Planner, given
+ * three seeds by hand, offered 1,678. The gap was the seed list, not the
+ * endpoint.
+ */
+const MAX_SEEDS = 20;
+
+/**
+ * The seeds to ask about, built from what the customer typed.
+ *
+ * ORDER IS PRIORITY, because the list is capped. The trade itself first — the
+ * one seed guaranteed to be relevant. Then the town pairings, which is where
+ * local intent lives. Then the customer's own words, AHEAD of the model's:
+ * somebody who types "slab leak detection" knows their trade better than a
+ * model guessing at it. Model suggestions fill whatever is left.
+ *
+ * Deduped case-insensitively, matching cacheKey — otherwise "Plumbing" and
+ * "plumbing" take two of the twenty slots and miss the cache as a bonus.
+ *
+ * @param {string} industry   "plumbing"
+ * @param {object} opts
+ * @param {string} [opts.city]       "Cedar Park" — the bare town, no state
+ * @param {string[]} [opts.related]  what the customer typed in Related terms
+ * @param {string[]} [opts.extra]    model suggestions, lowest priority
+ * @param {number} [opts.limit]
+ */
+function seedsFor(industry, opts = {}) {
+  const trade = String(industry || '').trim();
+  if (!trade) return [];
+
+  const city = String(opts.city || '').trim();
+  const limit = Math.max(1, Math.min(Number(opts.limit) || MAX_SEEDS, MAX_SEEDS));
+
+  const candidates = [trade];
+
+  // "plumbing cedar park" and "cedar park plumbing" are genuinely different
+  // questions to Google's idea engine, not one question written twice — which
+  // is why both go in rather than whichever reads better.
+  if (city) candidates.push(`${trade} ${city}`, `${city} ${trade}`);
+
+  for (const term of (opts.related || [])) candidates.push(term);
+  for (const term of (opts.extra || [])) candidates.push(term);
+
+  const seen = new Set();
+  const out = [];
+
+  for (const raw of candidates) {
+    const term = String(raw || '').trim();
+    if (!term) continue;
+
+    const fingerprint = term.toLowerCase();
+    if (seen.has(fingerprint)) continue;
+
+    seen.add(fingerprint);
+    out.push(term);
+
+    if (out.length >= limit) break;
+  }
+
+  return out;
+}
+
+/**
+ * Terms Google associates with a seed, in one town, with their volumes.
+ *
+ * @param {string|string[]} seed  "plumbing", or the whole seed list
+ * @param {object} opts
+ * @param {string} opts.location  "Austin,Texas,United States"
+ * @param {number} [opts.minVolume]  hide anything under this
+ * @param {number} [opts.limit]      how many to hand back
+ * @param {boolean} [opts.includeBrands]  keep competitor names, default false
+ *
+ * @returns {{ rows, seeds, cached, costUsd, total, aboveMinimum, brandsHidden }}
+ *   `total` and `aboveMinimum` are what the page needs to say "20 of 340" and
+ *   to tell the difference between "nothing matched your minimum" and
+ *   "nothing came back at all" — which read the same in an empty table and
+ *   mean completely different things.
+ *
+ *   `brandsHidden` is how many rows looksLikeBrand removed. It is reported
+ *   rather than merely applied because a filter nobody can see the effect of
+ *   is a filter nobody can tell is broken — and this one has been wrong
+ *   before, on "toilet plumber".
+ */
+async function keywordIdeasFor(seed, opts = {}) {
+  const Model = opts.Model || require('../models/KeywordCache');
+  const now = opts.now ? opts.now() : new Date();
+
+  // A string is still accepted, so a caller with one seed — the volumes
+  // route, the tests — need not wrap it.
+  const seeds = (Array.isArray(seed) ? seed : [seed])
+    .map(s => String(s || '').trim())
+    .filter(Boolean)
+    .slice(0, MAX_SEEDS);
+
+  const term = seeds[0] || '';
+  const location = opts.location;
+  const language = opts.language || 'English';
+
+  if (!term) throw new Error('keyword ideas: a seed term is required');
+  if (!location) throw new Error('keyword ideas: a location is required');
+
+  const key = cacheKey(seeds, {
+    location, language, month: currentMonth(now), kind: 'ideas',
+  });
+
+  let all = null;
+  let cached = false;
+  let costUsd = 0;
+
+  try {
+    const hit = await Model.findOne({ key }).lean();
+    if (hit) { all = hit.results || []; cached = true; }
+  } catch (err) {
+    log().error('keywords.ideasCacheReadFailed', err, { location });
+  }
+
+  if (!all) {
+    const fetched = await fetchIdeas(seeds, { location, language });
+    all = fetched.results;
+    costUsd = fetched.costUsd;
+
+    const expiresAt = new Date(now.getTime() + CACHE_DAYS * 24 * 60 * 60 * 1000);
+
+    try {
+      await Model.updateOne(
+        { key },
+        {
+          $set: {
+            key, location, language,
+            keywordCount: all.length,
+            results: all, costUsd,
+            fetchedAt: now,
+            expiresAt,
+          },
+        },
+        { upsert: true }
+      );
+    } catch (err) {
+      log().error('keywords.ideasCacheWriteFailed', err, { location });
+    }
+  }
+
+  // FILTERED AFTER THE CACHE, never before. The whole set is what was paid
+  // for, so a customer who lowers the minimum gets a wider list for free.
+  const minVolume = Math.max(0, Number(opts.minVolume) || 0);
+  const limit = Math.max(1, Math.min(Number(opts.limit) || MAX_IDEAS, 200));
+
+  const answered = all.filter(r => r.volume != null);
+
+  // Counted, not just applied. `brandsHidden` goes into the log line so the
+  // filter's appetite is a number somebody can look at after a week, instead
+  // of a guess. A day where it eats half the list is the signal to loosen it.
+  const branded = opts.includeBrands
+    ? []
+    : answered.filter(r => looksLikeBrand(r.keyword, term));
+
+  const usable = opts.includeBrands
+    ? answered
+    : answered.filter(r => !looksLikeBrand(r.keyword, term));
+
+  /* THE BUYER-INTENT PASS, and it runs here rather than at the network for
+   * the same reason every other filter does: the whole answer is what was
+   * paid for, so somebody who unticks the box gets the wider list free.
+   *
+   * See utils/keywordIntent.js for why a word test and a price test are both
+   * needed and neither is enough. In short: the Austin lookup returned 7,030
+   * keywords whose top twenty by volume were ten spellings of "tankless water
+   * heater", a shopping query for garbage disposals, and a baseball term. */
+  let shortlist = usable;
+  let removedByWords = 0;
+  let removedByPrice = 0;
+  let collapsed = 0;
+
+  if (opts.intent) {
+    const { buyerIntentRows, collapseClusters } = require('./keywordIntent');
+
+    const judged = buyerIntentRows(usable, {
+      city: opts.city,
+      industry: opts.industry || term,
+    });
+
+    removedByWords = judged.removedByWords;
+    removedByPrice = judged.removedByPrice;
+
+    const before = judged.rows.length;
+
+    // THE CORPUS IS EVERY ANSWERED ROW, not the shortlist. Inside one cluster
+    // "garburator" and "garbage" each appear a handful of times and neither
+    // looks odd; it is only against the other seven thousand rows that one of
+    // them is obviously the word the trade uses.
+    shortlist = collapseClusters(judged.rows, { corpus: answered, seeds });
+    collapsed = before - shortlist.length;
+  }
+
+  const matching = shortlist.filter(r => (r.volume || 0) >= minVolume);
+
+  const rows = matching
+    .slice()
+    .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+    .slice(0, limit);
+
+  return {
+    rows,
+    seeds,
+    cached,
+    costUsd,
+    // Everything Google answered, once competitor names are out. The big
+    // number: "7,030 found".
+    total: usable.length,
+    // The pool the rows were actually chosen from. Equal to `total` when the
+    // intent filter is off, which is what makes the page's wording honest in
+    // both states without a special case.
+    buyerIntent: shortlist.length,
+    aboveMinimum: matching.length,
+    brandsHidden: branded.length,
+    removedByWords,
+    removedByPrice,
+    collapsed,
+  };
+}
+
+/**
+ * The discovery call. Separate from fetchVolumes because the URL differs.
+ *
+ * @param {string|string[]} seed  one seed or up to MAX_SEEDS of them. They
+ *   ride in ONE task, which is what makes them free: the price is per task.
+ */
+async function fetchIdeas(seed, opts = {}) {
+  const login = process.env.DATAFORSEO_LOGIN;
+  const password = process.env.DATAFORSEO_PASSWORD;
+
+  if (!login || !password) {
+    throw new Error('keyword ideas: DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD are not set');
+  }
+
+  const list = (Array.isArray(seed) ? seed : [seed])
+    .map(s => String(s || '').trim())
+    .filter(Boolean)
+    .slice(0, MAX_SEEDS);
+
+  if (!list.length) return { results: [], costUsd: 0 };
+
+  const task = {
+    keywords: list,
+    language_name: opts.language || 'English',
+    location_name: opts.location,
+    search_partners: false,
+    // Biggest first from their side too, so the truncation that happens if
+    // they ever cap the reply keeps the rows worth having.
+    sort_by: 'search_volume',
+  };
+
+  const auth = Buffer.from(`${login}:${password}`).toString('base64');
+
+  const res = await fetch(IDEAS_ENDPOINT, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify([task]),
+  });
+
+  const body = await res.json();
+
+  if (!res.ok) throw new Error(`keyword ideas: HTTP ${res.status} from DataForSEO`);
+
+  const t = (body.tasks || [])[0];
+  if (!t) throw new Error('keyword ideas: DataForSEO returned no task');
+
+  if (t.status_code !== 20000) {
+    throw new Error(`keyword ideas: DataForSEO task ${t.status_code}: ${t.status_message}`);
+  }
+
+  // DEDUPED, which single-seed calls never needed. Twenty seeds around one
+  // trade overlap heavily — "plumbing" and "plumbing cedar park" both surface
+  // "plumbers near me" — and without this the same term fills several of the
+  // twenty rows the customer gets to see.
+  //
+  // First wins, and the task is sorted by volume, so the survivor is the
+  // better-answered copy rather than an arbitrary one.
+  const seen = new Set();
+  const results = [];
+
+  for (const item of (t.result || [])) {
+    if (!item || !item.keyword) continue;
+
+    const row = readResult(item);
+    const fingerprint = row.keyword.toLowerCase();
+
+    if (seen.has(fingerprint)) continue;
+
+    seen.add(fingerprint);
+    results.push(row);
+  }
+
+  return {
+    results,
+    costUsd: typeof t.cost === 'number' ? t.cost : COST_PER_TASK_USD,
+  };
+}
+
 module.exports = {
+  keywordIdeasFor,
+  fetchIdeas,
+  seedsFor,
+  MAX_SEEDS,
+  MAX_IDEAS,
+  IDEAS_ENDPOINT,
   volumesFor,
   cachedVolumesFor,
   keywordList,

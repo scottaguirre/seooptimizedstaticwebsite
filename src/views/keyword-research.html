@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Keyword Research</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+
+  <!-- The header's stylesheet and the sidebar's, filled by
+       routes/keywordResearchRoute.js from utils/appHeader.js — the same
+       source every other page uses, so the header exists in one file.
+
+       NOTE: do not name a placeholder inside a comment on this page. The
+       substitution is a global regex, and form.html once injected a second
+       copy of the whole header stylesheet into itself that way. -->
+  {{HEADER_ASSETS}}
+
+  <style>
+    body { background: #082d5b; }
+
+    /* Bootstrap 5.3 gives headings their own --bs-heading-color, which wins
+       over a plain `h1 { color }` — so the page title rendered dark navy on a
+       navy background and was all but invisible. Setting the variable is what
+       actually works; the colours below are kept for everything else. */
+    body { --bs-heading-color: #fff; }
+
+    h1, h2, h3, h4, h5, label, p, th, td, .form-text, strong {
+      color: #fff;
+    }
+
+    .research-card {
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: .75rem;
+    }
+
+    input[type=text],
+    input[type=number] {
+      background: #e4e6e7;
+    }
+
+    /* Numbers right-aligned so the eye can compare them down the column,
+       which is the entire point of the table. */
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* THE TABLE IS THEMED THROUGH BOOTSTRAP'S OWN VARIABLES, not with a plain
+       `table { color }` rule.
+
+       The previous version did exactly that and the table rendered WHITE on a
+       navy page — because Bootstrap 5.3 sets --bs-table-bg from the body
+       background and writes it onto every cell through
+       `.table > :not(caption) > * > *`, which outranks anything a bare
+       `table` selector can say. Same trap as the --bs-heading-color one
+       above, in a different costume: 5.3 moved table theming into custom
+       properties, so the custom properties are where it has to be answered.
+
+       Striped rather than flat because a row is a term and two numbers, and
+       the eye loses its place tracking one across to its CPC. */
+    table.table {
+      --bs-table-bg: transparent;
+      --bs-table-color: #fff;
+      --bs-table-striped-bg: rgba(255,255,255,.07);
+      --bs-table-striped-color: #fff;
+      --bs-table-hover-bg: rgba(255,255,255,.13);
+      --bs-table-hover-color: #fff;
+      --bs-table-border-color: rgba(255,255,255,.12);
+      color: #fff;
+    }
+
+    thead th {
+      border-bottom: 2px solid rgba(255,255,255,.35) !important;
+      font-size: .85rem;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.7);
+    }
+
+    /* The mode switch. btn-outline-* in 5.3 takes its colours from the theme
+       and comes out invisible on navy, so the two states are written here. */
+    .mode-switch .btn {
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.2);
+      color: rgba(255,255,255,.75);
+      padding: .45rem 1.1rem;
+    }
+
+    .mode-switch .btn-check:checked + .btn {
+      background: var(--bs-primary);
+      border-color: var(--bs-primary);
+      color: #fff;
+    }
+
+    .mode-switch .btn-check:focus-visible + .btn {
+      outline: 2px solid #fff;
+      outline-offset: 2px;
+    }
+
+    .form-check-input:checked {
+      background-color: var(--bs-primary);
+      border-color: var(--bs-primary);
+    }
+
+    /* How many other spellings of one keyword this row stands for. */
+    .variant-note {
+      font-size: .78rem;
+      color: rgba(255,255,255,.5);
+      white-space: nowrap;
+    }
+
+    /* The seeds actually sent. A thin result is then visibly a narrow net or
+       visibly a small town, without anybody reading a log to find out. */
+    .seed-chip {
+      display: inline-block;
+      padding: .15rem .55rem;
+      margin: 0 .35rem .35rem 0;
+      border-radius: 1rem;
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.14);
+      font-size: .78rem;
+      color: rgba(255,255,255,.75);
+    }
+  </style>
+</head>
+<body>
+  {{HEADER}}
+  {{SIDEBAR}}
+
+  <div class="container mt-3">
+    <div class="row">
+      <div class="col-12 col-xl-10">
+        <h1 class="h3 mb-1">Keyword Research</h1>
+        <p class="form-text mb-4" style="color:rgba(255,255,255,.7);">
+          What people in a town actually type into Google, and what advertisers
+          pay for the click.
+        </p>
+
+        <div class="research-card p-4 mb-4">
+
+          <!-- TWO MODES, not four boxes with two of them always irrelevant.
+               The switch swaps the fields; public/js/keywordResearch.js owns
+               the swapping, and the server defaults to Category so a page
+               cached from before this existed keeps working. -->
+          <div class="mode-switch btn-group mb-4" role="group" aria-label="What to look up">
+            <input type="radio" class="btn-check" name="kwMode" id="kwModeCategory"
+                   value="category" checked>
+            <label class="btn" for="kwModeCategory">Browse a category</label>
+
+            <input type="radio" class="btn-check" name="kwMode" id="kwModePairs"
+                   value="pairs">
+            <label class="btn" for="kwModePairs">Terms with the town in them</label>
+
+            <input type="radio" class="btn-check" name="kwMode" id="kwModeExact"
+                   value="exact">
+            <label class="btn" for="kwModeExact">Look up one term</label>
+          </div>
+
+          <form id="keywordForm" class="row g-3">
+
+            <div class="col-md-4">
+              <label for="kwLocation" class="form-label">City</label>
+              <input type="text" class="form-control" id="kwLocation"
+                     placeholder="Austin, TX" autocomplete="off" required>
+              <div class="form-text" style="color:rgba(255,255,255,.55);">
+                Format: City, ST
+              </div>
+            </div>
+
+            <div class="col-md-4">
+              <label for="kwCategory" class="form-label" id="kwCategoryLabel">Industry</label>
+              <input type="text" class="form-control" id="kwCategory"
+                     placeholder="plumbing" autocomplete="off" required>
+              <div class="form-text" style="color:rgba(255,255,255,.55);"
+                   id="kwCategoryHelp">
+                plumbing, roofing, web design&hellip;
+              </div>
+            </div>
+
+            <div class="col-md-4" data-mode="category">
+              <label for="kwMinVolume" class="form-label">Minimum searches</label>
+              <input type="number" class="form-control" id="kwMinVolume"
+                     min="0" step="10" value="0" placeholder="0">
+              <div class="form-text" style="color:rgba(255,255,255,.55);">
+                Leave at 0 to see everything
+              </div>
+            </div>
+
+            <div class="col-12" data-mode="category">
+              <label for="kwRelated" class="form-label">
+                Related terms <span style="opacity:.6;font-weight:400;">(optional)</span>
+              </label>
+              <input type="text" class="form-control" id="kwRelated"
+                     placeholder="water heater installation, drain cleaning"
+                     autocomplete="off">
+              <div class="form-text" style="color:rgba(255,255,255,.55);">
+                Other parts of the trade, separated by commas. We add the
+                obvious ones ourselves &mdash; these are for what only you know.
+              </div>
+            </div>
+
+            <div class="col-12" data-mode="category">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="kwShowAll">
+                <label class="form-check-label" for="kwShowAll">
+                  Show everything, including terms with no buying intent
+                </label>
+              </div>
+              <div class="form-text ms-4" style="color:rgba(255,255,255,.55);">
+                Off by default. Google&rsquo;s list is mostly people reading, not
+                people hiring.
+              </div>
+            </div>
+
+            <div class="col-12 d-flex align-items-center gap-3">
+              <button type="submit" id="kwSearch" class="btn btn-success"
+                      style="min-width:160px;font-size:18px;">
+                Search
+              </button>
+              <span id="kwNote" class="form-text m-0"
+                    style="color:rgba(255,255,255,.7);"></span>
+            </div>
+          </form>
+        </div>
+
+        <div id="kwResults"></div>
+      </div>
+    </div>
+  </div>
+
+  {{HEADER_SCRIPTS}}
+  <script src="/js/keywordResearch.js" defer></script>
+</body>
+</html>

@@ -18,6 +18,7 @@ const creditsRoute = require('./routes/creditsRoute');
 const suggestServicesRoute = require('./routes/suggestServicesRoute');
 const suggestLocationsRoute = require('./routes/suggestLocationsRoute');
 const keywordVolumesRoute = require('./routes/keywordVolumesRoute');
+const keywordResearchRoute = require('./routes/keywordResearchRoute');
 const requireAuth = require('./middleware/requireAuth');
 const { requireOwnDist } = require('./middleware/requireOwnDist');
 const helmet = require('helmet');
@@ -308,6 +309,7 @@ app.use('/', requireAuth, creditsRoute);      // /api/check-credits
 app.use('/', requireAuth, suggestServicesRoute); // /api/suggest-services
 app.use('/', requireAuth, suggestLocationsRoute); // /api/suggest-locations
 app.use('/', requireAuth, keywordVolumesRoute);   // /api/keyword-volumes
+app.use('/', requireAuth, keywordResearchRoute); // /keyword-research, /api/keyword-ideas
 app.use('/', requireAuth, adminRoute);        // /admin section
 app.use('/', requireAuth, formRoute);         // /
 app.use('/', requireAuth, generateRoute);     // /generate

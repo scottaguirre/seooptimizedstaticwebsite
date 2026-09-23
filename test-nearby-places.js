@@ -19,6 +19,8 @@
 const assert = require('assert');
 const {
   nearbyPlaces,
+  metroFor,
+  METRO_MIN_POPULATION,
   findPlace,
   milesBetween,
   normalisePlaceName,
@@ -564,6 +566,66 @@ test('the towns survive a trip to buy credits', () => {
 test('a new site starts with no towns from the last one', () => {
   const reset = WIZARD.slice(WIZARD.indexOf('state.mainFormSnapshot  = null;'));
   assert.ok(/state\.townBatches\s*=\s*\[\];/.test(reset.slice(0, 800)));
+});
+
+/* -------------------------------------------------------------------------
+ * The metro a town belongs to
+ *
+ * Real geography, not fixtures. These are the towns Edwin's customers are in.
+ * ---------------------------------------------------------------------- */
+
+test('a suburb borrows the city whose market it shares', () => {
+  // Cedar Park has 80,000 people and 774 of its 780 keywords came back at or
+  // under 40 searches a month. Without this it has nothing to rank by.
+  assert.strictEqual(metroFor('Cedar Park, TX').display, 'Austin, TX');
+  assert.strictEqual(metroFor('Leander, TX').display, 'Austin, TX');
+  assert.strictEqual(metroFor('Round Rock, TX').display, 'Austin, TX');
+  assert.strictEqual(metroFor('Naperville, IL').display, 'Chicago, IL');
+  assert.strictEqual(metroFor('Yonkers, NY').display, 'New York City, NY');
+});
+
+test('a city big enough to rank itself IS its own metro', () => {
+  // THE BUG THIS EXISTS FOR: "largest place within reach" sent Austin to San
+  // Antonio — 74 miles away, half a million larger — so a plumber in Austin
+  // would have been ranked by a market he does not serve. The metro is there
+  // to rescue towns with no volume; a town with volume needs no rescue.
+  assert.strictEqual(metroFor('Austin, TX').display, 'Austin, TX');
+  assert.strictEqual(metroFor('Austin, TX').miles, 0);
+  assert.strictEqual(metroFor('Dallas, TX').display, 'Dallas, TX');
+  assert.strictEqual(metroFor('San Antonio, TX').display, 'San Antonio, TX');
+});
+
+test('population decides, not distance', () => {
+  // A suburb between two cities belongs to the bigger market even when the
+  // smaller one is nearer.
+  const metro = metroFor('Cedar Park, TX');
+  assert.ok(metro.population >= METRO_MIN_POPULATION,
+    'a town under the bar was chosen as a metro');
+});
+
+test('an isolated town has no metro, and says so', () => {
+  // Null rather than a guess. The caller falls back to the town itself, which
+  // means fewer usable numbers — never wrong ones from the wrong market.
+  assert.strictEqual(metroFor('Marfa, TX'), null);
+});
+
+test('a town that is not in the gazetteer has no metro', () => {
+  assert.strictEqual(metroFor('Nowheresville, TX'), null);
+  assert.strictEqual(metroFor(''), null);
+  assert.strictEqual(metroFor('Austin'), null);
+});
+
+test('the radius can be narrowed, and then it bites', () => {
+  // Proves the radius is actually consulted rather than decorative.
+  assert.strictEqual(metroFor('Cedar Park, TX', { radiusMiles: 5 }), null);
+  assert.strictEqual(metroFor('Cedar Park, TX', { radiusMiles: 30 }).display, 'Austin, TX');
+});
+
+test('the population bar can be moved, and then it bites', () => {
+  // With the bar under Cedar Park's own population it becomes its own metro,
+  // which is exactly what the bar is deciding.
+  assert.strictEqual(metroFor('Cedar Park, TX', { minPopulation: 50000 }).display,
+    'Cedar Park, TX');
 });
 
 runAll().then(() => {

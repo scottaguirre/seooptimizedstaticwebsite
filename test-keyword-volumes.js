@@ -198,7 +198,11 @@ async function main() {
     for (const k of ['water heater repair', 'drain cleaning services',
                      'emergency plumber near me', 'plumbing repair',
                      'garbage disposal install', 'tankless water heater repair',
-                     'shower drain clogged', '24 hour plumber']) {
+                     'shower drain clogged', '24 hour plumber',
+                     // A FIXTURE PLUS THE TRADE. Same shape as "goettl
+                     // plumbing" and a real service page; the filter dropped
+                     // it until the nouns were listed.
+                     'toilet plumber', 'gas plumber', 'sink repair']) {
       assert.strictEqual(looksLikeBrand(k, 'Plumbing'), false, `${k} was flagged`);
     }
   });
@@ -755,7 +759,7 @@ async function main() {
   await test('no keywords is a 400 that says what to do', async () => {
     const { handler } = loadRoute();
     const res = fakeRes();
-    await handler({ body: { metro: 'Austin, TX' } }, res);
+    await handler({ body: { location: 'Austin, TX' } }, res);
     assert.strictEqual(res.statusCode, 400);
     assert.match(res.body.error, /services first/i);
   });
@@ -763,7 +767,7 @@ async function main() {
   await test('no usable location is a 400 that names the format', async () => {
     const { handler } = loadRoute();
     const res = fakeRes();
-    await handler({ body: { keywords: ['water heater repair'], metro: 'Austin' } }, res);
+    await handler({ body: { keywords: ['water heater repair'], location: 'Austin' } }, res);
     assert.strictEqual(res.statusCode, 400);
     assert.match(res.body.error, /City, ST/);
   });
@@ -777,8 +781,10 @@ async function main() {
       }),
     });
     const res = fakeRes();
+    // The page sends ONE location. The market it belongs to is the server's
+    // to work out — the wizard has no business knowing Cedar Park is Austin.
     await handler({
-      body: { keywords: ['water heater repair'], metro: 'Austin, TX', city: 'Cedar Park, TX' },
+      body: { keywords: ['water heater repair'], location: 'Cedar Park, TX' },
     }, res);
 
     assert.strictEqual(res.statusCode, 200);
@@ -800,7 +806,7 @@ async function main() {
         costUsd: 0,
       }),
     });
-    await handler({ body: { keywords: ['goettl plumbing'], metro: 'Austin, TX' } }, fakeRes());
+    await handler({ body: { keywords: ['goettl plumbing'], location: 'Austin, TX' } }, fakeRes());
 
     const line = seen.find(l => l.event === 'keywords.looked');
     assert.ok(line, 'nothing was logged');
@@ -815,11 +821,46 @@ async function main() {
       volumes: async () => { throw new Error('DataForSEO is down'); },
     });
     const res = fakeRes();
-    await handler({ body: { keywords: ['plumber'], metro: 'Austin, TX' } }, res);
+    await handler({ body: { keywords: ['plumber'], location: 'Austin, TX' } }, res);
 
     assert.strictEqual(res.statusCode, 502);
     assert.match(res.body.error, /still here/i);
     assert.match(res.body.error, /carry on/i);
+  });
+
+  await test('the market is worked out from the town, not asked for', () => {
+    const { mod } = loadRoute();
+
+    // A suburb borrows the city whose volumes describe its market...
+    assert.deepStrictEqual(mod.placesFor({ location: 'Cedar Park, TX' }), {
+      metro: 'Austin,Texas,United States',
+      city: 'Cedar Park,Texas,United States',
+    });
+
+    // ...and a city big enough stands alone, with no second call to pay for.
+    assert.deepStrictEqual(mod.placesFor({ location: 'Austin, TX' }), {
+      metro: 'Austin,Texas,United States',
+      city: 'Austin,Texas,United States',
+    });
+  });
+
+  await test('a town with no metro stands in for itself rather than borrowing wrongly', () => {
+    // Marfa is hours from anywhere. Fewer usable numbers is the right answer;
+    // numbers from a market it does not serve is not.
+    const { mod } = loadRoute();
+    const places = mod.placesFor({ location: 'Marfa, TX' });
+    assert.strictEqual(places.metro, 'Marfa,Texas,United States');
+    assert.strictEqual(places.city, '', 'it would have paid twice for one town');
+  });
+
+  await test('an explicit metro overrides the lookup', () => {
+    // Nothing sends one today. It exists for the standalone research screen,
+    // where the customer chooses the market deliberately.
+    const { mod } = loadRoute();
+    assert.strictEqual(
+      mod.placesFor({ location: 'Cedar Park, TX', metro: 'Dallas, TX' }).metro,
+      'Dallas,Texas,United States'
+    );
   });
 
   /* The part the whole pricing decision rests on. ------------------- */
@@ -835,7 +876,7 @@ async function main() {
 
     const gate = route.handlers[0];
     let passedThrough = false;
-    const req = { body: { keywords: ['plumber'], metro: 'Austin, TX', city: 'Cedar Park, TX' } };
+    const req = { body: { keywords: ['plumber'], location: 'Cedar Park, TX' } };
     await gate(req, fakeRes(), () => { passedThrough = true; });
 
     assert.strictEqual(limited, false, 'a free answer spent a rate-limit slot');
@@ -852,7 +893,7 @@ async function main() {
 
     const gate = route.handlers[0];
     await gate(
-      { body: { keywords: ['plumber'], metro: 'Austin, TX' } },
+      { body: { keywords: ['plumber'], location: 'Austin, TX' } },
       fakeRes(),
       () => {}
     );
@@ -871,7 +912,7 @@ async function main() {
 
     const gate = route.handlers[0];
     await gate(
-      { body: { keywords: ['plumber'], metro: 'Austin, TX' } },
+      { body: { keywords: ['plumber'], location: 'Austin, TX' } },
       fakeRes(),
       () => {}
     );
@@ -893,7 +934,7 @@ async function main() {
 
     const gate = route.handlers[0];
     await gate(
-      { body: { keywords: ['plumber'], metro: 'Austin, TX', city: 'Cedar Park, TX' } },
+      { body: { keywords: ['plumber'], location: 'Cedar Park, TX' } },
       fakeRes(),
       () => {}
     );

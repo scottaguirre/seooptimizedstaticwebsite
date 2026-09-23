@@ -415,6 +415,25 @@ test('the context badges are all one colour', () => {
     `a coloured badge is back: ${colours && colours.join(', ')}`);
 });
 
+test('no badge anywhere in the wizard is coloured', () => {
+  // Scoped to contextBadges(), the earlier test missed one: the LOGO step
+  // built its own "Business Type" badge inline, in blue, and it shipped that
+  // way. The badges are a sentence about the site broken into chips, wherever
+  // they are drawn — so the check is over the whole file, not one function.
+  const badges = JS.match(/text-bg-(primary|success|info|warning|danger|dark)\b/g);
+  assert.strictEqual(badges, null,
+    `a coloured badge is back: ${badges && badges.join(', ')}`);
+});
+
+test('every badge is built from the shared constant', () => {
+  // The way the LOGO step drifted was by hard-coding its own class. Counting
+  // them keeps a new badge from doing the same thing in the same colour.
+  const uses = (JS.match(/class="badge \$\{BADGE_CLASS\}"/g) || []).length
+             + (JS.match(/`<span class="badge \$\{BADGE_CLASS\}">/g) || []).length
+             + (JS.match(/badge \$\{BADGE_CLASS\}/g) || []).length;
+  assert.ok(uses >= 2, `only ${uses} badge(s) use BADGE_CLASS`);
+});
+
 test('the one badge class is the light one', () => {
   // Asserted on the constant rather than inside contextBadges, so that
   // moving the value cannot quietly change it.

@@ -28,7 +28,9 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { appHeader, appHeaderAssets, appHeaderScripts } = require('./utils/appHeader');
+const {
+  appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets,
+} = require('./utils/appHeader');
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -49,9 +51,10 @@ const CSRF = '<input type="hidden" name="_csrf" value="tok">';
  */
 function renderFormPage() {
   return read('src/views/form.html')
-    .replace(/{{HEADER_ASSETS}}/g, appHeaderAssets())
+    .replace(/{{HEADER_ASSETS}}/g, appHeaderAssets() + appSidebarAssets())
     .replace(/{{HEADER_SCRIPTS}}/g, appHeaderScripts())
     .replace(/{{HEADER}}/g, appHeader(CSRF))
+    .replace(/{{SIDEBAR}}/g, appSidebar('/'))
     .replace(/{{CSRF}}/g, CSRF);
 }
 
@@ -94,13 +97,13 @@ console.log('\nApp header\n');
  * ---------------------------------------------------------------------- */
 
 test('the header offers exactly the destinations it should', () => {
-  // "/" TWICE is deliberate: the logo and the visible "Build a Website" link
-  // go to the same place. The convention that a wordmark links home is real
-  // but invisible, and the thing customers came to do should not be invisible.
+  // "/" ONCE now: the logo. The visible "Build a Website" button moved to the
+  // sidebar on 23 September, because with a tools column on the page it was
+  // the same action offered twice on one screen.
   const html = appHeader(CSRF);
   assert.deepStrictEqual(
     [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]),
-    ['/', '/', '/dashboard', '/buy-credits']
+    ['/', '/dashboard', '/buy-credits']
   );
   assert.deepStrictEqual(
     [...html.matchAll(/action="([^"]+)"/g)].map(m => m[1]),
@@ -112,10 +115,20 @@ test('the header offers exactly the destinations it should', () => {
  * The primary action
  * ---------------------------------------------------------------------- */
 
-test('the header shows a visible link to build a website', () => {
-  const html = headerMarkup();
-  const link = html.match(/<a href="\/"[^>]*>Build a Website<\/a>/);
-  assert.ok(link, 'the "Build a Website" link is gone from the header');
+test('the sidebar shows a visible link to build a website', () => {
+  // It used to be in the header. What has NOT changed is that the thing
+  // customers came to do must be visible rather than hidden behind the
+  // convention that a wordmark links home.
+  const html = withoutComments(appSidebar('/dashboard'));
+  assert.ok(/<a href="\/"[\s\S]*?Build a Website[\s\S]*?<\/a>/.test(html),
+    'the "Build a Website" link is gone from the sidebar too');
+});
+
+test('the header no longer carries it as well', () => {
+  // One action, one place. Two was what Edwin spotted the moment the sidebar
+  // appeared beside it.
+  assert.ok(!/Build a Website/.test(withoutComments(appHeader(CSRF))),
+    'the build button is in the header AND the sidebar again');
 });
 
 test('the primary action is not called "Generator"', () => {
@@ -130,15 +143,30 @@ test('the primary action is not called "Generator"', () => {
   assert.ok(!/Generator/i.test(visible), 'the header says "Generator" somewhere');
 });
 
-test('the build action is a BUTTON, not a plain link', () => {
+test('the build action still LOOKS like a button after the move', () => {
   // It shipped as a plain text link for about an hour, so that it would not
   // compete with the yellow Buy Credits button. Wrong thing to optimise — it
   // read as a phrase rather than something clickable, and an affordance
   // nobody recognises is worth nothing however tidy the hierarchy.
-  const html = headerMarkup();
-  const el = html.match(/<a [^>]*>Build a Website<\/a>/)[0];
-  assert.ok(/\bbtn\b/.test(el), `it is back to a plain link: ${el}`);
-  assert.ok(/btn-primary/.test(el), `it is not the primary button: ${el}`);
+  //
+  // Moving it to the sidebar did not change that. It is the same solid blue;
+  // only the file it is drawn in changed.
+  const html = withoutComments(appSidebar('/dashboard'));
+  assert.ok(/app-sidebar-cta/.test(html),
+    'the build link is back to looking like every other sidebar entry');
+
+  const css = appSidebarAssets();
+  assert.ok(/\.app-sidebar-cta\s*\{[^}]*background:\s*var\(--bs-primary/.test(css),
+    'the build button is no longer the primary blue');
+});
+
+test('being the current page does not grey the build button out', () => {
+  // The plain active rule sets a translucent white background. Applied to the
+  // button it would override the blue and make the page you are ON look like
+  // the one action that is unavailable.
+  const css = appSidebarAssets();
+  assert.ok(/\.app-sidebar-cta\.app-sidebar-link-active\s*\{[^}]*background:\s*var\(--bs-primary/.test(css),
+    'the active rule overrides the button colour');
 });
 
 test('Build a Website outranks Buy Credits visually', () => {
@@ -146,14 +174,15 @@ test('Build a Website outranks Buy Credits visually', () => {
   // Credits was a filled yellow button — the loudest thing in the header —
   // which put the hierarchy backwards. It is an OUTLINE button now.
   //
-  // The two live in different files: the build button in appHeader.js, Buy
-  // Credits in public/js/currentUserInfo.js, which renders it at runtime. So
-  // this is the only place the pair can be compared.
-  const build = headerMarkup().match(/<a [^>]*>Build a Website<\/a>/)[0];
+  // The two live in different files: the build button in appSidebar() since
+  // 23 September, Buy Credits in public/js/currentUserInfo.js, which renders
+  // it at runtime. So this is the only place the pair can be compared.
+  const buildCss = appSidebarAssets();
   const script = read('public/js/currentUserInfo.js');
   const buy = script.match(/<a href="\/buy-credits"[^>]*>/)[0];
 
-  assert.ok(/btn-primary/.test(build), 'the build button is not solid');
+  assert.ok(/\.app-sidebar-cta\s*\{[^}]*background:\s*var\(--bs-primary/.test(buildCss),
+    'the build button is not solid');
   assert.ok(/btn-outline-/.test(buy), `Buy Credits is solid again: ${buy}`);
   assert.ok(!/btn-warning(?!-)/.test(buy.replace('btn-outline-warning', '')),
     `Buy Credits is a filled warning button again: ${buy}`);
@@ -171,13 +200,13 @@ test('the dashboard has no navigation row of its own', () => {
   assert.ok(!/btn-danger">Logout/.test(src), 'the Logout button is back');
 });
 
-test('the build link sits on the LEFT, beside the logo', () => {
-  // Navigation belongs on the left, where people look. On the right it would
-  // read as one more account action.
-  const html = headerMarkup();
-  const leftHalf = html.slice(0, html.indexOf('id="user-actions"'));
-  assert.ok(leftHalf.includes('Build a Website'),
-    'the build link moved to the right-hand actions area');
+test('the build action is the FIRST thing in the tools column', () => {
+  // Navigation belongs on the left, where people look — which is now the
+  // sidebar rather than the header's left half. Within it, the primary action
+  // goes first: it is the end the other tools are means to.
+  const html = withoutComments(appSidebar('/dashboard'));
+  const links = [...html.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
+  assert.strictEqual(links[0], '/', `the tools column starts with ${links[0]}`);
 });
 
 /* -------------------------------------------------------------------------
@@ -405,6 +434,28 @@ test('no placeholder survives into the rendered page', () => {
   assert.deepStrictEqual(renderFormPage().match(/{{[A-Z_]+}}/g), null);
 });
 
+test('the route fills every placeholder the page uses', () => {
+  // THE HELPER ABOVE IS A COPY of formRoute's substitution list, and a copy
+  // goes stale: adding {{SIDEBAR}} to form.html left the page rendering the
+  // literal braces in the test while the real route was fine. Checking the
+  // page against the ROUTE, rather than against the copy, catches the next
+  // one on the day it is added.
+  const page = read('src/views/form.html');
+  const route = read('routes/formRoute.js');
+
+  const used = new Set((page.match(/{{[A-Z_]+}}/g) || []));
+
+  for (const placeholder of used) {
+    const name = placeholder.slice(2, -2);
+    assert.ok(
+      new RegExp(`\\{\\{${name}\\}\\}`).test(route),
+      `form.html uses ${placeholder} and formRoute.js never fills it`
+    );
+  }
+
+  assert.ok(used.size >= 4, `only ${used.size} placeholders found — did the page change shape?`);
+});
+
 test('a placeholder name is never written inside a comment', () => {
   // The substitution is a global regex, so a placeholder MENTIONED in a
   // comment is filled in too. A comment here explaining where the CSS went
@@ -504,6 +555,7 @@ test('the header is inside <body>, not <head>', () => {
 // Behind requireAuth or requireAdmin. Every one of these must have it.
 const SIGNED_IN_PAGES = [
   'routes/formRoute.js',            // the generator
+  'routes/keywordResearchRoute.js', // /keyword-research
   'routes/authRoute.js',            // /dashboard
   'routes/jobRoute.js',             // /jobs/:id and its 404
   'routes/billingRoute.js',         // /buy-credits, /credits/success, /credits/cancelled

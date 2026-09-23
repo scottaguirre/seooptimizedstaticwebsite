@@ -228,8 +228,111 @@ function nearbyPlaces(location, opts = {}) {
   };
 }
 
+/**
+ * How far out to look for the metro a town belongs to.
+ *
+ * Wider than DEFAULT_RADIUS_MILES, because this is not asking "where could
+ * this business plausibly work" but "which city's search volumes describe
+ * this market". Cedar Park to Austin is 18 miles; Leander to Austin is 26;
+ * a small town an hour out of a metro still shares its search behaviour.
+ */
+const METRO_RADIUS_MILES = 75;
+
+/**
+ * Small enough that its own numbers are all at Google's reporting floor.
+ *
+ * Measured, not chosen: Cedar Park has 80,000 people and 774 of its 780
+ * keywords came back at or under 40 searches a month. A town under this
+ * cannot rank its own service keywords by volume, because it has no volume
+ * to rank by, so it borrows a bigger neighbour's ordering.
+ */
+const METRO_MIN_POPULATION = 250000;
+
+/**
+ * The city whose search volumes describe this town's market.
+ *
+ * WHY THIS EXISTS
+ *
+ * Google will not report under about ten searches a month. In Cedar Park that
+ * swallowed 774 of 780 keywords, and in AUSTIN — a city of a million — it
+ * still swallowed 930 of 993. So a keyword list scoped to the customer's own
+ * town is a list of zeros, which orders nothing and reads as "your website is
+ * pointless". The metro supplies the ordering; the town supplies the honesty.
+ *
+ * The answer is simply the largest place within reach, because that is what a
+ * metro IS for this purpose — the city whose name people in the suburbs use
+ * when they say where they live, and whose search volumes their own roll up
+ * into. No metro table, no extra dataset: the gazetteer already carries
+ * population.
+ *
+ * A TOWN CAN BE ITS OWN METRO. Austin's nearest bigger neighbour is hours
+ * away, and a plumber in Austin should be ranked by Austin. So the home town
+ * is in the running, and wins when nothing larger is near.
+ *
+ * @returns {object|null} `{name, state, display, population, miles}`, or null
+ *   when the town is not in the gazetteer or nothing big enough is near. The
+ *   caller then falls back to the town itself, which is the honest failure:
+ *   fewer usable numbers, never wrong ones.
+ */
+function metroFor(location, opts = {}) {
+  const radius = Math.max(1, Number(opts.radiusMiles) || METRO_RADIUS_MILES);
+  const minPopulation = Number.isFinite(Number(opts.minPopulation))
+    ? Number(opts.minPopulation)
+    : METRO_MIN_POPULATION;
+
+  const [rawName, rawState] = String(location || '').split(',');
+  const home = findPlace(rawName, rawState);
+
+  if (!home) return null;
+
+  // A TOWN BIG ENOUGH TO RANK ITSELF IS ITS OWN METRO, and this check has to
+  // come first. Without it "the largest place within reach" sent AUSTIN to
+  // San Antonio, 74 miles away and half a million people larger — so a
+  // plumber in Austin would have been ranked by a market he does not serve.
+  //
+  // The metro exists to rescue towns with no volume of their own. A town with
+  // volume needs no rescue, however big its neighbours are.
+  if (home.population >= minPopulation) {
+    return {
+      name: home.name,
+      state: home.state,
+      display: displayName(home),
+      population: home.population,
+      miles: 0,
+    };
+  }
+
+  let best = null;
+
+  for (const place of usPlaces()) {
+    if (place.population < minPopulation) continue;
+
+    const distance = milesBetween(home, place);
+    if (distance > radius) continue;
+
+    // Population decides, not distance. A suburb sitting between two cities
+    // belongs to the bigger one's market, whichever is physically closer.
+    if (!best || place.population > best.population) {
+      best = { ...place, miles: Math.round(distance * 10) / 10 };
+    }
+  }
+
+  if (!best) return null;
+
+  return {
+    name: best.name,
+    state: best.state,
+    display: displayName(best),
+    population: best.population,
+    miles: best.miles,
+  };
+}
+
 module.exports = {
   nearbyPlaces,
+  metroFor,
+  METRO_RADIUS_MILES,
+  METRO_MIN_POPULATION,
   findPlace,
   milesBetween,
   normalisePlaceName,
