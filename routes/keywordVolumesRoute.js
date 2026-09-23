@@ -43,6 +43,7 @@ const {
   volumesForArea,
   cachedVolumesFor,
   keywordList,
+  isBillingError,
   NOISE_FLOOR,
 } = require('../utils/keywordVolumes');
 const { metroFor } = require('../utils/nearbyPlaces');
@@ -228,14 +229,25 @@ router.post('/api/keyword-volumes', spendOnlyOnMisses(keywordVolumesLimiter), as
     });
 
   } catch (err) {
-    log.error('keywords.lookupFailed', err, {
+    // An empty DataForSEO account is not a glitch, and it gets its own event
+    // name so "the feature is down because nobody topped up" is one grep away
+    // rather than a stack trace read at the wrong moment. Same reasoning, and
+    // the same event name, as keywordResearchRoute's reportLookupFailure.
+    //
+    // The customer-facing wording is left alone here: this endpoint's message
+    // already says the right thing for both cases, because the wizard can
+    // carry on without the numbers either way.
+    const billing = isBillingError(err);
+
+    log.error(billing ? 'keywords.accountEmpty' : 'keywords.lookupFailed', err, {
       requestId: req.id,
       userId: String((req.user && req.user._id) || ''),
       metro,
       city: city || null,
+      ...(billing ? { action: 'top up the DataForSEO balance at app.dataforseo.com' } : {}),
     });
 
-    res.status(502).json({
+    res.status(billing ? 503 : 502).json({
       error: 'Could not look up search volumes just now. Your services are '
            + 'still here — you can carry on without the numbers and try again '
            + 'later.',

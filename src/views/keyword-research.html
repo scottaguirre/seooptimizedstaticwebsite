@@ -35,7 +35,8 @@
     }
 
     input[type=text],
-    input[type=number] {
+    input[type=number],
+    textarea {
       background: #e4e6e7;
     }
 
@@ -84,10 +85,26 @@
       padding: .45rem 1.1rem;
     }
 
-    .mode-switch .btn-check:checked + .btn {
+    /* HOVER HAS TO BE WRITTEN TOO, and leaving it out is why the labels went
+       near-black on navy the moment the pointer touched them. Bootstrap's own
+       `.btn:hover` sets --bs-btn-hover-color, which on an unstyled .btn is a
+       dark colour meant for a light background. Overriding the resting state
+       alone leaves the hover state to Bootstrap. */
+    .mode-switch .btn:hover {
+      background: rgba(255,255,255,.14);
+      border-color: rgba(255,255,255,.3);
+      color: #fff;
+    }
+
+    .mode-switch .btn-check:checked + .btn,
+    .mode-switch .btn-check:checked + .btn:hover {
       background: var(--bs-primary);
       border-color: var(--bs-primary);
       color: #fff;
+    }
+
+    .mode-switch .btn-check:checked + .btn:hover {
+      filter: brightness(1.08);
     }
 
     .mode-switch .btn-check:focus-visible + .btn {
@@ -136,10 +153,12 @@
 
         <div class="research-card p-4 mb-4">
 
-          <!-- TWO MODES, not four boxes with two of them always irrelevant.
-               The switch swaps the fields; public/js/keywordResearch.js owns
-               the swapping, and the server defaults to Category so a page
-               cached from before this existed keeps working. -->
+          <!-- THREE MODES, not seven boxes with four of them always
+               irrelevant. Each block below carries data-modes: the list of
+               modes it belongs to, space separated.
+               public/js/keywordResearch.js owns the swapping, and the server
+               defaults to Category so a page cached from before any of this
+               existed keeps working. -->
           <div class="mode-switch btn-group mb-4" role="group" aria-label="What to look up">
             <input type="radio" class="btn-check" name="kwMode" id="kwModeCategory"
                    value="category" checked>
@@ -151,7 +170,7 @@
 
             <input type="radio" class="btn-check" name="kwMode" id="kwModeExact"
                    value="exact">
-            <label class="btn" for="kwModeExact">Look up one term</label>
+            <label class="btn" for="kwModeExact">Look up terms</label>
           </div>
 
           <form id="keywordForm" class="row g-3">
@@ -165,17 +184,32 @@
               </div>
             </div>
 
-            <div class="col-md-4">
+            <div class="col-md-4" data-modes="category pairs">
               <label for="kwCategory" class="form-label" id="kwCategoryLabel">Industry</label>
               <input type="text" class="form-control" id="kwCategory"
-                     placeholder="plumbing" autocomplete="off" required>
+                     placeholder="plumbing" autocomplete="off">
               <div class="form-text" style="color:rgba(255,255,255,.55);"
                    id="kwCategoryHelp">
                 plumbing, roofing, web design&hellip;
               </div>
             </div>
 
-            <div class="col-md-4" data-mode="category">
+            <!-- A TEXTAREA, not the industry box relabelled. All of these go
+                 to Google in ONE task, so asking about six terms costs what
+                 asking about one costs. Pasting a column from Keyword Planner
+                 works, which a single-line input could never do. -->
+            <div class="col-12 col-lg-8" data-modes="exact">
+              <label for="kwTerms" class="form-label">Keywords</label>
+              <textarea class="form-control" id="kwTerms" rows="4"
+                        placeholder="plumber cedar park&#10;emergency plumber near me&#10;water heater repair"></textarea>
+              <div class="form-text" style="color:rgba(255,255,255,.55);">
+                One per line, or separated by commas. They all go in one
+                lookup &mdash; asking about twenty costs the same as asking
+                about one.
+              </div>
+            </div>
+
+            <div class="col-md-4" data-modes="category">
               <label for="kwMinVolume" class="form-label">Minimum searches</label>
               <input type="number" class="form-control" id="kwMinVolume"
                      min="0" step="10" value="0" placeholder="0">
@@ -184,7 +218,7 @@
               </div>
             </div>
 
-            <div class="col-12" data-mode="category">
+            <div class="col-12" data-modes="category">
               <label for="kwRelated" class="form-label">
                 Related terms <span style="opacity:.6;font-weight:400;">(optional)</span>
               </label>
@@ -197,7 +231,7 @@
               </div>
             </div>
 
-            <div class="col-12" data-mode="category">
+            <div class="col-12" data-modes="category">
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="kwShowAll">
                 <label class="form-check-label" for="kwShowAll">

@@ -30,7 +30,8 @@ Module._load = function (request, parent, isMain) {
 
 const { appSidebar, appSidebarAssets } = require('./utils/appHeader');
 const {
-  keywordIdeasFor, volumesFor, cacheKey, seedsFor, MAX_IDEAS, MAX_SEEDS,
+  keywordIdeasFor, volumesFor, cacheKey, seedsFor, fetchIdeas, isBillingError,
+  looksLikeBrand, geoWords, stem, MAX_IDEAS, MAX_SEEDS,
 } = require('./utils/keywordVolumes');
 
 let passed = 0, failed = 0;
@@ -142,9 +143,21 @@ async function main() {
   await test('the sidebar stacks rather than squeezing on a phone', () => {
     // A 2-column nav at phone width is worse than no nav. The column only
     // leaves the flow from the breakpoint up.
+    //
+    // This asserted `position: absolute` until the column became fixed. The
+    // property is not the point — the point is that whatever takes it out of
+    // the flow happens INSIDE the breakpoint, so a phone gets it in normal
+    // flow. Asserting the property was asserting the implementation.
     const css = appSidebarAssets();
     assert.ok(/@media \(min-width: 992px\)/.test(css), 'there is no breakpoint');
-    assert.ok(/position: absolute/.test(css));
+
+    const breakpoint = css.slice(css.indexOf('@media (min-width: 992px)'));
+    assert.ok(/\.app-sidebar-shell\s*\{[^}]*position:\s*(fixed|absolute)/.test(breakpoint),
+      'the column leaves the flow outside the breakpoint, so a phone gets a 2-column nav');
+
+    const before = css.slice(0, css.indexOf('@media (min-width: 992px)'));
+    assert.ok(!/\.app-sidebar-shell\s*\{[^}]*position:\s*(fixed|absolute)/.test(before),
+      'the column is taken out of the flow at every width');
   });
 
   await test('the column is positioned by CSS, not by each page\'s grid', () => {
@@ -488,7 +501,18 @@ async function main() {
         return { keywordVolumesLimiter: (req, res, next) => next() };
       }
       if (onLog && /logger$/.test(request)) {
-        return { log: { info: (e, f) => onLog(e, f), error: (e, f) => onLog(e, f) } };
+        // NOTE THE DIFFERENT ARITY. utils/logger's shape is
+        // `info(event, fields)` but `error(event, err, fields)` — the error
+        // object sits in the middle. The first version of this stub treated
+        // both as two-argument, so every assertion about an error line's
+        // FIELDS was silently reading the Error instead, and passed only
+        // because it never looked at one.
+        return {
+          log: {
+            info: (event, fields) => onLog(event, fields),
+            error: (event, err, fields) => onLog(event, fields || {}),
+          },
+        };
       }
       // STUBBED WHOLE, never partially. keywordSeeds requires openaiClient,
       // which requires the `openai` package — so loading the real one would
@@ -1113,6 +1137,201 @@ async function main() {
     assert.strictEqual(res.body.mode, 'exact');
   });
 
+  await test('SEVERAL terms ride in ONE task', async () => {
+    /* THE COST OF THE WHOLE FEATURE WAS THIS. From the log of 23 September:
+     * five exact lookups in 68 seconds, $0.45, for five wordings of one legal
+     * term. That is not misuse, it is the only sensible way to use the tool —
+     * and the lookup endpoint takes a thousand keywords per task at the same
+     * $0.09, so those five were always meant to be one. */
+    let calls = 0;
+    let sawKeywords = null;
+
+    const { handler } = loadRoute({
+      exact: async (keywords) => {
+        calls++;
+        sawKeywords = keywords;
+        return { results: [], cached: false, costUsd: 0.09 };
+      },
+    });
+
+    const res = fakeRes();
+    await handler({
+      body: {
+        mode: 'exact',
+        location: 'Austin, TX',
+        terms: 'lemon law lawyer\nlemon law lawyer austin\nlemon law attorney\n'
+             + 'lemon law lawyer near me\nlemon law attorney near me',
+      },
+    }, res);
+
+    assert.strictEqual(calls, 1, `${calls} tasks — that is $${(calls * 0.09).toFixed(2)}`);
+    assert.strictEqual(sawKeywords.length, 5);
+    assert.strictEqual(res.body.rows.length, 5);
+  });
+
+  await test('terms split on newlines AND on commas', async () => {
+    // Newlines because somebody pastes a column out of Keyword Planner;
+    // commas because somebody types a list.
+    const { mod } = loadRoute();
+
+    assert.deepStrictEqual(
+      mod.exactTerms({ terms: 'plumber austin\nwater heater repair' }),
+      ['plumber austin', 'water heater repair']
+    );
+    assert.deepStrictEqual(
+      mod.exactTerms({ terms: 'plumber austin, water heater repair' }),
+      ['plumber austin', 'water heater repair']
+    );
+  });
+
+  await test('a repeated term takes one slot and one row', async () => {
+    const { mod } = loadRoute();
+
+    assert.deepStrictEqual(
+      mod.exactTerms({ terms: 'Plumber Austin\nplumber austin\n  plumber   austin  ' }),
+      ['Plumber Austin']
+    );
+  });
+
+  await test('the list is capped, well under what the endpoint takes', async () => {
+    const { mod } = loadRoute();
+    const many = Array.from({ length: 200 }, (_, i) => `term ${i}`).join('\n');
+
+    assert.strictEqual(mod.exactTerms({ terms: many }).length, mod.MAX_EXACT_TERMS);
+    // DataForSEO takes a thousand. The cap is about what a person can read.
+    assert.ok(mod.MAX_EXACT_TERMS <= 50);
+  });
+
+  await test('a page cached from before the textarea still works', async () => {
+    // It sends its single keyword as `category`, which is where the old
+    // exact mode read from.
+    const { mod } = loadRoute();
+    assert.deepStrictEqual(
+      mod.exactTerms({ category: 'plumber cedar park' }),
+      ['plumber cedar park']
+    );
+  });
+
+  await test('a textarea with only whitespace is a 400, not a paid lookup', async () => {
+    // An empty task still costs $0.09.
+    let called = false;
+    const { handler } = loadRoute({
+      exact: async () => { called = true; return { results: [], cached: false, costUsd: 0.09 }; },
+    });
+
+    const res = fakeRes();
+    await handler({ body: { mode: 'exact', location: 'Austin, TX', terms: '  \n , \n ' } }, res);
+
+    assert.strictEqual(called, false, 'an empty lookup was paid for');
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.body.error, /keyword/i);
+  });
+
+  await test('a mix of answered and unanswered terms keeps both', async () => {
+    const { handler } = loadRoute({
+      exact: async () => ({
+        results: [
+          { keyword: 'plumber cedar park', volume: 170, cpc: 44.64 },
+          { keyword: 'water heater repair', volume: 480, cpc: 82.33 },
+        ],
+        cached: false, costUsd: 0.09,
+      }),
+    });
+
+    const res = fakeRes();
+    await handler({
+      body: {
+        mode: 'exact',
+        location: 'Cedar Park, TX',
+        terms: 'plumber cedar park\ncommercial plumber cedar park\nwater heater repair',
+      },
+    }, res);
+
+    assert.strictEqual(res.body.rows.length, 3, 'the unanswered term was dropped');
+    assert.strictEqual(res.body.answered, 2);
+
+    const blank = res.body.rows.find(r => r.keyword === 'commercial plumber cedar park');
+    assert.strictEqual(blank.volume, null);
+  });
+
+  await test('a term typed in capitals still matches its answer', async () => {
+    // NOT COVERED BY THE PAIRS TEST, which looked equivalent and is not:
+    // pairsFor lowercases everything it builds, so the asked side is always
+    // lower case there and only the reply's casing is in question. Exact mode
+    // keeps whatever the customer typed, so BOTH sides need normalising —
+    // and dropping it from the asked side went unnoticed until this existed.
+    const { handler } = loadRoute({
+      exact: async () => ({
+        results: [{ keyword: 'plumber cedar park', volume: 170, cpc: 44.64 }],
+        cached: false, costUsd: 0.09,
+      }),
+    });
+
+    const res = fakeRes();
+    await handler({
+      body: { mode: 'exact', location: 'Cedar Park, TX', terms: 'Plumber Cedar Park' },
+    }, res);
+
+    assert.strictEqual(res.body.answered, 1,
+      'the answer did not match a term typed in capitals');
+    assert.strictEqual(res.body.rows[0].volume, 170);
+  });
+
+  await test('the order asked is the order shown', async () => {
+    // Exact mode is not a ranking — the customer wrote the list and should
+    // be able to read their answers down it. Sorting by volume, as the
+    // pairings do, would shuffle it under them.
+    const { handler } = loadRoute({
+      exact: async () => ({
+        results: [
+          { keyword: 'water heater repair', volume: 480, cpc: 82.33 },
+          { keyword: 'plumber cedar park', volume: 170, cpc: 44.64 },
+        ],
+        cached: false, costUsd: 0.09,
+      }),
+    });
+
+    const res = fakeRes();
+    await handler({
+      body: {
+        mode: 'exact',
+        location: 'Cedar Park, TX',
+        terms: 'plumber cedar park\nwater heater repair',
+      },
+    }, res);
+
+    assert.deepStrictEqual(
+      res.body.rows.map(r => r.keyword),
+      ['plumber cedar park', 'water heater repair']
+    );
+  });
+
+  await test('the log records how many were asked and how many answered', async () => {
+    const seen = [];
+    const { handler } = loadRoute({
+      onLog: (event, fields) => seen.push({ event, fields }),
+      exact: async () => ({
+        results: [{ keyword: 'plumber cedar park', volume: 170, cpc: 44.64 }],
+        cached: false, costUsd: 0.09,
+      }),
+    });
+
+    await handler({
+      body: {
+        mode: 'exact',
+        location: 'Cedar Park, TX',
+        terms: 'plumber cedar park\ncommercial plumber cedar park',
+      },
+    }, fakeRes());
+
+    const line = seen.find(l => l.event === 'keywords.exact');
+    assert.strictEqual(line.fields.asked, 2);
+    assert.strictEqual(line.fields.answered, 1);
+    // `volume` stays meaningful for the single-term case, which is most of
+    // them, so old log lines and new ones read the same way.
+    assert.strictEqual(line.fields.volume, null);
+  });
+
   await test('exact mode reports 10 a month as 10 a month', async () => {
     // The explicit ask. A number Google barely stands behind is still the
     // answer to the question, and rounding it away would be the tool
@@ -1175,20 +1394,28 @@ async function main() {
     assert.strictEqual(res.body.rows[0].keyword, 'goettl plumbing');
   });
 
-  await test('an unanswerable term is an empty row set, not a 502', async () => {
+  await test('an unanswerable term comes back as a blank row, not a 502', async () => {
     // Google declining to report is an ANSWER — "fewer than about ten a
     // month" — and the page says so. A 502 would claim the lookup broke.
+    //
+    // The row is KEPT rather than dropped, which changed when exact mode
+    // started taking several terms: with a list, some answered and some not,
+    // dropping the blanks would quietly shorten the table and leave the
+    // customer unsure which of their terms had even been checked.
     const { handler } = loadRoute({
       exact: async () => ({ results: [], cached: false, costUsd: 0.09 }),
     });
 
     const res = fakeRes();
     await handler({
-      body: { mode: 'exact', category: 'zzzz plumbing zzzz', location: 'Austin, TX' },
+      body: { mode: 'exact', terms: 'zzzz plumbing zzzz', location: 'Austin, TX' },
     }, res);
 
     assert.strictEqual(res.statusCode, 200);
-    assert.deepStrictEqual(res.body.rows, []);
+    assert.strictEqual(res.body.rows.length, 1);
+    assert.strictEqual(res.body.rows[0].keyword, 'zzzz plumbing zzzz');
+    assert.strictEqual(res.body.rows[0].volume, null);
+    assert.strictEqual(res.body.answered, 0);
   });
 
   await test('a failed exact lookup IS a 502', async () => {
@@ -1234,6 +1461,372 @@ async function main() {
     assert.ok(line, 'nothing was logged for an exact lookup');
     assert.strictEqual(line.fields.volume, 2900);
     assert.strictEqual(line.fields.cached, true);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * A place name is not a surname
+   * ---------------------------------------------------------------- *
+   *
+   * FOUND IN THE PRODUCTION LOG, NOT BY READING THE CODE. `brandsHidden`
+   * looked implausible — 342 hidden against 76 kept for "lemon law firm" in
+   * Dallas — and the cause was that the brand filter asks "once the trade's
+   * own words are gone, is there a word about the work?". For "plumber cedar
+   * park" the leftover is `cedar park`, which describes no work, so it read
+   * as a proper noun plus a trade: the same shape as "Goettl Plumbing".
+   *
+   * It was deleting the 170-a-month keyword the pairs mode exists to find.
+   */
+
+  await test('the town is not evidence of a brand', () => {
+    const cedar = geoWords('Cedar Park,Texas,United States');
+
+    assert.ok(!looksLikeBrand('plumber cedar park', 'plumbing', { geo: cedar }));
+    assert.ok(!looksLikeBrand('cedar park plumber', 'plumbing', { geo: cedar }));
+    assert.ok(!looksLikeBrand('plumbing cedar park', 'plumbing', { geo: cedar }));
+  });
+
+  await test('the state counts as the place too', () => {
+    // "plumbing texas" is a place query as much as "plumbing austin" is.
+    const austin = geoWords('Austin,Texas,United States');
+    assert.ok(!looksLikeBrand('plumbing texas', 'plumbing', { geo: austin }));
+  });
+
+  await test('and the state survives the trip through keywordIdeasFor', () => {
+    // NOT THE SAME TEST AS THE ONE ABOVE, which builds the geography by hand
+    // and so proves nothing about what the lookup passes. Narrowing the
+    // lookup to opts.city alone — which loses the state — went unnoticed
+    // until this existed.
+    //
+    // The intent filter is off here on purpose: "plumbing texas" carries no
+    // action word and would be removed by it for an unrelated reason, hiding
+    // whether the brand filter had already eaten it.
+    return withFetch(() => ideasReply([
+      { keyword: 'plumbing texas', search_volume: 320, cpc: 20.00 },
+      { keyword: 'goettl plumbing', search_volume: 900, cpc: 4.10 },
+    ]), async () => {
+      const out = await keywordIdeasFor(['plumbing'], {
+        location: 'Austin,Texas,United States',
+        intent: false, city: 'Austin', industry: 'plumbing',
+        Model: fakeModel(),
+      });
+
+      const terms = out.rows.map(r => r.keyword);
+
+      assert.ok(terms.includes('plumbing texas'),
+        `the state was not passed to the filter: ${JSON.stringify(terms)}`);
+      assert.ok(!terms.includes('goettl plumbing'));
+    });
+  });
+
+  await test('the trade whose name says least was hit hardest', () => {
+    // "lemon law firm" carries no verb at all, so every geo variant looked
+    // like a brand. 342 hidden, 76 kept, in one real lookup.
+    const dallas = geoWords('Dallas,Texas,United States');
+
+    assert.ok(!looksLikeBrand('lemon law firm dallas', 'lemon law firm', { geo: dallas }));
+    assert.ok(!looksLikeBrand('dallas lemon law firm', 'lemon law firm', { geo: dallas }));
+  });
+
+  await test('a real competitor is STILL hidden, town or no town', () => {
+    // The filter has to keep doing its job. If the fix let brands through,
+    // it would have traded one silent failure for another.
+    const austin = geoWords('Austin,Texas,United States');
+
+    assert.ok(looksLikeBrand('goettl plumbing', 'plumbing', { geo: austin }));
+    assert.ok(looksLikeBrand('goettl plumbing austin', 'plumbing', { geo: austin }),
+      'adding the town to a brand name smuggled it past the filter');
+    assert.ok(looksLikeBrand('roto rooter', 'plumbing', { geo: austin }));
+  });
+
+  await test('"united states" is never evidence of anything', () => {
+    // It arrives on the end of every location_name DataForSEO is given, so
+    // leaving it in would exempt any keyword containing "states".
+    const geo = geoWords('Austin,Texas,United States');
+    assert.ok(!geo.has('united'));
+    assert.ok(!geo.has('states'));
+    assert.ok(geo.has('austin') && geo.has('texas'));
+  });
+
+  /* ---------------------------------------------------------------- *
+   * The trade's own words, matched by stem
+   * ---------------------------------------------------------------- *
+   *
+   * ALSO FOUND IN THE LOG, on a lookup Edwin ran after the geo fix:
+   *
+   *   seed: "deck builder"   total: 1754   brandsHidden: 2917
+   *
+   * More hidden than kept. The business type has "builder" in it and the
+   * keyword said "builders", so the plural was a leftover word describing no
+   * work, sitting next to a trade — the shape of a company name.
+   *
+   * PLUMBING HID IT FOR A WEEK. isTradeish is a hard-coded regex covering
+   * plumb/roof/electric/hvac/rooter/drain/sewer, so plumbers and roofers got
+   * singular and plural by accident and every other trade lost its head
+   * terms in silence.
+   */
+
+  await test('the plural of the trade is not a brand', () => {
+    const austin = geoWords('austin,Texas,United States');
+
+    // "deck builders" is the single best term a deck builder could rank for
+    // and the filter was deleting it.
+    assert.ok(!looksLikeBrand('deck builders', 'deck builder', { geo: austin }));
+    assert.ok(!looksLikeBrand('deck building', 'deck builder', { geo: austin }));
+    assert.ok(!looksLikeBrand('deck builders austin', 'deck builder', { geo: austin }));
+  });
+
+  await test('every trade gets what plumbing got by accident', () => {
+    const austin = geoWords('austin,Texas,United States');
+
+    assert.ok(!looksLikeBrand('roofers austin', 'roofing', { geo: austin }));
+    assert.ok(!looksLikeBrand('lemon law firms', 'lemon law firm', { geo: austin }));
+    assert.ok(!looksLikeBrand('lemon law lawyers', 'lemon law lawyer', { geo: austin }));
+    assert.ok(!looksLikeBrand('landscapers austin', 'landscaping', { geo: austin }));
+  });
+
+  await test('stems reduce the forms of a word to what they share', () => {
+    assert.strictEqual(stem('builders'), stem('builder'));
+    assert.strictEqual(stem('building'), stem('builder'));
+    assert.strictEqual(stem('plumbers'), stem('plumbing'));
+    assert.strictEqual(stem('roofer'), stem('roofing'));
+    assert.strictEqual(stem('services'), stem('service'));
+    assert.strictEqual(stem('companies'), 'company');
+  });
+
+  await test('a short word is not eaten by the stemmer', () => {
+    // "gas" must not become "ga", or every trade dealing in gas loses the
+    // word and starts calling its own keywords brands.
+    assert.strictEqual(stem('gas'), 'gas');
+    assert.strictEqual(stem('law'), 'law');
+    assert.strictEqual(stem('ads'), 'ads');
+  });
+
+  await test('stemming does NOT let a competitor through', () => {
+    // The whole risk of loosening a filter. If a brand name now survives,
+    // the fix traded one silent failure for another.
+    const austin = geoWords('austin,Texas,United States');
+
+    assert.ok(looksLikeBrand('archadeck of austin', 'deck builder', { geo: austin }));
+    assert.ok(looksLikeBrand('goettl plumbing', 'plumbing', { geo: austin }));
+    assert.ok(looksLikeBrand('roto rooter', 'plumbing', { geo: austin }));
+    assert.ok(looksLikeBrand('mr rooter plumbing', 'plumbing', { geo: austin }));
+  });
+
+  await test('isTradeish still covers words outside the business name', () => {
+    // A business calling itself "plumbing" never has "rooter", "sewer" or
+    // "drain" in its name, so stemming the name alone would not reach them.
+    // The regex is kept for exactly that.
+    //
+    // "sewer repair" was the first fixture here and proved nothing: "repair"
+    // is a service word, so it survives with or without isTradeish, and
+    // deleting the regex went unnoticed. These terms carry NO service word,
+    // so the regex is the only thing between them and the brand filter.
+    const austin = geoWords('austin,Texas,United States');
+
+    for (const term of ['drain rooter', 'sewer drain', 'rooter plumbing']) {
+      assert.ok(!looksLikeBrand(term, 'plumbing', { geo: austin }),
+        `"${term}" is being called a brand`);
+    }
+
+    // And the regex does not rescue an actual brand built around one of
+    // those words.
+    assert.ok(looksLikeBrand('roto rooter', 'plumbing', { geo: austin }));
+  });
+
+  await test('no geography passed leaves the old behaviour intact', () => {
+    // The wizard's own callers and any future one must not break by omitting
+    // the new argument — they just get the narrower answer.
+    assert.ok(looksLikeBrand('plumber cedar park', 'plumbing'));
+    assert.ok(!looksLikeBrand('emergency plumber', 'plumbing'));
+  });
+
+  await test('the geography reaches the filter through keywordIdeasFor', () => {
+    // THE WIRING. The rule above is useless if the lookup forgets to pass the
+    // location — which is exactly the mutation that slipped through last time
+    // a rule and its caller were tested separately.
+    return withFetch(() => ideasReply([
+      { keyword: 'plumber cedar park', search_volume: 170, cpc: 44.64,
+        high_top_of_page_bid: 177.49 },
+      { keyword: 'goettl plumbing', search_volume: 900, cpc: 4.10,
+        high_top_of_page_bid: 30.00 },
+      { keyword: 'water heater repair', search_volume: 480, cpc: 82.33,
+        high_top_of_page_bid: 148.26 },
+      { keyword: 'drain cleaning', search_volume: 590, cpc: 10.42,
+        high_top_of_page_bid: 54.45 },
+      { keyword: 'emergency plumber', search_volume: 320, cpc: 80.46,
+        high_top_of_page_bid: 148.45 },
+    ]), async () => {
+      const out = await keywordIdeasFor(['plumbing'], {
+        location: 'Cedar Park,Texas,United States',
+        intent: true, city: 'Cedar Park', industry: 'plumbing',
+        Model: fakeModel(),
+      });
+
+      const terms = out.rows.map(r => r.keyword);
+
+      assert.ok(terms.includes('plumber cedar park'),
+        `the town term was filtered out: ${JSON.stringify(terms)}`);
+      assert.ok(!terms.includes('goettl plumbing'), 'the brand survived');
+      assert.strictEqual(out.brandsHidden, 1);
+    });
+  });
+
+  /* ---------------------------------------------------------------- *
+   * An empty DataForSEO account is not a glitch
+   * ---------------------------------------------------------------- *
+   *
+   * THE PRODUCTION FAILURE THIS EXISTS FOR. The research page went down, the
+   * page said "please try again in a moment", and the log line sat in the
+   * same bucket as a dropped connection. Retrying was never going to work —
+   * the balance was spent — and nothing anywhere said so.
+   */
+
+  await test('a 402 becomes a billing error, not a generic one', async () => {
+    await withFetch(() => ({ ok: false, status: 402, json: async () => ({}) }), async () => {
+      await assert.rejects(
+        () => fetchIdeas(['plumbing'], { location: 'Austin,Texas,United States' }),
+        err => isBillingError(err) && /balance/i.test(err.message)
+      );
+    });
+  });
+
+  await test('the same verdict inside a 200 is caught too', async () => {
+    // DataForSEO's transport is frequently 200 with the real status in the
+    // task. Checking only the HTTP code would catch this on some calls and
+    // miss it on others, which is worse than not checking — the behaviour
+    // would look random.
+    for (const code of [40200, 40210]) {
+      await withFetch(() => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ tasks: [{ status_code: code, status_message: 'Payment Required.' }] }),
+      }), async () => {
+        await assert.rejects(
+          () => fetchIdeas(['plumbing'], { location: 'Austin,Texas,United States' }),
+          err => isBillingError(err),
+          `task status ${code} was not recognised as a billing failure`
+        );
+      });
+    }
+  });
+
+  await test('an ordinary failure is NOT marked as billing', async () => {
+    // Otherwise every outage would tell the operator to top up an account
+    // that has money in it.
+    await withFetch(() => ({ ok: false, status: 500, json: async () => ({}) }), async () => {
+      await assert.rejects(
+        () => fetchIdeas(['plumbing'], { location: 'Austin,Texas,United States' }),
+        err => !isBillingError(err) && /500/.test(err.message)
+      );
+    });
+  });
+
+  await test('a 402 stops telling the customer to try again in a moment', async () => {
+    // The lie that cost a debugging session.
+    const { handler } = loadRoute({
+      ideas: async () => {
+        const err = new Error('keyword ideas: DataForSEO returned 402 — the balance is spent');
+        err.dataForSeoBilling = true;
+        throw err;
+      },
+    });
+
+    const res = fakeRes();
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, res);
+
+    assert.ok(!/try again in a moment/i.test(res.body.error),
+      'the page still invites a retry that cannot work');
+    assert.strictEqual(res.statusCode, 503, 'a billing outage is not a bad gateway');
+  });
+
+  await test('the customer is not told whose account it is', async () => {
+    // Whose balance it is, and that money is involved, is the operator's
+    // problem. A customer can only act on "unavailable".
+    const { handler } = loadRoute({
+      ideas: async () => {
+        const err = new Error('balance spent');
+        err.dataForSeoBilling = true;
+        throw err;
+      },
+    });
+
+    const res = fakeRes();
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, res);
+
+    assert.ok(!/dataforseo|balance|billing|account|credit|top up/i.test(res.body.error),
+      `the customer-facing message leaks the cause: ${res.body.error}`);
+  });
+
+  await test('it gets its own log event, greppable and unambiguous', async () => {
+    const seen = [];
+    const { handler } = loadRoute({
+      onLog: (event, fields) => seen.push({ event, fields }),
+      ideas: async () => {
+        const err = new Error('balance spent');
+        err.dataForSeoBilling = true;
+        throw err;
+      },
+    });
+
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, fakeRes());
+
+    assert.ok(seen.some(l => l.event === 'keywords.accountEmpty'),
+      `the billing failure was logged as: ${seen.map(l => l.event).join(', ')}`);
+    assert.ok(!seen.some(l => l.event === 'keywords.ideasFailed'),
+      'it is still in the same bucket as a network blip');
+
+    // And the log says what to do, so the fix does not need this file open
+    // beside it at 2am.
+    const line = seen.find(l => l.event === 'keywords.accountEmpty');
+    assert.match(line.fields.action, /dataforseo/i);
+  });
+
+  await test('an ordinary failure keeps the old event and the old wording', async () => {
+    const seen = [];
+    const { handler } = loadRoute({
+      onLog: (event, fields) => seen.push({ event, fields }),
+      ideas: async () => { throw new Error('DataForSEO is down'); },
+    });
+
+    const res = fakeRes();
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, res);
+
+    assert.ok(seen.some(l => l.event === 'keywords.ideasFailed'));
+    assert.strictEqual(res.statusCode, 502);
+    assert.match(res.body.error, /try again in a moment/i);
+  });
+
+  await test('all three modes report a billing failure the same way', async () => {
+    // Three catch blocks; one of them silently keeping the old behaviour is
+    // exactly the kind of thing a single-mode test would miss.
+    const boom = async () => {
+      const err = new Error('balance spent');
+      err.dataForSeoBilling = true;
+      throw err;
+    };
+
+    for (const body of [
+      { category: 'plumbing', location: 'Austin, TX' },
+      { mode: 'exact', category: 'plumbing', location: 'Austin, TX' },
+      { mode: 'pairs', category: 'plumbing', location: 'Austin, TX' },
+    ]) {
+      const seen = [];
+      const { handler } = loadRoute({
+        onLog: (event, fields) => seen.push({ event, fields }),
+        ideas: boom,
+        exact: boom,
+      });
+
+      const res = fakeRes();
+      await handler({ body }, res);
+
+      const mode = body.mode || 'category';
+      assert.strictEqual(res.statusCode, 503, `${mode} mode returned ${res.statusCode}`);
+      assert.ok(seen.some(l => l.event === 'keywords.accountEmpty'),
+        `${mode} mode did not log the billing event`);
+      assert.ok(!/try again in a moment/i.test(res.body.error),
+        `${mode} mode still invites a pointless retry`);
+    }
   });
 
   /* ---------------------------------------------------------------- *
@@ -1779,27 +2372,46 @@ async function main() {
    * The page, in both modes
    * ---------------------------------------------------------------- */
 
-  await test('the page has a mode switch that hides the category-only fields', () => {
+  await test('every field says which modes it belongs to', () => {
     assert.match(pageHtml, /name="kwMode"/, 'there is no mode switch');
     assert.match(pageHtml, /id="kwModeExact"/);
-    assert.match(pageHtml, /data-mode="category"/,
-      'nothing marks which fields belong to category mode');
 
-    // The minimum, the related terms and the show-all box are all meaningless
-    // in exact mode and must be inside that marking.
-    const marked = pageHtml.split('data-mode="category"').length - 1;
-    assert.ok(marked >= 3, `only ${marked} blocks are category-only`);
+    // A LIST of modes per block, not one. Industry belongs to two modes and
+    // the Keywords textarea to one; a single-value marker could not say that,
+    // which is why the earlier `data-mode="category"` scheme was replaced.
+    assert.match(pageHtml, /data-modes="category pairs"/,
+      'the Industry field does not belong to both trade modes');
+    assert.match(pageHtml, /data-modes="exact"/,
+      'nothing is marked as belonging to exact mode');
+
+    // The minimum, the related terms and the show-all box are meaningless
+    // outside category mode and must all be marked.
+    const categoryOnly = pageHtml.split('data-modes="category"').length - 1;
+    assert.ok(categoryOnly >= 3, `only ${categoryOnly} blocks are category-only`);
 
     assert.match(pageJs, /applyMode/, 'the page never swaps the fields');
   });
 
-  await test('the shared field is relabelled, not left saying Industry', () => {
-    // Left as "Industry" in exact mode it invites somebody to type
-    // "plumbing" and then wonder why one row came back.
-    const fn = pageJs.match(/function applyMode[\s\S]*?\n  }/);
-    assert.ok(fn, 'applyMode is gone');
-    assert.match(fn[0], /Keyword/);
-    assert.match(fn[0], /Industry/);
+  await test('exact mode gets its own textarea, not the Industry box relabelled', () => {
+    // A single-line input cannot take a pasted column from Keyword Planner,
+    // and relabelling the shared box meant the two fields could never be
+    // validated or sent differently.
+    assert.match(pageHtml, /<textarea[^>]*id="kwTerms"/,
+      'there is no Keywords textarea');
+    assert.match(pageJs, /kwTerms/, 'the page never reads the textarea');
+
+    // And the request carries it separately from the industry.
+    assert.match(pageJs, /JSON\.stringify\(\{[\s\S]{0,200}?\bterms\b/,
+      'the terms are not sent to the server');
+  });
+
+  await test('exact mode validates the textarea, not the Industry box', () => {
+    // Checking the wrong field would block a valid search or send an empty
+    // one — and an empty one still costs $0.09.
+    const fn = pageJs.match(/form\.addEventListener[\s\S]*?\n  \}\);/);
+    assert.ok(fn, 'the submit handler is gone');
+    assert.match(fn[0], /mode === 'exact' \? !terms : !category/,
+      'the wrong field is checked for emptiness');
   });
 
   await test('the mode is sent with the request', () => {
@@ -1820,13 +2432,28 @@ async function main() {
     assert.match(pageHtml, /\.variant-note/, 'the variant note has no styling');
   });
 
-  await test('the count line says nothing about ratios in exact mode', () => {
-    // "1 of 1 found" is noise dressed as data.
+  await test('one term asked and answered needs no ratio', () => {
+    // "1 of 1 have a figure" is noise dressed as data.
     const { countLine } = liftFromPage('number', 'countLine');
 
     assert.strictEqual(
-      countLine({ mode: 'exact', total: 1, aboveMinimum: 1, minVolume: 0 }),
+      countLine({ mode: 'exact', total: 1, answered: 1, minVolume: 0 }),
       'Exact match'
+    );
+  });
+
+  await test('several terms get the ratio, and so does a single blank one', () => {
+    const { countLine } = liftFromPage('number', 'countLine');
+
+    assert.strictEqual(
+      countLine({ mode: 'exact', total: 6, answered: 4, minVolume: 0 }),
+      '4 of 6 have a figure'
+    );
+
+    // One term with no figure is NOT "Exact match" — nothing was matched.
+    assert.strictEqual(
+      countLine({ mode: 'exact', total: 1, answered: 0, minVolume: 0 }),
+      '0 of 1 have a figure'
     );
   });
 
@@ -1891,13 +2518,41 @@ async function main() {
       'the page cannot report pairs mode, so the server would run discovery');
   });
 
-  await test('the category-only fields are hidden in pairs mode too', () => {
+  await test('a block is shown only in the modes it names', () => {
     // The minimum, the related terms and the show-everything box belong to
-    // category mode alone. Pairs filters nothing on purpose.
-    const fn = pageJs.match(/function applyMode[\s\S]*?\n  }/);
-    assert.ok(fn, 'applyMode is gone');
-    assert.match(fn[0], /!==\s*'category'/,
-      'the fields are hidden only for exact mode, so pairs shows a dead minimum box');
+    // category mode alone; Industry to category and pairs; the textarea to
+    // exact. Checked by running the real function against a fake document,
+    // rather than by reading the source for a substring — reading the source
+    // is how a test passes while the page is wrong.
+    const seen = {};
+
+    const blocks = [
+      { el: { set hidden(v) { seen.minimum = v; } }, modes: ['category'] },
+      { el: { set hidden(v) { seen.industry = v; } }, modes: ['category', 'pairs'] },
+      { el: { set hidden(v) { seen.terms = v; } }, modes: ['exact'] },
+    ];
+
+    // applyMode closes over modeBlocks and currentMode, so it is rebuilt here
+    // from its own source with those two supplied.
+    const src = pageJs.match(/function applyMode[\s\S]*?\n  \}/);
+    assert.ok(src, 'applyMode is gone');
+
+    const build = new Function('modeBlocks', 'mode', `
+      const currentMode = () => mode;
+      const categoryHelp = { textContent: '' };
+      ${src[0]}
+      applyMode();
+    `);
+
+    build(blocks, 'category');
+    assert.deepStrictEqual(seen, { minimum: false, industry: false, terms: true });
+
+    build(blocks, 'pairs');
+    assert.deepStrictEqual(seen, { minimum: true, industry: false, terms: true },
+      'pairs mode is showing a dead minimum box, or hiding the industry');
+
+    build(blocks, 'exact');
+    assert.deepStrictEqual(seen, { minimum: true, industry: true, terms: false });
   });
 
   await test('the page explains what a dash means in pairs mode', () => {

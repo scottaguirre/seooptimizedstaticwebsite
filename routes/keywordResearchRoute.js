@@ -65,7 +65,8 @@ const router = express.Router();
 
 const { keywordVolumesLimiter } = require('../middleware/rateLimits');
 const {
-  keywordIdeasFor, volumesFor, seedsFor, MAX_IDEAS, MAX_SEEDS,
+  keywordIdeasFor, volumesFor, seedsFor, mergeAnswers, isBillingError,
+  MAX_IDEAS, MAX_SEEDS,
 } = require('../utils/keywordVolumes');
 const { seedTermsFor } = require('../utils/keywordSeeds');
 const { pairsFor, sortPairs, MAX_PAIRS } = require('../utils/keywordPairs');
@@ -91,6 +92,22 @@ const MAX_SEED = 60;
  */
 const MAX_RELATED = MAX_SEEDS - 3;
 const MAX_RELATED_LENGTH = 60;
+
+/**
+ * How many keywords one exact lookup may carry.
+ *
+ * IT USED TO BE ONE, AND THAT WAS THE WHOLE COST OF THIS FEATURE. From the
+ * log of 23 September: five lookups in 68 seconds — "lemon law lawyer",
+ * "lemon law lawyer austin", "lemon law lawyer near me", "lemon law attorney
+ * near me", "lemon law attorney" — five separate tasks, $0.45. That is not
+ * somebody abusing the tool; that is the only sensible way to use it.
+ *
+ * The lookup endpoint takes a THOUSAND keywords per task at the same $0.09,
+ * so those five should always have been one. Fifty is far below the
+ * endpoint's cap and is set by what a person can read in a table, not by what
+ * the API will bear.
+ */
+const MAX_EXACT_TERMS = 50;
 
 /**
  * A local sort plus one HTTP call — and now, on the first lookup for an
@@ -165,6 +182,45 @@ function modeOf(body) {
   return 'category';
 }
 
+/**
+ * Report a failed lookup, telling the truth about which kind it was.
+ *
+ * AN EMPTY ACCOUNT IS NOT A GLITCH, and the old code said it was. The page
+ * told customers "please try again in a moment" while the DataForSEO balance
+ * sat at zero, which no amount of trying would fix, and the failure went into
+ * the same log bucket as a dropped connection. It took reading a stack trace
+ * to find out the feature was down for a billing reason.
+ *
+ * So the billing case gets its own event name — `keywords.accountEmpty`,
+ * greppable, unambiguous — and a message that does not invite a pointless
+ * retry. Everything else keeps the old wording, because everything else
+ * really is worth trying again.
+ *
+ * The customer is not told whose account it is or that money is involved:
+ * that is the operator's problem, and "unavailable, we are on it" is both
+ * honest and all they can act on.
+ */
+function reportLookupFailure(res, err, { event, req, seed, location }) {
+  const billing = isBillingError(err);
+
+  log.error(billing ? 'keywords.accountEmpty' : event, err, {
+    requestId: req.id,
+    userId: String((req.user && req.user._id) || ''),
+    seed,
+    location,
+    // Spelled out for whoever reads the log at 2am, so the fix does not need
+    // this file open beside it.
+    ...(billing ? { action: 'top up the DataForSEO balance at app.dataforseo.com' } : {}),
+  });
+
+  return res.status(billing ? 503 : 502).json({
+    error: billing
+      ? 'Keyword data is unavailable at the moment. We have been notified — '
+        + 'please check back later today.'
+      : 'Could not look up keywords just now. Please try again in a moment.',
+  });
+}
+
 /** "Cedar Park,Texas,United States" -> "Cedar Park". The bare town. */
 function cityOf(locationName) {
   return String(locationName || '').split(',')[0].trim();
@@ -177,12 +233,43 @@ function cityOf(locationName) {
  * Planner gets newlines and would otherwise send one 200-character seed that
  * matches nothing.
  */
+function termList(value, max, maxLength = MAX_RELATED_LENGTH) {
+  const seen = new Set();
+  const out = [];
+
+  for (const raw of String(value || '').split(/[,\n]/)) {
+    const term = raw.trim().replace(/\s+/g, ' ').slice(0, maxLength);
+    if (!term) continue;
+
+    // Deduped case-insensitively, matching keywordVolumes.keywordList.
+    // Otherwise a pasted list with a repeat in it spends a slot twice AND
+    // shows the customer the same row twice.
+    const fingerprint = term.toLowerCase();
+    if (seen.has(fingerprint)) continue;
+
+    seen.add(fingerprint);
+    out.push(term);
+
+    if (out.length >= max) break;
+  }
+
+  return out;
+}
+
 function relatedTerms(value) {
-  return String(value || '')
-    .split(/[,\n]/)
-    .map(term => term.trim().slice(0, MAX_RELATED_LENGTH))
-    .filter(Boolean)
-    .slice(0, MAX_RELATED);
+  return termList(value, MAX_RELATED);
+}
+
+/**
+ * The keywords an exact lookup was asked about.
+ *
+ * `terms` is what the page sends now; `category` is the fallback, because a
+ * page cached in somebody's browser from before the textarea existed still
+ * puts its single keyword there. Costs one line and keeps them working.
+ */
+function exactTerms(body) {
+  const typed = (body && body.terms) || (body && body.category) || '';
+  return termList(typed, MAX_EXACT_TERMS, MAX_SEED);
 }
 
 /**
@@ -207,10 +294,15 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
   const minVolume = Math.max(0, Math.min(Number(req.body && req.body.minVolume) || 0, 1000000));
   const related = relatedTerms(req.body && req.body.related);
 
-  if (!seed) {
+  // Exact mode has its own field and its own emptiness: a textarea with only
+  // whitespace in it is not a seed, and `seed` would be empty for a different
+  // reason than a missing industry.
+  const terms = mode === 'exact' ? exactTerms(req.body) : [];
+
+  if (mode === 'exact' ? !terms.length : !seed) {
     return res.status(400).json({
       error: mode === 'exact'
-        ? 'Type the keyword you want the number for.'
+        ? 'Type the keywords you want the numbers for, one per line.'
         : 'Tell us the industry first — plumbing, roofing, web design, and so on.',
       mode,
     });
@@ -222,34 +314,41 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
     });
   }
 
-  /* EXACT MODE: one term, one answer, nothing removed.
+  /* EXACT MODE: the words you give it, the numbers back, nothing removed.
    *
-   * The whole point of this mode is that the customer already knows the term
-   * and wants the number. Running it through the brand filter, the intent
+   * The whole point of this mode is that the customer already knows the terms
+   * and wants the figures. Running them through the brand filter, the intent
    * filter or a minimum would mean the tool silently declining to answer the
    * question it was asked — and a page that says nothing looks identical to
    * a lookup that failed. So: no filters, and a volume of 10 is reported as
-   * 10 rather than rounded away. */
+   * 10 rather than rounded away.
+   *
+   * ALL OF THEM IN ONE TASK. See MAX_EXACT_TERMS for why that matters. */
   if (mode === 'exact') {
     try {
       const { results, cached, costUsd } = await withTimeout(
-        volumesFor([seed], { location, kind: 'volumes' }),
+        volumesFor(terms, { location, kind: 'volumes' }),
         CALL_TIMEOUT_MS,
         'keyword volume'
       );
 
-      const rows = results.filter(r => r && r.keyword);
+      // Asked, not answered — a term Google will not report on is kept as a
+      // blank row. "We checked and there is no figure" is the answer, and
+      // dropping it would leave the customer thinking it was never looked up.
+      const rows = mergeAnswers(terms, results);
+      const answered = rows.filter(r => r.volume != null).length;
 
       log.info('keywords.exact', {
         requestId: req.id,
         userId: String((req.user && req.user._id) || ''),
         mode,
-        seed,
+        seed: terms[0],
         location,
-        // null when Google will not report on the term at all, which is a
-        // different answer from zero and worth telling apart in the log.
-        volume: rows.length ? rows[0].volume : null,
-        answered: rows.length,
+        asked: terms.length,
+        answered,
+        // Kept for the single-term case, which is most of them, so the old
+        // log lines and the new ones still read the same way.
+        volume: rows.length === 1 ? rows[0].volume : null,
         cached,
         costUsd,
       });
@@ -258,24 +357,18 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
         mode,
         rows,
         location,
-        seeds: [seed],
+        seeds: terms,
         total: rows.length,
         buyerIntent: rows.length,
         aboveMinimum: rows.length,
+        answered,
         minVolume: 0,
         cached,
       });
 
     } catch (err) {
-      log.error('keywords.exactFailed', err, {
-        requestId: req.id,
-        userId: String((req.user && req.user._id) || ''),
-        seed,
-        location,
-      });
-
-      return res.status(502).json({
-        error: 'Could not look up that keyword just now. Please try again in a moment.',
+      return reportLookupFailure(res, err, {
+        event: 'keywords.exactFailed', req, seed: terms[0], location,
       });
     }
   }
@@ -310,14 +403,8 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
       // ASKED FOR, NOT ANSWERED, is the shape of this table. A term
       // DataForSEO omits entirely is shown with a dash rather than dropped,
       // because "we checked and Google has no figure" is the finding.
-      const byTerm = new Map(
-        results.filter(r => r && r.keyword)
-          .map(r => [r.keyword.toLowerCase(), r])
-      );
-
-      const rows = sortPairs(pairs.map(term => (
-        byTerm.get(term.toLowerCase()) || { keyword: term, volume: null, cpc: null }
-      )));
+      // Same helper the exact lookup uses; see keywordVolumes.mergeAnswers.
+      const rows = sortPairs(mergeAnswers(pairs, results));
 
       const answered = rows.filter(r => r.volume != null).length;
 
@@ -351,15 +438,8 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
       });
 
     } catch (err) {
-      log.error('keywords.pairsFailed', err, {
-        requestId: req.id,
-        userId: String((req.user && req.user._id) || ''),
-        seed,
-        location,
-      });
-
-      return res.status(502).json({
-        error: 'Could not look up those keywords just now. Please try again in a moment.',
+      return reportLookupFailure(res, err, {
+        event: 'keywords.pairsFailed', req, seed, location,
       });
     }
   }
@@ -448,15 +528,8 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
     });
 
   } catch (err) {
-    log.error('keywords.ideasFailed', err, {
-      requestId: req.id,
-      userId: String((req.user && req.user._id) || ''),
-      seed,
-      location,
-    });
-
-    res.status(502).json({
-      error: 'Could not look up keywords just now. Please try again in a moment.',
+    reportLookupFailure(res, err, {
+      event: 'keywords.ideasFailed', req, seed, location,
     });
   }
 });
@@ -492,6 +565,9 @@ module.exports.modeOf = modeOf;
 module.exports.MAX_PAIRS = MAX_PAIRS;
 module.exports.cityOf = cityOf;
 module.exports.relatedTerms = relatedTerms;
+module.exports.exactTerms = exactTerms;
+module.exports.termList = termList;
+module.exports.MAX_EXACT_TERMS = MAX_EXACT_TERMS;
 module.exports.MAX_SEED = MAX_SEED;
 module.exports.MAX_RELATED = MAX_RELATED;
 module.exports.MAX_RELATED_LENGTH = MAX_RELATED_LENGTH;

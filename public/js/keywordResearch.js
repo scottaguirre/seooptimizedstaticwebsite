@@ -34,8 +34,8 @@
 
   const locationInput = document.getElementById('kwLocation');
   const categoryInput = document.getElementById('kwCategory');
-  const categoryLabel = document.getElementById('kwCategoryLabel');
   const categoryHelp = document.getElementById('kwCategoryHelp');
+  const termsInput = document.getElementById('kwTerms');
   const minInput = document.getElementById('kwMinVolume');
   const relatedInput = document.getElementById('kwRelated');
   const showAllInput = document.getElementById('kwShowAll');
@@ -44,7 +44,20 @@
   const results = document.getElementById('kwResults');
 
   const modeInputs = Array.from(document.querySelectorAll('input[name="kwMode"]'));
-  const categoryOnly = Array.from(document.querySelectorAll('[data-mode="category"]'));
+
+  /**
+   * Every block that belongs to only some modes, with the modes it belongs
+   * to.
+   *
+   * A LIST, not a single mode. The first version marked blocks "category" and
+   * hid them anywhere else, which worked while the Industry box was shared by
+   * every mode. It is not any more: Industry belongs to two modes and the
+   * Keywords textarea to one, and a single-value marker cannot say that.
+   */
+  const modeBlocks = Array.from(document.querySelectorAll('[data-modes]')).map(el => ({
+    el,
+    modes: (el.getAttribute('data-modes') || '').trim().split(/\s+/).filter(Boolean),
+  }));
 
   function currentMode() {
     const picked = modeInputs.find(i => i.checked);
@@ -65,24 +78,18 @@
     const mode = currentMode();
 
     // The minimum, the related terms and the show-everything box belong to
-    // category mode alone. Pairs mode filters nothing on purpose — an
+    // category mode alone; Industry to category and pairs; the Keywords
+    // textarea to exact. Pairs mode filters nothing on purpose — an
     // unanswered pairing is one of its most useful rows.
-    categoryOnly.forEach(el => { el.hidden = mode !== 'category'; });
-
-    if (categoryLabel) {
-      categoryLabel.textContent = mode === 'exact' ? 'Keyword' : 'Industry';
-    }
+    modeBlocks.forEach(({ el, modes }) => {
+      el.hidden = !modes.includes(mode);
+    });
 
     if (categoryHelp) {
-      categoryHelp.textContent = {
-        exact: 'The exact words, as somebody would type them',
-        pairs: 'We pair every part of the trade with the town',
-        category: 'plumbing, roofing, web design…',
-      }[mode];
+      categoryHelp.textContent = mode === 'pairs'
+        ? 'We pair every part of the trade with the town'
+        : 'plumbing, roofing, web design…';
     }
-
-    categoryInput.placeholder =
-      mode === 'exact' ? 'emergency plumber austin' : 'plumbing';
   }
 
   modeInputs.forEach(input => input.addEventListener('change', applyMode));
@@ -124,15 +131,16 @@
   function countLine(data) {
     const total = number(data.total);
 
-    // Exact mode has no denominator worth showing: one term was asked about
-    // and one answer came back. "1 of 1 found" is noise dressed as data.
-    if (data.mode === 'exact') return 'Exact match';
+    // ONE TERM ASKED AND ANSWERED has no denominator worth showing. "1 of 1
+    // have a figure" is noise dressed as data.
+    if (data.mode === 'exact' && data.total === 1 && data.answered === 1) {
+      return 'Exact match';
+    }
 
-    // Pairs mode has the one ratio that matters here: of everything we
-    // checked, how much Google will actually report on. A customer seeing
-    // "12 of 38 have a figure" understands the dashes instead of mistrusting
-    // them.
-    if (data.mode === 'pairs') {
+    // Otherwise the ratio that matters: of everything we checked, how much
+    // Google will actually report on. A customer seeing "12 of 38 have a
+    // figure" understands the dashes instead of mistrusting them.
+    if (data.mode === 'exact' || data.mode === 'pairs') {
       return `${number(data.answered)} of ${number(data.total)} have a figure`;
     }
 
@@ -197,16 +205,24 @@
     const place = shortPlace(data.location);
     const exact = data.mode === 'exact';
 
-    // EXACT MODE, NO ANSWER. Google declines to report on terms below roughly
-    // ten searches a month; it is not that the term is unsearched, it is that
-    // the number is too small for Google to stand behind. Saying which is the
-    // difference between a useful answer and an apparent malfunction.
-    if (exact && !rows.length) {
+    // EXACT MODE, NOTHING ANSWERED. Google declines to report on terms below
+    // roughly ten searches a month; it is not that the term is unsearched, it
+    // is that the number is too small for Google to stand behind. Saying
+    // which is the difference between a useful answer and an apparent
+    // malfunction.
+    //
+    // Only when EVERY term came back blank. With several terms, a mix of
+    // answers and dashes is the normal result and belongs in the table.
+    if (exact && !data.answered) {
+      const many = rows.length > 1;
+
       message(
-        `Google has no figure for that term in ${place}. That means fewer than `
-        + 'about ten searches a month — too few for Google to report, not '
-        + 'necessarily zero. Check the spelling, or try the words a customer '
-        + 'would use rather than the trade would.'
+        (many
+          ? `Google has no figure for any of those ${number(rows.length)} terms in ${place}. `
+          : `Google has no figure for that term in ${place}. `)
+        + 'That means fewer than about ten searches a month — too few for '
+        + 'Google to report, not necessarily zero. Check the spelling, or try '
+        + 'the words a customer would use rather than the trade would.'
       );
       return;
     }
@@ -300,7 +316,8 @@
         <p class="form-text mt-3 mb-0" style="color:rgba(255,255,255,.5);">
           Lowest and highest bid are what advertisers pay at the top of the
           page &mdash; the range of the market, where cost per click is the
-          middle of it.${data.mode === 'pairs'
+          middle of it.${(data.mode === 'pairs' || data.mode === 'exact')
+            && data.answered < data.total
             ? ' A dash in the searches column means Google will not report on'
               + ' that phrase &mdash; under about ten a month, not necessarily zero.'
             : ''}
@@ -314,13 +331,16 @@
     const mode = currentMode();
     const location = locationInput.value.trim();
     const category = categoryInput.value.trim();
+    const terms = termsInput ? termsInput.value.trim() : '';
     const minVolume = Number(minInput.value) || 0;
     const related = relatedInput ? relatedInput.value.trim() : '';
     const showAll = !!(showAllInput && showAllInput.checked);
 
-    if (!location || !category) {
+    // Exact mode reads the textarea; the other two read the Industry box.
+    // Checking the wrong one would block a valid search or send an empty one.
+    if (!location || (mode === 'exact' ? !terms : !category)) {
       note.textContent = mode === 'exact'
-        ? 'Fill in the city and the keyword.'
+        ? 'Fill in the city and at least one keyword.'
         : 'Fill in the city and the industry.';
       return;
     }
@@ -342,7 +362,9 @@
         // ignored there by the server. Stripping them here would mean the
         // page and the route both had to agree on which fields belong to
         // which mode, and they would drift.
-        body: JSON.stringify({ mode, location, category, minVolume, related, showAll }),
+        body: JSON.stringify({
+          mode, location, category, terms, minVolume, related, showAll,
+        }),
       });
 
       const data = await res.json().catch(() => ({}));

@@ -343,11 +343,19 @@ function appSidebar(current = '') {
 function appSidebarAssets() {
   return `
   <style>
+    /* The column's width, named once. It is needed in three places now — the
+       body's padding, the column itself, and the negative margin that lets
+       the header escape that padding — and three copies of 232px is three
+       chances to change two of them. */
+    :root { --app-sidebar-width: 232px; }
+
     .app-sidebar {
       display: flex;
       flex-direction: column;
       gap: .25rem;
-      padding: 1rem .75rem;
+      /* Roomier at the top, so the list starts clear of the header instead of
+         crowding up under its shadow. */
+      padding: 1.75rem .75rem 1rem;
     }
 
     .app-sidebar-title {
@@ -409,32 +417,116 @@ function appSidebarAssets() {
       box-shadow: inset 0 0 0 2px rgba(255,255,255,.55);
     }
 
-    /* ABSOLUTE, NOT FIXED, and not sticky either.
-       
-       Fixed would need a hard-coded top offset matching the header's height —
-       a number that goes stale the moment the header changes, and that leaves
-       a gap above the column once the page scrolls. Sticky would need every
-       page's content wrapped in a flex parent, which is five hand-edited
-       layouts.
-       
-       Absolute with no top offset keeps the vertical position the element would
-       have had anyway — directly under the header — and takes it out of the
-       horizontal flow. The body's padding then holds the content clear. One
-       rule, no magic numbers, works on any page that drops the shell in after
-       the header.
-       
+    /* FIXED, and the two earlier attempts are worth recording because both
+       looked right in the file and wrong on screen.
+
+       ABSOLUTE WITH NO TOP OFFSET was the first. It keeps the element at its
+       STATIC position — wherever the {{SIDEBAR}} placeholder happens to sit
+       in that page's markup, after whatever precedes it. So the column began
+       near the top of step 2 of the wizard and most of the way down step 1,
+       and the divider was a floating segment in the middle of the page rather
+       than a line down the side of it.
+
+       ADDING bottom:0 AND A POSITIONED BODY fixed the length and not the
+       start: the top still came from the markup, so the line ran from an
+       arbitrary point to the end of the page.
+
+       Fixed has neither problem — it ignores where the element sits in the
+       document — and it is also what the column should do anyway: the tools
+       stay put while the page scrolls.
+
+       Its one cost is needing the header's height for the top offset, which
+       the comment here previously called a number that goes stale. It is,
+       so it is not hard-coded: the script below measures the header and
+       writes --app-header-height, and the value in the CSS is only the
+       fallback for the moment before that runs.
+
        Below 992px it stacks above the content in normal flow, because a
        column that narrow is worse than no column. */
     @media (min-width: 992px) {
-      body:has(.app-sidebar-shell) { padding-left: 232px; }
+      body:has(.app-sidebar-shell) {
+        padding-left: var(--app-sidebar-width);
+      }
+
+      /* THE HEADER SPANS THE PAGE, the column does not push it.
+
+         body's padding-left is what holds the content clear of the column,
+         and the header is inside that body, so it was being indented by the
+         same 232px — leaving a bite out of the top-left corner where the
+         column met it. Pulling it back by the padding and widening it by the
+         same amount puts it back across the full width. */
+      body:has(.app-sidebar-shell) > header {
+        margin-left: calc(var(--app-sidebar-width) * -1);
+        width: calc(100% + var(--app-sidebar-width));
+      }
 
       .app-sidebar-shell {
-        position: absolute;
+        position: fixed;
         left: 0;
-        width: 232px;
+
+        /* From the bottom edge of the header to the bottom of the window.
+           The fallback is the header's height today — 1rem padding, a 50px
+           logo, 1rem padding, a 2px border — and it is only ever on screen
+           for the instant before the script measures the real one. */
+        top: var(--app-header-height, 84px);
+        bottom: 0;
+
+        width: var(--app-sidebar-width);
+        border-right: 1px solid rgba(255,255,255,.1);
+
+        /* A tools list longer than the window scrolls inside its own column
+           rather than being cut off by the fixed height above. */
+        overflow-y: auto;
       }
     }
-  </style>`;
+  </style>
+  <script>
+    /* The header's real height, measured rather than assumed.
+
+       Everything about the header is fluid — the logo swaps, the padding is
+       Bootstrap's, a second row could appear at a narrow width — so any
+       number written into the CSS is right until somebody edits the header
+       and then silently wrong. This reads it and keeps reading it.
+
+       Defensive throughout: the script is in the HEAD, so the header does not
+       exist yet on first run, and it ships on pages that may have no header
+       at all. Every path returns quietly rather than throwing into a page
+       whose only fault is not having a sidebar. */
+    (function () {
+      function measure() {
+        var header = document.querySelector('header');
+        if (!header) return;
+
+        var height = Math.round(header.getBoundingClientRect().height);
+        if (!height) return;
+
+        document.documentElement.style.setProperty(
+          '--app-header-height', height + 'px');
+      }
+
+      function watch() {
+        measure();
+
+        var header = document.querySelector('header');
+        if (!header) return;
+
+        // The header grows when the credits badge loads, and again if the
+        // window narrows enough to wrap it. A one-off measurement would be
+        // taken before either.
+        if (typeof ResizeObserver === 'function') {
+          new ResizeObserver(measure).observe(header);
+        } else {
+          window.addEventListener('resize', measure);
+        }
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', watch);
+      } else {
+        watch();
+      }
+    })();
+  </script>`;
 }
 
 function withAppHeader(html, res) {

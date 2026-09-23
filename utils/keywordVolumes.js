@@ -72,6 +72,65 @@ const IDEAS_ENDPOINT =
 /** DataForSEO's own cap per task. Sending more is an error, not a truncation. */
 const MAX_KEYWORDS = 1000;
 
+/**
+ * The one HTTP status that is not a glitch.
+ *
+ * 402 Payment Required. DataForSEO's own wording: "We had a problem billing
+ * your account. Please, check your account's balance."
+ *
+ * THIS COST A DEBUGGING SESSION AND IT SHOULD NOT HAVE. The research page
+ * went down, the customer-facing message said "please try again in a moment",
+ * and the log line was `keywords.ideasFailed` sitting in the same bucket as
+ * every network blip. Trying again was never going to work — the account was
+ * empty — and nothing anywhere said so. I sent Edwin to `pm2 logs` twice
+ * before remembering this app logs to files.
+ *
+ * So 402 gets its own error, its own log event and its own wording. Every
+ * other status stays generic, because every other status really is worth
+ * retrying.
+ */
+const PAYMENT_REQUIRED = 402;
+
+/**
+ * Marks an error as "the account is empty", so callers can say something true
+ * without string-matching a message.
+ *
+ * A property rather than a subclass: it survives being caught and rethrown,
+ * and it needs no `instanceof` across module boundaries.
+ */
+function accountError(label, detail = '402 Payment Required') {
+  const err = new Error(
+    `${label}: DataForSEO returned ${detail} — the account balance is spent`
+  );
+  err.dataForSeoBilling = true;
+  return err;
+}
+
+/**
+ * The same problem, reported inside a 200.
+ *
+ * DataForSEO's transport is frequently 200 with the real verdict in the
+ * task's own status_code, so checking the HTTP status alone would catch this
+ * on some calls and miss it on others — which is worse than not checking at
+ * all, because the behaviour would look random.
+ *
+ *   40200  Payment Required — the account is flagged for billing
+ *   40210  Insufficient Funds — the balance will not cover this request
+ *
+ * Both mean "top up the account"; neither is worth retrying.
+ */
+const BILLING_TASK_CODES = new Set([40200, 40210]);
+
+/**
+ * Is this failure the empty account rather than a glitch?
+ *
+ * Exported so the routes ask this question rather than matching on the
+ * message text — a message is wording and wording gets edited.
+ */
+function isBillingError(err) {
+  return !!(err && err.dataForSeoBilling);
+}
+
 /** What one task costs, live mode, for the cost log. */
 const COST_PER_TASK_USD = 0.09;
 
@@ -169,6 +228,94 @@ function currentMonth(now = new Date()) {
  * ------------------------------------------------------------------ */
 
 /**
+ * A word reduced to the part its other forms share.
+ *
+ *   builder, builders, building  -> build
+ *   plumber, plumbers, plumbing  -> plumb
+ *   deck, decks                  -> deck
+ *   company, companies           -> company
+ *
+ * Crude on purpose. A real stemmer is a dependency for a job a suffix strip
+ * does, and the only question being asked is "are these two words the same
+ * trade word?" — not "what is the root of this English word?".
+ *
+ * The three-character floor stops it eating short words: "gas" must not
+ * become "ga", or every trade dealing in gas loses the word.
+ */
+function stem(word) {
+  const w = String(word || '').toLowerCase();
+
+  if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+
+  // Longest first, so "builders" loses "ers" rather than "s".
+  for (const suffix of ['ers', 'ing', 'er', 's']) {
+    if (w.endsWith(suffix) && w.length - suffix.length >= 3) {
+      return w.slice(0, -suffix.length);
+    }
+  }
+
+  return w;
+}
+
+/**
+ * The stems of the trade's own name.
+ *
+ * WHY STEMS AND NOT THE WORDS THEMSELVES, which is what this did until the
+ * log showed otherwise on 23 September:
+ *
+ *   seed: "deck builder"   total: 1754   brandsHidden: 2917
+ *
+ * More hidden than kept. The business type contains "builder", so "deck
+ * builders" had "builders" left over after the trade words were removed —
+ * a word describing no work, next to a trade. Structurally a company name.
+ * The filter was deleting "deck builders", the single best term a deck
+ * builder could rank for, along with "deck building" and "deck builders
+ * austin".
+ *
+ * PLUMBING HID THIS FROM US FOR A WEEK. isTradeish below is a hard-coded
+ * regex that happens to know plumb/roof/electric/hvac/rooter/drain/sewer, so
+ * plumbers and roofers got singular and plural handled by accident and every
+ * other trade quietly lost its head terms. The same fault produced the
+ * "lemon law firm" lookup that hid 342 and kept 76.
+ *
+ * isTradeish is kept: it also covers trade vocabulary that is NOT in the
+ * business type — "rooter" and "sewer" for a business calling itself
+ * "plumbing" — which stemming the name alone would never reach.
+ */
+function tradeStems(businessType) {
+  const out = new Set();
+
+  for (const word of String(businessType || '').toLowerCase().split(/\s+/)) {
+    if (word) out.add(stem(word));
+  }
+
+  return out;
+}
+
+/**
+ * The words of the place being researched.
+ *
+ * "Cedar Park,Texas,United States" -> { cedar, park, texas, united, states }
+ *
+ * Needed because a PLACE NAME IS NOT A SURNAME and the brand filter could not
+ * tell the difference. See looksLikeBrand.
+ */
+function geoWords(location) {
+  const out = new Set();
+
+  for (const word of String(location || '').toLowerCase().split(/[^a-z0-9]+/)) {
+    if (word) out.add(word);
+  }
+
+  // Never evidence of anything, and they arrive on the end of every
+  // location_name DataForSEO is given.
+  out.delete('united');
+  out.delete('states');
+
+  return out;
+}
+
+/**
  * Is this keyword a company's name rather than a job?
  *
  * The test is what the words DO, not what they are. A service query contains
@@ -179,8 +326,30 @@ function currentMonth(now = new Date()) {
  * customer, which is worse than letting one competitor name through: they can
  * see a bad suggestion and ignore it, but they cannot see one that was never
  * shown.
+ *
+ * A PLACE NAME IS NOT A SURNAME, AND THIS DID NOT KNOW THAT
+ *
+ * Found in production, in the log, on 23 September. The rule asks "once the
+ * trade's own words are gone, is there a word about the work?" — and for
+ * "plumber cedar park" the leftover is `cedar park`, which describes no work.
+ * So it read as a proper noun plus a trade: structurally identical to "Goettl
+ * Plumbing", and hidden.
+ *
+ * That is the 170-a-month keyword the whole pairs mode was built around, and
+ * the filter was deleting it. The damage scaled with how little the trade's
+ * own name says: for `lemon law firm` in Dallas it hid 342 terms and kept 76.
+ *
+ * So the caller passes the geography, and a leftover word that is part of the
+ * place is no longer evidence of a brand. It is not evidence AGAINST one
+ * either — "goettl plumbing austin" still has `goettl` left over and is still
+ * hidden, which is right.
+ *
+ * @param {string} keyword
+ * @param {string} [businessType]
+ * @param {object} [opts]
+ * @param {Set<string>|string[]} [opts.geo]  words belonging to the place
  */
-function looksLikeBrand(keyword, businessType = '') {
+function looksLikeBrand(keyword, businessType = '', opts = {}) {
   const words = String(keyword || '')
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -190,14 +359,19 @@ function looksLikeBrand(keyword, businessType = '') {
   if (!words.length) return false;
 
   // The trade's own words are not evidence either way — "plumbing" appears in
-  // "plumbing repair" and in "Smith Plumbing" alike.
-  const tradeWords = new Set(
-    String(businessType || '').toLowerCase().split(/\s+/).filter(Boolean)
-  );
+  // "plumbing repair" and in "Smith Plumbing" alike. MATCHED BY STEM, not
+  // literally; see tradeStems for the day that cost.
+  const stems = tradeStems(businessType);
 
-  const rest = words.filter(w => !tradeWords.has(w) && !isTradeish(w));
+  const geo = opts.geo instanceof Set
+    ? opts.geo
+    : new Set(Array.isArray(opts.geo) ? opts.geo : []);
 
-  // Nothing but the trade: "plumbing", "plumber". Generic, not a brand.
+  const rest = words.filter(w =>
+    !stems.has(stem(w)) && !isTradeish(w) && !geo.has(w));
+
+  // Nothing but the trade and the town: "plumbing", "plumber cedar park".
+  // Generic, not a brand.
   if (!rest.length) return false;
 
   // Any word that describes work makes it a service query.
@@ -215,6 +389,35 @@ function looksLikeBrand(keyword, businessType = '') {
  */
 function isTradeish(word) {
   return /^(plumb|roof|electric|hvac|plumbing|rooter|drain|sewer)/.test(word);
+}
+
+/**
+ * Line the answers up against the questions, keeping the unanswered ones.
+ *
+ * DataForSEO omits keywords it has no figure for rather than returning them
+ * empty, so a caller that just renders `results` silently loses the terms it
+ * asked about. That is the wrong shape for both places this is used:
+ *
+ *   - the exact lookup, where "we checked and Google will not report on this"
+ *     is the answer somebody asked for;
+ *   - the town pairings, where a blank row tells a customer to build that
+ *     page around different words.
+ *
+ * Matched case-insensitively, because the echoed keyword's casing is not
+ * guaranteed and a case-sensitive match would show an answered term as a
+ * dash.
+ */
+function mergeAnswers(asked, results) {
+  const byTerm = new Map(
+    (results || [])
+      .filter(r => r && r.keyword)
+      .map(r => [r.keyword.toLowerCase(), r])
+  );
+
+  return (asked || []).map(term => (
+    byTerm.get(String(term).toLowerCase())
+    || { keyword: term, volume: null, cpc: null }
+  ));
 }
 
 /** One row of DataForSEO's answer, in the shape the rest of the app wants. */
@@ -269,6 +472,8 @@ async function fetchVolumes(keywords, opts = {}) {
 
   const body = await res.json();
 
+  if (res.status === PAYMENT_REQUIRED) throw accountError('keyword volumes');
+
   if (!res.ok) {
     throw new Error(`keyword volumes: HTTP ${res.status} from DataForSEO`);
   }
@@ -277,6 +482,10 @@ async function fetchVolumes(keywords, opts = {}) {
   // so a naive `res.ok` check would treat a failed task as an empty answer.
   const t = (body.tasks || [])[0];
   if (!t) throw new Error('keyword volumes: DataForSEO returned no task');
+
+  if (BILLING_TASK_CODES.has(t.status_code)) {
+    throw accountError('keyword volumes', `task ${t.status_code}`);
+  }
 
   if (t.status_code !== 20000) {
     throw new Error(`keyword volumes: DataForSEO task ${t.status_code}: ${t.status_message}`);
@@ -463,7 +672,11 @@ async function volumesForArea(keywords, opts = {}) {
       competition: r.competition,
       low: r.low,
       high: r.high,
-      brand: looksLikeBrand(r.keyword, opts.businessType),
+      // Both towns' words, because this call spans a metro and a city and a
+      // term naming either of them is a place query, not a brand.
+      brand: looksLikeBrand(r.keyword, opts.businessType, {
+        geo: new Set([...geoWords(metro), ...geoWords(city)]),
+      }),
     }))
     // Ordered by the metro, because that is the number with signal in it.
     .sort((a, b) => (b.metroVolume || 0) - (a.metroVolume || 0));
@@ -653,13 +866,19 @@ async function keywordIdeasFor(seed, opts = {}) {
   // Counted, not just applied. `brandsHidden` goes into the log line so the
   // filter's appetite is a number somebody can look at after a week, instead
   // of a guess. A day where it eats half the list is the signal to loosen it.
+  // The town being researched, so "plumber cedar park" is not mistaken for a
+  // plumbing company called Cedar Park. Built from the full location_name
+  // rather than opts.city, so the state counts too — "plumbing texas" is a
+  // place query as much as "plumbing austin" is.
+  const geo = new Set([...geoWords(location), ...geoWords(opts.city)]);
+
   const branded = opts.includeBrands
     ? []
-    : answered.filter(r => looksLikeBrand(r.keyword, term));
+    : answered.filter(r => looksLikeBrand(r.keyword, term, { geo }));
 
   const usable = opts.includeBrands
     ? answered
-    : answered.filter(r => !looksLikeBrand(r.keyword, term));
+    : answered.filter(r => !looksLikeBrand(r.keyword, term, { geo }));
 
   /* THE BUYER-INTENT PASS, and it runs here rather than at the network for
    * the same reason every other filter does: the whole answer is what was
@@ -763,10 +982,16 @@ async function fetchIdeas(seed, opts = {}) {
 
   const body = await res.json();
 
+  if (res.status === PAYMENT_REQUIRED) throw accountError('keyword ideas');
+
   if (!res.ok) throw new Error(`keyword ideas: HTTP ${res.status} from DataForSEO`);
 
   const t = (body.tasks || [])[0];
   if (!t) throw new Error('keyword ideas: DataForSEO returned no task');
+
+  if (BILLING_TASK_CODES.has(t.status_code)) {
+    throw accountError('keyword ideas', `task ${t.status_code}`);
+  }
 
   if (t.status_code !== 20000) {
     throw new Error(`keyword ideas: DataForSEO task ${t.status_code}: ${t.status_message}`);
@@ -813,8 +1038,16 @@ module.exports = {
   volumesForArea,
   fetchVolumes,
   cacheKey,
+  accountError,
+  isBillingError,
+  PAYMENT_REQUIRED,
+  BILLING_TASK_CODES,
   currentMonth,
   looksLikeBrand,
+  geoWords,
+  stem,
+  tradeStems,
+  mergeAnswers,
   readResult,
   MAX_KEYWORDS,
   COST_PER_TASK_USD,

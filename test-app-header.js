@@ -660,6 +660,209 @@ test('withAppHeader survives a missing res rather than throwing', () => {
   }
 });
 
+/* -------------------------------------------------------------------- *
+ * The layout the column imposes on the rest of the page
+ * -------------------------------------------------------------------- *
+ *
+ * All of this is CSS, so none of it can be proven correct by a test — only
+ * the rules that MUST be present for the layout to hold. Each assertion
+ * below stands for something that was visibly wrong on screen.
+ */
+
+test('the header is pulled back out of the body padding', () => {
+  // The column's space is made with padding-left on the body, and the header
+  // lives inside that body — so it was being indented by the same amount,
+  // leaving a bite out of the top-left corner where the column met it.
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const css = appSidebarAssets();
+
+  // NOTE the nested parens: `calc(var(--x) * -1)` closes var() before calc(),
+  // so a `[^)]*` between them never reaches the -1. The first version of
+  // this test failed against correct CSS for exactly that reason.
+  const rule = css.match(/>\s*header\s*\{[^}]*\}/);
+  assert.ok(rule, 'there is no rule targeting the header at all');
+
+  assert.ok(/margin-left:\s*calc\(.*-1\s*\)/.test(rule[0]),
+    'the header is not pulled back, so the column indents it');
+  assert.ok(/width:\s*calc\(100%/.test(rule[0]),
+    'the header is pulled left but not widened, so it ends short on the right');
+});
+
+test('the column width is named once, not written three times', () => {
+  // It is needed by the body padding, the column, and the header's negative
+  // margin. Three copies of 232px is three chances to change two of them.
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const css = appSidebarAssets();
+
+  assert.ok(/--app-sidebar-width:\s*\d/.test(css), 'the width has no name');
+
+  // Comments stripped first. The prose explaining WHY the number is named
+  // once mentions the number, which is not a second place it is written —
+  // the first version of this test counted those and failed on correct CSS.
+  const rules = withoutComments(css);
+  const literals = (rules.match(/\b232px\b/g) || []).length;
+
+  assert.strictEqual(literals, 1,
+    `232px appears in ${literals} rules; it should be defined once and used by name`);
+});
+
+test('the column is fixed, not placed by where its markup sits', () => {
+  // ABSOLUTE WAS WRONG TWICE. With no top offset the element keeps its
+  // STATIC position — wherever {{SIDEBAR}} happens to fall in that page's
+  // markup — so the column started near the top of one wizard step and most
+  // of the way down another, and the divider was a floating segment rather
+  // than a line down the side of the page.
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const css = appSidebarAssets();
+
+  const rule = css.match(/\.app-sidebar-shell\s*\{[^}]*\}/);
+  assert.ok(rule, 'the column has no rule at all');
+
+  assert.ok(/position:\s*fixed/.test(rule[0]),
+    'the column is positioned by its place in the markup again');
+  assert.ok(/border-right:/.test(rule[0]), 'the column has no divider');
+
+  // top from the header, bottom to the window: the line runs the full height
+  // beside the content and stays there while the page scrolls.
+  assert.ok(/top:\s*var\(--app-header-height/.test(rule[0]),
+    'the top offset is hard-coded rather than measured');
+  assert.ok(/bottom:\s*0/.test(rule[0]));
+  assert.ok(/overflow-y:\s*auto/.test(rule[0]),
+    'a tools list taller than the window would be cut off with no way to reach it');
+});
+
+test('the header height is measured, and the CSS value is only a fallback', () => {
+  // Everything about the header is fluid — the logo, Bootstrap's padding,
+  // the credits badge arriving after /api/me answers. Any number written
+  // into the CSS is right until somebody edits the header.
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const out = appSidebarAssets();
+
+  assert.ok(/--app-header-height,\s*\d+px/.test(out),
+    'there is no fallback for the moment before the script runs');
+  assert.ok(/setProperty\(\s*'--app-header-height'/.test(out),
+    'nothing ever measures the header');
+  assert.ok(/getBoundingClientRect/.test(out));
+
+  // It must survive being in the head, where the header does not exist yet.
+  assert.ok(/DOMContentLoaded/.test(out),
+    'the script measures before the header exists');
+
+  // And survive a page with no header at all — it ships wherever the sidebar
+  // does, and a missing header is not a reason to throw into the page.
+  assert.ok(/if\s*\(!header\)\s*return/.test(out),
+    'a page without a header would throw');
+});
+
+test('the measuring script actually writes the height', () => {
+  // RUN, not read. A regex proves the words are present; it proves nothing
+  // about whether the thing works, and this suite has already had one test
+  // pass against a page that was broken.
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const script = appSidebarAssets().match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(script, 'there is no script');
+
+  const written = {};
+  const header = { getBoundingClientRect: () => ({ height: 97.4 }) };
+
+  const doc = {
+    readyState: 'complete',
+    querySelector: sel => (sel === 'header' ? header : null),
+    addEventListener() {},
+    documentElement: { style: { setProperty: (k, v) => { written[k] = v; } } },
+  };
+
+  new Function('document', 'window', 'ResizeObserver', script[1])(
+    doc, { addEventListener() {} }, undefined
+  );
+
+  // Rounded, and in px — a fractional value would be written straight into
+  // the CSS variable.
+  assert.strictEqual(written['--app-header-height'], '97px');
+});
+
+test('the measuring script is silent on a page with no header', () => {
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const script = appSidebarAssets().match(/<script>([\s\S]*?)<\/script>/)[1];
+
+  const doc = {
+    readyState: 'complete',
+    querySelector: () => null,
+    addEventListener() {},
+    documentElement: { style: { setProperty() { throw new Error('wrote anyway'); } } },
+  };
+
+  // No throw is the whole assertion: this ships on any page that takes the
+  // sidebar, and a missing header must not take the page down with it.
+  new Function('document', 'window', 'ResizeObserver', script)(
+    doc, { addEventListener() {} }, undefined
+  );
+});
+
+test('a header of zero height is ignored, not written as 0', () => {
+  // It measures in the head, before layout on some paths. Writing 0 would
+  // pin the column to the top of the window, under the header.
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const script = appSidebarAssets().match(/<script>([\s\S]*?)<\/script>/)[1];
+
+  const written = {};
+  const doc = {
+    readyState: 'complete',
+    querySelector: () => ({ getBoundingClientRect: () => ({ height: 0 }) }),
+    addEventListener() {},
+    documentElement: { style: { setProperty: (k, v) => { written[k] = v; } } },
+  };
+
+  new Function('document', 'window', 'ResizeObserver', script)(
+    doc, { addEventListener() {} }, undefined
+  );
+
+  assert.strictEqual(written['--app-header-height'], undefined,
+    'a zero height was written, pinning the column under the header');
+});
+
+test('it re-measures when the header changes size', () => {
+  // The credits badge arrives after /api/me answers, which can make the
+  // header taller. A single measurement would be taken before that.
+  const { appSidebarAssets } = require('./utils/appHeader');
+  const script = appSidebarAssets().match(/<script>([\s\S]*?)<\/script>/)[1];
+
+  let observed = null;
+  let height = 84;
+
+  const doc = {
+    readyState: 'complete',
+    querySelector: () => ({ getBoundingClientRect: () => ({ height }) }),
+    addEventListener() {},
+    documentElement: { style: { setProperty() {} } },
+  };
+
+  function FakeObserver(fn) {
+    this.observe = target => { observed = { fn, target }; };
+  }
+
+  new Function('document', 'window', 'ResizeObserver', script)(
+    doc, { addEventListener() {} }, FakeObserver
+  );
+
+  assert.ok(observed, 'the header is measured once and never again');
+});
+
+test('the CSS is a template literal and carries no backticks', () => {
+  // A backtick in a CSS comment ends the JavaScript string. One did, and the
+  // whole module stopped parsing.
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, 'utils/appHeader.js'), 'utf8');
+
+  const sidebar = src.match(/function appSidebarAssets[\s\S]*?\n\}/);
+  assert.ok(sidebar, 'appSidebarAssets is gone');
+
+  // Two: the ones opening and closing its own template literal.
+  const ticks = (sidebar[0].match(/`/g) || []).length;
+  assert.strictEqual(ticks, 2, `${ticks} backticks — a comment has one in it`);
+});
+
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);
 console.log('');
