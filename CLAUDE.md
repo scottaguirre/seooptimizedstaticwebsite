@@ -185,6 +185,166 @@ Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
 
 ## Outstanding
 
+**Keyword volumes in the wizard — next up, 23 September**
+
+Edwin's idea: before the form, the customer enters a city and a business
+category and sees real search volumes and CPCs, so the service pages they
+choose are the ones people actually search for. Today he does this by hand in
+Google Keyword Planner with an ad campaign running, which is why his numbers
+are exact rather than bucketed.
+
+*The gate.* `KeywordPlanIdeaService` is **Restricted Functionality** in the
+Google Ads API. **Basic access cannot call it.** It needs **Standard access**
+with "Researching keywords and recommendations" as the approved permissible
+use — a manual audit, about 10 business days, and because external users would
+use the tool they will ask for a demo sign-in. A running ad campaign grants
+none of this; the developer token needs a manager (MCC) account.
+
+*The way round it.* DataForSEO's **Keywords Data → Google Ads** endpoints
+(`search_volume`, "Keywords for Keywords") are a passthrough — their own help
+centre says the source is Google Ads, i.e. the same Keyword Planner data. They
+hold the token and the Standard access. $0.06 standard queue / $0.09 live per
+task, up to 1,000 keywords per task. Two lookups per customer is 18 cents
+against a site selling for 200+ credits.
+
+**Their Labs endpoints are a different product** — "DataForSEO's own keyword
+database", their estimates, cheaper and not Google's numbers. When anyone says
+DataForSEO is less accurate than the Planner, this is almost always what they
+are comparing. Do not use Labs for this feature.
+
+*The open question — **ANSWERED, 23 September. DataForSEO returns Google's
+numbers unchanged.*** It calls Google with THEIR accounts, not Edwin's, so
+whether the precision survived was an empirical question no documentation
+answered. Two runs of `tools/keyword-compare.js` against Edwin's own Keyword
+Planner exports settled it:
+
+| town | comparable | exact | above the floor | bids to the cent |
+|---|---|---|---|---|
+| Cedar Park, TX | 780 | **780** | 6 of 6 | 10 of 10 |
+| Austin, TX | 993 | **993** | 63 of 63 | 111 of 111 |
+
+Not one disagreement in 1,773 keywords, at volumes from 10 to 2,900 a month,
+with every top-of-page bid matching to the cent. No bucketing: 0 of 27 answers
+over 100 landed on a round bucket value. **Build the feature on DataForSEO**,
+and apply for Google Standard access in parallel so a paid feature is not one
+vendor outage from dead.
+
+*The trap that cost an evening: the export does not carry its own location.*
+A Cedar Park CSV was first compared against Leander. Every head term
+disagreed, every bid disagreed, and both sides were right about different
+towns — it looked exactly like a data-quality problem and was not. The
+comparison tool's verdict now names the location as the first suspect. For the
+feature itself this cannot happen, because the customer picks the location and
+it is an input rather than a thing to remember.
+
+*First task, before any code — **written, 22 September**: `tools/keyword-compare.js`.*
+It reads a Keyword Planner CSV export, sends the same keywords to DataForSEO's
+`keywords_data/google_ads/search_volume/live` at the same location and date
+range, and prints the two columns with the delta and a verdict. One task, nine
+cents, up to 1000 keywords.
+
+    node tools/keyword-compare.js planner.csv --location "Leander,Texas,United States"
+    node tools/keyword-compare.js planner.csv --dry-run    # spends nothing
+    node tools/keyword-compare.js --self-test              # 10 parser tests
+
+`DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` come from the environment and are
+never written to a file in this repo. `tools/` is in `.rsync-exclude`: it is a
+bench tool, not part of the app, and has no business on the server. Its tests
+are inline behind `--self-test` for the same reason — `deploy.sh`'s suite list
+is for the app.
+
+**Google's export is UTF-16 LE, tab-separated, with a title line above the
+header.** A spreadsheet hides all three, so a parser written from what the
+spreadsheet shows fails on the real file. That is handled; do not "simplify" it.
+
+*Design notes from the discussion, so they are not re-derived:*
+
+- **The reporting floor is the real design constraint, and it is worse than it
+  looks.** Measured, not guessed: **774 of 780** keywords in Cedar Park and
+  **930 of 993** in *Austin* sit at or under 40 searches a month. Even a city
+  of a million leaves only 63 keywords with usable signal. Below the floor
+  Google rounds to tens, so a 10 and a 0 say the same thing — nothing. A
+  pre-wizard screen that prints those numbers tells a contractor his site is
+  pointless. Query the METRO for ordering and show the city number beside it —
+  "Water heater repair — 390/mo in Austin, 10 in Cedar Park" — and widen
+  automatically, saying so, when a city comes back empty.
+- **Filter the brand names.** Roughly a third of Austin's above-floor keywords
+  are competitors: goettl, fergusons, roto rooter, reliance, rogers, wilson's,
+  pecks, crows. They carry real volume and are useless as service pages —
+  nobody wants a page called "Goettl Plumbing". The generic terms are what the
+  feature is for: plumber 2,900 · water heater replacement 390 · emergency
+  plumbing services 260 · plumbing repair 210 · tankless water heater repair 90
+  · garbage disposal install 90 · drain cleaning companies 70.
+- **Two placements, one module.** A standalone keyword screen is what Edwin
+  asked for, but the higher-value placement is inside step 6: put the volume
+  next to each suggested service and sort by it. The customer then does no
+  keyword research at all — they read the list already in front of them, in the
+  order that matters. Build `utils/keywordVolumes.js` once and wire both.
+- **Apply for Google Standard access regardless**, not only as a fallback. A
+  paid feature should not sit one vendor outage from dead. DataForSEO is what
+  it ships on; Google's API is what it moves to.
+
+*What it costs, and what it charges — **decided 23 September**.*
+
+A lookup costs **$0.09** per task, live mode, up to 1,000 keywords. The
+metro-plus-city design is two tasks, so **$0.18** a lookup — about 20 credits
+at what credits sell for ($0.010 / $0.009 / $0.008 by pack).
+
+**Free inside the wizard. Charged on the standalone research screen.**
+
+The wizard placement is free for the same reason `/api/suggest-services` is,
+and the comment there says it: *someone deciding how big a site to buy should
+not be charged to find out*. This one is stronger still — it is what convinces
+a customer to buy MORE service pages, at 100 credits each. One extra page is
+$0.80–1.00 against an $0.18 lookup, so the feature pays for itself if one
+customer in four adds a single page. Putting a toll in front of that taxes the
+upsell, and makes the customer hesitate exactly where he should not.
+
+The standalone screen is where someone could use it as a free keyword tool
+without ever building a site, so that one charges — **25 credits**, which
+covers the cost without reading as a tollbooth next to 100 credits a page.
+
+*Three things do the work that charging would not:*
+
+- **The cache, which is the real lever.** Key is *(keyword set, location,
+  month)* and its cardinality is low by nature: the inputs are a trade and a
+  town, not a person. Every plumber in Austin gets one answer. Volumes move
+  monthly at most, so a 30-day TTL is honest rather than stale. Follow
+  `models/PaaCache.js` — same problem, same shape, Mongo TTL index, no cron.
+- **A rate limit**, like `suggestServicesLimiter` (15/hour, keyed by user).
+  Cache hits must NOT count against it. Worst case uncached is $2.70 per user
+  per hour; with the cache it will not come near.
+- **Log the cost per call**, the way `services.suggested` logs tokens, so "what
+  is this costing me?" has a number in a month rather than a guess.
+
+*Built 23 September:* `models/KeywordCache.js`, `utils/keywordVolumes.js`,
+`routes/keywordVolumesRoute.js` (`POST /api/keyword-volumes`, behind
+`requireAuth`), `keywordVolumesLimiter` in `middleware/rateLimits.js`, and
+`test-keyword-volumes.js` — 55 tests, every one of them mutation-checked.
+
+**The limiter is deliberately BEHIND a cache peek**, in `spendOnlyOnMisses`.
+A limiter runs before the handler, so by the time `volumesForArea` could
+report `cached: true` the slot is already spent. The gate peeks both towns
+first and, on a full hit, calls `next()` without the limiter seeing the
+request. A peek that THROWS falls through to the limiter, not past it: a slot
+spent on a call that might have been free is recoverable, a free-for-all while
+Mongo is down is not.
+
+**Server needs two env vars** — Edwin sets them himself, like the Stripe keys:
+`DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`, from `app.dataforseo.com/api-access`.
+`KEYWORD_VOLUMES_RATE_LIMIT` (default 15/hour) and
+`KEYWORD_VOLUMES_TIMEOUT_MS` (default 30s) are optional.
+
+**Towns are spelled Google's way or not at all.** DataForSEO matches
+`location_name` against Google's own geo targets, where the state is written
+out: `Cedar Park,Texas,United States`. `Cedar Park,TX,United States` matches
+nothing and comes back an error, so `toLocationName` converts the wizard's
+"City, ST" and REFUSES rather than guessing when it cannot — guessing would
+spend $0.09 to be told no.
+
+*Still to build:* the wizard wiring — volumes beside each suggested service on
+step 6, sorted by metro volume, brands filtered out.
+
 **Add tokens to the picture before tightening any limit**
 
 `services.suggested` now logs `inputTokens` / `outputTokens` / `totalTokens`.

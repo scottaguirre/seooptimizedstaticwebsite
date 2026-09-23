@@ -35,3 +35,8 @@ Claude outputs/
 *.tar.gz
 *.tgz
 *.zip
+
+# Bench tools. Scripts run by hand on a laptop to answer a question — nothing
+# in the app requires them, and a production box is not the place for
+# investigation. They stay in the repo; they just do not travel.
+tools/

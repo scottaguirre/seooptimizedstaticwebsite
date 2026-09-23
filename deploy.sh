@@ -78,6 +78,7 @@ for suite in \
   test-suggest-services.js \
   test-wizard-steps.js \
   test-nearby-places.js \
+  test-keyword-volumes.js \
   test-blog-plan.js \
   test-anchor-pool.js \
   test-home-anchors.js \

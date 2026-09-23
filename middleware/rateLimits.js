@@ -246,6 +246,31 @@ const suggestServicesLimiter = rateLimit({
   message: (req, res) => retryJson(req, res, 'service suggestions'),
 });
 
+/**
+ * Keyword volumes for the wizard.
+ *
+ * DIFFERENT IN KIND from the other limiters here, and the difference is the
+ * point: this one guards a THIRD PARTY'S PREPAID BALANCE. A model call that
+ * gets abused costs an API bill that arrives later; a DataForSEO call that
+ * gets abused drains an account that then stops answering for everyone.
+ *
+ * Fifteen an hour, matching the service suggester, because the two are pressed
+ * in the same breath — a customer works out what pages to build once.
+ *
+ * **Cache hits must not count against this.** See routes/keywordVolumesRoute:
+ * the limiter is skipped entirely when the answer is already held, which is
+ * most of the time and costs nothing when it is. Counting free answers would
+ * lock out the customers the cache was built to serve.
+ */
+const keywordVolumesLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.KEYWORD_VOLUMES_RATE_LIMIT) || 15,
+  keyGenerator: userOrIp,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: (req, res) => retryJson(req, res, 'keyword lookups'),
+});
+
 module.exports = {
   authLimiter,
   emailLimiter,
@@ -255,4 +280,5 @@ module.exports = {
   blogActivateLimiter,
   blogSuggestLimiter,
   suggestServicesLimiter,
+  keywordVolumesLimiter,
 };
