@@ -498,14 +498,111 @@ test('two unrelated terms that collide on both figures are NOT merged', () => {
   assert.strictEqual(out.length, 2);
 });
 
-test('rows with no bid are never clustered', () => {
-  // At 10 searches and no CPC half a small town's keywords share both
-  // figures by coincidence.
+test('unpriced rows that name different things are NOT merged', () => {
+  // These share "repair" and nothing else. In a small town a whole bucket of
+  // keywords sits at one rounded volume with no bid, so the volume proves
+  // almost nothing and the verb proves nothing at all.
   const out = collapseClusters([
     row('slab leak repair', 10, null),
     row('gas line repair', 10, null),
     row('sump pump repair', 10, null),
   ]);
+  assert.strictEqual(out.length, 3);
+  assert.ok(out.every(r => !r.variants));
+});
+
+test('TEN WORDINGS OF ONE KEYWORD COLLAPSE EVEN WITH NO BID', () => {
+  /* Leander, Texas, "plumbing", 23 September. Ten of the thirty rows on the
+   * customer's table were one keyword, because clustering began
+   * `if (row.cpc == null) { out.push(row); continue; }` — and in a town that
+   * size almost nothing has a bid. The only two rows that did collapse on
+   * that table were the only two with a CPC.
+   *
+   * Two survivors, not one: "garburator" shares no naming word with
+   * "disposal", so it clusters separately rather than chaining in. */
+  const wordings = [
+    'garbage disposal repair', 'fix garbage disposal', 'sink disposal repair',
+    'garburator repair', 'sink disposal fix', 'dish disposal repair',
+    'fix garburator', 'fix waste disposal', 'garbage disposal unit repair',
+    'repair waste disposal unit',
+  ].map(k => row(k, 40, null));
+
+  const out = collapseClusters(wordings, { seeds: ['plumbing'] });
+
+  assert.strictEqual(out.length, 2, out.map(r => r.keyword).join(' | '));
+
+  const total = out.reduce((n, r) => n + 1 + (r.variants || 0), 0);
+  assert.strictEqual(total, 10, 'a wording was lost rather than folded');
+
+  assert.ok(out.some(r => /garburator/.test(r.keyword)),
+    'garburator chained into the disposal cluster');
+});
+
+test('a word that is everywhere cannot be the evidence', () => {
+  /* "water" is in the heater rows, the softener rows, the line rows and the
+   * pressure rows. Matching on it puts a softener and a heater in one
+   * cluster — two appliances, two pages, one row.
+   *
+   * The corpus is what says "water" is everywhere and "softener" is not,
+   * which is why collapseClusters is given the whole answer and not just the
+   * shortlist. */
+  const corpus = [];
+  for (let i = 0; i < 300; i++) corpus.push({ keyword: `water line repair ${i}` });
+  for (let i = 0; i < 700; i++) corpus.push({ keyword: `plumbing job ${i}` });
+
+  const rows = [
+    row('water heater repair', 40, null),
+    row('water softener repair', 40, null),
+  ];
+
+  const out = collapseClusters(rows, { corpus: corpus.concat(rows), seeds: ['plumbing'] });
+
+  assert.strictEqual(out.length, 2,
+    `a softener and a heater were merged: ${JSON.stringify(out.map(r => r.keyword))}`);
+});
+
+test('a priced cluster still merges on any shared word at all', () => {
+  // The stricter rule is ONLY for rows with no price. An identical CPC to
+  // the cent is nearly the whole argument on its own, and narrowing what
+  // counts as sharing there would undo the ten tankless rows.
+  const out = collapseClusters([
+    row('tankless water heater repair', 390, 24.43),
+    row('repair tankless water heater', 390, 24.43),
+    row('tankless hot water tank repair', 390, 24.43),
+  ]);
+
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].variants, 2);
+});
+
+test('an unpriced cluster does not chain from one row to the next', () => {
+  /* UNION IS WHAT MAKES A PRICED CLUSTER WORK AND WOULD WRECK AN UNPRICED
+   * ONE. With union, membership is transitive: sink-faucet pulls in
+   * faucet-cartridge, which pulls in cartridge-valve, and three services
+   * become one row on the strength of a chain no member shares.
+   *
+   * An identical CPC to the cent is what earns union its safety. Without a
+   * price, every member has to share a word with every other. */
+  const out = collapseClusters([
+    row('sink faucet repair', 40, null),
+    row('faucet cartridge replacement', 40, null),
+    row('cartridge valve repair', 40, null),
+  ]);
+
+  assert.strictEqual(out.length, 2,
+    `chained: ${JSON.stringify(out.map(r => r.keyword))}`);
+});
+
+test('an unpriced row with nothing but verbs rides alone', () => {
+  // "repair near me" names no thing. Matching it against whatever happens to
+  // share its volume would absorb a real keyword into a phrase about
+  // nothing.
+  const out = collapseClusters([
+    row('repair near me', 40, null),
+    row('emergency service', 40, null),
+    row('water heater repair', 40, null),
+  ]);
+
   assert.strictEqual(out.length, 3);
   assert.ok(out.every(r => !r.variants));
 });

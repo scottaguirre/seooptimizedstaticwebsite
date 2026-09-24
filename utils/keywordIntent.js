@@ -470,6 +470,64 @@ function seedScore(keyword, seedWords, seedPhrases) {
 }
 
 /**
+ * Words that could identify WHICH keyword this is.
+ *
+ * Everything a hiring query carries by default is struck out — the verbs, the
+ * "near me", the "emergency", the "cost". Half the answer has those, so they
+ * prove nothing about two rows being the same search.
+ *
+ * WHAT STAYS IN is the nouns, including the fixture nouns. "disposal",
+ * "heater", "softener" are precisely the words that say which page this is,
+ * and a rule that struck them out would have nothing left to match on.
+ *
+ * Only used where there is no CPC to lean on. See collapseClusters.
+ */
+const CLUSTER_STOPWORDS = new Set([
+  ...ACTION_WORDS, ...HIRE_WORDS, ...URGENCY_WORDS,
+  ...COMMERCE_WORDS, ...SEGMENT_WORDS,
+  'a', 'an', 'the', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by',
+  'with', 'from', 'near', 'nearby', 'me', 'my', 'you', 'your', 'i', 'it',
+  'is', 'are', 'do', 'does', 'how', 'what', 'who', 'where', 'when', 'why',
+]);
+
+/**
+ * A word in this share of the answer names nothing in particular.
+ *
+ * "water" is in the water heater rows, the water softener rows, the water
+ * line rows, the water pressure rows and the hot water rows. Matching on it
+ * would put a softener and a heater in one cluster — two different
+ * appliances, two different pages, one row.
+ *
+ * A fifth is a judgement, not a measurement, and it is the kind of number
+ * this codebase has been wrong about before. Two things make it safer here
+ * than the brand threshold that failed: the question is one frequency can
+ * actually answer — "is this word everywhere?" — and being wrong only groups
+ * two rows that were already identical in volume, which the "+N wordings"
+ * label shows on the page rather than hiding.
+ */
+const GENERIC_SHARE = 0.2;
+
+/**
+ * @param {string} keyword
+ * @param {Map<string,number>} [counts]  corpus word frequencies
+ * @param {number} [rowCount]  how many rows those counts came from
+ */
+function distinctiveWords(keyword, counts = null, rowCount = 0) {
+  const out = new Set();
+  const generic = counts && rowCount ? rowCount * GENERIC_SHARE : Infinity;
+
+  for (const w of words(keyword)) {
+    // A single character is never the name of anything.
+    if (w.length <= 1 || CLUSTER_STOPWORDS.has(w)) continue;
+    if ((counts ? counts.get(w) || 0 : 0) >= generic) continue;
+
+    out.add(w);
+  }
+
+  return out;
+}
+
+/**
  * @param {object[]} rows   the rows to collapse
  * @param {object} [opts]
  * @param {object[]} [opts.corpus]  EVERY row the lookup answered, not just
@@ -485,9 +543,19 @@ function collapseClusters(rows, opts = {}) {
   const groups = new Map();
   const out = [];
 
-  const counts = wordFrequency(
-    Array.isArray(opts.corpus) && opts.corpus.length ? opts.corpus : all
-  );
+  const corpus = Array.isArray(opts.corpus) && opts.corpus.length ? opts.corpus : all;
+  const counts = wordFrequency(corpus);
+
+  /* "IS THIS WORD EVERYWHERE?" IS A QUESTION ABOUT THE WHOLE ANSWER, and it
+   * cannot be asked of the shortlist. Counted against the ten rows being
+   * clustered, "disposal" is in eight of them and looks ubiquitous — so the
+   * rule would strike out the one word that identifies them and nothing
+   * would cluster at all.
+   *
+   * Zero switches the test off. The caller that matters passes the whole
+   * 4,671-row answer; a caller that passes nothing gets the old, looser
+   * behaviour rather than a wrong answer computed confidently. */
+  const corpusRows = corpus.length > all.length ? corpus.length : 0;
 
   const seedPhrases = new Set(
     (opts.seeds || []).map(s => String(s || '').toLowerCase().trim()).filter(Boolean)
@@ -497,19 +565,43 @@ function collapseClusters(rows, opts = {}) {
   for (const phrase of seedPhrases) for (const w of words(phrase)) seedWords.add(w);
 
   for (const row of all) {
-    // Unpriced or zero-volume rows are not clustered: at 10 searches and no
-    // bid, half a town's keywords share both figures by coincidence.
-    if (!row || row.cpc == null || !row.volume) {
+    if (!row || !row.volume) {
       out.push(row);
       continue;
     }
 
-    const key = `${row.volume}|${row.cpc.toFixed(2)}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
+    /* A ROW WITH NO PRICE IS STILL CLUSTERED, AND IT USED NOT TO BE.
+     *
+     * This began `if (row.cpc == null) { out.push(row); continue; }` — no
+     * price, no clustering — on the reasoning that volume alone is too weak
+     * a key when a town's keywords all sit at the same rounded figure.
+     *
+     * What that missed is that in a SMALL TOWN almost nothing has a price.
+     * Leander, Texas, "plumbing", 23 September: ten of the thirty rows shown
+     * were one keyword.
+     *
+     *   garbage disposal repair · fix garbage disposal · sink disposal repair
+     *   garburator repair · sink disposal fix · dish disposal repair
+     *   fix garburator · fix waste disposal · garbage disposal unit repair
+     *   repair waste disposal unit
+     *
+     * All 40 a month, all unpriced, all the same page. The only two rows on
+     * that table that DID collapse — "water softener installation +3
+     * wordings", "water heater installation +2 wordings" — were the only two
+     * with a CPC. So the de-duplicator was switched off in exactly the towns
+     * that need it, and a third of the customer's list went to one appliance.
+     *
+     * Unpriced rows go in their own buckets, keyed on volume alone, and are
+     * clustered by a stricter rule than the priced ones below. */
+    const key = row.cpc == null
+      ? `${row.volume}|unpriced`
+      : `${row.volume}|${row.cpc.toFixed(2)}`;
+
+    if (!groups.has(key)) groups.set(key, { priced: row.cpc != null, rows: [] });
+    groups.get(key).rows.push(row);
   }
 
-  for (const group of groups.values()) {
+  for (const { priced, rows: group } of groups.values()) {
     if (group.length === 1) {
       out.push(group[0]);
       continue;
@@ -520,23 +612,58 @@ function collapseClusters(rows, opts = {}) {
     const clusters = [];
 
     for (const row of group) {
-      const mine = new Set(words(row.keyword));
+      /* WHICH WORDS COUNT AS SHARING depends on how much the key proved.
+       *
+       * A priced group matched volume AND CPC to the cent, which is nearly
+       * the whole argument; any shared word will do. An unpriced group
+       * matched a rounded volume and nothing else, so "repair" or "near me"
+       * — words half the answer carries — cannot be the evidence. Only a
+       * word that names something counts there.
+       *
+       * The fixture nouns stay in: "disposal" and "heater" are exactly the
+       * words that identify which keyword this is. */
+      const mine = priced
+        ? new Set(words(row.keyword))
+        : distinctiveWords(row.keyword, counts, corpusRows);
+
+      // A row with nothing but verbs in it — "repair near me" — has an empty
+      // set here, matches no cluster, and so rides alone. That falls out of
+      // the search below rather than needing its own branch.
       const home = clusters.find(c => [...c.shared].some(w => mine.has(w)));
 
       if (home) {
         home.rows.push(row);
-        // UNION, not intersection, and the difference is the whole ten-row
-        // cluster. Intersecting narrowed the shared vocabulary each time a
-        // row joined: by the fourth tankless spelling it was down to
-        // {heater}, so "tankless hot water tank" — no "heater" in it —
-        // started a second cluster and the ten rows came out as two.
-        //
-        // Union makes membership transitive, which is what "Google is
-        // treating these as one keyword" actually means. Over-merging is not
-        // the risk it looks like: identical volume AND identical CPC to the
-        // cent is already doing nearly all the work, and the shared word is
-        // only here to stop a pure coincidence being absorbed.
-        for (const w of mine) home.shared.add(w);
+
+        if (priced) {
+          // UNION, not intersection, and the difference is the whole ten-row
+          // cluster. Intersecting narrowed the shared vocabulary each time a
+          // row joined: by the fourth tankless spelling it was down to
+          // {heater}, so "tankless hot water tank" — no "heater" in it —
+          // started a second cluster and the ten rows came out as two.
+          //
+          // Union makes membership transitive, which is what "Google is
+          // treating these as one keyword" actually means. Over-merging is
+          // not the risk it looks like: identical volume AND identical CPC
+          // to the cent is already doing nearly all the work, and the shared
+          // word is only here to stop a coincidence being absorbed.
+          for (const w of mine) home.shared.add(w);
+        } else {
+          /* INTERSECTION when there is no price, because union's safety net
+           * is the CPC and there isn't one.
+           *
+           * Every member must share one word with every other, so a cluster
+           * is "these are all about X" rather than a chain. On the Leander
+           * list that is the difference between two rows and one wrong one:
+           *
+           *   garbage disposal repair ∩ fix garbage disposal = {garbage, disposal}
+           *   ∩ sink disposal repair                         = {disposal}
+           *   ∩ garburator repair                            = {}  -> its own
+           *
+           * so the eight disposal wordings become one row, the two
+           * garburator wordings become another, and nothing chains past
+           * them. */
+          for (const w of [...home.shared]) if (!mine.has(w)) home.shared.delete(w);
+        }
       } else {
         clusters.push({ rows: [row], shared: mine });
       }
@@ -582,6 +709,9 @@ module.exports = {
   hasGeo,
   looksInformational,
   words,
+  distinctiveWords,
+  CLUSTER_STOPWORDS,
+  GENERIC_SHARE,
   ACTION_WORDS,
   HIRE_WORDS,
   URGENCY_WORDS,
