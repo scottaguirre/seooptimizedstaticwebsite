@@ -75,6 +75,7 @@ for suite in \
   test-location-pages.js \
   test-phone.js \
   test-app-header.js \
+  test-auth-pages.js \
   test-suggest-services.js \
   test-wizard-steps.js \
   test-nearby-places.js \

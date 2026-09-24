@@ -61,6 +61,13 @@ function page({ title, heading, body, status = 200, csrfField = '' }) {
       </div>
     </div>
   </div>
+  <!--
+    Every page built from this shell, whether or not it has a password field
+    on it. The script finds the fields itself and does nothing when there are
+    none, so the alternative — adding the tag on the four pages that do — is
+    four chances to forget rather than none.
+  -->
+  <script src="/js/passwordToggle.js" defer></script>
 </body>
 </html>`,
   };
