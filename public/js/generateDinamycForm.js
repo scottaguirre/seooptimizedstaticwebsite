@@ -853,21 +853,29 @@
       <div class="card-body">
         <h3 class="card-title mb-2">${stepNumber(STEP.TYPE)}. Choose your Business Type</h3>
         <div class="row g-3">
-          <div class="col-12">
-            <select class="form-select" id="businessType" required>
-              <option value="">Choose...</option>
-              ${BUSINESS_TYPE_LABELS
-                .map(bt => `<option ${state.businessType===bt?'selected':''}>${bt}</option>`).join('')}
-            </select>
-            <div class="form-text">You can adjust this later.</div>
-          </div>
+          <div class="col-12" id="businessTypeMount"></div>
         </div>
       </div>
     `;
     container.appendChild(card);
 
-    const select = card.querySelector('#businessType');
-    select.addEventListener('change', () => select.classList.remove('is-invalid'));
+    /* A SEARCHABLE LIST, NOT A <select>, SINCE 24 September.
+     *
+     * The dropdown was fine at 23 types and will not be at sixty. A search
+     * box over a <select> cannot be built reliably — hiding <option>
+     * elements works in some browsers and is silently ignored in others —
+     * so the control is a text input and a list. See
+     * public/js/businessTypePicker.js for the rest of the reasoning.
+     *
+     * The picker is a separate file because this one is 139KB and cannot be
+     * loaded outside a browser, which means nothing in it can be tested
+     * directly. The picker can, and is. */
+    const picker = createBusinessTypePicker({
+      labels: BUSINESS_TYPE_LABELS,
+      value: state.businessType,
+    });
+
+    card.querySelector('#businessTypeMount').appendChild(picker.el);
 
     renderNav(container, {
       // Back to the mode step: this is no longer the first screen, so the
@@ -877,17 +885,23 @@
       onBack: () => go(STEP.MODE),
       nextText: 'Next',
       onNext: () => {
-        const val = (select.value || '').trim();
+        // picker.value() is the CHOSEN type, never the typed text. Somebody
+        // who typed "plumbin" and pressed Next has chosen nothing, and
+        // letting that through would build a site with none of their trade's
+        // pages on it.
+        const val = picker.value();
         if (!val) {
-          select.classList.add('is-invalid');
-          select.focus();
-          showAlert(container, 'Please choose a business type.');
+          picker.markInvalid();
+          picker.focus();
+          showAlert(container, 'Please choose a business type from the list.');
           return;
         }
         state.businessType = val;
         go(STEP.LOGO);
       }
     });
+
+    picker.focus();
   }
 
   // -----------------------------

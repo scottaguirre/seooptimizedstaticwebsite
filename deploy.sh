@@ -71,11 +71,13 @@ fi
 echo "Running tests..."
 for suite in \
   test-business-shape.js \
+  test-business-type-picker.js \
   test-page-meta.js \
   test-location-pages.js \
   test-phone.js \
   test-app-header.js \
   test-auth-pages.js \
+  test-cost-report.js \
   test-suggest-services.js \
   test-wizard-steps.js \
   test-nearby-places.js \

@@ -50,6 +50,17 @@ class, a button that has to move — say so and ask first rather than editing.
 `utils/renderAuthPage.js` fills `{{CSRF}}`, `{{ALERT}}` and `{{EMAIL}}` into the
 view files. Its alert markup is presentation too.
 
+**TWO EXCEPTIONS, 24 September, and they were asked for.** `login.html`,
+`signup.html` and the `page()` shell in `passwordRoute.js` gained a viewport
+meta tag and a `<script src="/js/passwordToggle.js" defer>`. The script builds
+a show/hide button next to every password field, which DOES change how those
+pages look. Edwin asked for both by name. No class, colour, spacing, `<style>`
+block or inline style was touched, and the button is built at runtime rather
+than written into the markup — so with JavaScript off the pages are byte for
+byte what they were. Recorded here because the rule above is otherwise the
+first thing a reader hits, and an undocumented exception reads as somebody
+having ignored it.
+
 ## Deploying
 
     ./deploy.sh --dry-run     # always first: rsync uses --delete
@@ -83,13 +94,22 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 ## Tests
 
     node test-business-shape.js    # business shapes, prompts, case study, wizard parity
+    node test-business-type-picker.js  # wizard step 1: search, numbers, keyboard
     node test-page-meta.js         # every page's <title> and description; needs no php
     node test-location-pages.js    # which location pages are allowed; needs no php
     node test-phone.js             # the phone format check, both sides; needs no php
     node test-app-header.js        # the logged-in header and its two copies; needs no php
+    node test-auth-pages.js        # log in / sign up / reset: viewport, password eye
+    node test-cost-report.js       # the spend report; needs no log file of its own
     node test-suggest-services.js  # suggested service pages + the budget; needs no php
     node test-wizard-steps.js      # the wizard's steps and the draft; needs no php
     node test-nearby-places.js     # suggested location pages, from real geography
+    node test-keyword-volumes.js   # the lookup endpoint, the cache, the 402; no network
+    node test-keyword-research.js  # the research page and all three of its modes
+    node test-keyword-seeds.js     # the model-written seed terms and their cache
+    node test-keyword-intent.js    # buyer intent, the CPC veto, cluster collapse
+    node test-keyword-pairs.js     # trade x town, and the practitioner noun
+    node test-keyword-budget.js    # the daily cap on paid lookups
     node test-wp-canonical.js      # runs the exported theme as real PHP; skips without php
     node test-wp-single.js         # single.php incl. the featured image; skips without php
     node test-ie-pause.js          # campaign pause/resume as real PHP; skips without php
@@ -268,13 +288,15 @@ spreadsheet shows fails on the real file. That is handled; do not "simplify" it.
   pointless. Query the METRO for ordering and show the city number beside it —
   "Water heater repair — 390/mo in Austin, 10 in Cedar Park" — and widen
   automatically, saying so, when a city comes back empty.
-- **Filter the brand names.** Roughly a third of Austin's above-floor keywords
-  are competitors: goettl, fergusons, roto rooter, reliance, rogers, wilson's,
-  pecks, crows. They carry real volume and are useless as service pages —
-  nobody wants a page called "Goettl Plumbing". The generic terms are what the
-  feature is for: plumber 2,900 · water heater replacement 390 · emergency
-  plumbing services 260 · plumbing repair 210 · tankless water heater repair 90
-  · garbage disposal install 90 · drain cleaning companies 70.
+- **~~Filter the brand names.~~ TRIED, MEASURED, DELETED — see the brand
+  filter section below.** The observation was real: a third of Austin's
+  above-floor keywords are competitors — goettl, fergusons, roto rooter,
+  reliance, rogers, wilson's, pecks, crows — and nobody wants a page called
+  "Goettl Plumbing". What was wrong was the conclusion that a filter could
+  tell them from materials. Three rewrites later the measurement said 92% of
+  what it removed was removed by the buyer-intent pass anyway, and the other
+  8% was real work. The generic terms it was meant to protect — plumber 2,900
+  · water heater replacement 390 · plumbing repair 210 — survive without it.
 - **Two placements, one module.** A standalone keyword screen is what Edwin
   asked for, but the higher-value placement is inside step 6: put the volume
   next to each suggested service and sort by it. The customer then does no
@@ -377,13 +399,126 @@ at. So the endpoint returns `total` and `aboveMinimum` alongside the rows, and
 the page says which one happened. Most of `public/js/keywordResearch.js` is
 that distinction.
 
-**The brand filter learned the difference between a fixture and a surname.**
-"toilet plumber" and "goettl plumbing" are the same shape — one word plus the
-trade, no verb — and the filter dropped both. A toilet is a thing a plumber
-works on; Goettl is a surname; no rule about word SHAPE can see that. So the
-nouns are listed in `SERVICE_WORDS`. It is a list, which the check was written
-to avoid, but fixtures and building parts are stable where the set of plumbing
-companies in America is not.
+**THE BRAND FILTER IS GONE FROM THE RESEARCH PAGE, DELETED 23 SEPTEMBER.**
+Do not add it back. It was rewritten three times and measured four, and the
+measurements are the reason it went:
+
+| what was measured | on Austin "deck builder" |
+|---|---|
+| rows it hid | 2,474 of 4,671 — 53% |
+| of those, rows the intent pass would have removed anyway | 2,277 — 92% |
+| rows it uniquely removed | 197 |
+| competitor names in a 25-row sample of those 197 | **0** |
+
+That 197 held `deck installer austin`, `fix rotted wood deck`, `replacing
+porch decking`, `screened in porch renovation` — and three queries about
+lawnmower decks. Its entire contribution was deleting the best keywords on the
+customer's list.
+
+**The rule cannot work, and that is measured too, not argued.** It asked "once
+the trade's words and the town are gone, is a leftover word rare?" — a surname
+and a material are both a word next to a trade. The corpus-frequency version
+was instrumented to print each blamed word's count, and brands ran 1→40
+mentions against real describing words 1→44, interleaved the whole way:
+
+    screen porch extension   [extension×2]    real service
+    deckscapes stain         [deckscapes×2]   real brand
+    floating deck builders   [floating×7]     real service
+    sikkens deck stain       [sikkens×15]     real brand, COMMONER
+
+No threshold exists between them. Tuning the number could not have helped.
+
+**Why deleting it is safe:** a brand query is a PRODUCT query — "benjamin
+moore deck stain" carries no action word, no hire word, no town, and a bid a
+fraction of the real terms'. The buyer-intent pass takes it on its own
+evidence, which is what "92% duplicated" means.
+
+**What still calls `looksLikeBrand`:** `volumesForArea`, where the keywords
+are a list somebody already chose and the answer is a FLAG on the row rather
+than the row being hidden. A wrong flag on a list of twenty is visible and
+harmless; a wrong hide in a list of thousands is neither. Its `SERVICE_WORDS`
+fixture nouns — the "toilet plumber" fix — still earn their place there.
+
+**The corpus-frequency machinery went with it:** `vocabularyFloor`,
+`wordCounts`, and the diagnostics `brandsHidden`, `brandSample`,
+`answeredCount`, `brandsIntentWouldKeep`. The log line is back to
+`removedByWords`, `removedByPrice`, `collapsed`.
+
+**"Show everything" is gone too, 23 September.** The checkbox turned the
+buyer-intent filter off. Edwin asked what it was for and there was no answer:
+unticked, a customer got a baseball keyword, ten spellings of "tankless water
+heater" and a page of people reading rather than hiring. The route no longer
+reads `req.body.showAll` either — an option removed from the page but still
+live in the body is worse than one never removed, because nothing on screen
+offers it and nothing exercises it.
+
+**UNPRICED ROWS ARE CLUSTERED NOW, and that was a small-town bug.**
+`collapseClusters` began `if (row.cpc == null) { out.push(row); continue; }` —
+no price, no de-duplication — because volume alone is a weak key. What that
+missed is that in a small town almost NOTHING has a price. Leander, Texas,
+"plumbing": ten of the thirty rows shown were one keyword —
+
+    garbage disposal repair · fix garbage disposal · sink disposal repair
+    garburator repair · sink disposal fix · dish disposal repair
+    fix garburator · fix waste disposal · garbage disposal unit repair
+    repair waste disposal unit
+
+all 40 a month, all unpriced. The only two rows on that table that DID
+collapse were the only two with a CPC. So the de-duplicator was switched off
+in exactly the towns that need it.
+
+Unpriced rows now bucket on volume and cluster under a **stricter** rule than
+priced ones, in two ways:
+
+- **Only naming words count.** `distinctiveWords()` strikes out the verbs and
+  modifiers — repair, fix, near me, emergency, cost — which half the answer
+  carries and which therefore prove nothing. Fixture nouns STAY IN: "disposal"
+  and "heater" are exactly what identify a keyword.
+- **Intersection, not union.** Every member shares a word with every member.
+  Union is what makes a priced cluster work — identical CPC to the cent is
+  nearly the whole argument — and without a price it would chain
+  sink-faucet → faucet-cartridge → cartridge-valve into one row.
+
+**A word in more than a fifth of the answer cannot be the evidence**
+(`GENERIC_SHARE`). "water" is in the heater rows, the softener rows, the line
+rows and the pressure rows; matching on it merged a softener with a heater —
+two appliances, two pages, one row. This is a judgement, and this file has
+been wrong about numbers like it: what makes it safer than the brand threshold
+that failed is that frequency genuinely answers "is this word everywhere",
+and being wrong only groups rows that were already identical in volume, with
+"+N wordings" showing it on the page rather than hiding it.
+
+The question is about the WHOLE answer, so it is switched off when
+`collapseClusters` is not given a corpus larger than the rows themselves —
+counted against ten rows, "disposal" is in eight and looks ubiquitous.
+
+Result on Leander: ten rows became `garbage disposal repair +7 wordings` and
+`garburator repair +1 wording`, with eight real keywords in the space.
+
+**"Google never returns a town in the term" is TOO STRONG, and I said it
+several times.** Cedar Park and Austin supported it; Leander did not —
+`leander plumbing` came back at 320/month from category mode. Rare, not
+impossible. Pairs mode is still worth having because you cannot rely on it.
+
+**`practitionerForms` assumed every trade is named after the WORK, and half
+are named after the WORKER.** `plumbing → plumber` was the model, so
+"deck builder" came back as **"deck builderer"**, "plumber" as "plumberer" and
+"lemon law attorney" as "lemon law attorneyer" — while the form Edwin actually
+asked about, `deck builders austin`, was never asked about at all. Plumbing,
+roofing and landscaping hid it for weeks: all three are named after the work,
+so the rule happened to be right for every trade it was written against.
+
+It now branches on the shape of the word — `-ing` strips and makes the person;
+an agent ending (`er, or, ist, ian, eer, man, smith, wright, ney`) takes the
+word and its plural; an already-plural word takes its singular and itself;
+anything else keeps the old `-er` guess. The singular comes first because
+`pairsFor` qualifies `forms[0]`.
+
+`practitionerForms('lemon law')` still returns `['lemon lawer', 'lemon
+lawers']` and a test still asserts it. That is the module's standing
+argument — DO NOT GUESS WHICH FORM IS RIGHT, ASK ABOUT BOTH AND LET GOOGLE
+ANSWER — and a wrong form costs one slot in a task with a thousand and shows
+as a dash. `physical therapyer` and `hvacer` are live for the same reason.
 
 **`metroFor()` in `utils/nearbyPlaces.js`** finds the city whose volumes
 describe a town's market — largest place within 75 miles clearing 250,000. **A
@@ -434,11 +569,89 @@ the form."* The wizard step was already crowded enough that its badges read as
 buttons. The standalone page answers the same question without adding anything
 to a form somebody is halfway through.
 
-**Add tokens to the picture before tightening any limit**
+**~~Add tokens to the picture before tightening any limit~~ ANSWERED, 24
+September: NO DAILY CAP. Do not build one.**
 
-`services.suggested` now logs `inputTokens` / `outputTokens` / `totalTokens`.
-Leave it a week, then decide whether a daily cap is worth having. Until then
-there is no number, only a guess.
+The token logging on `services.suggested` ran for three days and the numbers
+settle it. Fourteen calls carried token counts:
+
+| | per call |
+|---|---|
+| input | 309 tokens (285 first press, ~400 on a re-press with an exclude list) |
+| output | 703 tokens (189 to 1,560) |
+| total | 1,012 tokens |
+
+At `gpt-5.6-terra` rates — $2.00 in, $12.00 out per million — that is
+**$0.0091 a call. Nine tenths of one cent.** The whole logged window, 19 calls
+across two and a half days, cost about **17 cents**.
+
+**Why no cap, stated as the trade rather than as a shrug:**
+
+- A daily-budget module is what the keyword lookups needed because those cost
+  $0.09 a call and drain a THIRD PARTY'S PREPAID BALANCE that then stops
+  answering for everyone. This costs a tenth of that and arrives on a bill.
+- `suggestServicesLimiter` already exists: **15 an hour per user**, env
+  `SUGGEST_SERVICES_RATE_LIMIT`.
+- Every one of the 19 calls came from a single userId — Edwin's own testing.
+  There is no customer usage pattern to cap yet, so any number chosen now
+  would be the guess this note was written to avoid.
+
+**The one number worth knowing, because it is higher than it looks.** Fifteen
+an hour sustained is 360 calls a day — **$3.28 a day for one determined
+user**, which is MORE than the keyword feature's capped ceiling of $1.80. If
+that ever needs closing, the cheap move is lowering
+`SUGGEST_SERVICES_RATE_LIMIT`, which is an env var and no deploy — not a
+second budget module.
+
+**`cost-report.js` is how this question gets answered next time, 24
+September.** `node cost-report.js --days 30` against `logs/app.log`, on the
+server. It reads the WHOLE window rather than `tail -50` — which is what the
+first answer came from, and fifty lines is an hour on a busy day and a week on
+a quiet one.
+
+It prints model calls with their tokens and cost, DataForSEO calls split into
+paid and cache hits, and **the busiest single user-day**, which is there
+because the total hides the thing the decision actually turns on: $4 across
+forty customers is "do not charge", and $4 where one account is $3.50 of it is
+not.
+
+Two things it says out loud rather than papering over: a call logged before
+the token instrumentation counts as $0 and is reported as an UNDERCOUNT, and
+the seed-term model call inside `keywords.pairs` / `keywords.ideas` logs no
+tokens at all, so the model figure is short by that much. **Fixing the second
+means logging `usage` in `utils/keywordSeeds` the way the suggester does.**
+
+The prices carry the date they were checked and the report prints it —
+gpt-5.6-terra was cut from $2.50/$15.00 to $2.00/$12.00 on 30 July 2026, and a
+hardcoded price with no date is a number nobody knows whether to trust.
+
+**The figures live in `logs/app.log` and nowhere else.** No rotation is
+configured, so the file only grows — but a truncation or a tidy-up takes the
+spending history with it. If these numbers ever start mattering, they belong
+in a collection.
+
+**A separate thing the log showed, not yet chased.** Fencing drops most of
+what the model returns: `count 8 / dropped 12`, `count 7 / dropped 13`,
+`count 4 / dropped 16` out of twenty. Plumbing, Concrete, Appliance Repair,
+Dentist and Chiropractor mostly drop nought or one. Some of that is the
+exclude list on a re-press, but not all of it. Either the Fencing vocabulary
+is thin or the drop rules are too keen on it. A customer whose trade is
+fencing gets four to nine suggestions where a plumber gets nineteen.
+
+**The hypothesis, untested:** plumbing services differ by APPLIANCE AND
+ACTION — "Drain Cleaning", "Water Heater Repair", "Sewer Line Replacement".
+Fencing services differ by MATERIAL — "Wood Fence Installation", "Vinyl Fence
+Installation", "Chain Link Fence Installation". To `similarServices` those
+read as one service said four ways, which is exactly what it exists to catch.
+For a plumber that rule is right; for a fencing contractor it may be deleting
+his actual product range, because the material IS what he sells.
+
+**Why it cannot be confirmed from the log.** `cleanServices` attaches a `why`
+to every drop — eight different reasons — and the route logs only
+`dropped.length`. Same shape as the brand filter: a count that cannot say what
+it did. **Cheapest way to settle it is a tally of the reasons on the log line**
+(`{"too similar": 11, "duplicate": 3}`) and one Fencing suggestion. That is
+the move that worked for the brand sample.
 
 **The rename to Three Comets — when threecomets.com goes live**
 
@@ -646,6 +859,54 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## The password eye and the phone — 24 September
+
+Found by looking at one screenshot of the log-in page.
+
+**`login.html` and `signup.html` had no viewport meta tag.** Every other page
+in the app has one. Without it a phone lays the page out at about 980px and
+scales it down, so the form arrives too small to read and has to be
+pinch-zoomed before it can be typed into. **Bootstrap's responsive grid does
+nothing whatever until that tag is present** — the `col-md-4` on those forms
+was decorative. That one tag is the whole of "is this page responsive".
+
+**`public/js/passwordToggle.js` builds the show/hide button rather than the
+markup carrying it.** There are six password fields across four pages: log in,
+sign up, and the two spellings of the reset form, each with "New password" and
+"Confirm new password". Hand-written markup would be the same input-group six
+times and a seventh field next year silently without one. The script finds
+them instead: a page gets the behaviour by loading the script, a field gets it
+by existing. Three `<script>` tags — the two views and the reset shell, which
+also covers "check your email" and "link expired" (it does nothing when there
+is no password field).
+
+**`type="button"`. NOT OPTIONAL.** A `<button>` inside a `<form>` with no type
+attribute defaults to SUBMIT — the eye would have posted the login form on the
+first click, before the password was finished. It would have looked like the
+site logging you out.
+
+**No JavaScript means an ordinary password field, not a dead control.** The
+markup is untouched, so the form submits exactly as before and the button is
+the only thing that does not appear. Nobody is locked out of their account
+because a script failed to load.
+
+**The caret goes back where it was.** Changing an input's type sends it to the
+end in every browser. Somebody who typed eight characters, spotted a typo in
+the third and pressed the eye should not then have to find their place again.
+
+**Inline SVG, no icon font.** These pages load Bootstrap's CSS and nothing
+else. One glyph is not worth a second network round trip on the page somebody
+is trying to log in from.
+
+**`test-auth-pages.js` RUNS the script instead of only reading it.** The first
+twelve tests are regexes over source, which is the kind this file has been
+burned by — one asserted the word "total" appeared in a function and passed
+happily after the total was deleted from the output. So eight more run the
+real script against a hand-written DOM stub: click the button, check the type
+flipped, check the caret came back, load the script twice and check there is
+still one eye. **No jsdom** — a dependency behind a deploy is the failure
+`deploy.sh` opens with a warning about. 20 tests, 13 mutations caught.
 
 ## Suggested location pages — 22 September
 

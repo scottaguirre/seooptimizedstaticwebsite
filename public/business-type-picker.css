@@ -1,0 +1,90 @@
+/* public/business-type-picker.css
+ *
+ * The business type picker on step 1 of the wizard.
+ *
+ * MATCHES THE KEYWORD RESEARCH RESULTS TABLE. Same navy, same zebra, same
+ * hover — because they are the same kind of thing on screen: a long list a
+ * customer scans, on a #082d5b page. Two lists that looked different would
+ * read as two different apps.
+ *
+ * The values here are LIFTED FROM src/views/keyword-research.html, not
+ * invented:
+ *
+ *   striped   rgba(255,255,255,.07)      --bs-table-striped-bg
+ *   hover     rgba(255,255,255,.13)      --bs-table-hover-bg
+ *   border    rgba(255,255,255,.12)      --bs-table-border-color
+ *
+ * If that table's palette changes, change this to match. A test asserts the
+ * three are identical in both files, so they cannot drift quietly.
+ *
+ * WHY THIS IS A STYLESHEET AND NOT RULES IN form.html: the same reason
+ * /logo-shape-picker.css is. A control's styling belongs with the control,
+ * not in the page's <style> block where the next page to want it has to
+ * copy it.
+ *
+ * Bootstrap's .list-group-item sets its own background and colour with real
+ * declarations rather than custom properties, so these override rather than
+ * configure — which is the difference between this file and the table rules
+ * it is copying.
+ */
+
+.bt-picker-list {
+  /* Tall enough to browse, short enough that the Next button stays on
+   * screen. The list is ALWAYS visible rather than dropping down — see the
+   * header of businessTypePicker.js for why. */
+  max-height: 18rem;
+  overflow-y: auto;
+  margin-top: .5rem;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: .375rem;
+}
+
+.bt-picker-list .list-group-item {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, .12);
+}
+
+/* The zebra. nth-child over the RENDERED rows, so the stripes stay alternate
+ * after the list is filtered rather than inheriting gaps from the full list. */
+.bt-picker-list .list-group-item:nth-child(even) {
+  background: rgba(255, 255, 255, .07);
+}
+
+.bt-picker-list .list-group-item:hover,
+.bt-picker-list .list-group-item:focus {
+  background: rgba(255, 255, 255, .13);
+  color: #fff;
+}
+
+/* The chosen row, and the one the arrow keys are on. Brighter than hover so
+ * that moving the mouse across the list cannot be mistaken for a selection. */
+.bt-picker-list .list-group-item.active {
+  background: rgba(255, 255, 255, .22);
+  border-color: rgba(255, 255, 255, .3);
+  color: #fff;
+}
+
+.bt-picker-option {
+  display: flex;
+  align-items: baseline;
+  gap: .75rem;
+  cursor: pointer;
+}
+
+.bt-picker-num {
+  /* A fixed column so the names line up however many digits the number has,
+   * and tabular figures so 11 is not narrower than 20. */
+  min-width: 2.25rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, .55);
+}
+
+.bt-picker-option.active .bt-picker-num {
+  color: rgba(255, 255, 255, .8);
+}
+
+.bt-picker-empty {
+  padding: .75rem;
+}
