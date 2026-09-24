@@ -88,11 +88,62 @@ const BUSINESS_WORDS = ['company', 'companies', 'contractor', 'services'];
 const MAX_PAIRS = 200;
 
 /**
- * "plumbing" -> ["plumber", "plumbers"]. Cheap and deliberately fallible.
+ * Endings that mean the word is ALREADY the name of a person who does the
+ * work, rather than the name of the work.
  *
- * See the header: a wrong form costs one slot in a task with a thousand of
- * them and shows as a dash. A missing form costs the customer the best page
- * on their site.
+ * Narrow on purpose. Getting this wrong in one direction produces "deck
+ * builder, deck builders" for a word that was really an activity — two rows
+ * that duplicate the bare pairing and cost nothing. Getting it wrong in the
+ * other direction produces "deck builderer", which is what this whole
+ * function had been doing.
+ */
+const AGENT_ENDINGS = ['er', 'or', 'ist', 'ian', 'eer', 'man', 'smith', 'wright', 'ney'];
+
+function looksLikeAgent(word) {
+  return AGENT_ENDINGS.some(ending => word.endsWith(ending));
+}
+
+function pluralOf(word) {
+  if (/man$/.test(word)) return `${word.slice(0, -3)}men`;
+  if (/(s|x|z|ch|sh)$/.test(word)) return `${word}es`;
+  return `${word}s`;
+}
+
+/** The singular of a word that is already plural, or null if it is not. */
+function singularOf(word) {
+  if (/[^s]men$/.test(word)) return `${word.slice(0, -3)}man`;
+  if (/(ses|xes|zes|ches|shes)$/.test(word)) return word.slice(0, -2);
+  // "glass" is not a plural, so a doubled s is left alone.
+  if (/[^s]s$/.test(word)) return word.slice(0, -1);
+  return null;
+}
+
+/**
+ * The person, and the people. "plumbing" -> ["plumber", "plumbers"].
+ *
+ * THE TRADE MAY BE NAMED AFTER THE WORK OR AFTER THE WORKER, and the two need
+ * opposite treatment. This function assumed the first for months:
+ *
+ *   plumbing      -> plumber, plumbers         the assumption holding
+ *   deck builder  -> deck builderer, ...       the assumption breaking
+ *
+ * Nobody noticed because plumbing, roofing and landscaping — the trades it was
+ * written against — are all named after the work. "deck builder", "plumber",
+ * "lemon law attorney" and every other trade named after the worker got a
+ * second -er bolted on, and the plural form Edwin actually asked about,
+ * "deck builders austin", was never asked about at all.
+ *
+ * So the branch is on the shape of the word:
+ *
+ *   -ing            an activity; strip it and make the person
+ *   agent ending    already the person; take the word and its plural
+ *   already plural  already a noun; take its singular and itself
+ *   anything else   assume an activity root: design -> designer
+ *
+ * The last branch is still a guess and still wrong sometimes — "lemon law"
+ * gives "lemon lawer". See the header: a wrong form costs one slot in a task
+ * with a thousand and shows as a dash. A missing form costs the customer the
+ * best page on their site.
  */
 function practitionerForms(industry) {
   const trade = String(industry || '').trim().toLowerCase();
@@ -102,18 +153,33 @@ function practitionerForms(industry) {
   const last = parts[parts.length - 1];
   const head = parts.slice(0, -1).join(' ');
 
-  // plumbing -> plumb, roofing -> roof, landscaping -> landscap
-  const stem = /ing$/.test(last) ? last.replace(/ing$/, '') : last;
+  const words = [];
+
+  if (/ing$/.test(last)) {
+    // plumbing -> plumb -> plumber; landscaping -> landscap -> landscaper.
+    // A stem ending in e takes the r alone: landscape -> landscaper.
+    const stem = last.replace(/ing$/, '');
+    const person = /e$/.test(stem) ? `${stem}r` : `${stem}er`;
+    words.push(person, pluralOf(person));
+  } else if (looksLikeAgent(last)) {
+    // deck builder -> deck builder, deck builders. The singular first,
+    // because pairsFor reads words[0] as the one to qualify.
+    words.push(last, pluralOf(last));
+  } else {
+    const singular = singularOf(last);
+
+    if (singular) {
+      // cleaning services -> cleaning service, cleaning services. A word that
+      // is already plural is a noun, not a verb root, so no -er.
+      words.push(singular, last);
+    } else {
+      const person = /e$/.test(last) ? `${last}r` : `${last}er`;
+      words.push(person, pluralOf(person));
+    }
+  }
 
   const forms = new Set();
-
-  for (const suffix of ['er', 'ers']) {
-    // landscap + er -> landscaper; design + er -> designer. A stem ending in
-    // e takes the suffix without doubling it: "plumbe" + "r" is wrong, but
-    // no trade word stems that way in practice, so the simple rule stands.
-    const word = /e$/.test(stem) ? `${stem}r${suffix === 'ers' ? 's' : ''}` : stem + suffix;
-    forms.add(head ? `${head} ${word}` : word);
-  }
+  for (const word of words) forms.add(head ? `${head} ${word}` : word);
 
   return [...forms];
 }

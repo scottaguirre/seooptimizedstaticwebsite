@@ -300,17 +300,67 @@ function tradeStems(businessType) {
  * Needed because a PLACE NAME IS NOT A SURNAME and the brand filter could not
  * tell the difference. See looksLikeBrand.
  */
+
+/**
+ * State names to the abbreviation people actually type.
+ *
+ * A HARDCODED LIST, WHICH THIS MODULE ARGUES AGAINST EVERYWHERE ELSE — and
+ * this is the case that earns one. The objection to a list is that it covers
+ * what somebody remembered and silently fails the rest; there are fifty
+ * states, the set has not changed since 1959, and nothing about a customer's
+ * trade or town can add one.
+ *
+ * Found in the brand sample on 23 September:
+ *
+ *   deck builders austin tx [tx]
+ *
+ * DataForSEO is given "Austin,Texas,United States", so geoWords knew "austin"
+ * and "texas" and had never heard of "tx". A two-letter word next to a trade,
+ * describing no work — structurally a company name. So the filter hid what is
+ * plausibly the single best keyword on the list — and did the same in every
+ * state, for every trade, since the day the filter was written.
+ */
+const STATE_ABBREVIATIONS = {
+  alabama: 'al', alaska: 'ak', arizona: 'az', arkansas: 'ar',
+  california: 'ca', colorado: 'co', connecticut: 'ct', delaware: 'de',
+  florida: 'fl', georgia: 'ga', hawaii: 'hi', idaho: 'id',
+  illinois: 'il', indiana: 'in', iowa: 'ia', kansas: 'ks',
+  kentucky: 'ky', louisiana: 'la', maine: 'me', maryland: 'md',
+  massachusetts: 'ma', michigan: 'mi', minnesota: 'mn', mississippi: 'ms',
+  missouri: 'mo', montana: 'mt', nebraska: 'ne', nevada: 'nv',
+  'new hampshire': 'nh', 'new jersey': 'nj', 'new mexico': 'nm',
+  'new york': 'ny', 'north carolina': 'nc', 'north dakota': 'nd',
+  ohio: 'oh', oklahoma: 'ok', oregon: 'or', pennsylvania: 'pa',
+  'rhode island': 'ri', 'south carolina': 'sc', 'south dakota': 'sd',
+  tennessee: 'tn', texas: 'tx', utah: 'ut', vermont: 'vt',
+  virginia: 'va', washington: 'wa', 'west virginia': 'wv',
+  wisconsin: 'wi', wyoming: 'wy',
+  'district of columbia': 'dc',
+};
+
 function geoWords(location) {
   const out = new Set();
+  const raw = String(location || '').toLowerCase();
 
-  for (const word of String(location || '').toLowerCase().split(/[^a-z0-9]+/)) {
+  for (const word of raw.split(/[^a-z0-9]+/)) {
     if (word) out.add(word);
+  }
+
+  // "Austin,Texas,United States" also means "tx". Matched on the whole
+  // string rather than word by word, because seven states are two words.
+  //
+  // "West Virginia" contains "Virginia" and so adds both "wv" and "va". That
+  // is left alone: an extra place word only means one more thing that cannot
+  // be mistaken for a brand, which is the safe direction.
+  for (const [name, abbreviation] of Object.entries(STATE_ABBREVIATIONS)) {
+    if (raw.includes(name)) out.add(abbreviation);
   }
 
   // Never evidence of anything, and they arrive on the end of every
   // location_name DataForSEO is given.
   out.delete('united');
   out.delete('states');
+  out.add('usa');
 
   return out;
 }
@@ -344,19 +394,42 @@ function geoWords(location) {
  * either — "goettl plumbing austin" still has `goettl` left over and is still
  * hidden, which is right.
  *
+ * A MATERIAL IS NOT A SURNAME EITHER, AND THIS CANNOT TELL THEM APART
+ *
+ *   pool deck          leftover "pool"       describes no work  -> brand
+ *   wood deck          leftover "wood"       describes no work  -> brand
+ *   composite decking  leftover "composite"  describes no work  -> brand
+ *
+ * A surname and a material are both a word sitting next to a trade, and no
+ * version of this rule has ever separated them. A corpus-frequency test was
+ * tried and measured on 23 September: brands ran from 1 to 40 mentions and
+ * real describing words from 1 to 44, interleaved the whole way, with
+ * "sikkens" COMMONER than "floating". There is no threshold between them.
+ *
+ * WHICH IS WHY keywordIdeasFor NO LONGER CALLS THIS. On a discovery answer
+ * of thousands of rows the rule hid over half of them, almost all real work,
+ * and the buyer-intent pass removed 92% of the rest anyway. See the comment
+ * at the filtering step there.
+ *
+ * WHAT STILL USES IT: volumesForArea, where the keywords are a list somebody
+ * already chose rather than a dump from Google, and where the answer is a
+ * FLAG on the row rather than the row being hidden. A wrong flag on a list of
+ * twenty is visible and harmless; a wrong hide in a list of thousands is
+ * neither.
+ *
  * @param {string} keyword
  * @param {string} [businessType]
  * @param {object} [opts]
  * @param {Set<string>|string[]} [opts.geo]  words belonging to the place
  */
-function looksLikeBrand(keyword, businessType = '', opts = {}) {
+function brandWords(keyword, businessType = '', opts = {}) {
   const words = String(keyword || '')
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean);
 
-  if (!words.length) return false;
+  if (!words.length) return [];
 
   // The trade's own words are not evidence either way — "plumbing" appears in
   // "plumbing repair" and in "Smith Plumbing" alike. MATCHED BY STEM, not
@@ -367,17 +440,33 @@ function looksLikeBrand(keyword, businessType = '', opts = {}) {
     ? opts.geo
     : new Set(Array.isArray(opts.geo) ? opts.geo : []);
 
-  const rest = words.filter(w =>
+  const afterTrade = words.filter(w =>
     !stems.has(stem(w)) && !isTradeish(w) && !geo.has(w));
 
   // Nothing but the trade and the town: "plumbing", "plumber cedar park".
   // Generic, not a brand.
-  if (!rest.length) return false;
+  if (!afterTrade.length) return [];
 
-  // Any word that describes work makes it a service query.
-  const hasServiceWord = rest.some(w => SERVICE_WORDS.has(w));
+  // A word that describes work settles it: this is a job, not a company.
+  if (afterTrade.some(w => SERVICE_WORDS.has(w))) return [];
 
-  return !hasServiceWord;
+  // What is left once the trade, the town and the work are all accounted
+  // for. Right for "goettl", wrong for "composite" — which is why the
+  // discovery path stopped calling this.
+  return afterTrade;
+}
+
+/**
+ * Is this row a competitor's name?
+ *
+ * The same decision as brandWords, phrased as the yes-or-no the filter wants.
+ * ONE CODE PATH ON PURPOSE: a separate "why was this hidden?" implementation
+ * would be a second rule that could disagree with the first, and the whole
+ * reason the sample exists is to be trusted as an account of what the filter
+ * actually did.
+ */
+function looksLikeBrand(keyword, businessType = '', opts = {}) {
+  return brandWords(keyword, businessType, opts).length > 0;
 }
 
 /**
@@ -784,18 +873,17 @@ function seedsFor(industry, opts = {}) {
  * @param {string} opts.location  "Austin,Texas,United States"
  * @param {number} [opts.minVolume]  hide anything under this
  * @param {number} [opts.limit]      how many to hand back
- * @param {boolean} [opts.includeBrands]  keep competitor names, default false
  *
- * @returns {{ rows, seeds, cached, costUsd, total, aboveMinimum, brandsHidden }}
+ * @returns {{ rows, seeds, cached, costUsd, total, buyerIntent, aboveMinimum }}
  *   `total` and `aboveMinimum` are what the page needs to say "20 of 340" and
  *   to tell the difference between "nothing matched your minimum" and
  *   "nothing came back at all" — which read the same in an empty table and
  *   mean completely different things.
  *
- *   `brandsHidden` is how many rows looksLikeBrand removed. It is reported
- *   rather than merely applied because a filter nobody can see the effect of
- *   is a filter nobody can tell is broken — and this one has been wrong
- *   before, on "toilet plumber".
+ *   There is no `brandsHidden` any more. See the comment at the filtering
+ *   step: the brand filter was removed on 23 September after it measured out
+ *   as 92% duplicated by the buyer-intent pass and, in the remaining 8%,
+ *   deleting "deck installer austin" rather than any competitor's name.
  */
 async function keywordIdeasFor(seed, opts = {}) {
   const Model = opts.Model || require('../models/KeywordCache');
@@ -863,22 +951,44 @@ async function keywordIdeasFor(seed, opts = {}) {
 
   const answered = all.filter(r => r.volume != null);
 
-  // Counted, not just applied. `brandsHidden` goes into the log line so the
-  // filter's appetite is a number somebody can look at after a week, instead
-  // of a guess. A day where it eats half the list is the signal to loosen it.
-  // The town being researched, so "plumber cedar park" is not mistaken for a
-  // plumbing company called Cedar Park. Built from the full location_name
-  // rather than opts.city, so the state counts too — "plumbing texas" is a
-  // place query as much as "plumbing austin" is.
-  const geo = new Set([...geoWords(location), ...geoWords(opts.city)]);
-
-  const branded = opts.includeBrands
-    ? []
-    : answered.filter(r => looksLikeBrand(r.keyword, term, { geo }));
-
-  const usable = opts.includeBrands
-    ? answered
-    : answered.filter(r => !looksLikeBrand(r.keyword, term, { geo }));
+  /* THERE IS NO BRAND FILTER HERE ANY MORE, AND THAT IS THE FIX.
+   *
+   * There was one, from the first version of this feature until 23 September.
+   * It asked "once the trade's own words and the town are gone, is there a
+   * word left that describes no work?" and hid the row if so. Two rewrites
+   * and a corpus-frequency signal later it was still hiding over half of
+   * every answer.
+   *
+   * WHAT THE MEASUREMENTS SAID, in the order they arrived:
+   *
+   *   1. It hid 2,474 of 4,671 rows on Austin deck builder — 53%.
+   *   2. Sampled with the word that hid each row, a third were real work:
+   *      "covered patio build", "floating deck builders", "pool deck steps".
+   *   3. With each word's frequency printed, brands ran 1 to 40 mentions and
+   *      real describing words 1 to 44, interleaved — "sikkens×15" against
+   *      "floating×7". No threshold exists, so no tuning could work.
+   *   4. Judging the hidden rows by the buyer-intent pass instead:
+   *      brandsIntentWouldKeep was 197 of 2,474. The intent pass removes 92%
+   *      of them anyway, because a brand query IS a product query —
+   *      "benjamin moore deck stain" has no hire intent and fails on its own.
+   *   5. Of the 197 the brand filter uniquely removed, a 25-row sample
+   *      contained NO competitor names. It contained "deck installer austin",
+   *      "fix rotted wood deck", "replacing porch decking", "screened in
+   *      porch renovation" — and three queries about lawnmower decks.
+   *
+   * So the filter's entire contribution was deleting "deck installer austin".
+   * It is gone. Brand queries are handled by the buyer-intent pass below,
+   * which was already handling almost all of them.
+   *
+   * WHAT THIS GIVES UP: a heavily advertised brand whose query happens to
+   * carry hire intent will now appear. That is one visible row a customer can
+   * ignore, against 790 a search they could not see at all. This module's
+   * header has argued for that trade the whole time; the filter was the one
+   * place that did not honour it.
+   *
+   * looksLikeBrand still exists for volumesForArea, where the keywords are a
+   * list somebody chose and the answer is a flag rather than a hiding. */
+  const usable = answered;
 
   /* THE BUYER-INTENT PASS, and it runs here rather than at the network for
    * the same reason every other filter does: the whole answer is what was
@@ -926,15 +1036,13 @@ async function keywordIdeasFor(seed, opts = {}) {
     seeds,
     cached,
     costUsd,
-    // Everything Google answered, once competitor names are out. The big
-    // number: "7,030 found".
+    // Everything Google answered. The big number: "7,030 found".
     total: usable.length,
     // The pool the rows were actually chosen from. Equal to `total` when the
     // intent filter is off, which is what makes the page's wording honest in
     // both states without a special case.
     buyerIntent: shortlist.length,
     aboveMinimum: matching.length,
-    brandsHidden: branded.length,
     removedByWords,
     removedByPrice,
     collapsed,
@@ -1044,6 +1152,7 @@ module.exports = {
   BILLING_TASK_CODES,
   currentMonth,
   looksLikeBrand,
+  brandWords,
   geoWords,
   stem,
   tradeStems,

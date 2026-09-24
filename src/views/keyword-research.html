@@ -231,18 +231,22 @@
               </div>
             </div>
 
-            <div class="col-12" data-modes="category">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="kwShowAll">
-                <label class="form-check-label" for="kwShowAll">
-                  Show everything, including terms with no buying intent
-                </label>
-              </div>
-              <div class="form-text ms-4" style="color:rgba(255,255,255,.55);">
-                Off by default. Google&rsquo;s list is mostly people reading, not
-                people hiring.
-              </div>
-            </div>
+            <!--
+              THERE WAS A "Show everything" CHECKBOX HERE and it is gone on
+              purpose. It turned the buyer-intent filter off.
+
+              Edwin asked what it was for and there was no answer. A customer
+              who unticks it gets a baseball keyword, ten spellings of
+              "tankless water heater", and a page of people reading rather
+              than people hiring — the exact list that made the tool look
+              broken in the first place. That is a diagnostic control, and
+              diagnostics belong in the log rather than on a form somebody is
+              trying to research a town with.
+
+              The log already carries total, buyerIntent, removedByWords,
+              removedByPrice and collapsed on every search, which is where the
+              filter gets watched. Nothing was lost by taking the box away.
+            -->
 
             <div class="col-12 d-flex align-items-center gap-3">
               <button type="submit" id="kwSearch" class="btn btn-success"

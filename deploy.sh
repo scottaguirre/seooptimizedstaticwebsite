@@ -83,6 +83,7 @@ for suite in \
   test-keyword-seeds.js \
   test-keyword-intent.js \
   test-keyword-pairs.js \
+  test-keyword-budget.js \
   test-blog-plan.js \
   test-anchor-pool.js \
   test-home-anchors.js \

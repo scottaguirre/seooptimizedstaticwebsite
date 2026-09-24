@@ -81,6 +81,22 @@ test('both word orders are asked about, because they are different queries', () 
   assert.ok(list.includes('cedar park plumber'));
 });
 
+test('the question Edwin asked: the plural is asked about too', () => {
+  // "if I search for Austin deck builder, will that also show Austin deck
+  // builders?" It would not have. pairsFor produced "deck builderer austin"
+  // and never named the plural at all.
+  const list = pairsFor('deck builder', { city: 'Austin' });
+
+  assert.ok(list.includes('deck builder austin'));
+  assert.ok(list.includes('deck builders austin'), 'the plural was never asked about');
+  assert.ok(list.includes('austin deck builders'));
+  assert.ok(list.includes('emergency deck builder austin'));
+
+  for (const term of list) {
+    assert.ok(!/erer/.test(term), `"${term}" has a doubled -er`);
+  }
+});
+
 test('each service is paired with the town', () => {
   const list = plumbing();
 
@@ -106,6 +122,71 @@ test('a multi-word trade keeps its head', () => {
   );
 });
 
+test('a trade NAMED AFTER THE WORKER is not given a second -er', () => {
+  // The bug this branch exists for. The rule assumed every trade was named
+  // after the work — plumbing, roofing, landscaping, which is what it was
+  // written against. "deck builder" is already the person, so it came back
+  // as "deck builderer" and "deck builderers", and the form Edwin actually
+  // asked about was never asked about at all.
+  assert.deepStrictEqual(
+    practitionerForms('deck builder'),
+    ['deck builder', 'deck builders']
+  );
+  assert.deepStrictEqual(practitionerForms('plumber'), ['plumber', 'plumbers']);
+  assert.deepStrictEqual(practitionerForms('roofer'), ['roofer', 'roofers']);
+});
+
+test('the agent endings cover how trades are actually named', () => {
+  // -or, -ist, -ian, -smith, -ney. Each is a real trade in the app's list or
+  // one word away from one.
+  assert.deepStrictEqual(practitionerForms('chiropractor'), ['chiropractor', 'chiropractors']);
+  assert.deepStrictEqual(practitionerForms('eye doctor'), ['eye doctor', 'eye doctors']);
+  assert.deepStrictEqual(practitionerForms('dentist'), ['dentist', 'dentists']);
+  assert.deepStrictEqual(practitionerForms('electrician'), ['electrician', 'electricians']);
+  assert.deepStrictEqual(practitionerForms('locksmith'), ['locksmith', 'locksmiths']);
+  // -man does not take an -s. "handymans austin" would be a wasted slot and
+  // an embarrassing one if anybody read the table.
+  assert.deepStrictEqual(practitionerForms('handyman'), ['handyman', 'handymen']);
+  assert.deepStrictEqual(
+    practitionerForms('lemon law attorney'),
+    ['lemon law attorney', 'lemon law attorneys']
+  );
+});
+
+test('a trade typed in the plural comes back with its singular too', () => {
+  // Somebody types what they would search for. Both forms are worth asking
+  // about and the singular is the one the qualifiers get attached to.
+  assert.deepStrictEqual(
+    practitionerForms('deck builders'),
+    ['deck builder', 'deck builders']
+  );
+  assert.deepStrictEqual(practitionerForms('plumbers'), ['plumber', 'plumbers']);
+});
+
+test('a plural that is not a plural is left alone', () => {
+  // "glass" ends in s and is not two glasses. Stripping it gives "glas".
+  assert.deepStrictEqual(practitionerForms('glass'), ['glasser', 'glassers']);
+});
+
+test('an already-plural service is not given an -er', () => {
+  // "cleaning serviceser" was the old output. A word that is already plural
+  // is a noun, not a verb root.
+  assert.deepStrictEqual(
+    practitionerForms('cleaning services'),
+    ['cleaning service', 'cleaning services']
+  );
+});
+
+test('the singular comes first, because that is the one that gets qualified', () => {
+  // pairsFor reads forms[0] for "emergency <person> <city>". A plural there
+  // would spend every qualifier row on "emergency deck builders austin",
+  // which is the same page as the singular.
+  for (const trade of ['plumbing', 'deck builder', 'deck builders', 'web design']) {
+    const [first, second] = practitionerForms(trade);
+    assert.ok(second.length > first.length, `${trade}: ${first} is not the singular`);
+  }
+});
+
 test('a nonsense form is generated ON PURPOSE and is not a bug', () => {
   // "lemon lawer" is gibberish. It is generated anyway, because guessing
   // English morphology for every trade the app will ever sell to is not a
@@ -114,6 +195,10 @@ test('a nonsense form is generated ON PURPOSE and is not a bug', () => {
   // would cover the trades somebody remembered and silently fail the rest.
   //
   // Asserted rather than tolerated, so nobody "fixes" it by adding a list.
+  //
+  // Note what the -er branch is now FOR: it is the fallback for a word that
+  // is neither an -ing activity nor a recognisable agent noun nor a plural.
+  // Narrowing it fixed "deck builderer" without touching this.
   assert.deepStrictEqual(
     practitionerForms('lemon law'),
     ['lemon lawer', 'lemon lawers']

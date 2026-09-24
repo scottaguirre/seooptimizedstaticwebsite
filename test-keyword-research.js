@@ -23,7 +23,7 @@ const realLoad = Module._load;
 
 Module._load = function (request, parent, isMain) {
   if (/(^\.\/logger$|\/logger$)/.test(request)) {
-    return { log: { info() {}, error() {}, warn() {} } };
+    return { log: { info() {}, error() {}, warn() {}, security() {} } };
   }
   return realLoad.call(this, request, parent, isMain);
 };
@@ -31,7 +31,8 @@ Module._load = function (request, parent, isMain) {
 const { appSidebar, appSidebarAssets } = require('./utils/appHeader');
 const {
   keywordIdeasFor, volumesFor, cacheKey, seedsFor, fetchIdeas, isBillingError,
-  looksLikeBrand, geoWords, stem, MAX_IDEAS, MAX_SEEDS,
+  looksLikeBrand, geoWords, stem, wordCounts, vocabularyFloor, MAX_IDEAS, MAX_SEEDS,
+  brandWords, spread, BRAND_SAMPLE,
 } = require('./utils/keywordVolumes');
 
 let passed = 0, failed = 0;
@@ -333,19 +334,6 @@ async function main() {
     });
   });
 
-  await test('competitor names are dropped, not shown as services', async () => {
-    CREDS();
-    await withFetch(() => ideasReply(AUSTIN), async () => {
-      const { rows } = await keywordIdeasFor('plumbing', {
-        location: 'Austin,Texas,United States', Model: fakeModel(),
-      });
-      assert.ok(!rows.some(r => r.keyword === 'goettl plumbing'),
-        'a competitor name came back as a keyword idea');
-      assert.ok(rows.some(r => r.keyword === 'water heater replacement'),
-        'a real service was dropped with them');
-    });
-  });
-
   await test('a keyword with no volume at all is left out', async () => {
     CREDS();
     await withFetch(() => ideasReply(AUSTIN), async () => {
@@ -365,9 +353,10 @@ async function main() {
 
       assert.ok(out.rows.every(r => r.volume >= 200), 'something under the minimum got through');
       assert.strictEqual(out.aboveMinimum, 5, 'the count above the minimum is wrong');
-      // `total` is everything usable, so the page can say "lower it and there
-      // are 7" rather than leaving a dead end.
-      assert.strictEqual(out.total, 7);
+      // `total` is every row Google answered, so the page can say "lower it
+      // and there are 8" rather than leaving a dead end. It was 7 while the
+      // brand filter ran; the eighth row is the one it used to hide.
+      assert.strictEqual(out.total, 8);
     });
   });
 
@@ -486,7 +475,7 @@ async function main() {
    * The endpoint
    * ---------------------------------------------------------------- */
 
-  function loadRoute({ onLog, ideas, exact, seedTerms } = {}) {
+  function loadRoute({ onLog, ideas, exact, seedTerms, budget, onSpend } = {}) {
     const routes = [];
     const fakeRouter = {
       post(p, ...h) { routes.push({ method: 'post', path: p, handlers: h }); },
@@ -511,9 +500,26 @@ async function main() {
           log: {
             info: (event, fields) => onLog(event, fields),
             error: (event, err, fields) => onLog(event, fields || {}),
+            // log.security(event, fields) — two arguments, like info.
+            security: (event, fields) => onLog(event, fields || {}),
           },
         };
       }
+      // The daily ceiling, stubbed so a route test is about the route. Its
+      // own suite is test-keyword-budget.js; what matters HERE is that the
+      // route asks before spending and records after.
+      if (/keywordBudget$/.test(request)) {
+        const real = outer.call(this, request, parent, isMain);
+        return {
+          ...real,
+          checkBudget: budget || (async () => ({
+            allowed: true, exempt: false, used: 0, limit: 20,
+            resetsAt: new Date(), resetPhrase: 'in about 10 hours',
+          })),
+          recordSpend: onSpend || (async () => {}),
+        };
+      }
+
       // STUBBED WHOLE, never partially. keywordSeeds requires openaiClient,
       // which requires the `openai` package — so loading the real one would
       // make this suite unable to check a route handler without an API client
@@ -801,36 +807,78 @@ async function main() {
    * The brand filter, counted rather than trusted
    * ---------------------------------------------------------------- */
 
-  await test('what the brand filter removed comes back as a number', async () => {
-    // A filter whose appetite nobody can see is a filter nobody can tell is
-    // broken. This one has been wrong before, on "toilet plumber".
-    await withFetch(() => ideasReply([
-      { keyword: 'goettl plumbing', search_volume: 900, cpc: 4 },
-      { keyword: 'roto rooter', search_volume: 800, cpc: 4 },
-      { keyword: 'water heater repair', search_volume: 300, cpc: 40 },
-    ]), async () => {
-      const out = await keywordIdeasFor(['plumbing'], {
-        location: 'Austin,Texas,United States', Model: fakeModel(),
-      });
+  /* ---------------------------------------------------------------- *
+   * What the brand filter hid, not just how much
+   * ---------------------------------------------------------------- */
 
-      assert.strictEqual(out.brandsHidden, 2);
-      assert.strictEqual(out.total, 1, 'total should count what survived the filter');
-    });
+  /* ---------------------------------------------------------------- *
+   * A state has two names and the filter knew one
+   * ---------------------------------------------------------------- */
+
+  await test('the state abbreviation is a place, not a company', () => {
+    // Found in the brand sample on 23 September:
+    //
+    //   deck builders austin tx [tx]
+    //
+    // DataForSEO is given "Austin,Texas,United States", so geoWords knew
+    // "austin" and "texas" and had never heard of "tx" — leaving a
+    // two-letter word next to a trade, describing no work, which is exactly
+    // the shape of a company name. The best keyword on the list, hidden.
+    const geo = geoWords('Austin,Texas,United States');
+
+    assert.ok(geo.has('tx'), 'tx is still read as a company name');
+    assert.ok(geo.has('texas'));
+    assert.ok(geo.has('austin'));
+
+    assert.ok(
+      !looksLikeBrand('deck builders austin tx', 'deck builder', { geo }),
+      'the best term a deck builder could rank for is still flagged'
+    );
   });
 
-  await test('brandsHidden is zero when brands are kept, not merely unreported', async () => {
-    await withFetch(() => ideasReply([
-      { keyword: 'goettl plumbing', search_volume: 900, cpc: 4 },
-    ]), async () => {
-      const out = await keywordIdeasFor(['plumbing'], {
-        location: 'Austin,Texas,United States',
-        includeBrands: true,
-        Model: fakeModel(),
-      });
+  await test('every state is covered, including the two-word ones', () => {
+    // Word-by-word matching would find "york" and miss "new york".
+    for (const [place, abbreviation] of [
+      ['Charlotte,North Carolina,United States', 'nc'],
+      ['Newark,New Jersey,United States', 'nj'],
+      ['Providence,Rhode Island,United States', 'ri'],
+      ['Phoenix,Arizona,United States', 'az'],
+      ['Seattle,Washington,United States', 'wa'],
+    ]) {
+      assert.ok(geoWords(place).has(abbreviation),
+        `${place} does not know ${abbreviation}`);
+    }
+  });
 
-      assert.strictEqual(out.brandsHidden, 0);
-      assert.strictEqual(out.total, 1);
-    });
+  await test('one state does not hand its abbreviation to another', () => {
+    // The whole point of a place word is that it is not evidence. Handing
+    // "tx" to a Florida search would quietly stop the filter ever seeing a
+    // company called TX Decks — a small loss, but a silent one.
+    const florida = geoWords('Miami,Florida,United States');
+
+    assert.ok(florida.has('fl'));
+    assert.ok(!florida.has('tx'), 'Florida thinks it is Texas');
+    assert.ok(!florida.has('ny'));
+  });
+
+  await test('the country is a place too', () => {
+    assert.ok(geoWords('Austin,Texas,United States').has('usa'));
+    // "united" and "states" arrive on every location_name and mean nothing.
+    assert.ok(!geoWords('Austin,Texas,United States').has('united'));
+    assert.ok(!geoWords('Austin,Texas,United States').has('states'));
+  });
+
+  await test('the words blamed are the words actually left over', () => {
+    const opts = { geo: new Set(['austin']) };
+
+    // "deck" is the trade and "austin" is the town, so neither is evidence.
+    // "trex" and "composite" are what is left — and the fact that the rule
+    // cannot tell those two apart is why the discovery path stopped calling
+    // it. Here the answer is a flag on a chosen keyword, not a hiding.
+    assert.deepStrictEqual(
+      brandWords('trex composite deck austin', 'deck builder', opts).sort(),
+      ['composite', 'trex']
+    );
   });
 
   /* ---------------------------------------------------------------- *
@@ -971,7 +1019,7 @@ async function main() {
       seedTerms: async () => ({ terms: ['drain cleaning'], cached: true, usage: null }),
       ideas: async () => ({
         rows: [], cached: false, costUsd: 0.09,
-        total: 500, aboveMinimum: 3, brandsHidden: 7,
+        total: 500, aboveMinimum: 3,
       }),
     });
 
@@ -983,9 +1031,7 @@ async function main() {
     assert.ok(line, 'nothing was logged');
 
     // Each of these answers a question that cost a round trip to ask last
-    // time: how wide was the net, how much did the filter eat, and was the
-    // model call paid for again.
-    assert.strictEqual(line.fields.brandsHidden, 7);
+    // time: how wide was the net, and was the model call paid for again.
     assert.strictEqual(line.fields.relatedCount, 1);
     assert.strictEqual(line.fields.modelSeeds, 1);
     assert.strictEqual(line.fields.seedsCached, true);
@@ -1491,33 +1537,6 @@ async function main() {
     assert.ok(!looksLikeBrand('plumbing texas', 'plumbing', { geo: austin }));
   });
 
-  await test('and the state survives the trip through keywordIdeasFor', () => {
-    // NOT THE SAME TEST AS THE ONE ABOVE, which builds the geography by hand
-    // and so proves nothing about what the lookup passes. Narrowing the
-    // lookup to opts.city alone — which loses the state — went unnoticed
-    // until this existed.
-    //
-    // The intent filter is off here on purpose: "plumbing texas" carries no
-    // action word and would be removed by it for an unrelated reason, hiding
-    // whether the brand filter had already eaten it.
-    return withFetch(() => ideasReply([
-      { keyword: 'plumbing texas', search_volume: 320, cpc: 20.00 },
-      { keyword: 'goettl plumbing', search_volume: 900, cpc: 4.10 },
-    ]), async () => {
-      const out = await keywordIdeasFor(['plumbing'], {
-        location: 'Austin,Texas,United States',
-        intent: false, city: 'Austin', industry: 'plumbing',
-        Model: fakeModel(),
-      });
-
-      const terms = out.rows.map(r => r.keyword);
-
-      assert.ok(terms.includes('plumbing texas'),
-        `the state was not passed to the filter: ${JSON.stringify(terms)}`);
-      assert.ok(!terms.includes('goettl plumbing'));
-    });
-  });
-
   await test('the trade whose name says least was hit hardest', () => {
     // "lemon law firm" carries no verb at all, so every geo variant looked
     // like a brand. 342 hidden, 76 kept, in one real lookup.
@@ -1633,6 +1652,53 @@ async function main() {
     assert.ok(looksLikeBrand('roto rooter', 'plumbing', { geo: austin }));
   });
 
+  /* ---------------------------------------------------------------- *
+   * A material is not a surname either
+   * ---------------------------------------------------------------- *
+   *
+   * The Austin "deck builder" answer: 4,671 keywords back, 2,915 hidden.
+   * Almost none were company names — they were `pool deck`, `wood deck`,
+   * `deck stain`, `composite decking`. A word sitting next to a trade,
+   * describing no work, which is the shape the filter catches.
+   *
+   * It cannot tell a surname from a material by looking at one keyword. It
+   * can tell them apart by looking at the whole answer: a material is how
+   * the trade talks and recurs everywhere; a company name recurs in a
+   * handful of rows because only that company uses it.
+   */
+
+  /** An answer shaped like a real one: common vocabulary, brands in the tail. */
+  function deckAnswer() {
+    const rows = [];
+    const common = { pool: 180, wood: 220, composite: 140, stain: 90, patio: 160 };
+
+    for (const [word, n] of Object.entries(common)) {
+      for (let i = 0; i < n; i++) rows.push({ keyword: `${word} deck ${i}` });
+    }
+    for (let i = 0; i < 9; i++) rows.push({ keyword: `archadeck austin ${i}` });
+    for (let i = 0; i < 1200; i++) rows.push({ keyword: `deck filler${i} term` });
+
+    return rows;
+  }
+
+  function deckOpts() {
+    const rows = deckAnswer();
+    return {
+      geo: geoWords('Austin,Texas,United States'),
+      counts: wordCounts(rows),
+      vocabularyFloor: vocabularyFloor(rows.length),
+    };
+  }
+
+  await test('with no counts passed, the frequency test simply does not run', () => {
+    // volumesForArea has no corpus to count — it looks up a list somebody
+    // already chose. It must keep working, narrower.
+    const geo = geoWords('Austin,Texas,United States');
+
+    assert.ok(looksLikeBrand('goettl plumbing', 'plumbing', { geo }));
+    assert.ok(!looksLikeBrand('emergency plumber', 'plumbing', { geo }));
+  });
+
   await test('no geography passed leaves the old behaviour intact', () => {
     // The wizard's own callers and any future one must not break by omitting
     // the new argument — they just get the narrower answer.
@@ -1640,10 +1706,79 @@ async function main() {
     assert.ok(!looksLikeBrand('emergency plumber', 'plumbing'));
   });
 
-  await test('the geography reaches the filter through keywordIdeasFor', () => {
-    // THE WIRING. The rule above is useless if the lookup forgets to pass the
-    // location — which is exactly the mutation that slipped through last time
-    // a rule and its caller were tested separately.
+  await test('DISCOVERY HIDES NOTHING AS A BRAND, WHICH IS THE POINT', () => {
+    /* The brand filter was deleted on 23 September. What it did, measured
+     * rather than argued, on Austin deck builder:
+     *
+     *   it hid                                        2,474 of 4,671 (53%)
+     *   of those, the intent pass would have removed  2,277 anyway  (92%)
+     *   leaving it uniquely removing                    197
+     *   competitor names in a 25-row sample of those:     0
+     *
+     * What that 197 actually held: "deck installer austin", "fix rotted wood
+     * deck", "replacing porch decking", "screened in porch renovation". Its
+     * whole contribution was deleting the best keywords on the list.
+     *
+     * So: the two kinds of row it used to eat both come back, and the answer
+     * no longer claims to have hidden anything. */
+    return withFetch(() => ideasReply([
+      { keyword: 'deck installer austin', search_volume: 210, cpc: 12.00,
+        high_top_of_page_bid: 40.00 },
+      { keyword: 'composite decking cost', search_volume: 880, cpc: 3.00,
+        high_top_of_page_bid: 9.00 },
+    ]), async () => {
+      const out = await keywordIdeasFor(['deck builder'], {
+        location: 'Austin,Texas,United States',
+        intent: false, city: 'Austin', industry: 'deck builder',
+        Model: fakeModel(),
+      });
+
+      const terms = out.rows.map(r => r.keyword);
+
+      assert.ok(terms.includes('deck installer austin'),
+        `the best term on the list is still hidden: ${JSON.stringify(terms)}`);
+      assert.ok(terms.includes('composite decking cost'),
+        'a material still reads as a company name');
+
+      assert.strictEqual(out.total, 2, 'something was filtered out');
+      assert.strictEqual(out.brandsHidden, undefined);
+      assert.strictEqual(out.brandSample, undefined);
+      assert.strictEqual(out.brandsIntentWouldKeep, undefined);
+    });
+  });
+
+  await test('a brand query is taken by the intent pass, on its own evidence', () => {
+    // Why deleting the filter is safe rather than merely simpler. A brand
+    // query is a PRODUCT query: no action word, no hire word, no town, and a
+    // bid a fraction of the real terms'. The intent pass was already removing
+    // 92% of what the brand filter removed.
+    return withFetch(() => ideasReply([
+      { keyword: 'benjamin moore deck stain', search_volume: 2400, cpc: 1.20,
+        high_top_of_page_bid: 3.10 },
+      { keyword: 'deck repair austin', search_volume: 210, cpc: 14.00,
+        high_top_of_page_bid: 48.00 },
+    ]), async () => {
+      const out = await keywordIdeasFor(['deck builder'], {
+        location: 'Austin,Texas,United States',
+        intent: true, city: 'Austin', industry: 'deck builder',
+        Model: fakeModel(),
+      });
+
+      const terms = out.rows.map(r => r.keyword);
+
+      // Note the volumes: the brand query is ten times bigger and would have
+      // led the table if volume were the only thing sorting it.
+      assert.ok(!terms.includes('benjamin moore deck stain'),
+        'a product query with no hire intent reached the customer');
+      assert.ok(terms.includes('deck repair austin'));
+    });
+  });
+
+  await test('the town term survives the trip through keywordIdeasFor', () => {
+    // THE WIRING. "plumber cedar park" is the 170-a-month term this whole
+    // feature was rebuilt around, and it has been lost twice — once to the
+    // brand filter reading "cedar park" as a surname, once to a narrowing
+    // that passed the city without the state.
     return withFetch(() => ideasReply([
       { keyword: 'plumber cedar park', search_volume: 170, cpc: 44.64,
         high_top_of_page_bid: 177.49 },
@@ -1666,9 +1801,180 @@ async function main() {
 
       assert.ok(terms.includes('plumber cedar park'),
         `the town term was filtered out: ${JSON.stringify(terms)}`);
-      assert.ok(!terms.includes('goettl plumbing'), 'the brand survived');
-      assert.strictEqual(out.brandsHidden, 1);
+
+      // "goettl plumbing" is a competitor's name and it is NOT hidden any
+      // more — the brand filter is gone. The buyer-intent pass takes it
+      // instead, on its own evidence: no action word, no hire word, no town,
+      // and a top-of-page bid a fraction of the real terms'.
+      assert.ok(!terms.includes('goettl plumbing'),
+        'a brand query with no hire intent reached the customer');
+      assert.strictEqual(out.brandsHidden, undefined,
+        'the brand filter is still reporting');
     });
+  });
+
+  /* ---------------------------------------------------------------- *
+   * The day's allowance, as the route uses it
+   * ---------------------------------------------------------------- *
+   *
+   * utils/keywordBudget has its own suite. None of it fires if the route
+   * forgets to ask, or records a cache hit as a spend — and both of those
+   * are invisible until a customer is wrongly locked out or a bill arrives.
+   */
+
+  await test('a customer out of lookups is refused before anything is spent', async () => {
+    let called = false;
+
+    const { handler } = loadRoute({
+      budget: async () => ({
+        allowed: false, used: 20, limit: 20,
+        resetsAt: new Date(), resetPhrase: 'in about 4 hours',
+      }),
+      ideas: async () => { called = true; throw new Error('should not be reached'); },
+    });
+
+    const res = fakeRes();
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, res);
+
+    assert.strictEqual(called, false, 'the lookup ran anyway — $0.09 gone');
+    assert.strictEqual(res.statusCode, 429);
+    assert.match(res.body.error, /20/);
+    assert.match(res.body.error, /4 hours/);
+  });
+
+  await test('all three modes are capped, not just the one', async () => {
+    // Three branches. One of them quietly skipping the check is exactly the
+    // kind of thing a single-mode test would miss.
+    for (const body of [
+      { category: 'plumbing', location: 'Austin, TX' },
+      { mode: 'exact', terms: 'plumbing', location: 'Austin, TX' },
+      { mode: 'pairs', category: 'plumbing', location: 'Austin, TX' },
+    ]) {
+      let called = false;
+      const boom = async () => { called = true; throw new Error('not reached'); };
+
+      const { handler } = loadRoute({
+        budget: async () => ({
+          allowed: false, used: 20, limit: 20,
+          resetsAt: new Date(), resetPhrase: 'in about 4 hours',
+        }),
+        ideas: boom,
+        exact: boom,
+      });
+
+      const res = fakeRes();
+      await handler({ body }, res);
+
+      const mode = body.mode || 'category';
+      assert.strictEqual(res.statusCode, 429, `${mode} mode ignored the cap`);
+      assert.strictEqual(called, false, `${mode} mode spent anyway`);
+    }
+  });
+
+  await test('a bad request is told what is wrong, not that it is out of lookups', async () => {
+    // The cap is checked AFTER validation. A customer who typed the city
+    // wrong being told they have run out would send them away believing a
+    // limit they have not reached.
+    const { handler } = loadRoute({
+      budget: async () => ({
+        allowed: false, used: 20, limit: 20,
+        resetsAt: new Date(), resetPhrase: 'in about 4 hours',
+      }),
+    });
+
+    const res = fakeRes();
+    await handler({ body: { category: 'plumbing', location: 'Austin' } }, res);
+
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.body.error, /City, ST/);
+  });
+
+  await test('a PAID lookup is recorded', async () => {
+    const spends = [];
+    const { handler } = loadRoute({
+      onSpend: async (user, opts) => spends.push(opts.costUsd),
+      ideas: async () => ({
+        rows: [], cached: false, costUsd: 0.09,
+        total: 10, buyerIntent: 10, aboveMinimum: 10, brandsHidden: 0,
+        removedByWords: 0, removedByPrice: 0, collapsed: 0,
+      }),
+    });
+
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, fakeRes());
+
+    assert.deepStrictEqual(spends, [0.09]);
+  });
+
+  await test('a CACHE HIT is reported to the budget as costing nothing', async () => {
+    // The property the whole cap depends on. keywordBudget ignores a zero
+    // cost — but only if the route tells it the truth about what happened.
+    const spends = [];
+    const { handler } = loadRoute({
+      onSpend: async (user, opts) => spends.push(opts.costUsd),
+      ideas: async () => ({
+        rows: [], cached: true, costUsd: 0,
+        total: 10, buyerIntent: 10, aboveMinimum: 10, brandsHidden: 0,
+        removedByWords: 0, removedByPrice: 0, collapsed: 0,
+      }),
+    });
+
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, fakeRes());
+
+    assert.deepStrictEqual(spends, [0],
+      'a free answer was reported as costing something');
+  });
+
+  await test('exact and pairs record their spending too', async () => {
+    for (const [body, stub] of [
+      [{ mode: 'exact', terms: 'plumbing', location: 'Austin, TX' },
+        { exact: async () => ({ results: [], cached: false, costUsd: 0.09 }) }],
+      [{ mode: 'pairs', category: 'plumbing', location: 'Austin, TX' },
+        { exact: async () => ({ results: [], cached: false, costUsd: 0.09 }) }],
+    ]) {
+      const spends = [];
+      const { handler } = loadRoute({
+        ...stub,
+        onSpend: async (user, opts) => spends.push(opts.costUsd),
+      });
+
+      await handler({ body }, fakeRes());
+
+      assert.deepStrictEqual(spends, [0.09],
+        `${body.mode} mode did not record its spending`);
+    }
+  });
+
+  await test('a failed lookup is not recorded as a spend', async () => {
+    // Nothing came back, so nothing should come off the allowance. The
+    // recordSpend call sits after the await, so a throw skips it.
+    const spends = [];
+    const { handler } = loadRoute({
+      onSpend: async (user, opts) => spends.push(opts.costUsd),
+      ideas: async () => { throw new Error('DataForSEO is down'); },
+    });
+
+    const res = fakeRes();
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, res);
+
+    assert.strictEqual(res.statusCode, 502);
+    assert.deepStrictEqual(spends, [], 'a failure spent a lookup');
+  });
+
+  await test('hitting the cap is logged, so it can be seen happening', async () => {
+    const seen = [];
+    const { handler } = loadRoute({
+      onLog: (event, fields) => seen.push({ event, fields }),
+      budget: async () => ({
+        allowed: false, used: 20, limit: 20,
+        resetsAt: new Date(), resetPhrase: 'in about 4 hours',
+      }),
+    });
+
+    await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, fakeRes());
+
+    const line = seen.find(l => l.event === 'keywords.dailyLimit');
+    assert.ok(line, `nothing was logged: ${seen.map(l => l.event).join(', ')}`);
+    assert.strictEqual(line.fields.used, 20);
   });
 
   /* ---------------------------------------------------------------- *
@@ -2059,10 +2365,16 @@ async function main() {
    * Category mode — the intent filter, wired through
    * ---------------------------------------------------------------- */
 
-  await test('the intent filter is ON unless the customer asks for everything', async () => {
-    // Default on, because the UNFILTERED list is the one that made the tool
-    // look broken: a baseball keyword first and ten spellings of "tankless
-    // water heater" after it.
+  await test('the intent filter is ON, and nothing posted turns it off', async () => {
+    // It used to be switchable from a "Show everything" checkbox. Edwin asked
+    // what the unfiltered list was for and there was no answer: a baseball
+    // keyword, ten spellings of "tankless water heater", and a page of people
+    // reading rather than hiring — the list that made the tool look broken.
+    //
+    // The box is gone from the form. This asserts the SERVER stopped reading
+    // the field as well, because an option removed from the page but still
+    // live in the body is worse than one that was never removed: nothing on
+    // screen offers it and nothing exercises it.
     let sawIntent = null;
 
     const { handler } = loadRoute({
@@ -2077,12 +2389,15 @@ async function main() {
     });
 
     await handler({ body: { category: 'plumbing', location: 'Austin, TX' } }, fakeRes());
-    assert.strictEqual(sawIntent, true, 'the filter is off by default');
+    assert.strictEqual(sawIntent, true, 'the filter did not run');
 
+    const res = fakeRes();
     await handler({
       body: { category: 'plumbing', location: 'Austin, TX', showAll: true },
-    }, fakeRes());
-    assert.strictEqual(sawIntent, false, 'Show everything did not turn it off');
+    }, res);
+
+    assert.strictEqual(sawIntent, true, 'showAll still turns the filter off');
+    assert.strictEqual(res.body.intent, true, 'the page was told the filter was off');
   });
 
   await test('the town and the trade reach the intent filter', async () => {
@@ -2133,7 +2448,7 @@ async function main() {
       onLog: (event, fields) => seen.push({ event, fields }),
       ideas: async () => ({
         rows: [], cached: false, costUsd: 0.09,
-        total: 7030, buyerIntent: 214, aboveMinimum: 0, brandsHidden: 12,
+        total: 7030, buyerIntent: 214, aboveMinimum: 0,
         removedByWords: 6700, removedByPrice: 116, collapsed: 9,
       }),
     });
@@ -2144,7 +2459,6 @@ async function main() {
     assert.strictEqual(line.fields.removedByWords, 6700);
     assert.strictEqual(line.fields.removedByPrice, 116);
     assert.strictEqual(line.fields.collapsed, 9);
-    assert.strictEqual(line.fields.brandsHidden, 12);
     assert.strictEqual(line.fields.mode, 'category');
   });
 
@@ -2384,10 +2698,15 @@ async function main() {
     assert.match(pageHtml, /data-modes="exact"/,
       'nothing is marked as belonging to exact mode');
 
-    // The minimum, the related terms and the show-all box are meaningless
-    // outside category mode and must all be marked.
+    // The minimum and the related terms are meaningless outside category mode
+    // and must both be marked. There were three — the "Show everything" box
+    // was the third, and it has been removed rather than unmarked.
     const categoryOnly = pageHtml.split('data-modes="category"').length - 1;
-    assert.ok(categoryOnly >= 3, `only ${categoryOnly} blocks are category-only`);
+    assert.ok(categoryOnly >= 2, `only ${categoryOnly} blocks are category-only`);
+    assert.match(pageHtml, /data-modes="category"[\s\S]{0,400}?id="kwMinVolume"/,
+      'the minimum is not marked as category-only');
+    assert.match(pageHtml, /data-modes="category"[\s\S]{0,400}?id="kwRelated"/,
+      'the related terms are not marked as category-only');
 
     assert.match(pageJs, /applyMode/, 'the page never swaps the fields');
   });
@@ -2417,7 +2736,29 @@ async function main() {
   await test('the mode is sent with the request', () => {
     assert.match(pageJs, /JSON\.stringify\(\{[^}]*\bmode\b/,
       'the body carries no mode, so the server always runs discovery');
-    assert.match(pageJs, /showAll/, 'the show-everything box is never sent');
+  });
+
+  await test('the "Show everything" box is gone from the page and the script', () => {
+    // Removed because it had no use a customer could put it to. The form and
+    // the script have to lose it together: the input left behind would offer
+    // a control that does nothing, and the script left behind would send a
+    // field the route no longer reads.
+    assert.ok(!/kwShowAll/.test(pageHtml), 'the checkbox is still on the form');
+    assert.ok(!/kwShowAll|showAll/.test(pageJs), 'the script still sends showAll');
+  });
+
+  await test('the empty-intent message no longer points at a box that is gone', () => {
+    // "Tick Show everything to see them anyway" was the advice. Following it
+    // now means hunting the form for a control that was deleted, which reads
+    // as the page being broken — the exact impression this whole family of
+    // messages exists to prevent.
+    const fn = pageJs.match(
+      /if \(!rows\.length && data\.intent && !data\.buyerIntent\)[\s\S]{0,700}?return;/
+    );
+
+    assert.ok(fn, 'the empty-intent branch is gone entirely');
+    assert.ok(!/Show everything/i.test(fn[0]), 'it still points at the checkbox');
+    assert.match(fn[0], /Try the words/i, 'it no longer says what to do instead');
   });
 
   await test('the table shows the low and high bids', () => {

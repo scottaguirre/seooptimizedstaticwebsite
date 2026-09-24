@@ -18,7 +18,8 @@
 //
 //   - the minimum is set higher than anything this town has, which is a knob
 //     the customer can turn;
-//   - the buyer-intent filter took everything, which is a different knob;
+//   - the buyer-intent filter took everything, which is not a knob any more
+//     but is still a different dead end and needs different advice;
 //   - Google will not report on the exact term asked for;
 //   - the town genuinely has nothing, which it cannot;
 //   - something broke.
@@ -38,7 +39,6 @@
   const termsInput = document.getElementById('kwTerms');
   const minInput = document.getElementById('kwMinVolume');
   const relatedInput = document.getElementById('kwRelated');
-  const showAllInput = document.getElementById('kwShowAll');
   const button = document.getElementById('kwSearch');
   const note = document.getElementById('kwNote');
   const results = document.getElementById('kwResults');
@@ -250,13 +250,20 @@
       return;
     }
 
-    // THE INTENT FILTER TOOK EVERYTHING. A different knob from the minimum,
-    // and it has to name itself or the customer turns the wrong one.
+    // THE INTENT FILTER TOOK EVERYTHING. A different dead end from the
+    // minimum, and it has to name itself or the customer turns the wrong
+    // knob — lowering a minimum that was never the problem.
+    //
+    // It used to end "Tick Show everything to see them anyway". That box is
+    // gone, so the advice is the one that can actually help: the filter is
+    // reading the trade, and a different word for the trade reads
+    // differently.
     if (!rows.length && data.intent && !data.buyerIntent) {
       message(
         `${number(data.total)} keywords came back for ${place}, but none of them `
         + 'look like somebody about to hire — they read as people researching. '
-        + 'Tick "Show everything" to see them anyway.'
+        + 'Try the words a customer would use to hire you: "plumbing repair" '
+        + 'rather than "how plumbing works".'
       );
       return;
     }
@@ -334,7 +341,6 @@
     const terms = termsInput ? termsInput.value.trim() : '';
     const minVolume = Number(minInput.value) || 0;
     const related = relatedInput ? relatedInput.value.trim() : '';
-    const showAll = !!(showAllInput && showAllInput.checked);
 
     // Exact mode reads the textarea; the other two read the Industry box.
     // Checking the wrong one would block a valid search or send an empty one.
@@ -358,12 +364,12 @@
       const res = await fetch('/api/keyword-ideas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-        // minVolume, related and showAll are sent in exact mode too and
-        // ignored there by the server. Stripping them here would mean the
-        // page and the route both had to agree on which fields belong to
-        // which mode, and they would drift.
+        // minVolume and related are sent in exact mode too and ignored there
+        // by the server. Stripping them here would mean the page and the
+        // route both had to agree on which fields belong to which mode, and
+        // they would drift.
         body: JSON.stringify({
-          mode, location, category, terms, minVolume, related, showAll,
+          mode, location, category, terms, minVolume, related,
         }),
       });
 
@@ -371,7 +377,8 @@
 
       if (!res.ok) {
         // The server's wording, not a generic one: it knows whether the town
-        // was unusable, the industry was missing, or the lookup failed.
+        // was unusable, the industry was missing, the day's lookups are used
+        // up, or the lookup failed.
         message(data.error || 'Could not look up keywords just now.');
         return;
       }

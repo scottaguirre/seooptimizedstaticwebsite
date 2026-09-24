@@ -19,7 +19,7 @@
 //            keywords_data/google_ads/search_volume/live, the LOOKUP
 //            endpoint. It answers about exactly the words given, with no
 //            expansion and no opinion. Nothing is filtered on the way back:
-//            no brand test, no intent test, no minimum. If the answer is 10 a
+//            no intent test, no minimum. If the answer is 10 a
 //            month, the answer is 10 a month, and that is a real and useful
 //            thing to know about a term somebody was going to build a page
 //            around.
@@ -70,6 +70,7 @@ const {
 } = require('../utils/keywordVolumes');
 const { seedTermsFor } = require('../utils/keywordSeeds');
 const { pairsFor, sortPairs, MAX_PAIRS } = require('../utils/keywordPairs');
+const { checkBudget, recordSpend, limitMessage } = require('../utils/keywordBudget');
 const {
   appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets,
 } = require('../utils/appHeader');
@@ -314,11 +315,36 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
     });
   }
 
+  /* THE DAY'S ALLOWANCE, checked once for every mode.
+   *
+   * Above the mode branches because all three spend from the same balance,
+   * and below the validation because a malformed request should be told what
+   * is wrong with it rather than that it is out of lookups.
+   *
+   * A cache hit still gets served after the cap is reached — the check is
+   * here, but recordSpend below only fires on a lookup that cost money, so a
+   * customer who has run out can still re-run anything already answered.
+   * That is deliberate and the message says so. */
+  const budget = await checkBudget(req.user);
+
+  if (!budget.allowed) {
+    log.security('keywords.dailyLimit', {
+      requestId: req.id,
+      userId: String((req.user && req.user._id) || ''),
+      used: budget.used,
+      limit: budget.limit,
+      mode,
+      seed,
+    });
+
+    return res.status(429).json({ error: limitMessage(budget), mode });
+  }
+
   /* EXACT MODE: the words you give it, the numbers back, nothing removed.
    *
    * The whole point of this mode is that the customer already knows the terms
-   * and wants the figures. Running them through the brand filter, the intent
-   * filter or a minimum would mean the tool silently declining to answer the
+   * and wants the figures. Running them through the intent filter or a
+   * minimum would mean the tool silently declining to answer the
    * question it was asked — and a page that says nothing looks identical to
    * a lookup that failed. So: no filters, and a volume of 10 is reported as
    * 10 rather than rounded away.
@@ -337,6 +363,10 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
       // dropping it would leave the customer thinking it was never looked up.
       const rows = mergeAnswers(terms, results);
       const answered = rows.filter(r => r.volume != null).length;
+
+      // Only a lookup that reached DataForSEO spends anything; a cache hit
+      // reports costUsd 0 and recordSpend ignores it.
+      await recordSpend(req.user, { costUsd });
 
       log.info('keywords.exact', {
         requestId: req.id,
@@ -408,6 +438,8 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
 
       const answered = rows.filter(r => r.volume != null).length;
 
+      await recordSpend(req.user, { costUsd });
+
       log.info('keywords.pairs', {
         requestId: req.id,
         userId: String((req.user && req.user._id) || ''),
@@ -464,13 +496,23 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
 
     const seeds = seedsFor(seed, { city, related, extra: seedTerms.terms });
 
-    // Ticked off, so the box is "show everything" rather than "filter" — the
-    // filter is the default because the unfiltered list is the one that made
-    // the tool look broken.
-    const intent = !(req.body && req.body.showAll);
+    // ALWAYS ON. This read `!(req.body && req.body.showAll)` for as long as
+    // the page had a "Show everything" checkbox on it.
+    //
+    // Edwin asked what showing the unfiltered list was for, and there is no
+    // good answer: it is a baseball keyword, ten spellings of "tankless water
+    // heater" and a page of people reading rather than hiring. The box is
+    // gone from the form, and the body field is no longer read either — an
+    // option the page has stopped offering should not survive as an
+    // undocumented one that can still be posted.
+    //
+    // Named rather than inlined, because the response and the log still
+    // report which filters ran and the page's empty-state wording turns on
+    // it.
+    const intent = true;
 
     const {
-      rows, cached, costUsd, total, buyerIntent, aboveMinimum, brandsHidden,
+      rows, cached, costUsd, total, buyerIntent, aboveMinimum,
       removedByWords, removedByPrice, collapsed,
     } = await withTimeout(
       keywordIdeasFor(seeds, {
@@ -480,6 +522,8 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
       CALL_TIMEOUT_MS,
       'keyword ideas'
     );
+
+    await recordSpend(req.user, { costUsd });
 
     log.info('keywords.ideas', {
       requestId: req.id,
@@ -496,10 +540,10 @@ router.post('/api/keyword-ideas', keywordVolumesLimiter, async (req, res) => {
       total,
       buyerIntent,
       aboveMinimum,
-      // How hungry each filter is. Watched rather than trusted: the brand one
-      // has been wrong before, and the intent one is new. A week of these
-      // says whether either needs loosening.
-      brandsHidden,
+      // How hungry each filter is. There used to be a brandsHidden here too,
+      // and watching it is what got the brand filter deleted: it sat at half
+      // the answer across two rewrites, and the rows it was eating turned out
+      // to be "deck installer austin" rather than anybody's company name.
       removedByWords,
       removedByPrice,
       collapsed,
