@@ -297,7 +297,17 @@ router.get('/dashboard', requireAuth, async (req, res) => {
           </div>
 
           ${connectedSites ? '' : `
-          <p class="text-white-50 small mb-0 mt-3">
+          <!-- text-muted, NOT text-white-50. This card is
+               bg-secondary-subtle — a LIGHT card — so white-on-white made
+               this line invisible to anyone who did not already know it was
+               there. Found on a fresh account, 24 September: the admin
+               dashboard has sites connected, so this paragraph never renders
+               for it and the fault only showed for a new customer.
+
+               text-muted rather than text-dark, matching the site card's
+               subtitle below: it is small print and should read as small
+               print. -->
+          <p class="text-muted small mb-0 mt-3">
             Works on any WordPress site, with any theme — including ones this
             app did not build.
           </p>`}
@@ -356,8 +366,19 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         ${appHeaderAssets()}${appSidebarAssets()}
         <style>
+          /* THE CURTAIN IS DARK, AND IT WAS PALE UNTIL 24 September.
+           *
+           * It read rgba(228, 219, 219, 0.8) — a pale grey — while its text
+           * was color: #fff and its spinner was .text-light. White on
+           * near-white: the "Building your WordPress theme... please wait"
+           * message and the spinner were both there and both invisible, so
+           * the page looked frozen for the minute a build takes.
+           *
+           * The navy is the page's own background (#082d5b) at 90%, so the
+           * curtain reads as the app dimming itself rather than as a
+           * different surface arriving. */
           #overlay {
-            position: fixed; inset: 0; background: rgba(228, 219, 219, 0.8);
+            position: fixed; inset: 0; background: rgba(8, 45, 91, 0.9);
             display: none; flex-direction: column; align-items: center;
             justify-content: center; z-index: 9999; color: #fff;
           }
@@ -374,10 +395,16 @@ ${appSidebar('/dashboard')}
 
           ${blogCard}
 
-          <!-- text-white is required: Bootstrap 5.3's .card sets
-               color: var(--bs-body-color), which is dark, and that overrides
-               the text-white inherited from <body>. Without it the contents
-               are dark text on a dark card — present, but invisible. -->
+          <!-- text-dark is required, and the reason is the mirror image of
+               what this comment used to claim. The card is LIGHT
+               (bg-secondary-subtle) sitting on a navy <body class="text-white">,
+               so without an explicit colour the contents inherit white and
+               vanish. The same trap caught the paragraph in the blog card
+               above.
+
+               (This comment read "text-white is required" for a while, while
+               the code said text-dark. A comment that contradicts the line
+               under it is worse than no comment.) -->
           <div class="card border-secondary bg-secondary-subtle text-dark mb-4">
             <div class="card-body">
               <p class="mb-1"><strong>Email:</strong> ${user.email}</p>

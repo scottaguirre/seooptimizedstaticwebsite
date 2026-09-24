@@ -66,8 +66,28 @@
   function createBusinessTypePicker(opts) {
     const options = opts || {};
     const doc = options.document || global.document;
-    const labels = Array.isArray(options.labels) ? options.labels.slice() : [];
     const idBase = options.id || 'businessType';
+
+    /* ALPHABETICAL, AND SORTED HERE RATHER THAN IN THE REGISTRY.
+     *
+     * utils/businessShape.js keeps its types grouped under section comments —
+     * Home services, Medical, Professional services, Project based — which is
+     * what makes that file editable by a human. Sorting the source would
+     * scatter those groups to put Air Conditioning next to Appliance Repair,
+     * trading a file somebody maintains for a list nobody reads in source
+     * order anyway. Order on screen is a screen concern.
+     *
+     * localeCompare, not <, so that a type with an accent in it lands where a
+     * reader expects rather than after Z.
+     *
+     * WHAT THIS COSTS THE NUMBERS. They were positions in the registry's own
+     * order, where a new type appended to the end shifted nothing. Now they
+     * are positions in the alphabet, so adding "Carpet Cleaning" moves
+     * everything from C onwards by one. In exchange the list is predictable
+     * without being memorised at all, which is the better deal for a customer
+     * seeing it once. */
+    const labels = (Array.isArray(options.labels) ? options.labels.slice() : [])
+      .sort((a, b) => String(a).localeCompare(String(b)));
 
     /** Is this a type the registry actually has? */
     function isKnown(label) {

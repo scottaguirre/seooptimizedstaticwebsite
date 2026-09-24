@@ -133,6 +133,12 @@ const LABELS = [
   'Lemon Law', 'Web Design', 'Coding',
 ];
 
+/* The order the picker shows them in. Derived, not typed out: a test that
+ * hardcoded "20 is Swimming Pool Contractor" would have to be rewritten every
+ * time a type is added, and would then be asserting the list I happened to
+ * write down rather than the rule. */
+const SORTED = LABELS.slice().sort((a, b) => a.localeCompare(b));
+
 function picker(over = {}) {
   return createBusinessTypePicker({ labels: LABELS, document, ...over });
 }
@@ -158,7 +164,31 @@ test('everything is listed before anything is typed', () => {
   // Nobody should have to guess a search term to see what is on offer. The
   // list is the page's content, not a dropdown that has to be opened.
   const p = picker();
-  assert.deepStrictEqual(shown(p), LABELS);
+  assert.deepStrictEqual(shown(p), SORTED);
+});
+
+test('THE LIST IS ALPHABETICAL, WHATEVER ORDER IT ARRIVES IN', () => {
+  /* The registry hands them over grouped under section comments — Home
+   * services, Medical, Professional services, Project based — because that is
+   * what makes that file editable. Sorting the source would scatter those
+   * groups; sorting here costs nothing and makes the list predictable without
+   * anyone having to memorise it. */
+  const p = picker();
+  const listed = shown(p);
+
+  assert.notDeepStrictEqual(listed, LABELS, 'the fixture is already sorted, so this proves nothing');
+  assert.deepStrictEqual(listed, SORTED);
+  assert.strictEqual(listed[0], 'Air Conditioning');
+});
+
+test('sorting does not lose or duplicate a type', () => {
+  // A sort that dropped one would be invisible in a list this long.
+  const p = picker();
+  const listed = shown(p);
+
+  assert.strictEqual(listed.length, LABELS.length);
+  assert.strictEqual(new Set(listed).size, LABELS.length);
+  for (const label of LABELS) assert.ok(listed.includes(label), `${label} is gone`);
 });
 
 test('typing narrows the list', () => {
@@ -188,11 +218,12 @@ test('TYPING A NUMBER JUMPS TO THAT POSITION', () => {
   // Edwin's reason for the numbers: "if I know that plumbing is #20 it's
   // easier to remember." No business type has a digit in it, so without this
   // a numeric query would match nothing and the numbers would be decoration.
+  //
+  // The position is in the ALPHABETICAL list, which is the one on screen.
   const p = picker();
   type(p, '20');
 
-  assert.deepStrictEqual(shown(p), ['Physical Therapy']);
-  assert.strictEqual(LABELS[19], 'Physical Therapy');
+  assert.deepStrictEqual(shown(p), [SORTED[19]]);
 });
 
 test('a partial number is a prefix, so 1 does not mean only the first', () => {
@@ -201,8 +232,8 @@ test('a partial number is a prefix, so 1 does not mean only the first', () => {
 
   // 1, and everything from 10 to 19.
   assert.deepStrictEqual(shown(p).length, 11);
-  assert.ok(shown(p).includes('Plumbing'));
-  assert.ok(shown(p).includes('Chiropractor'));
+  assert.ok(shown(p).includes(SORTED[0]));
+  assert.ok(shown(p).includes(SORTED[18]));
 });
 
 test('the numbers shown are positions in the WHOLE list, not in the filter', () => {
@@ -213,7 +244,7 @@ test('the numbers shown are positions in the WHOLE list, not in the filter', () 
   type(p, 'r');
 
   for (const row of p.options()) {
-    assert.strictEqual(row.number, LABELS.indexOf(row.label) + 1, row.label);
+    assert.strictEqual(row.number, SORTED.indexOf(row.label) + 1, row.label);
   }
 });
 
@@ -261,7 +292,7 @@ test('arrow keys move and Enter takes the highlighted row', () => {
   key(p, 'ArrowDown');
   key(p, 'Enter');
 
-  assert.strictEqual(p.value(), 'Fencing');
+  assert.strictEqual(p.value(), SORTED[1]);
 });
 
 test('arrows wrap, because the bottom of a long list is closer from the top', () => {
@@ -270,7 +301,7 @@ test('arrows wrap, because the bottom of a long list is closer from the top', ()
   key(p, 'ArrowUp');
   key(p, 'Enter');
 
-  assert.strictEqual(p.value(), LABELS[LABELS.length - 1]);
+  assert.strictEqual(p.value(), SORTED[SORTED.length - 1]);
 });
 
 test('ONE MATCH AND ENTER IS AN ANSWER', () => {
@@ -311,7 +342,7 @@ test('Escape clears the search and brings the whole list back', () => {
   key(p, 'Escape');
 
   assert.strictEqual(p.input.value, '');
-  assert.deepStrictEqual(shown(p), LABELS);
+  assert.deepStrictEqual(shown(p), SORTED);
 });
 
 test('a choice survives the search being changed afterwards', () => {
@@ -391,7 +422,7 @@ test('the invalid mark comes off when they CLICK, with nothing typed', () => {
 
   p.list.children[0].fire('mousedown');
 
-  assert.strictEqual(p.value(), LABELS[0]);
+  assert.strictEqual(p.value(), SORTED[0]);
   assert.ok(!/is-invalid/.test(p.input.className), 'still marked after choosing');
 });
 
