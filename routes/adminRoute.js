@@ -4,6 +4,7 @@ const router = express.Router();
 const User = require('../models/User');
 const requireAdmin = require('../middleware/requireAdmin');
 const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets } = require('../utils/appHeader');
+const { pageTitle } = require('../utils/pageTitle');
 
 // GET /admin - list users (with optional filters)
 router.get('/admin', requireAdmin, async (req, res) => {
@@ -134,7 +135,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
       <html lang="en">
       <head>
         <meta charset="UTF-8" />
-        <title>Admin - Users</title>
+        <title>${pageTitle('Admin — Users')}</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         ${appHeaderAssets()}${appSidebarAssets()}
       </head>

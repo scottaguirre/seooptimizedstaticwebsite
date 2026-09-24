@@ -12,6 +12,7 @@ const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { renderAuthPage } = require('../utils/renderAuthPage');
 const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets } = require('../utils/appHeader');
+const { pageTitle } = require('../utils/pageTitle');
 const { createVerificationToken, hashToken, notExpired } = require('../utils/authTokens');
 const { sendEmail, verificationEmail } = require('../utils/sendEmail');
 
@@ -362,7 +363,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Dashboard</title>
+        <title>${pageTitle('Dashboard')}</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         ${appHeaderAssets()}${appSidebarAssets()}
         <style>
@@ -567,7 +568,7 @@ router.get('/verify', async (req, res) => {
 
     if (!user) {
       return res.status(400).send(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Invalid link</title>
+<html lang="en"><head><meta charset="UTF-8"><title>${pageTitle('Invalid link')}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head><body class="bg-dark text-white"><div class="container py-5" style="max-width:600px;">
   <h1>That link is not valid</h1>
@@ -580,7 +581,7 @@ router.get('/verify', async (req, res) => {
     // account predates the field, and is treated as still valid.
     if (!notExpired(user.verificationExpiresAt)) {
       return res.status(400).send(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Link expired</title>
+<html lang="en"><head><meta charset="UTF-8"><title>${pageTitle('Link expired')}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head><body class="bg-dark text-white"><div class="container py-5" style="max-width:600px;">
   <h1>That link has expired</h1>
@@ -601,7 +602,7 @@ router.get('/verify', async (req, res) => {
     });
 
     res.send(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Email verified</title>
+<html lang="en"><head><meta charset="UTF-8"><title>${pageTitle('Email verified')}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head><body class="bg-dark text-white"><div class="container py-5" style="max-width:600px;">
   <h1>Email verified</h1>

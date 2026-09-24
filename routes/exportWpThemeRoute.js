@@ -12,6 +12,7 @@ const BlogSite = require('../models/BlogSite');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
+const { pageTitle } = require('../utils/pageTitle');
 
 const projectRoot = path.join(__dirname, '..');
 const baseDistDir = path.join(projectRoot, 'dist');
@@ -55,7 +56,7 @@ function page({ title, heading, body, actions, status = 200, csrfToken = '' }) {
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>${title}</title>
+  <title>${pageTitle(title)}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
 {{HEADER_ASSETS}}

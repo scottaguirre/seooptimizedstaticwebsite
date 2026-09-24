@@ -21,6 +21,7 @@ const router = express.Router();
 
 const requireAuth = require('../middleware/requireAuth');
 const { appHeader, appHeaderAssets, appHeaderScripts } = require('../utils/appHeader');
+const { pageTitle } = require('../utils/pageTitle');
 const { ensureZip } = require('../utils/pluginPackage');
 const { log } = require('../utils/logger');
 
@@ -58,7 +59,7 @@ router.get('/plugin/download', requireAuth, async (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Download failed</title>
+  <title>${pageTitle('Download failed')}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 ${appHeaderAssets()}
 </head>

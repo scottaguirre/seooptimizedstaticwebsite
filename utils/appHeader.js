@@ -37,6 +37,10 @@
 // NOTHING HERE IS NEW. Every link, label and id is reproduced from form.html
 // unchanged — same profile menu, same three items, same dynamic credits badge.
 
+// The product's name. It lives in its own module so a SIGNED-OUT page can
+// brand its tab without importing the logged-in header — see pageTitle.js.
+const { APP_NAME } = require('./pageTitle');
+
 /**
  * Stylesheets and CSS the header needs, for the <head>.
  *
@@ -144,7 +148,7 @@ function appHeader(csrfField = '') {
            image loads. They must match the FILE, which is 452x127 here. -->
       <a href="/" class="d-inline-flex align-items-center text-decoration-none">
         <img src="/img/three-comets-logo-header.png"
-             alt="Three Comets"
+             alt="${APP_NAME}"
              width="178" height="50">
       </a>
 

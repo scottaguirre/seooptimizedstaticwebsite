@@ -2,6 +2,7 @@
 const requireAuth = require('../middleware/requireAuth');
 const { checkCredits } = require("../utils/helpers");
 const express = require('express');
+const { pageTitle } = require('../utils/pageTitle');
 const router = express.Router();
 
 // GET /buy-credits – simple page to show current credits + placeholder
@@ -13,7 +14,7 @@ router.get("/buy-credits", (req, res) => {
     <html lang="en">
     <head>
       <meta charset="UTF-8" />
-      <title>Buy Credits</title>
+      <title>${pageTitle('Buy Credits')}</title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">

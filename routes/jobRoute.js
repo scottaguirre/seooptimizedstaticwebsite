@@ -15,6 +15,7 @@ const Job = require('../models/Job');
 const requireAuth = require('../middleware/requireAuth');
 const { log } = require('../utils/logger');
 const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets } = require('../utils/appHeader');
+const { pageTitle } = require('../utils/pageTitle');
 
 /**
  * Load a job the current user is allowed to see.
@@ -85,7 +86,7 @@ router.get('/jobs/:id', requireAuth, async (req, res) => {
     // mistyped job id, and without it the only way out is the one link in the
     // body — which is the dead-end problem the header exists to fix.
     return res.status(404).send(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Not found</title>
+<html lang="en"><head><meta charset="UTF-8"><title>${pageTitle('Not found')}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 ${appHeaderAssets()}${appSidebarAssets()}
 </head><body style="background:#082d5b;" class="text-white">
@@ -120,7 +121,7 @@ ${appHeaderScripts()}
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${copy.title}</title>
+  <title>${pageTitle(copy.title)}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 ${appHeaderAssets()}${appSidebarAssets()}
 </head>

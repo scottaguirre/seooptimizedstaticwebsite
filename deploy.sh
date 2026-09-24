@@ -73,6 +73,7 @@ for suite in \
   test-business-shape.js \
   test-business-type-picker.js \
   test-page-meta.js \
+  test-page-titles.js \
   test-location-pages.js \
   test-phone.js \
   test-app-header.js \

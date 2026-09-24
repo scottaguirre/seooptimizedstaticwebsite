@@ -18,12 +18,31 @@ rewrite, reformat or "tidy" them:
 `src/css/themes/style.css` was last changed earlier and is not part of that
 batch, but treat it the same way unless asked otherwise.
 
-## DO NOT TOUCH — hand-styled app pages
+## Hand-styled app pages — SAY WHEN YOU CHANGE HOW THEY LOOK
 
-The same day, Edwin also restyled the app's own pages: login, dashboard, blog
-sites and others. Those pages have no stylesheet of their own — the markup and
-its styling are written INLINE in the route files and the view templates, so
-the CSS and the logic sit in the same file:
+**This was a DO NOT TOUCH rule until 24 September 2026. Edwin lifted it:**
+*"the do not touch was a while back, now we can forget about that but let me
+know when it's needed."*
+
+So the rule is no longer "ask before touching presentation". It is: **change
+what the work needs, and say plainly in the reply that you changed how a page
+looks, and what.** The reason for the original rule still stands — these are
+deliberate aesthetic choices, not generated output — so the cost of a silent
+restyle is that Edwin finds it on screen rather than in a sentence.
+
+Still true, and still worth keeping to:
+
+- Don't reformat or "tidy" markup and CSS that the change did not require.
+- Prefer a new stylesheet for a new control over rules pasted into a page's
+  `<style>` block — `/logo-shape-picker.css` and `/business-type-picker.css`
+  are that pattern.
+- Take colours from classes the page already loads rather than inventing
+  them, unless the job is a colour.
+
+Edwin also restyled the app's own pages by hand: login, dashboard, blog sites
+and others. Those pages have no stylesheet of their own — the markup and its
+styling are written INLINE in the route files and the view templates, so the
+CSS and the logic sit in the same file:
 
     src/views/login.html
     src/views/signup.html
@@ -39,27 +58,26 @@ the CSS and the logic sit in the same file:
     routes/exportWpThemeRoute.js
     routes/formRoute.js
 
-Logic in these files is fair game. The presentation is not: leave `<style>`
-blocks, `class="..."` attributes, inline `style="..."`, colours, spacing and
-markup structure exactly as found. Change behaviour without touching how it
-looks.
-
-If a change genuinely requires touching presentation — a new section needing a
-class, a button that has to move — say so and ask first rather than editing.
+Which means a change to how one of them looks lives in the same file as the
+logic, and is easy to make by accident while editing something else. That is
+the reason for the reporting rule above: not that these files are off limits,
+but that a change to them is invisible until somebody loads the page.
 
 `utils/renderAuthPage.js` fills `{{CSRF}}`, `{{ALERT}}` and `{{EMAIL}}` into the
 view files. Its alert markup is presentation too.
 
-**TWO EXCEPTIONS, 24 September, and they were asked for.** `login.html`,
-`signup.html` and the `page()` shell in `passwordRoute.js` gained a viewport
-meta tag and a `<script src="/js/passwordToggle.js" defer>`. The script builds
-a show/hide button next to every password field, which DOES change how those
-pages look. Edwin asked for both by name. No class, colour, spacing, `<style>`
-block or inline style was touched, and the button is built at runtime rather
-than written into the markup — so with JavaScript off the pages are byte for
-byte what they were. Recorded here because the rule above is otherwise the
-first thing a reader hits, and an undocumented exception reads as somebody
-having ignored it.
+**What changed on these pages on 24 September**, while the old rule was still
+in force and each was asked for by name:
+
+- `login.html`, `signup.html` and the `page()` shell in `passwordRoute.js`
+  gained a viewport meta tag and `/js/passwordToggle.js`, which builds a
+  show/hide button beside every password field.
+- `form.html` gained `/business-type-picker.css` and
+  `/js/businessTypePicker.js`, and wizard step 1 stopped being a `<select>`.
+
+Neither touched a class, colour, spacing, `<style>` block or inline style, and
+both build their controls at runtime — so with JavaScript off those pages are
+byte for byte what they were.
 
 ## Deploying
 
@@ -95,7 +113,8 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 
     node test-business-shape.js    # business shapes, prompts, case study, wizard parity
     node test-business-type-picker.js  # wizard step 1: search, numbers, keyboard
-    node test-page-meta.js         # every page's <title> and description; needs no php
+    node test-page-meta.js         # a GENERATED SITE's <title> and description; no php
+    node test-page-titles.js      # the APP's own tab titles and the one APP_NAME
     node test-location-pages.js    # which location pages are allowed; needs no php
     node test-phone.js             # the phone format check, both sides; needs no php
     node test-app-header.js        # the logged-in header and its two copies; needs no php
@@ -653,18 +672,83 @@ it did. **Cheapest way to settle it is a tally of the reasons on the log line**
 (`{"too similar": 11, "duplicate": 3}`) and one Fencing suggestion. That is
 the move that worked for the brand sample.
 
-**The rename to Three Comets — when threecomets.com goes live**
+**The rename to Three Comets — MOSTLY DONE, 24 September 2026**
 
-The header is already the Three Comets logo. Three things still carry the old
-names and are deliberately left until the domain is in use:
+**The app now lives at https://threecomets.com.** This section said "when
+threecomets.com goes live" until the early hours of the 24th, when it did.
 
-- `EMAIL_FROM_NAME` — emails still send as "Fast Website Generator".
-  `utils/sendEmail.js`; the default is `DEFAULT_FROM_NAME` in that file.
-  **The Resend sending domain has to be verified for threecomets.com first**,
-  or the From address and the domain disagree and deliverability suffers.
-- Page `<title>`s — "Generate Website Pages" in `src/views/form.html`,
-  "Dashboard" in `routes/authRoute.js`.
-- Any remaining "SEO Site Generator" strings outside the header.
+What was done, in the order it had to happen:
+
+1. **Resend** — threecomets.com added and verified: DKIM TXT
+   (`resend._domainkey`), and `rsend` / `send` CNAMEs. Verified in about 40
+   minutes at TTL 300.
+2. **DNS at Hostinger** — `A @` and `A www` to `15.204.123.104`.
+3. **nginx** — `/etc/nginx/sites-available/threecomets`, symlinked into
+   `sites-enabled`. Copied from the old site's file, which is where
+   `proxy_read_timeout 300s`, `proxy_connect_timeout 75s` and
+   `client_max_body_size 10M` come from. **That last one is the logo upload
+   limit** — a new server block written from scratch would have omitted it
+   and uploads would have started failing at a size nobody tests.
+4. **certbot** — `sudo certbot --nginx -d threecomets.com -d
+   www.threecomets.com`. Expires 2026-12-23, renews on its own.
+5. **`.env` on the server** — `BASE_URL=https://threecomets.com`, then
+   `EMAIL_FROM=hello@threecomets.com` and `EMAIL_FROM_NAME=Three Comets`.
+   `pm2 restart webgen`.
+
+**THE ORDER MATTERED, and both halves could have broken things:** the cert had
+to exist before `BASE_URL` moved, or every emailed link would have landed on a
+certificate warning; and Resend had to be verified before `EMAIL_FROM` moved,
+or verification and password-reset mail would have bounced and locked people
+out with no way back.
+
+`pm2 restart` is enough to pick up an `.env` change — `server.js` line 3 is
+`require('dotenv').config()`, so it reads the file at startup. pm2's
+"Use --update-env" warning is about pm2's own saved environment, which is not
+where these live.
+
+**THE LOOSE ENDS — all closed by 24 September.**
+
+- ~~**The Stripe webhook still points at fastwebsitegenerator.com.**~~ Done
+  24 September, and the whole live-mode switch with it. See *Stripe went live*
+  below.
+- ~~**www does not redirect to the apex.**~~ Done. One `if ($host =
+  www.threecomets.com)` block in the :443 server, verified with
+  `curl -sI https://www.threecomets.com` → `Location: https://threecomets.com/`.
+- ~~**fastwebsitegenerator.com is still live**~~ Done — switched off the way
+  Edwin chose, and "off" turned out to need three separate things, not one.
+  Deleting the nginx site is **not** enough: requests still land on nginx's
+  default server. The A record had to go from Hostinger's DNS (and the `www`
+  record there was a **CNAME**, not an A — easy to delete one and leave the
+  other), and `certbot delete` had to run, or renewal would have failed daily
+  forever against a domain that no longer resolves.
+- ~~**`hello@threecomets.com` receives nothing.**~~ **THIS WAS WRONG, and it
+  was wrong for three sessions.** It receives fine: there is a real Hostinger
+  mailbox behind it, `dig +short MX threecomets.com` returns
+  `mx1/mx2.hostinger.com`, and a test message sent from Edwin's Gmail on
+  24 September arrived in Hostinger webmail.
+
+  The claim came from reasoning rather than from looking — Resend's *Enable
+  Receiving* is off, so I concluded nothing could receive. Resend's receiving
+  has nothing to do with it; the domain's MX records point at Hostinger, and
+  Hostinger delivers. **One test email would have settled it at any point.**
+  Send the email before writing down what the mail does.
+
+  **Forwarding to Gmail is on**, set up the same evening: hPanel → Emails →
+  threecomets.com → Forwarders, `hello@threecomets.com` → Edwin's Gmail, with
+  **Save copies of forwarded emails LEFT ON**. That toggle is the one to know
+  about — turned off, Hostinger deletes each message after forwarding and Gmail
+  becomes the only copy. Confirmed by a second test email arriving in Gmail,
+  not by the success page.
+
+  So `hello@` now has two inboxes: the Hostinger mailbox holds everything, and
+  Gmail gets a copy. A reply sent from Gmail goes out as Edwin's personal
+  address unless `hello@threecomets.com` is added under Gmail's *Send mail as*
+  — not done, and worth doing before customers write in.
+- ~~Page `<title>`s~~ Done — and it became `utils/pageTitle.js` rather than
+  fourteen edits, so the *next* rename is one constant. See the Tests section
+  for `test-page-titles.js`.
+- ~~Any remaining "SEO Site Generator" strings~~ Done; `test-page-titles.js`
+  fails if one comes back.
 
 **Blocking the medical types**
 
@@ -859,6 +943,122 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## Stripe went live — 24 September 2026
+
+**The app takes real money.** Verified end to end: a $10.00 starter pack bought
+with Edwin's own card, credited automatically, then refunded.
+
+```
+{"event":"billing.webhook.credited","userId":"6a85…","packId":"starter",
+ "credits":1000,"amountCents":1000,"creditsAfter":9400,
+ "stripeSessionId":"cs_live_…"}
+```
+
+**`cs_live_` is the proof, and it is the only proof worth trusting.** A test
+and a live purchase look identical on screen — same Thank You page, same
+balance going up. The session ID prefix is what separates them.
+
+*The two variables, and only two.* `STRIPE_SECRET_KEY` and
+`STRIPE_WEBHOOK_SECRET`. **Edwin sets both on the server himself; a live secret
+key is never pasted into a session, committed, or written to a local file.**
+`pm2 restart webgen` picks them up — `server.js` line 3 is
+`require('dotenv').config()`.
+
+**THE TRAP IS THE SECOND VARIABLE.** `STRIPE_WEBHOOK_SECRET` belongs to one
+specific endpoint, and live mode has its own endpoint list — the test endpoint
+does not carry over. Copy the test signing secret into live and checkout
+succeeds while every webhook fails signature verification: Stripe shows the
+payment as fine, the customer is charged, and credits are never granted,
+quietly. `grep -c 'sk_test_' .env` returning `0` is the cheap check.
+
+*Where things are in the dashboard now.* Stripe renamed two things and both
+cost time:
+
+- **Test mode is now "Sandboxes"**, in the account switcher at the top left —
+  not a toggle at the top right.
+- **Webhooks are now "event destinations"**, under Workbench → Webhooks. The
+  creation flow offers **Select all**, which selects 260 events. Do not. This
+  app acts on exactly one, `checkout.session.completed`, and ignores the rest;
+  260 means hundreds of deliveries the server throws away, and Stripe can
+  disable an endpoint that keeps erroring on things it does not handle.
+
+Live endpoint: `https://threecomets.com/api/stripe-webhook`, one event,
+destination `we_1UJJr3ApitC70jDG0RM8zQAx`.
+
+*Two things that are NOT a problem, so nobody goes looking.*
+`utils/creditPacks.js` passes inline `price_data` rather than stored price IDs,
+so there are no test-mode products to recreate in live; and there is no
+publishable key anywhere, because billing is a Checkout redirect and never
+touches Stripe.js on the client.
+
+**Checking the endpoint without spending money:**
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://threecomets.com/api/stripe-webhook
+```
+
+`400` is the right answer — the app rejecting an unsigned request, which proves
+the route exists *and* that signature checking is on. `404` means the path is
+wrong. This leaves a `billing.webhook.badSignature` line in the log, which is
+expected and not an incident.
+
+**`grep` over SSH buffers, and it looks exactly like a dead feature.**
+
+```
+ssh ubuntu@… 'tail -f logs/app.log | grep billing.webhook'   # prints nothing
+ssh ubuntu@… 'tail -f logs/app.log | grep --line-buffered billing.webhook'
+```
+
+Without `--line-buffered`, grep holds its output because it is not writing to a
+terminal. During the live test this printed nothing at all while the webhook
+was in fact succeeding. When a live tail is silent, read the file directly
+before concluding anything:
+
+```
+grep billing.webhook /home/ubuntu/app/logs/app.log | tail -20
+```
+
+## White text on light cards — 24 September
+
+Both found by Edwin creating a fresh account and looking at it. Neither could
+be seen from the admin account, which is the point.
+
+**The blog card's small print was white on a light card.** `routes/authRoute.js`
+— `class="text-white-50 small"` inside a `bg-secondary-subtle` card, so
+"Works on any WordPress site..." rendered white on near-white. Now
+`text-muted`, matching the site card's subtitle.
+
+**IT ONLY RENDERS FOR SOMEBODY WITH NO WORDPRESS SITES.** The admin account has
+sites connected, so that paragraph never appeared for it and the fault was
+invisible to the only person who ever looked. A whole class of bug lives in
+the branches a developer's own account never takes.
+
+**The dashboard's loading curtain was pale with white text on it.** `#overlay`
+— the full-screen layer behind "Building your WordPress theme... please wait",
+shown by the two download buttons on a site card. It read
+`background: rgba(228, 219, 219, 0.8)` with `color: #fff` and a
+`.text-light` spinner: everything on it was invisible, so the page looked
+frozen for the minute a build takes. Now `rgba(8, 45, 91, 0.9)` — the page's
+own navy at 90%, so it reads as the app dimming itself.
+
+**Not to be confused with the wizard's overlay**, `#loading-overlay` built in
+`public/js/spinner.js`, which has always been `rgba(0,0,0,0.75)` and was never
+the problem. Two overlays, two files, one of them fine.
+
+**A comment that contradicted its own code** sat four lines below the first
+fix: "text-white is required" above a line saying `text-dark`. Corrected. The
+reason is the mirror image of what it claimed — the card is light on a navy
+`<body class="text-white">`, so without an explicit colour the contents
+inherit white and vanish.
+
+**A COMMIT THAT REPORTED SUCCESS AND DID NOT HAPPEN.** The overlay fix was
+written to Edwin's Mac, the write returned `written` with nothing rejected,
+and the file on disk was unchanged — so the deploy that followed carried the
+first fix and not the second. It was caught by grepping the SERVER, which
+returned 0, and then the Mac, which returned 0 as well. Writing a file is not
+evidence that the file changed: check the size or grep the content back,
+especially when writing the same file twice in a row.
 
 ## The password eye and the phone — 24 September
 
@@ -1837,26 +2037,10 @@ The other half of the conversation — a softer "the customer stopped paying"
 stop that leaves already-scheduled posts to publish — was deliberately left
 undecided. Do not build it without asking.
 
-**Next — raised 11 September, for 12 September**
+**Blog hero image — raised 11 September, done on 12 September**
 
-*Stripe live keys.* Only two variables are involved: `STRIPE_SECRET_KEY` and
-`STRIPE_WEBHOOK_SECRET`. Edwin sets both on the server himself; a live secret
-key is never pasted into a session, committed, or written to a local file.
-
-The trap is the second one. **`STRIPE_WEBHOOK_SECRET` is different in live
-mode** — it belongs to a specific endpoint, and the live endpoint has to be
-created in the Stripe dashboard and its own signing secret copied out. Swap
-only the API key and checkout succeeds while every webhook fails signature
-verification, so customers are charged and credits are never granted, quietly.
-
-Two things that are *not* a problem here, worth knowing so nobody goes looking:
-`utils/creditPacks.js` passes inline `price_data` rather than stored price IDs,
-so there are no test-mode products to recreate in live; and there is no
-publishable key anywhere, because billing is a Checkout redirect and never
-touches Stripe.js on the client.
-
-*Blog hero image.* **Done on 12 September** — and it needed no custom post
-type. See "Deliberately dropped" for why the CPT was abandoned.
+It needed no custom post type. See "Deliberately dropped" for why the CPT was
+abandoned.
 
 The goal was "at least one main image so it doesn't look like plain text".
 Everything for that already existed: `functions.php` declares

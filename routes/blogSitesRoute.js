@@ -43,6 +43,7 @@ const { versionOrNull } = require('../utils/pluginPackage');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
+const { pageTitle } = require('../utils/pageTitle');
 
 /** The same shell billingRoute and creditsRoute use, so this does not look bolted on. */
 function page({ title, body, status = 200 }) {
@@ -53,7 +54,7 @@ function page({ title, body, status = 200 }) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <title>${pageTitle(title)}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 {{HEADER_ASSETS}}
 </head>

@@ -34,6 +34,7 @@ const requireAuth = require('../middleware/requireAuth');
 const { PACKS, getPack, formatPrice } = require('../utils/creditPacks');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
+const { pageTitle } = require('../utils/pageTitle');
 
 // Lazy, like the OpenAI client: constructing Stripe without a key throws, and
 // a missing env var should not stop the whole server booting.
@@ -57,7 +58,7 @@ function page({ title, body, status = 200 }) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title}</title>
+  <title>${pageTitle(title)}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 {{HEADER_ASSETS}}
 </head>
