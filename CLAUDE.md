@@ -740,10 +740,25 @@ where these live.
   becomes the only copy. Confirmed by a second test email arriving in Gmail,
   not by the success page.
 
-  So `hello@` now has two inboxes: the Hostinger mailbox holds everything, and
-  Gmail gets a copy. A reply sent from Gmail goes out as Edwin's personal
-  address unless `hello@threecomets.com` is added under Gmail's *Send mail as*
-  — not done, and worth doing before customers write in.
+  So `hello@` has two inboxes: the Hostinger mailbox holds everything, and
+  Gmail gets a copy.
+
+  **Gmail also sends AS `hello@threecomets.com`** — set up the same evening
+  through *Send mail as*, so a reply to a customer leaves as the business
+  address rather than Edwin's personal Gmail. Settings: `smtp.hostinger.com`,
+  port **465**, **SSL**, username the full address (not just `hello`), and the
+  **mailbox** password rather than the Hostinger account login. Those come from
+  hPanel → Emails → Manage → *Connect Apps & Devices*; the IMAP and POP3
+  columns on that page are not needed.
+
+  **"Treat as an alias" is TICKED, and I told Edwin to untick it — wrong.**
+  Google's rule is one question: does mail to this address arrive in this Gmail
+  inbox? The forwarder means yes, so it is an alias in Gmail's sense, whatever
+  Hostinger calls it (there, `hello@` is a real mailbox, not an alias — two
+  different vocabularies, and only Gmail's matters for that checkbox). Unticked
+  Gmail would treat it as a different person and CC Edwin back to himself on
+  Reply All. **I reasoned about threading instead of reading the doc, an hour
+  after writing down that exact lesson two bullets up.**
 - ~~Page `<title>`s~~ Done — and it became `utils/pageTitle.js` rather than
   fourteen edits, so the *next* rename is one constant. See the Tests section
   for `test-page-titles.js`.
@@ -2074,9 +2089,10 @@ exactly like the archive canonical fix — see the WordPress section above.
   run on the VPS. See the Tests section.
 - ~~`MONGO_URI` for the blog suites~~ — mostly a non-issue; see the Tests
   section. Only `findWork` needs a database, and it must be a scratch one.
-- The server has 25 pending package updates, 11 of them security, and a kernel
-  upgrade waiting on a reboot. Noticed 12 September. Needs a quiet moment and
-  its own plan, not a ride-along with a deploy.
+- ~~The server has 25 pending package updates and a kernel upgrade waiting on a
+  reboot.~~ **Done 24 September.** 31 packages upgraded, rebooted onto kernel
+  `6.8.0-142-generic`. Recorded below, because the next one should be the same
+  twenty minutes rather than another twelve days of putting it off.
 - ~~`test-blog-api.js` and `test-blog-scheduler.js` need `MONGO_URI` set. They
   exit without running, so they have never told anyone anything.~~ **Not true**
   — corrected 13 September. One needs no database at all and the other only
