@@ -43,22 +43,20 @@ class IE_Admin {
 	const TABS = array( 'running', 'drafts', 'done', 'new' );
 
 	/**
-	 * Finished campaigns per page.
-	 *
-	 * They never stop accumulating — a site running one campaign a fortnight
-	 * has twenty-six a year, and nothing ever removes them, because the posts
-	 * they wrote are the customer's and the record of what was charged has to
-	 * survive. Ten is roughly a screen.
-	 */
-	const DONE_PER_PAGE = 10;
-
-	/**
-	 * How many running campaigns before the screen changes shape.
+	 * How many campaigns before the screen changes shape.
 	 *
 	 * Below this every campaign gets its own open card, which is the right
 	 * screen for somebody with two or three. At and above it they fold into
 	 * rows under the page they feed, and a filter box appears — because a
 	 * wall of fifty identical cards is not a list, it is a haystack.
+	 *
+	 * ONE THRESHOLD FOR BOTH TABS. There used to be a second rule for the
+	 * Completed tab — ten full cards a page, with a pager — written on the
+	 * assumption that finished campaigns are a different kind of list. They
+	 * are not. They are the SAME list, and the one that grows: a site running
+	 * one campaign a fortnight has twenty-six finished in a year and nothing
+	 * ever removes them, because the posts they wrote are the customer's and
+	 * the record of what was charged has to survive.
 	 */
 	const GROUP_FROM = 4;
 
@@ -743,58 +741,109 @@ class IE_Admin {
 			return;
 		}
 
-		self::render_campaign_filter( count( $running ) );
+		self::render_folded_groups( $running );
 
-		foreach ( self::by_money_page( $running ) as $group ) {
-			?>
-			<h2 class="ie-group-heading" style="margin:1.5rem 0 .5rem;font-size:1.1rem">
-				<?php echo esc_html( $group['title'] ); ?>
-				<span style="font-weight:400;color:#666">
-					— <?php echo esc_html( sprintf(
-						/* translators: %d: number of campaigns feeding this page */
-						_n( '%d campaign', '%d campaigns', count( $group['campaigns'] ), 'interlink-engine' ),
-						count( $group['campaigns'] )
-					) ); ?>
-				</span>
-			</h2>
-			<?php
+		/* Below the campaigns, not above: it describes them. ONCE — this stood
+		 * as an unconditional call followed by an `if ( count > 1 )` call, and
+		 * the grouped path only runs at four or more, so "Coming up" was drawn
+		 * twice on every screen the fold was built for. */
+		self::render_upcoming();
+	}
 
+	/**
+	 * Campaigns as one flat, numbered list of one-line rows, with a box that
+	 * filters them.
+	 *
+	 * SHARED BY BOTH TABS, and it was not. This was written inside the In
+	 * progress tab for the fifty-campaign problem, and the Completed tab —
+	 * which is the one that only ever GROWS — was left paging through full
+	 * cards ten at a time. So the tab that empties itself got the treatment
+	 * and the tab that accumulates did not, which is exactly backwards.
+	 *
+	 * Pagination went with it. A folded row is one line: fifty of them is a
+	 * screen you can scan, and the filter box finds a campaign faster than
+	 * remembering it was on page three.
+	 *
+	 * THE MONEY-PAGE HEADINGS ARE GONE, and the grouping is not.
+	 *
+	 * Campaigns are usually named after the page they feed, so each heading
+	 * read "Toilet Replacement Services — 1 campaign" directly above a row
+	 * reading "Toilet Replacement Services — 4 of 4 scheduled, 4 live". At
+	 * fifty campaigns that is fifty headings and fifty rows: a hundred lines
+	 * to say fifty things, on the screen built to stop exactly that.
+	 *
+	 * So the heading went and by_money_page() stayed, for ORDER alone —
+	 * campaigns feeding one page still sit together, which was the useful
+	 * half. The page is named on the row itself only when it differs from the
+	 * campaign's own name, so nothing is lost and nothing is said twice.
+	 *
+	 * NUMBERED 1..N STRAIGHT THROUGH, so a number is a name somebody can say
+	 * out loud. That only works while it is stable: it is why there is no
+	 * pagination (a number that depends on which page you are on is not a
+	 * reference) and why it counts across groups rather than restarting.
+	 */
+	private static function render_folded_groups( $campaigns ) {
+		self::render_campaign_filter( count( $campaigns ) );
+
+		$n = 0;
+		?>
+		<div class="ie-campaign-list">
+		<?php
+		foreach ( self::by_money_page( $campaigns ) as $group ) {
 			foreach ( $group['campaigns'] as $campaign ) {
+				$n++;
+				$label    = IE_Campaigns::label_of( $campaign );
 				$headline = self::campaign_headline( $campaign );
+
+				/* Only when it adds something. Compared loosely — trimmed and
+				 * case-folded — because "Slab Leak Detection" and "slab leak
+				 * detection" are the same words, and printing the second after
+				 * the first is the duplication this change removed. */
+				$page = ( '' !== $group['title']
+					&& strtolower( trim( $group['title'] ) ) !== strtolower( trim( $label ) ) )
+					? $group['title']
+					: '';
 				?>
 				<details class="ie-campaign-fold"
 				         data-ie-search="<?php echo esc_attr( strtolower(
-					         IE_Campaigns::label_of( $campaign ) . ' ' . $group['title']
+					         $label . ' ' . $group['title']
 				         ) ); ?>"
 				         style="margin-bottom:.4rem;border:1px solid #dcdcde;background:#fff;border-radius:4px">
 					<summary style="padding:.6rem .9rem;cursor:pointer">
-						<strong><?php echo esc_html( IE_Campaigns::label_of( $campaign ) ); ?></strong>
+						<span class="ie-row-num"><?php echo esc_html( $n ); ?>.</span>
+						<strong><?php echo esc_html( $label ); ?></strong>
 						<span style="color:#666"> — <?php echo esc_html( $headline ); ?></span>
+						<?php if ( $page ) : ?>
+							<span style="color:#787c82"> · <?php echo esc_html( sprintf(
+								/* translators: %s: the page this campaign's posts link to */
+								__( 'feeds %s', 'interlink-engine' ),
+								$page
+							) ); ?></span>
+						<?php endif; ?>
 					</summary>
 					<?php self::render_campaign_card( $campaign, true, true ); ?>
 				</details>
 				<?php
 			}
 		}
-
-		// Unchanged by any of this: it is the only view that can see a day
-		// carrying two posts, and that matters more at fifty than at three.
-		self::render_upcoming();
-
-		// Below the campaigns, not above: it describes them, and with one
-		// campaign it repeats the card it sits under. It earns its place at
-		// two or more, where it is the only view that can see a day carrying
-		// two posts.
-		if ( count( $running ) > 1 ) {
-			self::render_upcoming();
-		}
+		?>
+		</div>
+		<?php
 	}
 
 	/**
 	 * Campaigns, gathered under the page each one feeds.
 	 *
+	 * FOR ORDER, NOT FOR HEADINGS, since the headings went. Campaigns feeding
+	 * one page still come out adjacent, which was the half of grouping worth
+	 * having; what went was printing the page's name above a row that already
+	 * carried it.
+	 *
 	 * Keyed by the money page's URL rather than its name: two pages can share
-	 * a title, and the URL is the thing that makes them the same page.
+	 * a title, and the URL is the thing that makes them the same page. Merging
+	 * on title would interleave two different pages' campaigns and the row
+	 * numbers would run through both as if they belonged together.
+	 *
 	 * Insertion order is kept, so the newest campaign's page leads — the list
 	 * arrives sorted and this must not undo that.
 	 */
@@ -850,22 +899,14 @@ class IE_Admin {
 			box.addEventListener( 'input', function () {
 				var want = box.value.trim().toLowerCase();
 
+				/* THE NUMBERS DO NOT RENUMBER, and that is the point. Filtering
+				 * to three rows leaves them reading 7, 19 and 31, because the
+				 * number names the campaign rather than its position — and a
+				 * name that changes when you type in a box is not a name. The
+				 * rows keep their numbers whatever is hidden. */
 				document.querySelectorAll( '.ie-campaign-fold' ).forEach( function ( row ) {
 					var hit = ! want || ( row.dataset.ieSearch || '' ).indexOf( want ) !== -1;
 					row.style.display = hit ? '' : 'none';
-				} );
-
-				// A heading with nothing under it is a lie about what is on
-				// the page. Hidden with its group.
-				document.querySelectorAll( '.ie-group-heading' ).forEach( function ( heading ) {
-					var any = false, node = heading.nextElementSibling;
-
-					while ( node && node.classList.contains( 'ie-campaign-fold' ) ) {
-						if ( node.style.display !== 'none' ) { any = true; break; }
-						node = node.nextElementSibling;
-					}
-
-					heading.style.display = any ? '' : 'none';
 				} );
 			} );
 		}() );
@@ -897,12 +938,24 @@ class IE_Admin {
 	}
 
 	/**
-	 * Finished campaigns, a page at a time.
+	 * Finished campaigns.
 	 *
-	 * Paged rather than hidden behind a <details>, because the list only grows
-	 * and "62 finished campaigns" behind one toggle is not a list anyone can
-	 * use. paginate_links() draws WordPress's own pager, so it matches every
-	 * other list table in the admin.
+	 * FOLDED AND FILTERED, exactly like In progress, and this tab needs it
+	 * more. In progress empties itself as campaigns finish; THIS list only
+	 * ever grows, so it is the one that reaches fifty. It spent that whole
+	 * time paging through full cards ten at a time, which is how a screen
+	 * built for the fifty-campaign problem ended up on the only tab that
+	 * never has fifty campaigns on it.
+	 *
+	 * The pager went with the cards. It was there because "62 finished
+	 * campaigns" as 62 full cards is unusable — true, and the answer is to
+	 * stop drawing 62 full cards. As one-line rows they fit on a screen you
+	 * can scan, and the filter box finds one faster than remembering which
+	 * page it was on. Any old ?paged= bookmark now simply shows everything,
+	 * which is the right failure.
+	 *
+	 * Below the fold threshold nothing changes: a handful of finished
+	 * campaigns still open as cards, same as a handful of running ones.
 	 */
 	private static function render_done_tab( $done ) {
 		if ( empty( $done ) ) {
@@ -913,14 +966,6 @@ class IE_Admin {
 		}
 
 		$total = count( $done );
-		$pages = (int) ceil( $total / self::DONE_PER_PAGE );
-
-		// Clamped, not trusted: ?paged=999 on a two-page list should show the
-		// last page rather than an empty screen with a pager pointing nowhere.
-		$paged = isset( $_GET['paged'] ) ? max( 1, (int) $_GET['paged'] ) : 1;
-		$paged = min( $paged, $pages );
-
-		$slice = array_slice( $done, ( $paged - 1 ) * self::DONE_PER_PAGE, self::DONE_PER_PAGE );
 		?>
 		<p class="description" style="margin:0 0 1rem">
 			<?php esc_html_e( 'Every post stays on your site. A finished campaign is the record of what was published and what it feeds.', 'interlink-engine' ); ?>
@@ -937,38 +982,18 @@ class IE_Admin {
 					) );
 					?>
 				</span>
-				<?php self::done_pager( $paged, $pages ); ?>
 			</div>
 		</div>
 
 		<?php
-		foreach ( $slice as $campaign ) {
-			self::render_campaign_card( $campaign, true );
-		}
-
-		if ( $pages > 1 ) {
-			?>
-			<div class="tablenav bottom" style="height:auto">
-				<div class="tablenav-pages"><?php self::done_pager( $paged, $pages ); ?></div>
-			</div>
-			<?php
-		}
-	}
-
-	private static function done_pager( $paged, $pages ) {
-		if ( $pages < 2 ) {
+		if ( $total >= self::GROUP_FROM ) {
+			self::render_folded_groups( $done );
 			return;
 		}
 
-		echo wp_kses_post( paginate_links( array(
-			'base'      => self::tab_url( 'done', array( 'paged' => '%#%' ) ),
-			'format'    => '',
-			'prev_text' => '&laquo;',
-			'next_text' => '&raquo;',
-			'total'     => $pages,
-			'current'   => $paged,
-			'type'      => 'plain',
-		) ) );
+		foreach ( $done as $campaign ) {
+			self::render_campaign_card( $campaign, true );
+		}
 	}
 
 	/**
@@ -981,6 +1006,13 @@ class IE_Admin {
 	private static function styles() {
 		?>
 		<style>
+			/* RIGHT-ALIGNED IN A FIXED WIDTH, so 9 and 10 put their last digit
+			   in the same column and the names below them start in one line
+			   rather than stepping right at every tenth row. Tabular figures
+			   for the same reason. */
+			.ie-row-num{display:inline-block;min-width:2.2em;margin-right:.35rem;
+				color:#787c82;font-weight:600;text-align:right;
+				font-variant-numeric:tabular-nums}
 			.ie-count{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;
 				border-radius:9px;background:#b8bcc0;color:#fff;font-size:11px;
 				font-weight:600;line-height:18px;text-align:center;vertical-align:1px}

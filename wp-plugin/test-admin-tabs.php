@@ -465,63 +465,131 @@ test( 'the search-term column starts hidden', function () {
 	has( $html, 'Show search terms', 'no toggle to bring it back' );
 } );
 
-echo "\nPagination\n";
+/* ---------------------------------------------------------------------
+ * The Completed tab folds too
+ *
+ * The fold and the filter box were built for the fifty-campaign problem and
+ * wired into the In progress tab alone. In progress EMPTIES ITSELF as
+ * campaigns finish; the Completed tab only ever grows. So the tab that never
+ * reaches fifty got the fix, and the tab that certainly will was left paging
+ * through full cards ten at a time.
+ *
+ * These replace the pagination tests. The pager is gone: a folded row is one
+ * line, fifty of them is a screen you can scan, and the filter box finds a
+ * campaign faster than remembering which page it was on.
+ * ------------------------------------------------------------------ */
+
+echo "\nThe completed tab folds too\n";
 
 $many = array();
 for ( $i = 0; $i < 23; $i++ ) {
-	$many[] = campaign(
+	$c = campaign(
 		"done-$i",
 		"finished campaign $i",
 		array( slot( 0, 'published', -30 ) ),
 		true,
 		date( 'Y-m-d H:i:s', strtotime( '2026-01-01' ) + $i * 86400 )
 	);
+
+	// Three money pages, so the grouping has something to group by.
+	$page = $i % 3;
+	$c['target_page'] = array(
+		'title' => 'Money Page ' . $page,
+		'url'   => 'http://site/p/' . $page,
+	);
+
+	$many[] = $c;
 }
 
-test( 'page one holds ten of twenty-three', function () use ( $many ) {
+test( 'TWENTY-THREE FINISHED CAMPAIGNS ALL FIT ON ONE SCREEN', function () use ( $many ) {
 	$GLOBALS['ie_campaigns'] = $many;
 	$html = render( 'done' );
-	ok( 10 === cards( $html ), 'expected 10 cards, got ' . cards( $html ) );
+
+	same( 23, cards( $html ), 'the completed tab is still showing a slice' );
 	has( $html, '23 campaigns', 'the total is not stated' );
+	hasnt( $html, 'page-numbers', 'the pager survived' );
 } );
 
-test( 'newest finished is first', function () use ( $many ) {
+test( 'they fold into rows rather than cards', function () use ( $many ) {
 	$GLOBALS['ie_campaigns'] = $many;
 	$html = render( 'done' );
-	has( $html, 'finished campaign 22', 'the most recent one is not on page one' );
-	hasnt( $html, 'finished campaign 0<', 'the oldest one is on page one' );
+
+	/* Counted on the opening tag: 'ie-campaign-fold' also appears in the
+	 * filter's JavaScript, so the bare class name reports one too many. */
+	same( 23, substr_count( $html, '<details class="ie-campaign-fold"' ),
+		'the finished campaigns did not fold' );
 } );
 
-test( 'the last page holds the remaining three', function () use ( $many ) {
-	$GLOBALS['ie_campaigns'] = $many;
-	$html = render( 'done', 3 );
-	ok( 3 === cards( $html ), 'expected 3 cards, got ' . cards( $html ) );
-} );
-
-test( 'a page number past the end shows the last page, not an empty screen', function () use ( $many ) {
-	$GLOBALS['ie_campaigns'] = $many;
-	$html = render( 'done', 999 );
-	ok( 3 === cards( $html ), 'expected the last page, got ' . cards( $html ) . ' cards' );
-} );
-
-test( 'a page number below one is clamped', function () use ( $many ) {
-	$GLOBALS['ie_campaigns'] = $many;
-	$html = render( 'done', -4 );
-	ok( 10 === cards( $html ), 'expected page one, got ' . cards( $html ) . ' cards' );
-} );
-
-test( 'the pager links carry the tab, or they would land on In progress', function () use ( $many ) {
+test( 'AND THEY CAN BE FILTERED', function () use ( $many ) {
 	$GLOBALS['ie_campaigns'] = $many;
 	$html = render( 'done' );
-	ok( preg_match( '/page-numbers" href="[^"]*tab=done[^"]*paged=2/', $html )
-	    || preg_match( '/page-numbers" href="[^"]*paged=2[^"]*tab=done/', $html ),
-		'a pager link does not name the tab' );
+
+	has( $html, 'id="ie-campaign-filter"', 'there is no way to search the finished list' );
+	has( $html, 'Filter 23 campaigns', 'the filter box does not say what it filters' );
+	has( $html, 'data-ie-search="finished campaign 7 money page 1"',
+		'a finished campaign cannot be matched by its own name or page' );
 } );
 
-test( 'no pager when everything fits on one page', function () {
-	$GLOBALS['ie_campaigns'] = array( campaign( 'c-done', 'only one', array( slot( 0, 'published', -2 ) ), true ) );
+test( 'numbered 1 through 23, with no headings', function () use ( $many ) {
+	$GLOBALS['ie_campaigns'] = $many;
 	$html = render( 'done' );
-	hasnt( $html, 'page-numbers', 'drew a pager for a single page' );
+
+	preg_match_all( '/<span class="ie-row-num">(\d+)\.<\/span>/', $html, $m );
+
+	same( range( 1, 23 ), array_map( 'intval', $m[1] ),
+		'the finished campaigns are not numbered straight through' );
+	hasnt( $html, 'ie-group-heading', 'the completed tab still draws headings' );
+} );
+
+test( 'newest finished is still first', function () use ( $many ) {
+	$GLOBALS['ie_campaigns'] = $many;
+	$html = render( 'done' );
+
+	$newest = strpos( $html, 'finished campaign 22' );
+	$oldest = strpos( $html, 'finished campaign 0<' );
+
+	ok( false !== $newest, 'the most recent one is not on the page at all' );
+	ok( false === $oldest || $newest < $oldest, 'the oldest one comes first' );
+} );
+
+test( 'an old ?paged bookmark shows everything rather than nothing', function () use ( $many ) {
+	/* The pager is gone, so links people saved point at a parameter nothing
+	 * reads. Ignoring it is the right failure; an empty screen is not. */
+	$GLOBALS['ie_campaigns'] = $many;
+
+	same( 23, cards( render( 'done', 3 ) ), 'a stale ?paged=3 lost the list' );
+	same( 23, cards( render( 'done', 999 ) ), 'a stale ?paged=999 lost the list' );
+} );
+
+test( 'A HANDFUL OF FINISHED CAMPAIGNS STILL OPEN AS CARDS', function () {
+	/* The same threshold as In progress. A fold and a filter box over three
+	 * campaigns is furniture. */
+	$few = array();
+	for ( $i = 0; $i < 3; $i++ ) {
+		$few[] = campaign( "d-$i", "only $i", array( slot( 0, 'published', -2 ) ), true );
+	}
+
+	$GLOBALS['ie_campaigns'] = $few;
+	$html = render( 'done' );
+
+	same( 3, cards( $html ), 'the cards are not all there' );
+	hasnt( $html, '<details class="ie-campaign-fold"', 'three campaigns were folded' );
+	hasnt( $html, 'id="ie-campaign-filter"', 'a filter box over three campaigns' );
+	hasnt( $html, 'page-numbers', 'drew a pager' );
+} );
+
+test( 'COMING UP IS DRAWN ONCE, NOT TWICE', function () {
+	/* An unconditional call followed by an `if ( count > 1 )` call, in a
+	 * branch that only runs at four or more — so the one screen the fold was
+	 * built for printed the whole schedule table twice. */
+	$GLOBALS['ie_campaigns'] = many_running( 6, 2 );
+
+	$html = render( 'running' );
+
+	/* Six campaigns, each with a post four days out, so upcoming() has rows
+	 * and the section really is drawn — a count of 1 on a section that never
+	 * renders would pass for the wrong reason. */
+	same( 1, substr_count( $html, '>Coming up<' ), 'Coming up was not rendered exactly once' );
 } );
 
 echo "\nEmpty states\n";
@@ -780,36 +848,104 @@ test( 'FIFTY CAMPAIGNS FOLD INTO ROWS', function () {
 		'not every campaign became a foldable row' );
 } );
 
-test( 'THEY ARE GROUPED UNDER THE PAGE THEY FEED', function () {
-	/* Campaigns are not an unordered list. Each feeds ONE page, and several
-	 * feeding the same page are the thing an owner reasons about. */
+/** The rows in the order they were rendered, by what the filter searches. */
+function row_order( $html ) {
+	preg_match_all( '/data-ie-search="([^"]*)"/', $html, $m );
+	return $m[1];
+}
+
+test( 'THE MONEY-PAGE HEADINGS ARE GONE', function () {
+	/* Campaigns are usually named after the page they feed, so every heading
+	 * read "Toilet Replacement Services — 1 campaign" directly above a row
+	 * reading "Toilet Replacement Services — 4 of 4 scheduled". At fifty that
+	 * is a hundred lines to say fifty things, on the screen whose whole job
+	 * is to stop that. */
 	$GLOBALS['ie_campaigns'] = many_running( 12, 3 );
 
 	$html = render( 'running' );
 
-	same( 3, substr_count( $html, '<h2 class="ie-group-heading"' ),
-		'the campaigns were not grouped' );
-	has( $html, 'Money Page 0', 'the page a group feeds is not named' );
-	has( $html, '4 campaigns', 'a group does not say how many it holds' );
+	hasnt( $html, 'ie-group-heading', 'the headings are still being drawn' );
+	hasnt( $html, '4 campaigns', 'a group is still announcing how many it holds' );
+} );
+
+test( 'CAMPAIGNS FEEDING ONE PAGE STILL COME OUT TOGETHER', function () {
+	/* The grouping stayed; only its heading went. Adjacency was the half
+	 * worth having — several campaigns at one page are the thing an owner
+	 * reasons about, and a list that scatters them is back to an unordered
+	 * pile whatever it is called. */
+	$GLOBALS['ie_campaigns'] = many_running( 12, 3 );
+
+	$rows = row_order( render( 'running' ) );
+
+	same( 12, count( $rows ), 'not every campaign became a row' );
+
+	foreach ( array( 0, 1, 2 ) as $page ) {
+		for ( $i = 0; $i < 4; $i++ ) {
+			$at = $page * 4 + $i;
+			ok( false !== strpos( $rows[ $at ], 'money page ' . $page ),
+				"row $at belongs to another page — the grouping was lost" );
+		}
+	}
 } );
 
 test( 'TWO PAGES THAT SHARE A TITLE ARE STILL TWO PAGES', function () {
 	/* Grouped by URL, not by name. An agency running the same service on two
-	 * sites has two "Emergency Plumber" pages, and piling their campaigns
-	 * into one heading says a thing that is not true about either.
+	 * sites has two "Emergency Plumber" pages, and running their campaigns
+	 * together says a thing that is not true about either — and, now that the
+	 * rows are numbered straight through, numbers them as one run.
 	 *
-	 * The fixture above gives every page a distinct title AND url, so it
-	 * could not tell the two apart — a mutation grouping by title passed. */
+	 * ASSERTED ON THE ORDER, because with the headings gone there is nothing
+	 * else left to count. Grouping by URL gives campaigns 0, 2 then 1, 3;
+	 * grouping by title merges all four and leaves them 0, 1, 2, 3. The
+	 * fixture's pages share a title but not a url, so the two orders differ —
+	 * which is exactly what the old fixture could not do. */
 	$GLOBALS['ie_campaigns'] = many_running( 4, 2 );
 
 	foreach ( $GLOBALS['ie_campaigns'] as $i => $c ) {
 		$GLOBALS['ie_campaigns'][ $i ]['target_page']['title'] = 'Emergency Plumber';
 	}
 
+	$rows = row_order( render( 'running' ) );
+
+	same( array(
+		'campaign 0 emergency plumber',
+		'campaign 2 emergency plumber',
+		'campaign 1 emergency plumber',
+		'campaign 3 emergency plumber',
+	), $rows, 'two different pages with the same name were merged' );
+} );
+
+test( 'EVERY ROW IS NUMBERED, 1 THROUGH N', function () {
+	/* A number somebody can say out loud. It only works while it is stable,
+	 * which is why it counts across groups instead of restarting, and why
+	 * there is no pagination behind it. */
+	$GLOBALS['ie_campaigns'] = many_running( 12, 3 );
+
 	$html = render( 'running' );
 
-	same( 2, substr_count( $html, '<h2 class="ie-group-heading"' ),
-		'two different pages with the same name were merged into one group' );
+	preg_match_all( '/<span class="ie-row-num">(\d+)\.<\/span>/', $html, $m );
+
+	same( range( 1, 12 ), array_map( 'intval', $m[1] ),
+		'the rows are not numbered 1..12 in order' );
+} );
+
+test( 'the page is named on the row only when it is not the row', function () {
+	/* The whole reason the headings went. Saying "feeds Toilet Replacement
+	 * Services" on a row called "Toilet Replacement Services" is the same
+	 * duplication in a smaller font. */
+	$same = many_running( 6, 2 );
+	foreach ( $same as $i => $c ) {
+		$same[ $i ]['label'] = $c['target_page']['title'];
+	}
+
+	$GLOBALS['ie_campaigns'] = $same;
+	hasnt( render( 'running' ), 'feeds Money Page',
+		'the page is repeated on a row that already carries its name' );
+
+	// ...and it IS said when it differs, or the page becomes unfindable.
+	$GLOBALS['ie_campaigns'] = many_running( 6, 2 );
+	has( render( 'running' ), 'feeds Money Page 0',
+		'a campaign named differently from its page does not say which page' );
 } );
 
 test( 'a filter box appears once there are enough to need one', function () {

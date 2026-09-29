@@ -149,10 +149,10 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
-    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, 60
+    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, 64
     php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, 57
 
-160 assertions in all; last run green on 29 September under PHP 8.4.
+164 assertions in all; last run green on 29 September under PHP 8.4.
 
 `test-admin-tabs.php` is the only harness that can actually render
 `class-ie-admin.php`. It had drifted to 6 passing / 23 failing while sitting
@@ -259,6 +259,18 @@ Add `rua=mailto:hello@threecomets.com` now that forwarding works. Unverified:
 Resend's DKIM was NXDOMAIN at `resend._domainkey` on both the root and
 `send.threecomets.com`; SPF and MX there are correctly Resend's, so the
 selector is probably just different — check their dashboard.
+
+**Next up — Edwin asked for this on 29 September, for the following day**
+
+*Number the rows in the Three Comets blog report.* `routes/blogReportRoute.js`
+— a `#` column on the Campaigns tab AND the Posts tab, so a row can be named
+out loud the way the plugin's campaign rows now can. The rules are already
+settled in `render_folded_groups()` in `class-ie-admin.php`: numbered 1..N
+straight through, right-aligned with `tabular-nums` so the digits line up,
+and **the number must not change when a filter is applied** — it names the
+row, not its position. The CSV should carry the same column, or the export
+stops matching the screen it came from, which is the whole reason `rowsFor()`
+is shared.
 
 **Raised 29 September, not yet ruled on by Edwin**
 
@@ -1014,6 +1026,97 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## A flat numbered list — 29 September 2026 (plugin 0.11.1)
+
+Edwin, on seeing the fold for the first time: *"I want to remove the heading,
+i feel is extra as each field has the name of the campaign and it takes up
+space."*
+
+He was describing this, three times over on one screen:
+
+    Toilet Replacement Services — 1 campaign
+      ▸ Toilet Replacement Services — 4 of 4 scheduled, 4 live, finished
+
+**Campaigns are almost always named after the page they feed**, so the
+money-page heading repeated the row under it. At fifty campaigns that is fifty
+headings and fifty rows — a hundred lines to say fifty things, on the screen
+whose entire purpose was to stop that.
+
+**The heading went; the grouping stayed.** `by_money_page()` now orders rather
+than titles: campaigns feeding one page still come out adjacent, which was the
+half worth having. The page is named on the row itself — *"· feeds Slab Leak
+Detection"* — **only when it differs from the campaign's own name**, compared
+trimmed and case-folded, so nothing is lost and nothing is said twice.
+
+**Rows are numbered 1..N straight through**, his request: a number is
+something you can say out loud. That only holds while it is stable, which is
+why the numbering counts across groups instead of restarting, why **filtering
+does not renumber** (filter to three rows and they still read 7, 19, 31 — a
+name that changes when you type in a box is not a name), and why he chose no
+pagination: a number that depends on which page you are on is not a reference.
+
+`.ie-row-num` is right-aligned in a fixed `2.2em` with `tabular-nums`, so 9 and
+10 put their last digit in the same column and the names below them do not step
+right at every tenth row.
+
+### Losing the headings cost the tests their assertion
+
+Two suites counted `<h2 class="ie-group-heading">` to prove the grouping
+worked. With the headings gone there is nothing left to count, and "the rows
+are all there" does not distinguish grouped from unordered.
+
+**They assert the ORDER now.** `many_running(4, 2)` with both pages retitled
+"Emergency Plumber" comes out `0, 2, 1, 3` when keyed by URL and `0, 1, 2, 3`
+when keyed by title — so the two implementations produce different output and
+the test can tell them apart. Verified by mutation: keying `by_money_page()` on
+the title fails exactly that test, and removing the grouping outright fails
+five.
+
+That is the general repair for this. **When the thing you were counting
+disappears, do not reach for a weaker count — find what the change is actually
+supposed to produce and assert that.**
+
+64 / 34 / 9 / 57 — **164**, green.
+
+## The fold went on the wrong tab — 29 September 2026 (plugin 0.11.0)
+
+The fifty-campaign rework (#32) was built into `render_running_tab()` and
+nowhere else. Edwin never saw it, and said so: *"I thought you were fixing the
+long list of cards (50 campaigns) UI"*.
+
+He was right, and his screen was the proof:
+
+- **In progress: 1 campaign.** `GROUP_FROM` is 4, so the fold never switches
+  on. He would have had to run four campaigns at once to see it.
+- **Completed: 6 campaigns**, rendered as six full open cards — the exact wall
+  of identical boxes the rework existed to kill.
+
+**In progress empties itself as campaigns finish. Completed only ever grows.**
+So the fold landed on the tab that never reaches fifty, and the tab that
+certainly will was left paging through full cards ten at a time. Backwards,
+and easy to miss because each tab's code reads sensibly on its own.
+
+`render_folded_groups()` is now shared by both tabs, and `GROUP_FROM` is the
+single threshold: under four, open cards; at four or more, one-line rows
+grouped by money page with a filter box.
+
+**The pager went with the cards.** It existed because "62 finished campaigns"
+as 62 full cards is unusable — true, and the answer is to stop drawing 62 full
+cards, not to show ten of them at a time. As folded rows they fit on a screen
+you can scan, and the filter box beats remembering which page it was on. An
+old `?paged=3` bookmark now shows everything, which is the right failure; a
+test asserts that rather than leaving it to chance.
+
+**"Coming up" was being drawn twice.** An unconditional `render_upcoming()`
+followed by `if ( count( $running ) > 1 ) render_upcoming()`, inside a branch
+that only runs at four or more campaigns — so the entire schedule table
+printed twice on the one screen the fold was built for. Nothing caught it: the
+suite asserted the section was *present*. **"It is there" and "it is there
+once" are different assertions**, and only the second one catches a
+duplicate. The new test was checked against the old code and fails on it.
+
+61 / 34 / 9 / 57 — **161**, green.
 
 ## Pause on a finished campaign — 29 September 2026 (plugin 0.10.1)
 
