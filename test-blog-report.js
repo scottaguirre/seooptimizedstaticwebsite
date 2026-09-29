@@ -33,7 +33,7 @@ const Module = require('module');
 const { execFileSync } = require('child_process');
 
 let passed = 0, failed = 0;
-const DECLARED = 81;
+const DECLARED = 83;
 
 function test(name, fn) {
   try {
@@ -246,6 +246,36 @@ await atest('removal is a date beside the status, not a replacement for it', asy
   const statuses = rows.map(r => r.campaignStatus).sort();
 
   assert.deepStrictEqual(statuses, ['cancelled', 'completed']);
+});
+
+await atest('THE PAGE A CAMPAIGN FEEDS IS NAMED, NOT LEFT BLANK', async () => {
+  /* The report read targetPage.title, which is not in the schema — /plan
+   * stores url, keyword and intent and nothing else. So "Links to" and the
+   * CSV's links_to_page were blank on every row ever produced: an anchor
+   * phrase under an empty heading, and a bare link. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      targetPage: { url: 'https://roofingamerica.xyz/slab-leak', keyword: 'slab leak detection austin' },
+    })],
+  });
+
+  const rows = await rowsFor('u1');
+
+  assert.strictEqual(rows[0].moneyPage, 'slab leak detection austin',
+    'the page a campaign feeds has no name');
+});
+
+await atest('a stored title still wins over the keyword', async () => {
+  // The more human answer, if one is ever stored.
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      targetPage: { url: 'https://x.test/p', keyword: 'slab leak detection austin', title: 'Slab Leak Detection' },
+    })],
+  });
+
+  assert.strictEqual((await rowsFor('u1'))[0].moneyPage, 'Slab Leak Detection');
 });
 
 await atest('a slot that never published still has a row', async () => {
@@ -706,8 +736,16 @@ await atest('A REMOVED CAMPAIGN\'S STATUS IS SAID IN THE PAST', async () => {
   const res = await render('/blog-report', {});
   const body = /<tbody>([\s\S]*?)<\/tbody>/.exec(res.body)[1];
 
-  assert.ok(body.includes('In progress at removal'),
+  assert.ok(body.includes('Was in progress'),
     'a removed campaign still claims to be in progress');
+
+  /* THE STATUS CELL, not just the page. text-danger is already on the removal
+   * date beside it, so asking whether the body contains it at all answers
+   * nothing — and a mutation putting the status back to muted grey passed. */
+  const flat = body.replace(/\s+/g, ' ');
+
+  assert.match(flat, /<td class="text-danger"[^>]*>\s*Was in progress\s*<\/td>/,
+    'the status of a removed campaign is not marked out');
 });
 
 await atest('a live campaign is still said in the present', async () => {
@@ -717,7 +755,7 @@ await atest('a live campaign is still said in the present', async () => {
   const body = /<tbody>([\s\S]*?)<\/tbody>/.exec(res.body)[1];
 
   assert.ok(body.includes('In progress'), 'a running campaign lost its status');
-  assert.ok(!body.includes('at removal'), 'a live campaign was described as removed');
+  assert.ok(!body.includes('Was in progress'), 'a live campaign was described as removed');
 });
 
 await atest('FINISHED-THEN-REMOVED READS DIFFERENTLY FROM CUT-SHORT', async () => {
@@ -734,8 +772,8 @@ await atest('FINISHED-THEN-REMOVED READS DIFFERENTLY FROM CUT-SHORT', async () =
   const res = await render('/blog-report', {});
   const body = /<tbody>([\s\S]*?)<\/tbody>/.exec(res.body)[1];
 
-  assert.ok(body.includes('Completed at removal'), 'a finished campaign lost that fact');
-  assert.ok(body.includes('In progress at removal'), 'an unfinished campaign lost that fact');
+  assert.ok(body.includes('Was completed'), 'a finished campaign lost that fact');
+  assert.ok(body.includes('Was in progress'), 'an unfinished campaign lost that fact');
 });
 
 await atest('THE CAMPAIGNS TAB SHOWS THE REMOVAL DATE', async () => {

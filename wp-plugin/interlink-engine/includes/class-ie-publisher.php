@@ -1475,6 +1475,26 @@ class IE_Publisher {
 			return 0;
 		}
 
+		/* A FINISHED CAMPAIGN CANNOT BE PAUSED, and hiding the button is not
+		 * the same as refusing the action.
+		 *
+		 * The Completed tab offered "Pause campaign" on campaigns with every
+		 * post already live. It held nothing back — there was nothing to hold
+		 * — announced "0 scheduled posts were held as drafts", and set the
+		 * status to paused regardless. The next sweep reported that status to
+		 * Three Comets, which takes a site's word on paused, so a campaign
+		 * that had genuinely finished was recorded as paused in the blog
+		 * report, with nothing on the site to say it had happened.
+		 *
+		 * The button is gone now. A stale tab still has the URL and the nonce,
+		 * and an instruction with no check behind it is a hope. */
+		if ( IE_Campaigns::is_finished( $campaign ) ) {
+			return new WP_Error(
+				'ie_campaign_finished',
+				__( 'That campaign has finished. There is nothing left to pause.', 'interlink-engine' )
+			);
+		}
+
 		// The status goes first. Everything below can fail on one post without
 		// the campaign being left running, and a half-paused campaign that
 		// still thinks it is active would collect more posts on the next cron.
@@ -1544,6 +1564,17 @@ class IE_Publisher {
 
 		if ( ! IE_Campaigns::is_paused( $campaign ) ) {
 			return 0;
+		}
+
+		/* The same refusal, for the same reason. Resuming a cancelled campaign
+		 * would set it back to active with slots naming posts that were binned
+		 * — it would leave the Completed tab, sit on the running tab for ever
+		 * with nothing to do, and report itself active to the server. */
+		if ( IE_Campaigns::is_finished( $campaign ) ) {
+			return new WP_Error(
+				'ie_campaign_finished',
+				__( 'That campaign has finished. There is nothing left to resume.', 'interlink-engine' )
+			);
 		}
 
 		$paused_at = ! empty( $campaign['paused_at'] ) ? strtotime( $campaign['paused_at'] ) : 0;

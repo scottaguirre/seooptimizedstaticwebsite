@@ -141,15 +141,24 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
     node test-email-html.js        # the HTML email body and its escaping
-    node test-blog-report.js       # /blog-report and its CSV; stubs express + the models
+    node test-blog-report.js       # /blog-report, its two tabs and its CSV; stubs express + the models
+    node test-post-quality.js      # length, the three wrappers, and where they sit
     node test-campaign-reconcile.js # markMissingRemoved: the grace window and the site scope
     node test-blog-sites-delete.js # removing a revoked licence; revoked + no campaigns only
     node test-licence-binding.js   # one licence one site; the URL check and old-plugin safety
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
+    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, 60
+    php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, 57
 
-The two PHP suites run in `deploy.sh` behind a `command -v php` check, and when
+160 assertions in all; last run green on 29 September under PHP 8.4.
+
+`test-admin-tabs.php` is the only harness that can actually render
+`class-ie-admin.php`. It had drifted to 6 passing / 23 failing while sitting
+outside `deploy.sh`. **Do not rework the Campaigns screen without it.**
+
+The PHP suites run in `deploy.sh` behind a `command -v php` check, and when
 php is absent it says **"SKIPPED, not passed"** — a check that did not happen
 must never read as one that did. `test-deleted-posts.php` spent its whole life
 outside that loop because the loop runs `node "$suite"`, so it ran on the days
@@ -170,7 +179,7 @@ documents. The cleanup is scoped to a random site id and looks careful, but a
 crash mid-run leaves rows behind — in the live collection, if that is what you
 pointed it at.
 
-**The two PHP suites cannot run on Edwin's Mac.** It is on macOS 12, which
+**The PHP suites cannot run on Edwin's Mac.** It is on macOS 12, which
 Homebrew no longer ships bottles for, so `brew install php` tries to compile
 from source. Do not suggest it again.
 
@@ -237,46 +246,12 @@ Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
 
 ## Outstanding
 
-**From the 27–28 September sessions**
+**Cleared on 29 September** — the blog report headline, filtering the blog
+report, fifty campaigns in the plugin, longer posts with spread-out links, and
+`test-admin-tabs.php` (52 passing, in `deploy.sh`). All five are written up in
+the 29 September entries below; do not re-add them here.
 
-*The blog report headline.* It counts posts under removed campaigns as
-published — 26 of 48 on roofingamerica, for a site carrying 12. Split it:
-`12 published · 36 under removed campaigns · 0 scheduled`. One number is being
-asked to describe two different things. Also: do not render links for those
-rows (they 404), and the footer paragraph still claims posts from a removed
-campaign "stay on the site", which is only true when the campaign alone was
-removed.
-
-*Filtering the blog report.* `?campaign=&site=&from=&to=&state=`, server side,
-**inside `rowsFor()`** so the CSV keeps matching the screen. Campaign name
-becomes a link that filters to it. Group by campaign. "removed" in red.
-Browser-side filtering is quicker to build and breaks the export.
-
-*Fifty campaigns in the plugin.* The Campaigns screen is card-based and does
-not scale. Group by the money page each campaign feeds — that hierarchy is
-already in the data — one row per campaign in a table, the card only on open,
-plus a filter box. Leave "Coming up" alone; it does not grow with campaign
-count.
-
-*Longer posts, links spread out.* `utils/blog/writePost.js` says "700-900
-words, in 3-5 sections" — move to 1000–1300 in 4–6, and move `qualityCheck.js`
-with it (it fails under 550, warns over 1400). **The link placement is not
-specified at all**: the prompt says each phrase must appear "EXACTLY ONCE,
-verbatim" and says nothing about where, so three links in one paragraph is not
-the model misbehaving. money → opening, prev → middle, next → final, no two in
-one paragraph — and **check it in qualityCheck.js**, which already verifies
-each wrapper exists but not where. An instruction with no check behind it is a
-hope.
-
-*`wp-plugin/test-admin-tabs.php` is dead.* 6 passing, 23 failing since a stub
-fell behind the code; not in `deploy.sh`, so nothing runs it. It is the only
-harness that can RENDER `class-ie-admin.php`, which is why two guards in
-`test-deleted-posts.php` are still source greps. **Fix it before reworking the
-Campaigns screen** — otherwise that rework has no net under it.
-
-*hilltophomeloans.net needs its own key.* It still holds key 1096 with a stale
-secret. Since 0.7.0 it gets a clear refusal instead of silence, but it needs
-minting, pasting, and updating to the current plugin (it was on 0.4.1).
+**Still open**
 
 *DMARC reporting.* `_dmarc.threecomets.com` is `v=DMARC1; p=none` — valid, but
 with no `rua=` nobody sends the aggregate reports, so it monitors into a void.
@@ -284,6 +259,26 @@ Add `rua=mailto:hello@threecomets.com` now that forwarding works. Unverified:
 Resend's DKIM was NXDOMAIN at `resend._domainkey` on both the root and
 `send.threecomets.com`; SPF and MX there are correctly Resend's, so the
 selector is probably just different — check their dashboard.
+
+**Raised 29 September, not yet ruled on by Edwin**
+
+*Nothing stops the blog writer emitting a bare URL.* The prompt does not
+forbid one and `qualityCheck.js` does not look for one, so if the model writes
+`https://…` in prose WordPress auto-links it and the post gains a link nobody
+planned. Proposed: forbid it in the prompt AND fail it in `qualityCheck` —
+an instruction with no check behind it is a hope.
+
+*`utils/blog/anchorPool.js`'s header comments are wrong.* They still say
+"exact… only 15%" and "semantic… 50%". The code does 30 / 40 / 20 / 10. A
+comment that contradicts the code is worse than no comment, because the next
+reader trusts it.
+
+*"TK Water Damage Restoration" is the branded anchor on four plumbing
+campaigns* — Water Cleanup, Mold Mitigation, Slab Leak Detection, Water
+Softener. That looks like the wrong business name leaking into the branded
+bucket rather than a formatting problem. Worth understanding before fixing:
+if the name is coming from the wrong record, the same fault will be feeding
+other fields too.
 
 **Keyword volumes in the wizard — next up, 23 September**
 
@@ -1019,6 +1014,341 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## Pause on a finished campaign — 29 September 2026 (plugin 0.10.1)
+
+Edwin's Completed tab, six campaigns, four of four live on every one of them.
+Each card offered **"Pause campaign"**, and each heading said **"publishing on
+schedule"**.
+
+The heading was only wrong. The button was worse:
+
+1. It set the campaign's status to `paused`.
+2. It held nothing back, because there was nothing to hold.
+3. It announced *"Campaign paused. 0 scheduled posts were held as drafts."*
+4. The next sweep reported `paused` to Three Comets — which **accepts a site's
+   word on paused** (`applyReportedStatuses`) — so a campaign that had
+   genuinely finished weeks earlier was recorded as paused in the blog report.
+
+**A no-op button that corrupts a record is the worst kind.** Nothing appears
+to happen, so nobody goes looking, and the damage is in a different system
+from the button.
+
+**The cause, in one sentence: `bucket()` knew the campaign had finished and
+the card did not.** The test lived in `bucket()` alone — count the unpublished
+slots, plus "cancelled counts as finished" — so `render_campaign_card()` had
+no idea which tab it was being rendered on.
+
+`IE_Campaigns::is_finished()` is now the one place that decides, and
+`bucket()`, `campaign_headline()` and the card's buttons all read it.
+
+**The second copy nobody had noticed.** The card's `<h2>` built the identical
+sentence inline from its own counting loop, while the fold summary called
+`campaign_headline()` — and the comment above the `<h2>` claimed both came
+from that function. They agreed only by luck, and parted company the instant
+`campaign_headline()` learned the word "finished": folded campaigns said it,
+open ones (which is what the Completed tab renders) went on saying
+"publishing on schedule". The heading calls the function now.
+
+**Hiding a button is not refusing an action.** A stale tab still holds the URL
+and the nonce, so `IE_Publisher::pause()` and `::resume()` return
+`WP_Error('ie_campaign_finished')` for a finished campaign. Resume matters as
+much as pause: resuming a **cancelled** campaign would set it back to `active`
+with slots naming posts that were binned — off the Completed tab, onto the
+running tab for ever, reporting itself active to the server.
+
+Remove is deliberately still offered. It is the one action that still means
+something once a campaign is over, and a guard that took it too would leave no
+way to clear the record.
+
+### Two harness faults this turned up
+
+**`IE_Campaigns`'s live-post cache leaked between tests.** `$live_post_ids` is
+a static, filled on first use and correct for the rest of a request — but a
+suite is one process. A fixture introducing post ids the previous test never
+mentioned had every one of them reported deleted, so a campaign with four live
+posts rendered *"1 of 4 scheduled, 1 live, 3 posts deleted"* and the failure
+read exactly like a bug in the code under test. Tests were calling
+`forget_post_cache()` by hand, which works right up to the first one that
+forgets. `render()` calls it now: **one render is one request.**
+
+**`test-orphan-links.php`'s `WP_Error` stub threw the message away** and
+returned the literal string `'error'` for every failure. Two different guards
+in the same function are indistinguishable to a stub like that — the sixth
+instance of *a stub that cannot express the failure cannot detect it*.
+
+Suites: deleted-posts 34, topic-merge 9, admin-tabs 60, orphan-links 57 —
+**160**, all green under PHP 8.4.
+
+## Every campaign was a draft — 29 September 2026
+
+The day's centrepiece, and the shape of it is worth more than the fix.
+
+**The symptom.** Campaign status = Completed on the blog report returned
+nothing. Ever. On an account with twelve posts, all twelve live, both
+campaigns finished weeks ago.
+
+**The chain, from the bottom.**
+
+`settleFinished()` only promotes a campaign whose status is `active`.
+Nothing was ever `active`. Not one row. Because `utils/blogGenerator.js`, at
+the end of a successful plan — *after charging the customer* — did this:
+
+```js
+// what it was
+const anythingLive = (campaign.slots || []).some(s => s.status === 'ready' || …);
+```
+
+`campaign` is the document loaded at the top of the function, before any slot
+was written. `markSlotReady()` is a **static `findOneAndUpdate` on the
+collection** — it updates Mongo and does not touch that in-memory object. So
+`anythingLive` read a list of `pending` slots, came back false, and every
+campaign in the system was set back to `draft` the moment it was paid for.
+
+The fix is three lines and re-reads the document:
+
+```js
+const fresh = await BlogCampaign.findById(campaign._id).select('slots').lean();
+const anythingLive = ((fresh && fresh.slots) || []).some(
+  s => s.status === 'ready' || s.status === 'scheduled' || s.status === 'published');
+```
+
+**A stale in-memory document is not a cache. It is a different answer to the
+same question.** If a static writes to the collection, nothing you were
+holding before that write knows about it.
+
+**Why one fix was not enough.** The completion check inside
+`/api/blog/published` carried the *same* `=== 'active'` condition, so it had
+never fired either. Widening `settleFinished()` to
+`{ $in: ['active', 'writing', 'draft'] }` fixed both — but only for campaigns
+that would be swept in future. The twelve posts already live needed a third
+fix (below), and it took all three before the report said
+"2 campaigns · 12 posts · 12 confirmed live".
+
+**How it was actually found.** Not by reading code. Two guesses were wrong
+before Edwin supplied the server log — `{"statuses":0,"finished":0}` — and the
+CSV export, which had `campaign_status: draft` on **every single row**. That
+column is what turned a hunt into a diagnosis. The same lesson as the licence
+bug the day before: *ask for the data before theorising twice.*
+
+### A gate that guards a payload must be computed from that payload
+
+`campaign_report_due()` in `class-ie-campaigns.php` decided whether the sweep
+had anything new to say by comparing a fingerprint of campaign **ids** against
+the one last sent. But the payload had grown to carry `{id, status}` pairs.
+So a campaign that changed from active to paused produced an identical
+fingerprint, the gate said "nothing new", and the pause never reached Three
+Comets. Nothing logged, nothing failed.
+
+The fingerprint now builds `'id:status'` strings — unique, sorted — so it is
+derived from exactly the bytes it is gating. Shipped as plugin **0.9.2**.
+
+**Whenever a "has anything changed?" check sits in front of a send, check that
+it is hashing the thing being sent, not an older, smaller version of it.**
+
+### A truth you can derive from your own data should never wait on someone else's news
+
+Even with the gate fixed, the twelve already-published posts stayed
+`draft` — correctly, because the plugin had nothing new to report and the
+sweep stayed quiet. The settle only ever ran on the back of an inbound call.
+
+But "every slot in this campaign is published, therefore the campaign is
+completed" is a statement about rows Three Comets already owns. It needs
+nobody's permission. So the report page now read-repairs on load:
+
+```js
+await BlogCampaign.settleFinishedForUser(req.user._id);
+```
+
+before `rowsFor()`. Opening the report fixes the report.
+
+**Events need sweeps behind them — this is now the fifth instance** (deleted
+posts, removed campaigns, `/api/blog/published`, pause/cancel status, and the
+settle). The pattern is settled enough to assume: any state that arrives by
+notification needs a second path that derives it.
+
+## Remove means remove — 29 September 2026
+
+Edwin's call, and it changed the feature: *"removing a campaign should remove
+even the articles belonging to the campaign that got published. The user will
+have to start over."*
+
+Before this, Remove deleted the campaign record and left the posts standing —
+which is why the report had to invent a whole vocabulary for "posts whose
+campaign is gone". Now `remove_campaign()` trashes the lot, and the order is
+load-bearing:
+
+    trash the posts
+      → flush_deleted_reports()      (tell the server while the records exist)
+        → IE_Api::removed()
+          → IE_Campaigns::delete()   (only now destroy the local record)
+
+Reverse any two of those and the server is told about a campaign whose posts
+it cannot name, or is never told at all.
+
+**The confirmation is two dialogs, not a checkbox.** Edwin rejected the
+opt-in ("also move 4 published articles to Trash") for a specific reason: a
+box the user does not tick leaves the articles behind, which is the outcome
+the redesign existed to remove. So:
+
+1. *Remove "Water Softener Installation"? This moves 4 published articles and
+   8 drafts to Trash. You can restore them from Trash for 30 days.*
+2. *Are you sure you want to send 4 published articles and 8 drafts to Trash?*
+
+`onclick="return confirm('…') && confirm('…')"`. Two suites assert there are
+**two**, and that the singular reads properly.
+
+Also his: **"paused", not "stopped"**, everywhere in the UI. And a campaign
+that is paused and then has its drafts deleted is closed out as
+**`cancelled`**, not `completed` — `abandon_remaining()` sets that and clears
+`paused_at`, so the report can say *Was cancelled* rather than pretending the
+run finished.
+
+`applyReportedStatuses()` accepts `active`, `paused`, `cancelled` from a site.
+It will **not** accept `completed` — that is Three Comets' conclusion to draw,
+from slots it can count, not a site's claim.
+
+### Removal is a DATE, not a status
+
+`removedAt`, never `status: 'removed'`. This is the reason "completed, then
+deleted from WordPress in October" and "cancelled halfway, then deleted in
+October" stay tellable apart. `campaignStatusOf()` is therefore deliberately
+**blind to `removedAt`**, and the Removed option in the filter is handled as a
+separate clause in `keep()`.
+
+The cost is one odd-looking branch. The payoff is that Campaign status
+"Completed" + Post state "Campaign removed" composes into a question no single
+merged dropdown could ask. Do not "tidy" this by folding removal into the
+status list.
+
+### The dead placeholder, and why it never showed up
+
+A post published in March cannot link to one publishing in June, so it carries
+`<span data-il-link="slot-3">phrase</span>` and `IE_Links::activate()` swaps it
+for an `<a href>` when slot 3 goes live. **If slot 3 never goes live, that span
+renders as ordinary prose.** No broken link, no 404, nothing in any log. The
+only symptom is a link you were paying for that does not exist.
+
+`on_transition()` used to `return` when the campaign record was missing, so a
+removed campaign's later publish orphaned every placeholder pointing at it.
+Now it falls back to a `_ie_campaign` meta query (`MAX_ORPHAN_SIBLINGS = 100`).
+`repair_links()` (`MAX_REPAIR_POSTS = 200`) is the catch-up pass for posts
+already stranded.
+
+**Repair ran clean on Edwin's seven removed campaigns, and that was correct,
+not a failure.** All seven were removed on 28 September, after their posts had
+published between 3 and 20 September — every swap had already happened. A
+"Nothing to repair" result is only meaningful once you can say why.
+
+## The blog report grew a second tab — 29 September 2026
+
+`routes/blogReportRoute.js`, ~83 tests, plus `utils/blog/reportFilters.js` for
+the pure parts.
+
+- **Two tabs**, `campaigns` (default) and `posts`, riding in the URL so a
+  bookmark opens where it was sent from.
+- **Campaigns are grouped by `row.campaignId`, not name+site.** Three of
+  Edwin's campaigns share a name on one site — re-planning a money page does
+  it — and grouping by name showed "4 removed" beside "6 removed campaigns"
+  on the same line. One id, one row, one source for the count.
+- **A post state asked from the campaigns tab switches to the posts tab.**
+  Choosing "Deleted from site" and pressing Filter used to change the numbers
+  in a table of campaigns and nothing else, which looks exactly like a button
+  that did nothing. Nobody picks a post state wanting a list of campaigns.
+- **Campaign status filter**: Any / In progress / Paused / Completed /
+  Cancelled / Removed.
+- **Check posts** button per campaign row, linking by `campaignId`.
+- LIVE column shows `—`, not `0`, for a removed campaign. *Unknown is not
+  zero* — "0" beside "12 posts" is a worse lie than the caution it was
+  guarding.
+
+**The empty state twice ate the page.** `if (!rows.length)` served the
+brand-new-account message for *any* zero-row result, so a filter matching
+nothing removed the filter bar that set it — leaving no way back except the
+browser's Back button. Split on `anyFilter(f)`. Then the tabs were added and
+it happened again, because they were inside the same branch. **An empty result
+and an empty account are different pages.**
+
+Related, same shape: **dropdowns built from the filtered rows** emptied
+themselves at exactly the moment they were needed. They are built from all
+campaigns and sites now.
+
+**"Links to" was blank on every row this report had ever produced.**
+`pageName()` read `targetPage.title` — which is not in the schema. It reads
+`title || keyword || ''` now. A field name that is never checked against the
+model is a silent blank, not an error.
+
+## Fifty campaigns in the plugin — 29 September 2026
+
+`class-ie-admin.php`, `const GROUP_FROM = 4;`
+
+Below four campaigns, nothing changes — open cards, as before. At or above,
+`by_money_page()` groups them **by URL, not title** (two money pages can share
+a title), each campaign folds into
+`<details class="ie-campaign-fold" data-ie-search="…">`, and
+`render_campaign_filter()` adds a client-side box that hides non-matching rows
+*and* the group headings that empty out. "Coming up" is untouched — it does
+not grow with campaign count.
+
+`test-admin-tabs.php` was brought back from the dead first (it had drifted to
+6 passing / 23 failing) because it is the only harness that can actually
+RENDER this file. Reworking a screen with no net under it was the thing to
+avoid.
+
+## Four test-harness lessons, all paid for on one day — 29 September 2026
+
+**1. A stub that cannot express the failure cannot detect it.** Six times:
+`get_posts` ignoring `post_status`; `updateOne` requiring `site`; no `$in`
+match on status; `removedAt` dropped in the `_id.$in` branch;
+`campaigns_present` `strval`-ing an array into the string `"Array"`;
+`settleFinishedForUser` missing from the model stub entirely. Every one of
+these made a test pass while the real thing was broken. **When a test passes
+first time on a bug you have not fixed yet, suspect the stub.**
+
+**2. Counting a string that appears in more than one place.** Four times:
+the card counter counted labels (which then also appeared in the dialog, so it
+reported double); `ie-campaign-fold` appears in the JS as well as the markup;
+`text-danger` is on the removal date as well as the status; campaign labels
+appear in dropdowns as well as rows. Anchor the count on something that
+appears exactly once per thing — `action=ie_delete_campaign`, for instance.
+
+**3. "The two counts agree" is not an assertion.** Both can be wrong
+together, and were.
+
+**4. PHP 8 `TypeError` is an `Error`, not an `Exception`.** The harness caught
+`Exception`, so one crashing test killed the whole run and printed no summary
+at all — which on a fast scroll reads exactly like a pass. Catch `Throwable`.
+
+## Small things worth not rediscovering — 29 September 2026
+
+**`esc_js()` does not escape `<` or `>`.** A campaign label containing a
+`<script>` tag reached an `onclick` intact. `wp_strip_all_tags()` before
+`esc_js()`.
+
+**Contrast is computed, not eyeballed.** Edwin: *"Is this the actual
+outline-success color or did you add a different color? It looks like disabled
+color."* Bootstrap's `#198754` on the app's `#082d5b` is **3.02:1** — it
+genuinely is too dark, and the eye was right. `.btn-outline-success` is
+overridden in `utils/appHeader.js` to `#5ddc95`, which every logged-in page
+inherits.
+
+**Anchor mixes, because these get confused.** Two different systems:
+
+| | mix |
+|---|---|
+| Blog campaigns (`utils/blog/anchors.js`) | exact 30 / semantic 40 / descriptive 20 / **branded 10** |
+| Site generator (`utils/homeAnchorPool.js`) | exact 40 / semantic 40 / descriptive 20, **naked 0%** |
+
+The naked URL Edwin found on emergencyplumberaustin.net is **old output, not
+a live bug**. The rule it came from was deliberate and is documented in the
+code it replaced: *1–2 pages → every page uses the naked URL; 3–10 → the first
+uses the business name, the rest naked; 11+ → the first two.*
+`buildRankFastLinks.js` was rewritten on **19 September**; anything generated
+before that keeps its naked URLs, because static HTML does not fix itself.
+
+**Plugin 0.10.0 is live.** All four PHP suites pass in a PHP 8.4 container:
+`test-deleted-posts.php` 34, `test-topic-merge.php` 9, `test-admin-tabs.php`
+52, `test-orphan-links.php` 52 — 147 in all.
 
 ## One licence, two sites — 27–28 September 2026
 

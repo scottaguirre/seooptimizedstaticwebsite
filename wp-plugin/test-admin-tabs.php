@@ -326,10 +326,27 @@ function cards( $html ) {
 	preg_match_all( '/action=ie_delete_campaign/', $html, $m );
 	return count( $m[0] );
 }
+function same( $expected, $actual, $msg = null ) {
+	ok( $expected === $actual, ( $msg ? $msg : 'not equal' )
+		. ' — expected ' . var_export( $expected, true )
+		. ', got ' . var_export( $actual, true ) );
+}
 function has( $hay, $needle, $msg = null ) { ok( false !== strpos( $hay, $needle ), $msg ? $msg : "expected to find: $needle" ); }
 function hasnt( $hay, $needle, $msg = null ) { ok( false === strpos( $hay, $needle ), $msg ? $msg : "did NOT expect: $needle" ); }
 
 function render( $tab = null, $paged = null ) {
+	/* ONE RENDER IS ONE REQUEST, so it starts with the post cache empty.
+	 *
+	 * IE_Campaigns caches which post ids still exist in a static, filled the
+	 * first time anything asks and correct for the rest of that request. In a
+	 * suite it survives into the next test, so a fixture introducing post ids
+	 * the earlier one never mentioned had every one of them reported deleted:
+	 * a campaign with four live posts rendered "1 of 4 scheduled, 1 live,
+	 * 3 posts deleted" and the test read like a bug in the code it was
+	 * checking. Tests were calling forget_post_cache() by hand, which works
+	 * right up to the first one that forgets. */
+	IE_Campaigns::forget_post_cache();
+
 	$_GET = array( 'page' => 'interlink-engine' );
 	if ( null !== $tab )   { $_GET['tab'] = $tab; }
 	if ( null !== $paged ) { $_GET['paged'] = $paged; }
@@ -706,6 +723,137 @@ test( 'a campaign still running is not sent to the finished tab', function () {
 	has( render( 'running' ), 'slab leak detection', 'a live campaign vanished' );
 } );
 
+/* ---------------------------------------------------------------------
+ * Fifty campaigns
+ *
+ * Every campaign rendered a full card, one after another. At three that
+ * reads well. At fifty it is a page nobody can navigate: the campaign you
+ * came for is a thousand pixels down a wall of identical boxes.
+ * ------------------------------------------------------------------ */
+
+/** $n running campaigns, spread across $pages money pages. */
+function many_running( $n, $pages = 1 ) {
+	$out = array();
+
+	for ( $i = 0; $i < $n; $i++ ) {
+		$c = campaign( 'c-' . $i, 'Campaign ' . $i,
+			array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+
+		$page = $i % $pages;
+
+		// upcoming() reads this directly; without it every render of these
+		// fixtures warns, which buries the failure being looked for.
+		$c['status'] = 'active';
+
+		$c['target_page'] = array(
+			'title' => 'Money Page ' . $page,
+			'url'   => 'http://site/p/' . $page,
+		);
+
+		$out[] = $c;
+	}
+
+	return $out;
+}
+
+test( 'A FEW CAMPAIGNS ARE LEFT EXACTLY AS THEY WERE', function () {
+	/* The fold and the filter are furniture over two campaigns. Somebody who
+	 * is not drowning should not be made to open things. */
+	$GLOBALS['ie_campaigns'] = many_running( 2 );
+
+	$html = render( 'running' );
+
+	hasnt( $html, '<details class="ie-campaign-fold"', 'two campaigns were folded away' );
+	hasnt( $html, 'id="ie-campaign-filter"', 'two campaigns got a filter box' );
+	has( $html, 'Campaign 0', 'a campaign vanished' );
+} );
+
+test( 'FIFTY CAMPAIGNS FOLD INTO ROWS', function () {
+	$GLOBALS['ie_campaigns'] = many_running( 50, 5 );
+
+	$html = render( 'running' );
+
+	/* THE OPENING TAG, not the bare class name — which also appears twice in
+	 * the filter's JavaScript, so counting it said 52 for fifty campaigns and
+	 * read exactly like an off-by-two in the grouping. */
+	same( 50, substr_count( $html, '<details class="ie-campaign-fold"' ),
+		'not every campaign became a foldable row' );
+} );
+
+test( 'THEY ARE GROUPED UNDER THE PAGE THEY FEED', function () {
+	/* Campaigns are not an unordered list. Each feeds ONE page, and several
+	 * feeding the same page are the thing an owner reasons about. */
+	$GLOBALS['ie_campaigns'] = many_running( 12, 3 );
+
+	$html = render( 'running' );
+
+	same( 3, substr_count( $html, '<h2 class="ie-group-heading"' ),
+		'the campaigns were not grouped' );
+	has( $html, 'Money Page 0', 'the page a group feeds is not named' );
+	has( $html, '4 campaigns', 'a group does not say how many it holds' );
+} );
+
+test( 'TWO PAGES THAT SHARE A TITLE ARE STILL TWO PAGES', function () {
+	/* Grouped by URL, not by name. An agency running the same service on two
+	 * sites has two "Emergency Plumber" pages, and piling their campaigns
+	 * into one heading says a thing that is not true about either.
+	 *
+	 * The fixture above gives every page a distinct title AND url, so it
+	 * could not tell the two apart — a mutation grouping by title passed. */
+	$GLOBALS['ie_campaigns'] = many_running( 4, 2 );
+
+	foreach ( $GLOBALS['ie_campaigns'] as $i => $c ) {
+		$GLOBALS['ie_campaigns'][ $i ]['target_page']['title'] = 'Emergency Plumber';
+	}
+
+	$html = render( 'running' );
+
+	same( 2, substr_count( $html, '<h2 class="ie-group-heading"' ),
+		'two different pages with the same name were merged into one group' );
+} );
+
+test( 'a filter box appears once there are enough to need one', function () {
+	$GLOBALS['ie_campaigns'] = many_running( 12, 3 );
+
+	$html = render( 'running' );
+
+	has( $html, 'id="ie-campaign-filter"', 'there is no way to search a long list' );
+	has( $html, 'Filter 12 campaigns', 'the filter box does not say what it filters' );
+} );
+
+test( 'EVERY ROW CARRIES WHAT THE FILTER SEARCHES', function () {
+	// The box matches on this attribute. Without it a row can never be found,
+	// and typing its exact name would hide it.
+	$GLOBALS['ie_campaigns'] = many_running( 6, 2 );
+
+	$html = render( 'running' );
+
+	has( $html, 'data-ie-search="campaign 0 money page 0"',
+		'a row cannot be matched by its own name or page' );
+} );
+
+test( 'THE HEADLINE IS NOT PRINTED TWICE', function () {
+	/* The fold summary and the card both describe the campaign, from the same
+	 * function. Printing both puts the same sentence on screen twice, half a
+	 * centimetre apart. */
+	$GLOBALS['ie_campaigns'] = many_running( 6, 2 );
+
+	$html = render( 'running' );
+
+	same( 6, substr_count( $html, 'scheduled, 1 live' ),
+		'the summary and the card are both printing the headline' );
+} );
+
+test( 'a folded campaign still carries its buttons', function () {
+	// Folding must hide the card, not amputate it.
+	$GLOBALS['ie_campaigns'] = many_running( 6, 2 );
+
+	$html = render( 'running' );
+
+	has( $html, 'action=ie_delete_campaign', 'a folded campaign lost its actions' );
+	has( $html, 'Show all', 'a folded campaign lost its post list' );
+} );
+
 test( 'THE REPAIR LINKS BUTTON IS ON THE SCREEN', function () {
 	/* It lives at the foot of the screen rather than on a campaign card,
 	 * because the campaigns it helps most no longer have cards — they were
@@ -832,6 +980,149 @@ test( 'the second tab asks for approval rather than announcing a debt', function
 
 	has( $html, 'Campaigns needing approval' );
 	hasnt( $html, 'Waiting for you', 'the old tab name is back' );
+} );
+
+/* ---------------------------------------------------------------------
+ * The Completed tab — a finished campaign is not a running one
+ *
+ * Six completed campaigns on screen, every one of them offering "Pause
+ * campaign" and every heading saying "publishing on schedule".
+ *
+ * The wording was only wrong. The button was worse: it set the status to
+ * paused, held nothing back because there was nothing to hold, announced
+ * "0 scheduled posts were held as drafts", and the next sweep reported
+ * paused to Three Comets — which takes a site's word on paused. A campaign
+ * that had finished weeks earlier was then recorded as paused in the blog
+ * report, with nothing on the site to say it had happened.
+ *
+ * The cause: bucket() knew the campaign had finished and the card did not.
+ * IE_Campaigns::is_finished() is now the one place that decides, and both
+ * read it.
+ * ------------------------------------------------------------------ */
+
+echo "\nA finished campaign is not a running one\n";
+
+function finished_campaign( $id = 'c-fin', $label = 'toilet replacement services' ) {
+	$c = campaign( $id, $label,
+		array( slot( 0, 'published', -9 ), slot( 1, 'published', -6 ),
+		       slot( 2, 'published', -3 ), slot( 3, 'published', -1 ) ), true );
+	$c['status'] = 'completed';
+	return $c;
+}
+
+test( 'A FINISHED CAMPAIGN IS NOT OFFERED PAUSE', function () {
+	$GLOBALS['ie_campaigns'] = array( finished_campaign() );
+
+	$html = render( 'done' );
+
+	has( $html, 'toilet replacement services', 'the fixture is not on the completed tab at all' );
+	hasnt( $html, 'action=ie_pause_campaign',
+		'a campaign with nothing left to publish was offered Pause' );
+} );
+
+test( 'it says why the button is not there', function () {
+	// A row of buttons with a gap in it reads as a screen that failed to load.
+	$GLOBALS['ie_campaigns'] = array( finished_campaign() );
+
+	$html = render( 'done' );
+
+	has( $html, 'There is nothing left to schedule',
+		'the missing button is not explained' );
+} );
+
+test( 'A FINISHED CAMPAIGN STOPS SAYING IT IS PUBLISHING ON SCHEDULE', function () {
+	/* Present tense on six campaigns that had all finished. The heading is the
+	 * line somebody reads before deciding whether anything is wrong. */
+	$GLOBALS['ie_campaigns'] = array( finished_campaign() );
+
+	$html = render( 'done' );
+
+	hasnt( $html, 'publishing on schedule',
+		'a finished campaign still claims to be publishing' );
+	has( $html, '4 of 4 scheduled, 4 live, finished',
+		'the heading does not say the campaign finished' );
+} );
+
+test( 'a cancelled campaign says so rather than claiming to have run its course', function () {
+	$c = finished_campaign( 'c-can', 'water softener installation' );
+	$c['slots'][2]['status'] = 'scheduled';
+	$c['slots'][3]['status'] = 'scheduled';
+	$c['status'] = 'cancelled';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'done' );
+
+	has( $html, 'cancelled', 'a cancelled campaign is described as if it ran to the end' );
+	hasnt( $html, 'action=ie_pause_campaign', 'a cancelled campaign was offered Pause' );
+	hasnt( $html, 'action=ie_resume_campaign', 'a cancelled campaign was offered Resume' );
+} );
+
+test( 'a PAUSED campaign whose posts all published is not offered Resume', function () {
+	/* Resume would release nothing and set the status back to active, which
+	 * the sweep reports and the server then has to settle all over again. */
+	$c = finished_campaign( 'c-pf', 'unclogging sewer line services' );
+	$c['status'] = 'paused';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'done' );
+
+	hasnt( $html, 'action=ie_resume_campaign',
+		'a campaign with nothing held back was offered Resume' );
+	has( $html, 'closed out', 'the closed-out campaign is not described' );
+} );
+
+test( 'A CAMPAIGN THAT IS STILL RUNNING KEEPS ITS PAUSE BUTTON', function () {
+	/* The guard must not be so keen it disarms the tab it was not about. */
+	$c = campaign( 'c-live', 'commercial plumbing services',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+	$c['status'] = 'active';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	has( $html, 'action=ie_pause_campaign', 'a running campaign lost its Pause button' );
+	has( $html, 'publishing on schedule', 'a running campaign stopped saying what it is doing' );
+} );
+
+test( 'THE TAB AND THE CARD CANNOT PART COMPANY AGAIN', function () {
+	/* The bug in one sentence: bucket() knew and the card did not. Assert the
+	 * rule directly, then assert the tab obeys the same rule — so a future
+	 * change that moves one has to move the other. */
+	$mixed = array(
+		finished_campaign( 'c-a', 'alpha' ),
+		campaign( 'c-b', 'beta', array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true ),
+		campaign( 'c-c', 'gamma', array( slot( 0, 'pending', 1 ) ), false ),
+	);
+	$mixed[1]['status'] = 'active';
+
+	same( true,  IE_Campaigns::is_finished( $mixed[0] ), 'a fully published campaign is not finished' );
+	same( false, IE_Campaigns::is_finished( $mixed[1] ), 'a campaign with a scheduled post is finished' );
+	same( false, IE_Campaigns::is_finished( $mixed[2] ), 'an unapproved campaign counts as finished' );
+
+	$GLOBALS['ie_campaigns'] = $mixed;
+
+	$done = render( 'done' );
+	same( 1, cards( $done ), 'the completed tab is not showing exactly the finished one' );
+	has( $done, 'alpha' );
+	hasnt( $done, 'beta', 'a running campaign reached the completed tab' );
+} );
+
+test( 'REMOVE STILL WORKS ON A FINISHED CAMPAIGN', function () {
+	/* Everything else was taken away from this card. Remove is the one action
+	 * that still means something once a campaign is over, and a guard that
+	 * took it too would leave no way to clear the record at all. */
+	$GLOBALS['ie_campaigns']   = array( finished_campaign( 'c-rm', 'removable' ) );
+	$GLOBALS['ie_post_counts'] = array( 'c-rm' => array( 'published' => 4, 'drafts' => 0 ) );
+
+	$html = render( 'done' );
+
+	has( $html, 'action=ie_delete_campaign', 'a finished campaign cannot be removed' );
+	same( 2, substr_count( $html, 'confirm(' ), 'the two dialogs did not survive' );
+
+	$GLOBALS['ie_post_counts'] = array();
 } );
 
 echo "\n$passed passed, $failed failed\n";

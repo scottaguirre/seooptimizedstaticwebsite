@@ -199,8 +199,27 @@ function day(value) {
  */
 function campaignName(campaign) {
   return campaign.name
-    || (campaign.targetPage && campaign.targetPage.title)
+    || pageName(campaign.targetPage)
     || '';
+}
+
+/**
+ * What to call the page a campaign feeds.
+ *
+ * THERE IS NO `title`, AND THERE NEVER WAS. This read targetPage.title,
+ * which is not in the schema — /plan stores url, keyword and intent, and
+ * nothing else. So the report's "Links to" column and the CSV's
+ * links_to_page have been blank on every row since the page was written,
+ * showing an anchor phrase under an empty heading and a bare link.
+ *
+ * The keyword is stored, and it is what the page is actually about, so it
+ * names the page rather than leaving a hole. A title, if one is ever stored,
+ * wins — it is the more human answer.
+ */
+function pageName(targetPage) {
+  if (!targetPage) return '';
+
+  return targetPage.title || targetPage.keyword || '';
 }
 
 /** Is any filter actually set? Decides which of the two empty pages is right. */
@@ -243,7 +262,7 @@ async function rowsFor(userId, filters = {}) {
         campaign: campaignName(campaign),
         campaignStatus: campaign.status,
         removedAt: campaign.removedAt || null,
-        moneyPage: (campaign.targetPage && campaign.targetPage.title) || '',
+        moneyPage: pageName(campaign.targetPage),
         moneyPageUrl: (campaign.targetPage && campaign.targetPage.url) || '',
         topic: slot.topic || '',
         keyword: slot.targetQuery || '',
@@ -370,7 +389,13 @@ function campaignLabel(c) {
     : c.campaignStatus === 'paused' ? 'Paused'
     : 'In progress';
 
-  return c.removedAt ? `${now} at removal` : now;
+  if (!c.removedAt) return now;
+
+  /* PAST TENSE, AND IT READS AS ONE PHRASE. "In progress at removal" is
+   * accurate and parses badly — the eye takes "In progress" and stops, which
+   * is the exact wrong reading for a campaign that no longer exists. Opening
+   * with "Was" settles the tense before the status is read at all. */
+  return `Was ${now.charAt(0).toLowerCase()}${now.slice(1)}`;
 }
 
 const PILLS = {
@@ -745,7 +770,11 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                      class="btn btn-sm btn-outline-success report-check">Check posts</a>
                 </td>
                 <td class="muted">${esc(c.site)}</td>
-                <td class="${c.removedAt ? 'muted' : ''}"
+                ${/* RED, LIKE THE REMOVAL DATE BESIDE IT. Muted grey read as
+                      "less important"; this is the opposite — it is the word
+                      that tells you the campaign is gone. The two cells now
+                      carry the same signal and are read together. */ ''}
+                <td class="${c.removedAt ? 'text-danger' : ''}"
                     ${c.removedAt ? 'title="What the campaign was doing on the day it was deleted from WordPress. Nothing has changed it since, and nothing can: the site no longer reports on it."' : ''}>${esc(campaignLabel(c))}</td>
                 <td class="${c.removedAt ? 'text-danger' : 'muted'}">${esc(day(c.removedAt)) || '&mdash;'}</td>
                 <td class="num">${c.posts}</td>

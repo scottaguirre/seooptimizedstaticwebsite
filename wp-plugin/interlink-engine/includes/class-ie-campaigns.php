@@ -241,6 +241,49 @@ class IE_Campaigns {
 		return is_array( $campaign ) && isset( $campaign['status'] ) && 'paused' === $campaign['status'];
 	}
 
+	/**
+	 * Has this campaign finished? Nothing left to publish, ever.
+	 *
+	 * ONE DEFINITION, and it was two. The Campaigns screen decided which tab a
+	 * campaign belonged on by counting unpublished slots, and every other part
+	 * of the screen simply did not ask. So a campaign sitting on the Completed
+	 * tab — four of four live, nothing outstanding — was still offered
+	 * "Pause campaign", and its heading still said "publishing on schedule".
+	 *
+	 * The heading was only wrong. The button was worse: pressing it set the
+	 * campaign's status to paused, held nothing back because there was nothing
+	 * to hold, and announced "0 scheduled posts were held as drafts". The
+	 * sweep then reported `paused` to Three Comets, which accepts a site's
+	 * word on paused, and a campaign that had genuinely finished was recorded
+	 * as paused in the blog report. A no-op button that corrupts a record is
+	 * the worst kind: nothing appears to happen, so nobody goes looking.
+	 *
+	 * A CANCELLED CAMPAIGN IS FINISHED whatever its slots say. Its unpublished
+	 * posts were thrown away, so the slots that named them go on reading
+	 * 'scheduled' for posts that do not exist — outstanding work that is never
+	 * coming.
+	 *
+	 * A campaign whose batch never started is NOT finished; it has not begun.
+	 * That is the Drafts tab, and bucket() splits it off first.
+	 */
+	public static function is_finished( $campaign ) {
+		if ( ! is_array( $campaign ) || empty( $campaign['batch_started'] ) ) {
+			return false;
+		}
+
+		if ( isset( $campaign['status'] ) && 'cancelled' === $campaign['status'] ) {
+			return true;
+		}
+
+		foreach ( (array) $campaign['slots'] as $slot ) {
+			if ( ! isset( $slot['status'] ) || 'published' !== $slot['status'] ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	/** Find a slot by index. Returns [ position, slot ] or null. */
 	public static function find_slot( $campaign, $slot_index ) {
 		foreach ( $campaign['slots'] as $i => $slot ) {

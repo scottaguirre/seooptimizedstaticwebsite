@@ -64,9 +64,21 @@ function esc_url( $u ) { return $u; }
 function esc_attr( $a ) { return $a; }
 function esc_html( $h ) { return $h; }
 function sanitize_text_field( $s ) { return $s; }
+function __( $s, $d = null ) { return $s; }
+function _n( $one, $many, $n, $d = null ) { return 1 === (int) $n ? $one : $many; }
 function add_action() {}
 function is_wp_error( $thing ) { return $thing instanceof WP_Error; }
-class WP_Error { public $code; public function __construct( $c = '' ) { $this->code = $c; } public function get_error_message() { return 'error'; } }
+/* THE MESSAGE IS KEPT, not thrown away. It used to return the literal string
+ * 'error' for every failure, so a test could tell that something was refused
+ * and never which refusal it got — and two different guards in the same
+ * function are indistinguishable to a stub like that. */
+class WP_Error {
+	public $code;
+	private $message;
+	public function __construct( $c = '', $m = '' ) { $this->code = $c; $this->message = $m; }
+	public function get_error_code() { return $this->code; }
+	public function get_error_message() { return '' === $this->message ? 'error' : $this->message; }
+}
 function wp_list_pluck( $list, $field ) {
 	$out = array();
 	foreach ( (array) $list as $row ) {
@@ -251,7 +263,7 @@ require_once __DIR__ . '/interlink-engine/includes/class-ie-publisher.php';
 
 $passed = 0;
 $failed = 0;
-$DECLARED = 52;
+$DECLARED = 57;
 
 function test( $name, $fn ) {
 	global $passed, $failed;
@@ -1129,6 +1141,122 @@ test( 'nothing is named when nothing was unwrapped', function () {
 	$stats = IE_Publisher::repair_links();
 
 	same( array(), $stats['short'], 'a post was named although nothing was lost' );
+} );
+
+/* ---------------------------------------------------------------------
+ * Pause and resume refuse a campaign that has finished
+ *
+ * The Campaigns screen offered "Pause campaign" on the Completed tab. It
+ * held nothing back — there was nothing to hold — announced "0 scheduled
+ * posts were held as drafts", and set the status to paused regardless. The
+ * next sweep reported that status to Three Comets, which takes a site's
+ * word on paused, so a campaign that had genuinely finished was recorded as
+ * paused in the blog report.
+ *
+ * The button is gone. These are the checks behind it: hiding a control is
+ * not refusing an action, and a stale tab still holds the URL and nonce.
+ * ------------------------------------------------------------------ */
+
+/** A campaign record with every slot published — nothing left to do. */
+function build_finished( $status = 'completed' ) {
+	build_campaign( true );
+
+	foreach ( array( 3, 4, 5 ) as $i ) {
+		$GLOBALS['ie_posts'][ 100 + $i ]['status'] = 'publish';
+	}
+
+	$record = $GLOBALS['ie_options']['ie_campaigns'][ CAMPAIGN_ID ];
+
+	foreach ( $record['slots'] as $i => $slot ) {
+		$record['slots'][ $i ]['status'] = 'published';
+	}
+
+	// is_finished() will not call a campaign finished until its batch has
+	// started — an unapproved campaign has not begun, it has not ended.
+	$record['batch_started'] = '2026-09-05 09:00:00';
+	$record['status']        = $status;
+
+	$GLOBALS['ie_options']['ie_campaigns'][ CAMPAIGN_ID ] = $record;
+}
+
+test( 'PAUSING A FINISHED CAMPAIGN IS REFUSED, NOT SILENTLY ALLOWED', function () {
+	build_finished();
+
+	$out = IE_Publisher::pause( CAMPAIGN_ID );
+
+	ok( is_wp_error( $out ), 'pause() accepted a campaign with nothing left to publish' );
+	same( 'ie_campaign_finished', $out->code, 'refused, but for the wrong reason' );
+
+	$after = IE_Campaigns::get( CAMPAIGN_ID );
+	same( 'completed', $after['status'], 'the refusal still changed the status' );
+	ok( empty( $after['paused_at'] ), 'the refusal still stamped a pause time' );
+} );
+
+test( 'RESUMING A CANCELLED CAMPAIGN IS REFUSED', function () {
+	/* Worse than the pause case. Resuming would set it back to active with
+	 * slots naming posts that were binned: off the Completed tab, onto the
+	 * running one for ever, reporting itself active to the server. */
+	build_finished( 'cancelled' );
+	IE_Campaigns::set_status( CAMPAIGN_ID, 'paused', array( 'paused_at' => '2026-09-20T09:00:00+00:00' ) );
+
+	$out = IE_Publisher::resume( CAMPAIGN_ID );
+
+	ok( is_wp_error( $out ), 'resume() accepted a campaign that was closed out' );
+	same( 'ie_campaign_finished', $out->code, 'refused, but for the wrong reason' );
+} );
+
+test( 'a campaign still mid-run pauses exactly as before', function () {
+	/* The other half of every guard. A refusal that also fires on the
+	 * ordinary case is worse than the bug it was written for — and a test
+	 * that only checks the refusal cannot tell the two apart. */
+	build_campaign( true );
+
+	$held = IE_Publisher::pause( CAMPAIGN_ID );
+
+	ok( ! is_wp_error( $held ), 'pause() refused a campaign that is still running' );
+	same( 3, $held, 'the scheduled posts were not held back' );
+
+	$after = IE_Campaigns::get( CAMPAIGN_ID );
+	same( 'paused', $after['status'], 'the campaign was not paused' );
+} );
+
+test( 'and is not refused when it is resumed', function () {
+	/* Only that the guard stays out of the way. What resume actually PUTS
+	 * BACK is test-ie-pause.js's job — it drives real WordPress post meta,
+	 * which this harness does not model, and asserting a count here would be
+	 * asserting the stub rather than the code. */
+	build_campaign( true );
+	IE_Publisher::pause( CAMPAIGN_ID );
+
+	$released = IE_Publisher::resume( CAMPAIGN_ID );
+
+	ok( ! is_wp_error( $released ), 'resume() refused a campaign that was merely paused' );
+
+	$after = IE_Campaigns::get( CAMPAIGN_ID );
+	same( 'active', $after['status'], 'the campaign did not come back' );
+} );
+
+test( 'IS_FINISHED DOES NOT CALL AN UNAPPROVED CAMPAIGN FINISHED', function () {
+	/* A campaign whose batch never started has not ended, it has not begun —
+	 * and with no slots written, "every slot is published" is vacuously true.
+	 * Without the batch_started test the Drafts tab would lose its buttons. */
+	same( false, IE_Campaigns::is_finished( array( 'slots' => array() ) ),
+		'a campaign that never started counts as finished' );
+
+	same( false, IE_Campaigns::is_finished( array(
+		'batch_started' => '',
+		'slots'         => array( array( 'status' => 'published' ) ),
+	) ), 'an unapproved campaign counts as finished' );
+
+	same( true, IE_Campaigns::is_finished( array(
+		'batch_started' => '2026-09-05 09:00:00',
+		'slots'         => array( array( 'status' => 'published' ) ),
+	) ), 'a published campaign is not finished' );
+
+	same( false, IE_Campaigns::is_finished( array(
+		'batch_started' => '2026-09-05 09:00:00',
+		'slots'         => array( array( 'status' => 'published' ), array( 'status' => 'scheduled' ) ),
+	) ), 'a campaign with a post still to come is finished' );
 } );
 
 /* ------------------------------------------------------------------ */

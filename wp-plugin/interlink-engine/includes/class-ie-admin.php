@@ -53,6 +53,16 @@ class IE_Admin {
 	const DONE_PER_PAGE = 10;
 
 	/**
+	 * How many running campaigns before the screen changes shape.
+	 *
+	 * Below this every campaign gets its own open card, which is the right
+	 * screen for somebody with two or three. At and above it they fold into
+	 * rows under the page they feed, and a filter box appears — because a
+	 * wall of fifty identical cards is not a list, it is a haystack.
+	 */
+	const GROUP_FROM = 4;
+
+	/**
 	 * How many topics one press of "Suggest topics" asks for.
 	 *
 	 * Twelve is the server's ceiling per request (routes/blogTopicsRoute.js
@@ -475,29 +485,22 @@ class IE_Admin {
 		$out = array( 'running' => array(), 'drafts' => array(), 'done' => array() );
 
 		foreach ( $campaigns as $campaign ) {
-			$outstanding = 0;
-			foreach ( $campaign['slots'] as $slot ) {
-				if ( 'published' !== $slot['status'] ) {
-					$outstanding++;
-				}
-			}
-
-			/* A CANCELLED CAMPAIGN IS FINISHED, whatever its slots still say.
+			/* WHICH TAB, AND WHICH BUTTONS, NOW ASK THE SAME FUNCTION.
 			 *
-			 * Its unpublished posts were thrown away, so the slots that named
-			 * them go on reading 'scheduled' for posts that no longer exist —
-			 * outstanding work that is never coming. Without this the campaign
-			 * sat on the running tab for ever with nothing left to do and no
-			 * way to close it out, which is the gap "Delete the remaining
-			 * drafts" would otherwise have left behind. */
+			 * This rule used to live here and nowhere else, so the card had no
+			 * idea it was being rendered on the Completed tab. A finished
+			 * campaign was still offered "Pause campaign" — which set its
+			 * status to paused, held nothing back because there was nothing to
+			 * hold, and left Three Comets recording a finished campaign as
+			 * paused. IE_Campaigns::is_finished() carries the rule now,
+			 * including why a cancelled campaign counts as finished whatever
+			 * its slots still say. */
 			if ( empty( $campaign['batch_started'] ) ) {
 				$out['drafts'][] = $campaign;
-			} elseif ( isset( $campaign['status'] ) && 'cancelled' === $campaign['status'] ) {
+			} elseif ( IE_Campaigns::is_finished( $campaign ) ) {
 				$out['done'][] = $campaign;
-			} elseif ( $outstanding ) {
-				$out['running'][] = $campaign;
 			} else {
-				$out['done'][] = $campaign;
+				$out['running'][] = $campaign;
 			}
 		}
 
@@ -709,9 +712,74 @@ class IE_Admin {
 		// nothing to be buried under, so it opens.
 		$collapse = count( $running ) > 1;
 
-		foreach ( $running as $campaign ) {
-			self::render_campaign_card( $campaign, $collapse );
+		/* GROUPED BY THE PAGE THEY FEED, AND FOLDED, ONCE THERE ARE ENOUGH.
+		 *
+		 * Every campaign rendered a full card — heading, schedule table,
+		 * buttons — one after another. At three that reads well. At fifty it
+		 * is a page nobody can navigate: the campaign you came for is a
+		 * thousand pixels down a wall of identical boxes, and the only way to
+		 * find it is Cmd-F.
+		 *
+		 * Campaigns are not an unordered list. Each one feeds ONE page, and
+		 * several campaigns feeding the same page are the thing an owner
+		 * actually reasons about — "how am I doing on slab leak detection"
+		 * rather than "what was campaign number thirty-one". So they group by
+		 * the page, and the page's name is the heading.
+		 *
+		 * Below the threshold none of this appears: a fold and a filter over
+		 * two campaigns is furniture, and the screen stays exactly as it was
+		 * for anybody who is not drowning. */
+		$grouped = count( $running ) >= self::GROUP_FROM;
+
+		if ( ! $grouped ) {
+			foreach ( $running as $campaign ) {
+				self::render_campaign_card( $campaign, $collapse );
+			}
+
+			if ( count( $running ) > 1 ) {
+				self::render_upcoming();
+			}
+
+			return;
 		}
+
+		self::render_campaign_filter( count( $running ) );
+
+		foreach ( self::by_money_page( $running ) as $group ) {
+			?>
+			<h2 class="ie-group-heading" style="margin:1.5rem 0 .5rem;font-size:1.1rem">
+				<?php echo esc_html( $group['title'] ); ?>
+				<span style="font-weight:400;color:#666">
+					— <?php echo esc_html( sprintf(
+						/* translators: %d: number of campaigns feeding this page */
+						_n( '%d campaign', '%d campaigns', count( $group['campaigns'] ), 'interlink-engine' ),
+						count( $group['campaigns'] )
+					) ); ?>
+				</span>
+			</h2>
+			<?php
+
+			foreach ( $group['campaigns'] as $campaign ) {
+				$headline = self::campaign_headline( $campaign );
+				?>
+				<details class="ie-campaign-fold"
+				         data-ie-search="<?php echo esc_attr( strtolower(
+					         IE_Campaigns::label_of( $campaign ) . ' ' . $group['title']
+				         ) ); ?>"
+				         style="margin-bottom:.4rem;border:1px solid #dcdcde;background:#fff;border-radius:4px">
+					<summary style="padding:.6rem .9rem;cursor:pointer">
+						<strong><?php echo esc_html( IE_Campaigns::label_of( $campaign ) ); ?></strong>
+						<span style="color:#666"> — <?php echo esc_html( $headline ); ?></span>
+					</summary>
+					<?php self::render_campaign_card( $campaign, true, true ); ?>
+				</details>
+				<?php
+			}
+		}
+
+		// Unchanged by any of this: it is the only view that can see a day
+		// carrying two posts, and that matters more at fifty than at three.
+		self::render_upcoming();
 
 		// Below the campaigns, not above: it describes them, and with one
 		// campaign it repeats the card it sits under. It earns its place at
@@ -720,6 +788,89 @@ class IE_Admin {
 		if ( count( $running ) > 1 ) {
 			self::render_upcoming();
 		}
+	}
+
+	/**
+	 * Campaigns, gathered under the page each one feeds.
+	 *
+	 * Keyed by the money page's URL rather than its name: two pages can share
+	 * a title, and the URL is the thing that makes them the same page.
+	 * Insertion order is kept, so the newest campaign's page leads — the list
+	 * arrives sorted and this must not undo that.
+	 */
+	private static function by_money_page( $campaigns ) {
+		$groups = array();
+
+		foreach ( $campaigns as $campaign ) {
+			$url = isset( $campaign['target_page']['url'] ) ? (string) $campaign['target_page']['url'] : '';
+
+			$title = isset( $campaign['target_page']['title'] ) && $campaign['target_page']['title']
+				? (string) $campaign['target_page']['title']
+				: ( $url ? $url : __( 'No page', 'interlink-engine' ) );
+
+			if ( ! isset( $groups[ $url ] ) ) {
+				$groups[ $url ] = array( 'title' => $title, 'url' => $url, 'campaigns' => array() );
+			}
+
+			$groups[ $url ]['campaigns'][] = $campaign;
+		}
+
+		return array_values( $groups );
+	}
+
+	/**
+	 * A box that hides the rows that do not match what is typed.
+	 *
+	 * IN THE BROWSER, not a form submit. Filtering a list you are looking at
+	 * should not cost a page load, lose your scroll position, or fold every
+	 * campaign you had opened. There is no server round trip to make: the
+	 * rows are already here.
+	 *
+	 * Degrades to nothing without JavaScript — the box simply does nothing
+	 * and every campaign is still on the page, which is the right failure.
+	 */
+	private static function render_campaign_filter( $total ) {
+		?>
+		<p style="margin:0 0 .5rem">
+			<label>
+				<span class="screen-reader-text"><?php esc_html_e( 'Filter campaigns', 'interlink-engine' ); ?></span>
+				<input type="search" id="ie-campaign-filter" class="regular-text"
+				       placeholder="<?php echo esc_attr( sprintf(
+					       /* translators: %d: how many campaigns are running */
+					       __( 'Filter %d campaigns by name or page…', 'interlink-engine' ),
+					       $total
+				       ) ); ?>">
+			</label>
+		</p>
+		<script>
+		( function () {
+			var box = document.getElementById( 'ie-campaign-filter' );
+			if ( ! box ) { return; }
+
+			box.addEventListener( 'input', function () {
+				var want = box.value.trim().toLowerCase();
+
+				document.querySelectorAll( '.ie-campaign-fold' ).forEach( function ( row ) {
+					var hit = ! want || ( row.dataset.ieSearch || '' ).indexOf( want ) !== -1;
+					row.style.display = hit ? '' : 'none';
+				} );
+
+				// A heading with nothing under it is a lie about what is on
+				// the page. Hidden with its group.
+				document.querySelectorAll( '.ie-group-heading' ).forEach( function ( heading ) {
+					var any = false, node = heading.nextElementSibling;
+
+					while ( node && node.classList.contains( 'ie-campaign-fold' ) ) {
+						if ( node.style.display !== 'none' ) { any = true; break; }
+						node = node.nextElementSibling;
+					}
+
+					heading.style.display = any ? '' : 'none';
+				} );
+			} );
+		}() );
+		</script>
+		<?php
 	}
 
 	private static function render_drafts_tab( $drafts ) {
@@ -1000,24 +1151,21 @@ class IE_Admin {
 		<?php
 	}
 
-	private static function render_campaign_card( $campaign, $collapse = false ) {
-		// Two numbers now, because a post being ON the site and a post being
-		// VISIBLE are no longer the same event. "9 of 12 scheduled, 3 live"
-		// is the sentence the owner needs; one combined figure hides whichever
-		// half they were actually asking about.
+	/**
+	 * The one line that describes a campaign.
+	 *
+	 * ONE DEFINITION, because it is now read in two places: the card's own
+	 * heading, and the fold summary that stands in for the card when there
+	 * are too many to show at once. Two copies of a sentence this loaded —
+	 * scheduled, live, deleted, and what the campaign is doing — would come
+	 * to disagree, and the summary is the one people read first.
+	 */
+	private static function campaign_headline( $campaign ) {
 		$scheduled = 0;
 		$live      = 0;
 		$gone      = 0;
 
 		foreach ( $campaign['slots'] as $slot ) {
-			/* A DELETED POST COUNTS AS NEITHER.
-			 *
-			 * This heading read "6 of 6 scheduled, 1 live, publishing on
-			 * schedule" for a campaign whose posts had all been deleted. Every
-			 * number in it came from the stored slot status, which no longer
-			 * described anything real — and the sentence sent us looking for a
-			 * publishing fault for an evening. A count that cannot be true is
-			 * worse than no count. */
 			if ( IE_Campaigns::post_missing( $slot ) ) {
 				$gone++;
 				continue;
@@ -1031,35 +1179,83 @@ class IE_Admin {
 			}
 		}
 
+		/* ORDER MATTERS, MOST SPECIFIC FIRST.
+		 *
+		 * A deleted post is the fact that explains a missing link, so it wins
+		 * over everything. Then cancelled, then finished — a campaign that has
+		 * nothing left to publish is not "publishing on schedule", and saying
+		 * so on the Completed tab put a present tense on six campaigns that
+		 * had all finished weeks earlier. Only then the present-tense words,
+		 * which now only ever describe a campaign that really is still going. */
+		if ( $gone ) {
+			$state = sprintf(
+				/* translators: %d: how many of this campaign's posts no longer exist */
+				_n( '%d post deleted', '%d posts deleted', $gone, 'interlink-engine' ),
+				$gone
+			);
+		} elseif ( isset( $campaign['status'] ) && 'cancelled' === $campaign['status'] ) {
+			$state = __( 'cancelled — the rest was never written', 'interlink-engine' );
+		} elseif ( IE_Campaigns::is_finished( $campaign ) ) {
+			$state = __( 'finished', 'interlink-engine' );
+		} else {
+			$state = 'draft' === $campaign['publish_mode']
+				? __( 'saving as drafts', 'interlink-engine' )
+				: __( 'publishing on schedule', 'interlink-engine' );
+		}
+
+		return sprintf(
+			/* translators: 1: posts on the site, 2: total, 3: how many are public, 4: what it is doing */
+			__( '%1$d of %2$d scheduled, %3$d live, %4$s', 'interlink-engine' ),
+			$scheduled, count( $campaign['slots'] ), $live, $state
+		);
+	}
+
+	private static function render_campaign_card( $campaign, $collapse = false, $folded = false ) {
+		/* The counting that used to live here moved into campaign_headline(),
+		 * which the heading now calls. All the card still needs for itself is
+		 * whether ANY post has gone missing, because that turns on a warning
+		 * the headline has no room to explain. */
+		$gone = 0;
+
+		foreach ( $campaign['slots'] as $slot ) {
+			if ( IE_Campaigns::post_missing( $slot ) ) {
+				$gone++;
+			}
+		}
+
+		/* FINISHED CAMPAIGNS GET NO RUNNING CONTROLS, and that is not a
+		 * cosmetic rule. "Pause campaign" on a campaign with nothing left to
+		 * publish held nothing back, said "0 scheduled posts were held as
+		 * drafts", and set the status to paused anyway — which the sweep then
+		 * reported to Three Comets, turning a completed campaign into a paused
+		 * one in the blog report. Same for Resume: releasing nothing, it would
+		 * push the campaign back to active for the server to settle again. */
+		$finished = IE_Campaigns::is_finished( $campaign );
+
 		$orphans = IE_Campaigns::orphans( $campaign );
 		?>
-		<div class="card" style="max-width:none;padding:1rem 1.25rem;margin-bottom:1.25rem">
+		<div class="card" style="max-width:none;padding:1rem 1.25rem;margin-bottom:1.25rem<?php echo $folded ? ';border:0;box-shadow:none;margin:0' : ''; ?>">
+			<?php if ( ! $folded ) : ?>
+			<?php /* THE SAME SENTENCE, FROM THE SAME FUNCTION, AND IT WAS NOT.
+			        *
+			        * The fold summary calls campaign_headline(). This heading
+			        * used to build the identical sentence inline from its own
+			        * copy of the counting loop — two implementations agreeing
+			        * only by luck, and the comment here claimed they were one.
+			        * They stopped agreeing the moment campaign_headline()
+			        * learned the word "finished": folded campaigns said it and
+			        * open ones, which is what the Completed tab renders, went
+			        * on saying "publishing on schedule".
+			        *
+			        * Printing BOTH puts the same sentence on screen twice, half
+			        * a centimetre apart, which is why this is behind $folded. */ ?>
 			<h2 style="margin-top:0">
 				<?php echo esc_html( IE_Campaigns::label_of( $campaign ) ); ?>
 				<span style="font-weight:400;color:#666">
-					— <?php echo esc_html( sprintf(
-						/* translators: 1: posts on the site, 2: total, 3: how many are public */
-						__( '%1$d of %2$d scheduled, %3$d live', 'interlink-engine' ),
-						$scheduled, count( $campaign['slots'] ), $live
-					) ); ?>,
-					<?php if ( $gone ) : ?>
-						<?php
-						/* Said here rather than only on the rows, because the
-						 * heading is the line somebody reads before deciding
-						 * whether anything is wrong. "publishing on schedule"
-						 * under a table of dead rows is the sentence that sent
-						 * us hunting a scheduler fault. */
-						echo esc_html( sprintf(
-							/* translators: %d: how many of this campaign's posts no longer exist */
-							_n( '%d post deleted', '%d posts deleted', $gone, 'interlink-engine' ),
-							$gone
-						) );
-						?>
-					<?php else : ?>
-						<?php echo esc_html( 'draft' === $campaign['publish_mode'] ? __( 'saving as drafts', 'interlink-engine' ) : __( 'publishing on schedule', 'interlink-engine' ) ); ?>
-					<?php endif; ?>
+					— <?php echo esc_html( self::campaign_headline( $campaign ) ); ?>
 				</span>
 			</h2>
+			<?php endif; ?>
 
 			<?php if ( $gone ) : ?>
 				<?php
@@ -1421,7 +1617,20 @@ class IE_Admin {
 					</span>
 				<?php endif; ?>
 
-				<?php if ( IE_Campaigns::is_paused( $campaign ) ) : ?>
+				<?php if ( $finished ) : ?>
+					<?php
+					/* NOTHING TO PAUSE AND NOTHING TO RESUME. Said plainly,
+					 * because a row of buttons with a gap where two of them
+					 * used to be reads as a screen that failed to load. */
+					?>
+					<span class="description">
+						<?php
+						echo esc_html( IE_Campaigns::is_paused( $campaign ) || ( isset( $campaign['status'] ) && 'cancelled' === $campaign['status'] )
+							? __( 'This campaign is closed out. Nothing further will publish.', 'interlink-engine' )
+							: __( 'Every post in this campaign has published. There is nothing left to schedule.', 'interlink-engine' ) );
+						?>
+					</span>
+				<?php elseif ( IE_Campaigns::is_paused( $campaign ) ) : ?>
 					<a class="button button-primary"
 					   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_resume_campaign&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_resume_campaign' ) ); ?>">
 						<?php esc_html_e( 'Resume campaign', 'interlink-engine' ); ?>
