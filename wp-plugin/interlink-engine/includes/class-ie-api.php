@@ -309,6 +309,25 @@ class IE_Api {
 	 * @param array $payload targetPage, topics, schedule, linkMode, name
 	 */
 	public static function plan( $payload ) {
+		/* THE BUSINESS RIDES WITH THE PLAN, and it had to start doing so.
+		 *
+		 * The server stores `site.business` at LICENCE ACTIVATION and never
+		 * again — one write, in the activation handler, and one read, here at
+		 * planning. So a site that changed its Business Name in Theme
+		 * Settings went on planning campaigns under whatever it was called
+		 * the day the licence was pasted in, possibly months earlier.
+		 *
+		 * That is how roofingamerica.xyz ended up with live posts linking
+		 * with the anchor "TK Water Damage Restoration" and "…in Leander"
+		 * long after it had become Emergency Plumber Austin in Austin.
+		 *
+		 * Sent on the plan because that is the one moment the value is used:
+		 * anchors are chosen here and then frozen into the slots. Sending it
+		 * anywhere else would keep a copy current that nothing reads. */
+		if ( ! isset( $payload['business'] ) ) {
+			$payload['business'] = IE_Settings::business();
+		}
+
 		return self::post( '/api/blog/plan', $payload, 60 );
 	}
 
@@ -439,10 +458,24 @@ class IE_Api {
 	 *
 	 * So the return value is for the log, not for the caller's decision.
 	 */
-	public static function removed( $campaign_id ) {
-		$result = self::post( '/api/blog/removed', array(
-			'campaignId' => $campaign_id,
-		) );
+	public static function removed( $campaign_id, $at = '' ) {
+		/* THE TIME THE CUSTOMER PRESSED REMOVE, sent because the server has no
+		 * way to know it. It used to stamp its own clock on arrival, which is
+		 * the same answer only when the report arrives immediately — and a
+		 * report from a site whose licence was being refused arrived eight
+		 * days late, so six campaigns were recorded as removed on the day the
+		 * server finally heard rather than the day they went.
+		 *
+		 * ISO 8601 UTC. Omitted rather than guessed when the caller has no
+		 * time to offer: the server falls back to its own clock, which is the
+		 * old behaviour and still better than a made-up timestamp. */
+		$body = array( 'campaignId' => $campaign_id );
+
+		if ( ! empty( $at ) ) {
+			$body['removedAt'] = (string) $at;
+		}
+
+		$result = self::post( '/api/blog/removed', $body );
 
 		if ( is_wp_error( $result ) ) {
 			IE_Publisher::log( 'removal callback failed: ' . $result->get_error_message() );
@@ -595,9 +628,15 @@ class IE_Api {
 			$payload[] = array( 'id' => $id, 'status' => $status );
 		}
 
+		/* Carried here too, for the same reason the campaign statuses are: a
+		 * reconciliation is re-sent every run, so a rename reaches the server
+		 * within the hour rather than waiting for the next campaign to be
+		 * planned. The plan call above is what actually needs it; this keeps
+		 * the stored copy from being months old when it arrives. */
 		$result = self::post( '/api/blog/campaigns-present', array(
 			'campaignIds' => $ids,
 			'campaigns'   => $payload,
+			'business'    => IE_Settings::business(),
 		) );
 
 		if ( is_wp_error( $result ) ) {

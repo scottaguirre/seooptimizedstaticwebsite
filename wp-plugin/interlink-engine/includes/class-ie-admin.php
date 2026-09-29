@@ -629,7 +629,7 @@ class IE_Admin {
 			</a>
 		</p>
 		<p class="description" style="margin-top:-.5rem">
-			<?php esc_html_e( 'Finds links between your posts that were never switched on, and switches them on. Safe to run more than once.', 'interlink-engine' ); ?>
+			<?php esc_html_e( 'Finds links between your posts that were never switched on, and switches them on. Also tidies search-result titles on older posts. Safe to run more than once.', 'interlink-engine' ); ?>
 		</p>
 		<?php
 	}
@@ -2919,7 +2919,14 @@ class IE_Admin {
 
 		$stats = IE_Publisher::repair_links();
 
-		if ( ! $stats['restored'] && ! $stats['unwrapped'] ) {
+		/* THE TITLE COUNT IS PART OF "NOTHING TO REPAIR".
+		 *
+		 * It was not, at first: the early-exit tested only the two link
+		 * counters, so a run that fixed forty search-result titles and no
+		 * links announced "Nothing to repair" and looked like a no-op. A
+		 * gate in front of a message has to count everything the message is
+		 * allowed to mention. */
+		if ( ! $stats['restored'] && ! $stats['unwrapped'] && empty( $stats['titles'] ) ) {
 			self::redirect( 'interlink-engine', 'repaired',
 				__( 'Nothing to repair — every link between your posts is already in place.', 'interlink-engine' ),
 				array( 'tab' => $tab ) );
@@ -2945,6 +2952,19 @@ class IE_Admin {
 					'interlink-engine'
 				),
 				$stats['unwrapped']
+			);
+		}
+
+		if ( ! empty( $stats['titles'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %d: number of posts whose search-result title was fixed */
+				_n(
+					"%d post's search-result title no longer has your domain stuck on the end",
+					"%d posts' search-result titles no longer have your domain stuck on the end",
+					$stats['titles'],
+					'interlink-engine'
+				),
+				$stats['titles']
 			);
 		}
 

@@ -95,17 +95,35 @@ function get_post( $id ) {
 
 	$row = $GLOBALS['ie_posts'][ $id ];
 
+	/* post_title IS PART OF A POST, and this stub did not have one.
+	 * repair_links() reads $post->post_title to backfill the SEO title, so
+	 * without it the property is undefined, casts to '', and the backfill
+	 * skips every post — quietly, and the tests for it would have passed
+	 * against a feature that never ran. */
 	return (object) array(
 		'ID'           => $id,
+		'post_title'   => isset( $row['title'] ) ? $row['title'] : 'Post ' . $id,
 		'post_content' => $row['content'],
 		'post_status'  => $row['status'],
 	);
 }
 
+/* A REAL STORE, because update_post_meta() used to return true and keep
+ * nothing. Anything written through it vanished, so "the SEO title is set"
+ * and "an existing title is never overwritten" were both unaskable — and a
+ * test for either would have passed against code that wrote nothing at all.
+ * Fifth time this suite has been bitten by a stub that cannot express the
+ * thing under test. */
+$GLOBALS['ie_meta'] = array();
+
 function get_post_meta( $id, $key, $single = false ) {
 	$id = (int) $id;
 	if ( ! isset( $GLOBALS['ie_posts'][ $id ] ) ) {
 		return '';
+	}
+
+	if ( isset( $GLOBALS['ie_meta'][ $id ][ $key ] ) ) {
+		return $GLOBALS['ie_meta'][ $id ][ $key ];
 	}
 
 	$row = $GLOBALS['ie_posts'][ $id ];
@@ -120,7 +138,18 @@ function get_post_meta( $id, $key, $single = false ) {
 	return '';
 }
 
-function update_post_meta( $id, $key, $value ) { return true; }
+function update_post_meta( $id, $key, $value ) {
+	$GLOBALS['ie_meta'][ (int) $id ][ $key ] = $value;
+	return true;
+}
+
+/* Reached for the first time once the store above became real: resume()
+ * clears its hold marker, and with a black-hole stub the marker was never
+ * there to clear, so this function was never called. */
+function delete_post_meta( $id, $key ) {
+	unset( $GLOBALS['ie_meta'][ (int) $id ][ $key ] );
+	return true;
+}
 function get_permalink( $id ) { return 'https://example.test/post-' . (int) $id; }
 function get_the_title( $id ) {
 	$id = (int) $id;
@@ -216,7 +245,23 @@ require_once __DIR__ . '/interlink-engine/includes/class-ie-campaigns.php';
 
 /** Connected, so the report path is exercised rather than skipped. */
 class IE_Settings {
-	public static function is_connected() { return true; }
+	/* Settable, because "the site is not connected" is a state the removal
+	 * queue behaves differently in and a stub hard-coded to true cannot
+	 * express it. */
+	public static function is_connected() {
+		return array_key_exists( 'ie_connected', $GLOBALS ) ? (bool) $GLOBALS['ie_connected'] : true;
+	}
+
+	/* SERVED FROM A GLOBAL, not a fixed string. The repair pass writes the
+	 * SEO title to '<prefix>_page_title', and a stub that always answers the
+	 * same prefix cannot express the case where there is NO generated theme
+	 * — which is the case the backfill has to skip rather than write a meta
+	 * key beginning with an underscore and nothing else. */
+	public static function active_theme_prefix() {
+		return array_key_exists( 'ie_theme_prefix', $GLOBALS )
+			? $GLOBALS['ie_theme_prefix']
+			: 'lbt';
+	}
 }
 
 /**
@@ -235,13 +280,23 @@ class IE_Api {
 		);
 		return array( 'ok' => true );
 	}
-	public static function removed( $id ) {
+	/* TWO ARGUMENTS AND A WAY TO FAIL, neither of which this stub had.
+	 *
+	 * It took only the id, so "the removal time is sent" was unaskable. And
+	 * it always succeeded, so the retry queue — the entire point of which is
+	 * what happens when this call does NOT get through — could not be
+	 * reached by any test at all. */
+	public static function removed( $id, $at = '' ) {
 		$GLOBALS['ie_calls'][] = array(
-			'call'          => 'removed',
-			'campaign'      => $id,
+			'call'           => 'removed',
+			'campaign'       => $id,
+			'at'             => $at,
 			'record_existed' => (bool) IE_Campaigns::get( $id ),
 		);
-		return array( 'ok' => true );
+
+		return ! empty( $GLOBALS['ie_api_fail'] )
+			? new WP_Error( 'ie_http', 'the server could not be reached' )
+			: array( 'ok' => true );
 	}
 	public static function posts_deleted( $campaign_id = '', $slots = array(), $reconcile = false, $live = array() ) {
 		$GLOBALS['ie_calls'][] = array(
@@ -263,7 +318,7 @@ require_once __DIR__ . '/interlink-engine/includes/class-ie-publisher.php';
 
 $passed = 0;
 $failed = 0;
-$DECLARED = 57;
+$DECLARED = 70;
 
 function test( $name, $fn ) {
 	global $passed, $failed;
@@ -305,6 +360,9 @@ const CAMPAIGN_ID = 'camp-abc';
 function build_campaign( $keep_record = true ) {
 	$GLOBALS['ie_options']      = array();
 	$GLOBALS['ie_posts']        = array();
+	// Reset WITH the posts. Meta that outlives the post it belongs to makes
+	// the next test's fixture arrive pre-loaded with the last one's writes.
+	$GLOBALS['ie_meta']         = array();
 	$GLOBALS['ie_published']    = array();
 	$GLOBALS['ie_meta_queries'] = 0;
 	$GLOBALS['ie_calls']        = array();
@@ -1257,6 +1315,248 @@ test( 'IS_FINISHED DOES NOT CALL AN UNAPPROVED CAMPAIGN FINISHED', function () {
 		'batch_started' => '2026-09-05 09:00:00',
 		'slots'         => array( array( 'status' => 'published' ), array( 'status' => 'scheduled' ) ),
 	) ), 'a campaign with a post still to come is finished' );
+} );
+
+
+/* ---------------------------------------------------------------------
+ * The search-result title, and the domain stuck on the end of it
+ *
+ * The generated theme filters pre_get_document_title and returns
+ * '<prefix>_page_title' when the post has one. Its own pages get that meta at
+ * theme activation. Posts published by this plugin never did, so the filter
+ * fell through on every one of them and WordPress's default took over:
+ *
+ *   Cloudy Glasses and White Faucet Scale Usually Mean Hard Water — roofingamerica.xyz
+ *
+ * insert_post() writes the meta now. repair_links() backfills it, because a
+ * post already on the site keeps the meta it was given, which was none.
+ * ------------------------------------------------------------------ */
+
+test( 'THE REPAIR PASS BACKFILLS THE SEO TITLE', function () {
+	build_broken();
+
+	foreach ( $GLOBALS['ie_posts'] as $id => $row ) {
+		$GLOBALS['ie_posts'][ $id ]['title'] = 'Headline ' . $id;
+	}
+
+	$stats = IE_Publisher::repair_links();
+
+	same( 6, $stats['titles'], 'not every post had its title backfilled' );
+	same( 'Headline 100', get_post_meta( 100, 'lbt_page_title', true ),
+		'the theme does not see an SEO title on this post' );
+	same( 'Headline 100', get_post_meta( 100, '_ie_meta_title', true ),
+		'the title will not survive a change of theme' );
+} );
+
+test( 'A TITLE SOMEBODY ALREADY WROTE IS NEVER OVERWRITTEN', function () {
+	/* Theirs, not ours. Anybody who edited the SEO title by hand meant it,
+	 * and a repair pass advertised as safe to run more than once must not
+	 * quietly undo that on the next press. */
+	build_broken();
+	update_post_meta( 100, 'lbt_page_title', 'The One I Wrote Myself' );
+
+	$stats = IE_Publisher::repair_links();
+
+	same( 'The One I Wrote Myself', get_post_meta( 100, 'lbt_page_title', true ),
+		'the repair pass overwrote a hand-written title' );
+	same( 5, $stats['titles'], 'the untouched post was still counted as fixed' );
+} );
+
+test( 'running it twice fixes nothing the second time', function () {
+	build_broken();
+
+	IE_Publisher::repair_links();
+	$again = IE_Publisher::repair_links();
+
+	same( 0, $again['titles'], 'the pass rewrites titles it already wrote' );
+} );
+
+test( 'WITH NO GENERATED THEME, NOTHING IS WRITTEN', function () {
+	/* active_theme_prefix() is empty on a site running somebody else's theme.
+	 * Writing '_page_title' — the prefix plus the suffix and nothing else —
+	 * would put a meta key on the post that no theme reads and no one can
+	 * account for later. */
+	build_broken();
+	$GLOBALS['ie_theme_prefix'] = '';
+
+	$stats = IE_Publisher::repair_links();
+
+	same( 0, $stats['titles'], 'titles were written with no theme to read them' );
+	same( '', get_post_meta( 100, '_page_title', true ), 'a prefixless meta key was written' );
+
+	$GLOBALS['ie_theme_prefix'] = 'lbt';
+} );
+
+test( 'a post whose campaign is gone still gets its title fixed', function () {
+	/* The backfill sits ABOVE the campaign-record check on purpose. A removed
+	 * campaign's posts are still on the site, still in search results, and
+	 * their titles are still wrong. Nothing about a title needs the record. */
+	build_broken( false );
+
+	$stats = IE_Publisher::repair_links();
+
+	ok( $stats['titles'] > 0, 'an orphaned post was skipped by the title backfill' );
+} );
+
+
+/* ---------------------------------------------------------------------
+ * The removal time, and the queue that carries it when the report fails
+ *
+ * Six campaigns on the blog report all read "removed 09-28-2026", a date
+ * Edwin was sure was wrong. It was. He removed them earlier; that site's
+ * licence was being refused for eight days, so nothing it said was heard,
+ * and the hourly sweep eventually noticed the campaigns were missing and
+ * stamped the whole batch with the day it noticed.
+ *
+ * Two things were wrong. The plugin sent no time, so the server could only
+ * use its own clock. And remove_campaign() deletes the local record
+ * immediately, so a failed report had nothing left to be rebuilt from.
+ * ------------------------------------------------------------------ */
+
+test( 'THE REMOVAL CARRIES THE MOMENT IT HAPPENED', function () {
+	build_campaign( true );
+	$GLOBALS['ie_api_fail'] = false;
+
+	IE_Publisher::remove_campaign( CAMPAIGN_ID );
+
+	$sent = null;
+	foreach ( $GLOBALS['ie_calls'] as $call ) {
+		if ( 'removed' === $call['call'] ) { $sent = $call; }
+	}
+
+	ok( $sent, 'no removal was reported at all' );
+	ok( ! empty( $sent['at'] ), 'the removal was reported without a time' );
+	ok( false !== strtotime( $sent['at'] ), 'the reported time is not a date' );
+
+	// Now, not the epoch and not a formatted-in-site-timezone string that
+	// the server would read as a different instant.
+	ok( abs( time() - strtotime( $sent['at'] ) ) < 120,
+		'the reported time is not the moment of removal' );
+} );
+
+test( 'A REPORT THAT FAILS IS QUEUED, WITH THAT SAME TIME', function () {
+	/* The record is deleted on the next line, so this is the only chance to
+	 * keep it. Without the queue the removal is simply lost and the sweep
+	 * invents a date later — which is exactly what happened. */
+	build_campaign( true );
+	$GLOBALS['ie_api_fail'] = true;
+
+	IE_Publisher::remove_campaign( CAMPAIGN_ID );
+
+	$queue = get_option( IE_Publisher::PENDING_REMOVALS, array() );
+
+	same( 1, count( $queue ), 'the failed removal was not queued' );
+	ok( ! empty( $queue[0]['at'] ), 'the queued removal carries no time' );
+	ok( abs( time() - strtotime( $queue[0]['at'] ) ) < 120,
+		'the queued time is not the moment of removal' );
+
+	$GLOBALS['ie_api_fail'] = false;
+} );
+
+test( 'a report that succeeds queues nothing', function () {
+	build_campaign( true );
+	$GLOBALS['ie_api_fail'] = false;
+
+	IE_Publisher::remove_campaign( CAMPAIGN_ID );
+
+	same( array(), get_option( IE_Publisher::PENDING_REMOVALS, array() ),
+		'a successful removal was queued for retry anyway' );
+} );
+
+test( 'THE RETRY SENDS THE ORIGINAL TIME, NOT THE TIME OF THE RETRY', function () {
+	/* The whole reason the queue stores a timestamp rather than just an id.
+	 * Retrying with "now" would reproduce the original bug a week later. */
+	build_campaign( true );
+	$GLOBALS['ie_options'][ IE_Publisher::PENDING_REMOVALS ] = array(
+		array( 'id' => 'c-gone', 'at' => '2026-09-20T14:00:00+00:00' ),
+	);
+	$GLOBALS['ie_calls']    = array();
+	$GLOBALS['ie_api_fail'] = false;
+
+	same( 1, IE_Publisher::flush_removed_reports(), 'the queued removal was not sent' );
+
+	same( '2026-09-20T14:00:00+00:00', $GLOBALS['ie_calls'][0]['at'],
+		'the retry reported the time of the retry' );
+	same( array(), get_option( IE_Publisher::PENDING_REMOVALS, array() ),
+		'the queue was not cleared after a successful retry' );
+} );
+
+test( 'A RETRY THAT FAILS KEEPS ITS PLACE IN THE QUEUE', function () {
+	/* One unreachable minute must not become permanent silence — the same
+	 * rule send_slot_reports() follows for deleted posts. */
+	build_campaign( true );
+	$GLOBALS['ie_options'][ IE_Publisher::PENDING_REMOVALS ] = array(
+		array( 'id' => 'c-gone', 'at' => '2026-09-20T14:00:00+00:00' ),
+	);
+	$GLOBALS['ie_api_fail'] = true;
+
+	same( 0, IE_Publisher::flush_removed_reports(), 'a failed retry reported success' );
+
+	$queue = get_option( IE_Publisher::PENDING_REMOVALS, array() );
+	same( 1, count( $queue ), 'the failed retry dropped the removal' );
+	same( '2026-09-20T14:00:00+00:00', $queue[0]['at'], 'the time was lost on the way' );
+
+	$GLOBALS['ie_api_fail'] = false;
+} );
+
+test( 'a disconnected site holds the queue rather than emptying it', function () {
+	build_campaign( true );
+	$GLOBALS['ie_options'][ IE_Publisher::PENDING_REMOVALS ] = array(
+		array( 'id' => 'c-gone', 'at' => '2026-09-20T14:00:00+00:00' ),
+	);
+	$GLOBALS['ie_connected'] = false;
+
+	same( 0, IE_Publisher::flush_removed_reports(), 'something was sent with no licence' );
+	same( 1, count( get_option( IE_Publisher::PENDING_REMOVALS, array() ) ),
+		'the queue was emptied without reporting anything' );
+
+	$GLOBALS['ie_connected'] = true;
+} );
+
+test( 'QUEUEING THE SAME CAMPAIGN TWICE KEEPS THE FIRST TIME', function () {
+	/* Remove, reinstall, remove again. The second press describes nothing —
+	 * the same rule markRemoved() applies on the server, where the first
+	 * removal wins. */
+	build_campaign( true );
+	$GLOBALS['ie_options'][ IE_Publisher::PENDING_REMOVALS ] = array();
+
+	ok( IE_Publisher::queue_removal( 'c-gone', '2026-09-20T14:00:00+00:00' ), 'the first was not queued' );
+	ok( ! IE_Publisher::queue_removal( 'c-gone', '2026-09-28T09:00:00+00:00' ), 'the second was queued too' );
+
+	$queue = get_option( IE_Publisher::PENDING_REMOVALS, array() );
+	same( 1, count( $queue ), 'the same campaign is in the queue twice' );
+	same( '2026-09-20T14:00:00+00:00', $queue[0]['at'], 'the later press overwrote the real date' );
+} );
+
+test( 'the hourly sweep is what drains the queue', function () {
+	/* A queue nothing flushes is a slower way of losing the report. The
+	 * flush sits ABOVE run_catch_up's early return, because a site with no
+	 * pending work is exactly the site that just removed its last campaign. */
+	build_campaign( true );
+	$GLOBALS['ie_options'][ IE_Publisher::PENDING_REMOVALS ] = array(
+		array( 'id' => 'c-gone', 'at' => '2026-09-20T14:00:00+00:00' ),
+	);
+	$GLOBALS['ie_calls']    = array();
+	$GLOBALS['ie_api_fail'] = false;
+
+	/* Driven through the SOURCE rather than by calling run_catch_up(), which
+	 * walks into publish_missed() and a dozen more WordPress functions this
+	 * harness does not stub. Asserting the call site is weaker than running
+	 * it — so it also checks the ORDER, which is the part that would
+	 * actually break: below the early return, a site with nothing pending
+	 * never drains the queue, and that is precisely the site that just
+	 * removed its last campaign. */
+	$src = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-publisher.php' );
+
+	$flush  = strpos( $src, 'self::flush_removed_reports();' );
+	$return = strpos( $src, "return array( 'rescued' => \$rescued, 'ran' => 0" );
+
+	ok( false !== $flush, 'run_catch_up never drains the removal queue' );
+	ok( false !== $return, 'the early return moved — this guard is now checking nothing' );
+	ok( $flush < $return, 'the queue is drained only on sites that still have work' );
+
+	// ...and the flush itself really does the work, driven directly.
+	same( 1, IE_Publisher::flush_removed_reports(), 'the queued removal was not sent' );
 } );
 
 /* ------------------------------------------------------------------ */

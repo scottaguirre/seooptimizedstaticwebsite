@@ -58,6 +58,8 @@ const { quotePosts, CREDITS_PER_POST } = require('../utils/blogPricing');
 const { planForCampaign } = require('../utils/blog/campaignPlan');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
+const { parseReportedRemoval } = require('../utils/blog/removalTime');
+const { readBusiness, businessChanged, mergeBusiness } = require('../utils/blog/businessShape');
 
 // How many written posts one /collect hands over. The plugin inserts them one
 // at a time anyway, and a 52-post campaign returned in a single response is
@@ -176,14 +178,11 @@ router.post('/api/blog/activate', blogActivateLimiter, async (req, res) => {
     site.failedAuthCount = 0;
     site.lastSeenAt = new Date();
 
-    if (business && typeof business === 'object') {
-      site.business = {
-        name: String(business.name || '').slice(0, 200),
-        type: String(business.type || '').slice(0, 200),
-        location: String(business.location || '').slice(0, 200),
-        phone: String(business.phone || '').slice(0, 50),
-      };
-    }
+    /* Through the shared reader now. This was the ONLY place site.business
+     * was ever written, which is the whole reason the planner spent months
+     * choosing anchor text from a name the customer had since changed. */
+    const activating = readBusiness(business);
+    if (activating) site.business = mergeBusiness(site.business, activating);
 
     await site.save();
 
@@ -250,6 +249,29 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
       site: req.site._id,
       'targetPage.url': String(targetPage.url),
     }).select('slots.moneyAnchor').lean();
+
+    /* REFRESHED HERE, BEFORE THE ANCHORS ARE CHOSEN.
+     *
+     * This is the one moment the value is actually used: planForCampaign()
+     * builds the branded anchor phrases from it and freezes them into the
+     * slots, where they stay for the life of the campaign. Refreshing after
+     * planning would be a copy nothing reads.
+     *
+     * Persisted rather than merely used, so the report and any later plan
+     * see the same name, and so a site that renames once does not have to
+     * keep re-sending before anything is right. */
+    const reportedBusiness = readBusiness(req.body.business);
+
+    if (businessChanged(req.site.business, reportedBusiness)) {
+      req.site.business = mergeBusiness(req.site.business, reportedBusiness);
+      await BlogSite.updateOne({ _id: req.site._id }, { $set: { business: req.site.business } });
+
+      log.info('blog.business.updated', {
+        requestId: req.id,
+        siteId: String(req.site._id),
+        at: 'plan',
+      });
+    }
 
     const plan = planForCampaign({
       targetPage,
@@ -866,7 +888,33 @@ router.post('/api/blog/removed', blogApiLimiter, requireSite, async (req, res) =
       return res.status(404).json({ error: 'Campaign not found.' });
     }
 
-    const recorded = await BlogCampaign.markRemoved(campaign._id);
+    /* THE SITE'S OWN TIMESTAMP, AND IT IS NOT TRUSTED BLINDLY.
+     *
+     * The server used to stamp its own clock here, which is the right answer
+     * only when the report arrives at once. It does not always: a site whose
+     * licence was being refused went eight days without being heard, and six
+     * campaigns ended up recorded as removed on the day the server finally
+     * learned rather than the day the customer pressed the button.
+     *
+     * So the plugin sends the moment it happened. THIS IS CLIENT INPUT — it
+     * arrives from a WordPress whose clock is not ours and whose plugin
+     * anybody can edit — so it is bounded rather than believed:
+     *
+     *   - unparseable, or missing (an older plugin) -> our clock, as before
+     *   - in the future -> our clock. Five minutes of skew is allowed
+     *     because ordinary servers disagree by seconds and a removal is
+     *     reported immediately; beyond that it is wrong or invented.
+     *   - before the campaign existed -> our clock. A removal cannot precede
+     *     the thing removed, and this is the bound that stops a bad clock
+     *     writing a date that reorders the customer's own history.
+     *
+     * Rejection is silent on purpose. The report must still succeed: a
+     * customer cannot be left unable to clear a campaign off their screen
+     * because their server's clock is wrong. The log records which was used. */
+    const reported = parseReportedRemoval(req.body.removedAt, campaign);
+    const when = reported || new Date();
+
+    const recorded = await BlogCampaign.markRemoved(campaign._id, when);
 
     log.info('blog.removed.ok', {
       requestId: req.id,
@@ -875,6 +923,9 @@ router.post('/api/blog/removed', blogApiLimiter, requireSite, async (req, res) =
       // false means it was already on record — a retry, or a reinstall.
       // Worth seeing in the log, not worth failing over.
       recorded,
+      // Which clock the date came from. A run of 'server' here means sites
+      // are not sending the time, which is what the old silence looked like.
+      clock: reported ? 'site' : 'server',
     });
 
     res.json({ ok: true, recorded });
@@ -1031,6 +1082,26 @@ router.post('/api/blog/campaigns-present', blogApiLimiter, requireSite, async (r
     const reported = Array.isArray(body.campaigns)
       ? body.campaigns
       : (Array.isArray(body.campaignIds) ? body.campaignIds.map(id => ({ id })) : []);
+
+    /* BEFORE THE EARLY RETURN BELOW, deliberately.
+     *
+     * A site with no campaigns takes that return on every run, and a site
+     * that has just been renamed and has not planned anything yet is exactly
+     * that site. Putting this after it would mean the rename did not reach
+     * the server until the customer planned a campaign — which is the moment
+     * the stale name would be used. */
+    const sweptBusiness = readBusiness(body.business);
+
+    if (businessChanged(req.site.business, sweptBusiness)) {
+      const merged = mergeBusiness(req.site.business, sweptBusiness);
+      await BlogSite.updateOne({ _id: req.site._id }, { $set: { business: merged } });
+
+      log.info('blog.business.updated', {
+        requestId: req.id,
+        siteId: String(req.site._id),
+        at: 'sweep',
+      });
+    }
 
     const seen = [];
 

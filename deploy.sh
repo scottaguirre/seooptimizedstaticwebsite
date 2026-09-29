@@ -92,6 +92,8 @@ for suite in \
   test-keyword-budget.js \
   test-blog-plan.js \
   test-blog-report.js \
+  test-removal-time.js \
+  test-business-refresh.js \
   test-post-quality.js \
   test-campaign-reconcile.js \
   test-blog-sites-delete.js \

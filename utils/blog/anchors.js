@@ -54,10 +54,24 @@ const DEFAULT_MIX = {
 /**
  * Turn percentages into whole counts for n posts, using largest remainder.
  *
- * Plain rounding does not work: 15% of 4 rounds to 1, 50% rounds to 2, 25%
- * rounds to 1, 10% rounds to 0 — that totals 4 here but drifts on other
- * values, and a campaign with the wrong number of slots filled is a crash
- * waiting to happen. Largest remainder always totals exactly n.
+ * Plain rounding does not work. A NINE-POST CAMPAIGN, against the mix above:
+ *
+ *     exact        30% of 9 = 2.7  -> 3
+ *     semantic     40% of 9 = 3.6  -> 4
+ *     descriptive  20% of 9 = 1.8  -> 2
+ *     branded      10% of 9 = 0.9  -> 1
+ *                                    --
+ *                                    10   for a campaign with nine slots
+ *
+ * Largest remainder gives 3 / 3 / 2 / 1 instead, and always totals exactly
+ * n. A campaign with the wrong number of slots filled is a crash waiting to
+ * happen.
+ *
+ * The example is nine and not four for a reason: at four, and at seven, and
+ * at twelve, plain rounding happens to come out right. An example that only
+ * shows the cases where the bug does not bite argues for the wrong thing.
+ * (Worked through with bucketCounts(9) rather than by hand — the previous
+ * version of this comment used percentages the code had not used for weeks.)
  */
 function bucketCounts(n, mix = DEFAULT_MIX) {
   const types = Object.keys(mix);

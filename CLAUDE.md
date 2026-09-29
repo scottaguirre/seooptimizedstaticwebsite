@@ -136,12 +136,14 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-ie-video.js          # the campaign video and where it lands; skips without php
     node test-ie-topics.js         # the campaign form's topic/video readers; skips without php
     node test-blog-plan.js
-    node test-anchor-pool.js       # what each anchor bucket may contain; needs no php
+    node test-anchor-pool.js       # what each anchor bucket may contain, and the mix; 22
     node test-home-anchors.js      # the generated SITE's home-page anchors; needs no php
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
     node test-email-html.js        # the HTML email body and its escaping
-    node test-blog-report.js       # /blog-report, its two tabs and its CSV; stubs express + the models
+    node test-blog-report.js       # /blog-report, its two tabs, row numbers, dates and CSV; 102
+    node test-removal-time.js      # the removal time a site reports, and its bounds; needs nothing
+    node test-business-refresh.js  # the business a site reports, and what may overwrite what; 9
     node test-post-quality.js      # length, the three wrappers, and where they sit
     node test-campaign-reconcile.js # markMissingRemoved: the grace window and the site scope
     node test-blog-sites-delete.js # removing a revoked licence; revoked + no campaigns only
@@ -150,9 +152,9 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
     php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, 64
-    php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, 57
+    php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, SEO titles, removal queue, 70
 
-164 assertions in all; last run green on 29 September under PHP 8.4.
+177 assertions in all; last run green on 30 September under PHP 8.4.
 
 `test-admin-tabs.php` is the only harness that can actually render
 `class-ie-admin.php`. It had drifted to 6 passing / 23 failing while sitting
@@ -251,46 +253,67 @@ report, fifty campaigns in the plugin, longer posts with spread-out links, and
 `test-admin-tabs.php` (52 passing, in `deploy.sh`). All five are written up in
 the 29 September entries below; do not re-add them here.
 
+**Cleared on 30 September** — **#27 DMARC**. `_dmarc.threecomets.com` now
+reads `v=DMARC1; p=none; rua=mailto:hello@threecomets.com`, added at the DNS
+host by Edwin. It had been `p=none` with no `rua=`: a valid record that told
+receivers to do nothing and sent the reports nowhere, so it monitored into a
+void. With `rua=` the providers send daily aggregate XML — who is sending as
+the domain, and whether SPF and DKIM pass — which is both the early warning
+for spoofing and the prerequisite for ever moving to `p=quarantine` safely.
+Confirm with `dig +short TXT _dmarc.threecomets.com`.
+
 **Still open**
 
-*DMARC reporting.* `_dmarc.threecomets.com` is `v=DMARC1; p=none` — valid, but
-with no `rua=` nobody sends the aggregate reports, so it monitors into a void.
-Add `rua=mailto:hello@threecomets.com` now that forwarding works. Unverified:
-Resend's DKIM was NXDOMAIN at `resend._domainkey` on both the root and
-`send.threecomets.com`; SPF and MX there are correctly Resend's, so the
-selector is probably just different — check their dashboard.
+*~~Resend's DKIM~~ — **closed, 30 September. It is there and Verified.**
 
-**Next up — Edwin asked for this on 29 September, for the following day**
+    TXT   resend._domainkey   p=MIGfMA0GCSqG…l7BMC1wIDAQAB   Verified
 
-*Number the rows in the Three Comets blog report.* `routes/blogReportRoute.js`
-— a `#` column on the Campaigns tab AND the Posts tab, so a row can be named
-out loud the way the plugin's campaign rows now can. The rules are already
-settled in `render_folded_groups()` in `class-ie-admin.php`: numbered 1..N
-straight through, right-aligned with `tabular-nums` so the digits line up,
-and **the number must not change when a filter is applied** — it names the
-row, not its position. The CSV should carry the same column, or the export
-stops matching the screen it came from, which is the whole reason `rowsFor()`
-is shared.
+SPF is two CNAMEs, `rsend` and `send`, both pointing at `forge.rmta.net`, both
+verified. Sending is on; receiving is off.
+
+**THE OLD NOTE SAID NXDOMAIN AT `resend._domainkey`, AND THAT IS THE RIGHT
+NAME.** So the earlier finding was not a wrong lookup — it was a lookup run
+too early. Resend's own timeline: domain added **23 Sep 21:59**, DNS verified
+**24 Sep 00:37**. The check fell in that window, or just before propagation.
+
+Two things were got wrong here, and the second is the instructive one:
+
+1. A negative DNS answer was written down as a defect. **NXDOMAIN is a
+   snapshot, not a verdict** — records get added minutes later, and nothing
+   goes back to re-check a note.
+2. When the dashboard showed Verified, the first explanation offered was
+   "the selector name must have been a guess" — a tidy story that fitted the
+   new evidence and was **contradicted by the old note, which named the
+   selector correctly all along.** Reading the original note would have cost
+   nothing. **A neat explanation that requires not re-reading your own
+   evidence is a guess wearing a better suit.**
+
+**Next up — Edwin asked for these on 29 September, for the following day**
+
+*Show him a worked example of mutation testing.* He asked for this last thing
+before bed, about the check described in "A flat numbered list" below: break
+the code on purpose, watch the test fail, put it back. Walk it through on one
+small concrete case he can follow end to end — the by_money_page URL-vs-title
+swap is the natural one, since it is his own screen and the diff is two words.
+The point to land: a test that stays green when you break the thing it tests
+is not a test, and running it once against a deliberate break is the only way
+to know which kind you have.
+
 
 **Raised 29 September, not yet ruled on by Edwin**
 
-*Nothing stops the blog writer emitting a bare URL.* The prompt does not
-forbid one and `qualityCheck.js` does not look for one, so if the model writes
-`https://…` in prose WordPress auto-links it and the post gains a link nobody
-planned. Proposed: forbid it in the prompt AND fail it in `qualityCheck` —
-an instruction with no check behind it is a hope.
+*~~"TK Water Damage Restoration" as a branded anchor~~ — **closed, not a
+bug.** The branded bucket is built from `business.name`, which the SITE sends
+(`IE_Settings::business()` → `<theme>_global_settings.business_name`, falling
+back to the site title), read at PLAN time and baked into `slot.moneyAnchor`.
+emergencyplumberaustin.net was TK Water Damage Restoration when those four
+campaigns were planned and is "Emergency Plumber Austin" now — its money-page
+list no longer even contains Water Cleanup or Mold Mitigation. The anchors
+were true when they were written.
 
-*`utils/blog/anchorPool.js`'s header comments are wrong.* They still say
-"exact… only 15%" and "semantic… 50%". The code does 30 / 40 / 20 / 10. A
-comment that contradicts the code is worse than no comment, because the next
-reader trusts it.
-
-*"TK Water Damage Restoration" is the branded anchor on four plumbing
-campaigns* — Water Cleanup, Mold Mitigation, Slab Leak Detection, Water
-Softener. That looks like the wrong business name leaking into the branded
-bucket rather than a formatting problem. Worth understanding before fixing:
-if the name is coming from the wrong record, the same fault will be feeding
-other fields too.
+**Followed up 30 September, and the real fault was one layer down** — see
+"The business nobody ever updated" below. Frozen-at-plan-time was the third
+link in a chain whose first two nobody had looked at.
 
 **Keyword volumes in the wizard — next up, 23 September**
 
@@ -649,6 +672,15 @@ page's own layout.
 `${appHeaderAssets()}`. There is a test listing every such page.
 
 ## Deliberately dropped — do not re-propose
+
+**A guard against bare URLs in blog prose.** Proposed twice and dropped twice,
+the second time explicitly: *"let's not do this."* The concern was real enough
+to state — nothing forbids the model writing `https://…` in prose, and
+WordPress auto-links it, so a post could gain a link nobody planned. It has
+not happened, the posts are read before they matter, and the cost is a prompt
+rule plus a `qualityCheck` failure that would re-roll posts over a
+hypothetical. **Do not raise it again unless a real post turns up carrying
+one** — at which point it stops being a guess and the argument is different.
 
 **Volumes beside each suggested service inside the wizard.** Designed, argued
 for, and dropped on 23 September at Edwin's instruction: *"I dont want to touch
@@ -1026,6 +1058,421 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+### A comment nobody can check is a comment that goes stale
+
+`anchorPool.js`'s header described exact as "only 15%" and semantic as "50%"
+for weeks after the code moved to **30 / 40 / 20 / 10**. `bucketCounts()`'s
+docblock in `anchors.js` carried a THIRD set again (15/50/25/10). Nothing
+failed, because prose is not executed.
+
+**The fix was not to correct the numbers.** A number duplicated in prose is a
+number that will drift, so the header no longer states the shares at all — it
+names `DEFAULT_MIX` as where they live. There is nothing left to go stale.
+
+The one example that still has to carry numbers is `bucketCounts()`'s, and it
+is now **pinned by a test**: `DEFAULT_MIX` must be 30/40/20/10 and
+`bucketCounts(9)` must be 3/3/2/1. Change the mix and the test fails naming
+the comment that needs rewriting.
+
+**The example is nine, not four, and that is the point.** At 4, 7 and 12 plain
+rounding happens to total correctly; at 9 it hands out ten slots for a
+nine-post campaign. The old comment's example was one of the cases where the
+bug does not bite — an example chosen from those argues for the wrong thing.
+Checked by running `bucketCounts(9)` rather than by hand, which is how the
+previous version got it wrong.
+
+## The business nobody ever updated — 30 September 2026 (plugin 0.14.0)
+
+Edwin's report, row 27: a **published** post on a **running** campaign,
+linking with the anchor **"TK Water Damage Restoration"**. Other rows read
+"plumber near me **in Leander**". The site's Theme Settings say Emergency
+Plumber Austin, in Austin, TX.
+
+**The first diagnosis was wrong, and it was mine.** I said the anchor freezes
+at plan time and offered to re-derive it at write time — *"a small change with
+a test"*. Then I looked:
+
+```
+$ grep -rn "site.business = " routes/ utils/
+routes/blogApiRoute.js:181:      site.business = {     ← licence activation
+```
+
+**One write, in the activation handler. One read, in the planner.** Nothing in
+between, ever. So the server's idea of a customer's business name is frozen at
+the moment the licence was pasted in — which is *older* than plan time, not
+newer. Re-deriving at write time would have re-derived from the same stale
+value and changed nothing. **I would have shipped a fix that looked right and
+did nothing**, and the tests would have passed, because they would have
+tested the thing I believed rather than the thing that was broken.
+
+**Say the size after reading the code, not before.** "Small change with a
+test" was a guess dressed as an estimate, and the guess was wrong by two
+links of a three-link chain.
+
+### What shipped
+
+The plugin sends `business` **on the plan call** — the one moment the value
+is used, since `planForCampaign()` builds the branded phrases and freezes
+them into the slots — and **on the hourly sweep**, so a rename reaches the
+server within the hour instead of waiting for the next campaign.
+
+Server-side, `utils/blog/businessShape.js` holds the rules, split out because
+three endpoints now write the same four fields and three copies of a
+truncation is three places to forget one.
+
+**The dangerous direction is erasure, not staleness.** Plugins before 0.14.0
+send no business on the sweep, and they sweep every hour. If "nothing sent"
+read as "an empty business", every one of those would wipe the stored name
+and leave the planner with nothing to build a branded anchor from. So:
+
+- nothing sent, or a non-object → `null`, and the caller does not write
+- a field present but blank → dropped, not stored (a half-filled settings
+  page must not erase a name entered elsewhere)
+- **merged, never replaced** — a plugin reporting a name and a town cannot
+  drop a phone number an older version stored
+- unchanged report → no write at all, which is the common case: the same
+  name reported every hour for months
+- overlong values are **cut, not refused** — refusing the whole report would
+  take the rest of a legitimate one with it
+
+The sweep's refresh sits **above** the "no campaigns" early return, because a
+site that has just been renamed and planned nothing yet is exactly the site
+that takes that return every run.
+
+`blog.business.updated` logs `at: 'plan' | 'sweep'`.
+
+**Not done, deliberately:** campaigns already planned keep their anchors.
+Re-deriving mid-campaign needs the phrase re-checked for reuse against the
+campaign's other slots and persisted so the report and the post cannot
+disagree — a bigger piece of work for a rarer case. Edwin chose the smaller
+half knowing that.
+
+Three mutations, three caught: returning an empty shape instead of null,
+dropping the trim, and replacing instead of merging. `test-business-refresh.js`
+is new, 9 assertions, in `deploy.sh`.
+
+## The removal date was the day we found out — 30 September 2026 (plugin 0.13.0)
+
+Edwin, on six campaigns all reading `removed 09-28-2026`: *"I'm pretty sure I
+removed these campaigns and posts a while back."*
+
+He was right. **`removedAt` recorded when Three Comets found out, not when he
+pressed Remove**, and on this account those were eight days apart.
+
+### How it was established, and the step that nearly got skipped
+
+The log said:
+
+```
+ssh ubuntu@15.204.123.104 "grep -h 'blog.removed\|blog.auth' .../app.log | tail -40"
+```
+
+**Not one `blog.removed` line. Ever.** But absence of evidence only counts if
+the evidence would have been there — so `utils/logger.js` was read first:
+`app.log` is written at `info` level and `blog.removed.ok` is an `info` event,
+so it would be in that file. The output also spans 3 → 28 September, so
+rotation had not eaten the period.
+
+*Then* the conclusion was safe: no removal was ever reported. Every date on
+the account came from `markMissingRemoved()` — the sweep noticing a campaign
+had vanished and stamping "now" on the whole batch in one `updateMany`. That
+is why six campaigns shared a date to the day.
+
+The `badSignature` lines said why it was late: that site was refused on 20,
+21, 22, 23, 24 and 28 September — the one-licence-two-sites bug. Nothing it
+said was heard.
+
+**The general rule: before concluding from a missing log line, check the line
+would have been written.** A level filter, a rotated file or a different
+destination all produce the same silence as "it never happened".
+
+### Two faults, and only fixing one would have fixed nothing
+
+1. **The plugin sent no timestamp.** `IE_Api::removed()` posted `campaignId`
+   alone, so the server could only use its own clock. It sends `removedAt`
+   now, ISO 8601 UTC, taken at the moment of the press.
+
+2. **A failed report was gone for good.** `remove_campaign()` deletes the
+   local record immediately after reporting, and the report is deliberately
+   unfailable — a customer must be able to clear a campaign off their screen
+   whether or not the server is reachable. So a report that did not get
+   through had nothing left to be rebuilt from, and the only trace was the
+   campaign's absence, noticed at whatever later date. **This is the half
+   that mattered**: fixing only (1) leaves an eight-day outage recording
+   discovery exactly as before.
+
+   `PENDING_REMOVALS` is a durable option holding `{id, at}` and nothing
+   else, so it needs no record to retry from. `flush_removed_reports()` runs
+   from the hourly sweep, **above** `run_catch_up()`'s early return — a site
+   with no pending work is precisely the site that just removed its last
+   campaign. Rows are dropped only on success, capped at 100, and
+   deduplicated keeping the FIRST time (remove, reinstall, remove again: the
+   second press describes nothing — the same rule `markRemoved()` applies
+   server-side).
+
+### The reported time is bounded, not believed
+
+`utils/blog/removalTime.js`, split out of the route for the reason
+`reportFilters.js` was: **every branch in it is a rejection**, and a guard
+reachable only through a signed HTTP request against a database is one
+somebody checks once and never again.
+
+It arrives from a WordPress whose clock is not ours, on a machine the
+customer administers, running a plugin anybody can edit. So: unparseable →
+server clock; more than **five minutes** in the future → server clock; before
+the campaign existed → server clock. Rejection is silent and the report still
+succeeds, because nobody should be unable to clear a campaign off their own
+screen over a wrong clock. `blog.removed.ok` logs `clock: 'site' | 'server'`,
+so a run of `server` says sites have stopped sending the time — the same
+silence, made visible.
+
+The skew test asserts **both sides** of the five minutes. A test that only
+checks the far side passes just as happily against a guard that refuses
+everything, and a fallback firing on every removal would make the feature
+quietly do nothing.
+
+### And the stub could not see any of it
+
+`IE_Api::removed()` in `test-orphan-links.php` took **one argument and always
+succeeded** — so "the time is sent" was unaskable, and the retry queue, whose
+entire purpose is what happens when that call fails, could not be reached by
+any test at all. Ninth instance. `IE_Settings::is_connected()` was hard-coded
+`true` for the same reason.
+
+Four mutations run, four caught: not queueing a failed report, retrying with
+`now` instead of the stored time, and dropping either bound in the parser.
+
+Suites: 8 / 70 / 64 / 34 / 9. `test-removal-time.js` is new and in
+`deploy.sh`.
+
+### A date under "Published" for a post that never published
+
+Edwin's own CSV export, beside the screen it came from:
+
+```
+published_date  = ""            screen:  PUBLISHED   09-16-2026
+planned_date    = 2026-09-16
+post_state      = scheduled
+```
+
+Eight rows like that, under two removed campaigns, directly beneath a headline
+reading **"0 confirmed live"**. The cell fell back to `publishAt` when
+`publishedAt` was empty, with nothing to mark the difference.
+
+**The CSV was honest the whole time** — `published_date` and `planned_date`
+are separate columns there. Only the screen conflated them, which is the
+argument for the export carrying the raw fields rather than a copy of what
+the page renders.
+
+Same fault as the plugin's *"6 of 6 scheduled, 1 live"* on a campaign whose
+posts had all been deleted: **a value that cannot be true is worse than no
+value**, and the STATE pill beside it was already saying the opposite.
+
+The fix: a published post shows its date plainly, an unpublished one shows
+`due 09-16-2026` in dimmer italic, and the heading is **Date** rather than
+Published — the column holds two different facts and should not claim
+otherwise. One column, because a second would be empty on every row.
+
+**A third case followed, from Edwin.** A post that DID publish and whose
+campaign was removed afterwards shows a real date beside a pill reading
+"Campaign removed" — two facts that look contradictory until you know the
+order. The pill has one word to work with, so the row now says
+*"published, but the campaign was removed"* under the date. Only when both
+are true: a row already reading "due" never published, and a note there
+would explain something that did not happen.
+
+`.note` resets `white-space` because it sits inside `.date`, which is
+`nowrap` so a date cannot break mid-date. Without the reset the note inherits
+it and drags the column to the width of the whole sentence.
+
+**And the anchor phrase is now labelled** `Anchor text: "what the work
+involves"`. Quotation marks alone do not name the thing — a grey quoted
+fragment under a page name reads as a subtitle or a tagline, and that it is
+the clickable words carrying the link is the one fact somebody auditing this
+page came for.
+
+**THE FIX PASSED ALL 94 EXISTING TESTS WITHOUT CHANGING ONE.** That is the
+finding worth keeping: nothing had ever asserted that cell, so there was no
+failure to notice and no test to update. A suite growing to 94 assertions
+around a column nobody checked is exactly how a bug sits in plain sight on
+the first screen a customer opens.
+
+Two mutations, both caught — restoring the silent fallback, and printing the
+bare date *alongside* the marker (which an assertion looking only for "due"
+would have passed). 98 assertions, green, and green under
+`TZ=America/Chicago`.
+
+### Dates on screen are mm-dd-yyyy; everywhere else they are not
+
+Edwin asked for `09-23-2026` in place of `2026-09-23`. The obvious change —
+reformat `day()` — would have broken the date filter without a word.
+
+`day()` has three kinds of caller and only one is text somebody reads:
+
+- **`<input type="date">`'s value.** The HTML spec requires `yyyy-mm-dd`, and
+  a browser handed anything else does not complain: **the box renders empty.**
+  Filter to a date range and the filter bar looks like it forgot, while the
+  table stays filtered.
+- **the `from=` / `to=` query string**, which `readFilters()` parses with
+  `/^(\d{4})-(\d{2})-(\d{2})$/`.
+- **the CSV and its filename.** ISO sorts correctly as plain text and is the
+  one spelling a spreadsheet cannot read as the wrong day — `09-10` is the
+  9th of October to most of the world and the 10th of September here, and the
+  file gives no clue which was meant.
+
+So `shownDay()` is a separate function, built **on top of** `day()` — it
+reorders the parts and does no date arithmetic of its own, which is where a
+second implementation would drift. Five display sites use it; the machine
+callers are untouched.
+
+Mutation: reformatting `day()` itself fails five tests, two of them written
+specifically for this — the date boxes and the CSV. Without those two it would
+have failed only on cosmetic assertions and looked like a test-fixture problem
+rather than a broken filter.
+
+Also `.date { white-space: nowrap; }` — the column had been squeezing
+`09-29-2026` across two lines mid-date.
+
+94 assertions, green, and green again under `TZ=America/Chicago`.
+
+## The domain on the end of every title — 30 September 2026 (plugin 0.12.0)
+
+Edwin, from a browser inspector on a live post:
+
+    <title>Cloudy Glasses and White Faucet Scale Usually Mean Hard Water — roofingamerica.xyz</title>
+
+**The generated theme has a `pre_get_document_title` filter** in
+`functionsPhp.js` that returns `<prefix>_page_title` when the post has it, and
+falls through to WordPress's default otherwise. The theme sets that meta on its
+own pages at activation. **`insert_post()` in the plugin set the description
+and never the title**, so the filter fell through on every post this plugin
+has ever published and WordPress's `"Post Title - Site Name"` took over.
+
+The domain is dead weight in a search result — it is already shown underneath
+the title — and it eats characters off the end of a headline written to fit.
+
+**Fixed in the plugin, not the theme, and that was the point.** The filter is
+already in every installed theme; it just had nothing to read. Writing the
+meta fixes sites whose theme is already on disk, with no re-export. Written to
+both `_ie_meta_title` and `<prefix>_page_title`, the same two-key pattern the
+description uses, so it survives a change of theme.
+
+**The backfill lives in `repair_links()`.** A post already on the site keeps
+the meta it was given, which was none, so without this the fix only ever helps
+future posts — and every existing one stays a live search result with the
+domain on it. That pass already walks every post carrying `_ie_campaign`, is
+already capped at 200, and is already advertised as safe to run more than
+once. Three guards on it:
+
+- never overwrites a title somebody wrote by hand
+- skipped entirely when `active_theme_prefix()` is empty, or it would write a
+  meta key called `_page_title` that no theme reads
+- **above** the campaign-record check, because a removed campaign's posts are
+  still in search results and their titles are still wrong
+
+And: `campaign_report_due()`'s lesson again, in the admin. The "Nothing to
+repair" early-exit tested only the two link counters, so a run that fixed
+forty titles and no links announced it had done nothing. **A gate in front of
+a message has to count everything the message is allowed to mention.**
+
+### Two stubs that could not see the feature at all
+
+`test-orphan-links.php` **had no `post_title` on its fake posts**, so
+`$post->post_title` was an undefined property, cast to `''`, and the backfill
+skipped every post. Tests written against it would have passed on a feature
+that never ran once.
+
+**And `update_post_meta()` returned `true` and kept nothing.** Everything
+written through it vanished, so "the title is set" and "a hand-written title
+is never overwritten" were both unaskable. Making it a real store immediately
+exposed a missing `delete_post_meta()` — code that `resume()` had been walking
+into for weeks without any test reaching it.
+
+Seventh and eighth instances of *a stub that cannot express the failure cannot
+detect it*. The tell is the same every time: **a test that passes the moment
+you write it, on a feature you have not finished.**
+
+Four mutations run, four caught. 64 / 34 / 9 / 62 — **169**, green.
+
+## A number is a name — 30 September 2026
+
+Edwin wanted the blog report's rows numbered, the way the plugin's campaign
+rows now are. The interesting part is not the column; it is what makes the
+number worth printing.
+
+**A ROW COUNTER, AND NOTHING MORE — and it shipped as something cleverer
+first.**
+
+The first version numbered every row the user owns before filtering, so a row
+kept its number whatever was hidden and a filtered report read 2, 6, 17. The
+reasoning was that a number should be a NAME: quote "row 17" to somebody and
+they find the same row. It is a real property. **Nobody asked for it.**
+
+Edwin: *"the numbering I needed was just for the rows, not which campaign was
+first or second."* What he wanted is what a numbered list ordinarily does —
+count the lines in front of you, 1..n, starting at 1. The gaps were the tell,
+and I should have read them as one.
+
+So `rowsFor()` sorts, **filters, and then numbers**. The consequence, written
+down so nobody 'fixes' it later: **the same post has a different number under
+a different filter.** That is correct. The number describes a position in a
+list, not a post. The campaigns tab counts its own rows from its own order,
+since it sorts removed-first and cannot borrow the post list's numbering.
+
+Numbered in `rowsFor()` rather than in the template, so the page and the CSV
+cannot disagree about which row is row seven.
+
+The general fault is worth more than the fix: **a request came in one sentence
+and I built the more interesting version of it.** Stable identifiers are a
+better feature than row counters for some purposes, and none of those purposes
+were his. The test even encoded my version, so it passed — a test written from
+the same misreading defends the misreading.
+
+**An Approved column came with it**, next to Removed so a campaign's whole
+life reads left to right in one place. It earns its cell because **several of
+this account's campaigns share a name** — "quality plumbing leander" at rows 1
+and 5, "Unclogging Sewer Line Services" at 9 and 10 — and the date is what
+tells them apart at a glance.
+
+**THREE DATES, ROUTINELY WEEKS APART, AND ONLY ONE IS THE ANSWER.** It shipped
+as Created first, and Edwin said plainly what he wanted: *"I want the date of
+the campaign being approved."* He was right, and the first version was wrong:
+
+| field | what it means |
+|---|---|
+| `createdAt` | the plan was drawn up. A draft — nothing written, nothing charged, and it may never be approved |
+| `batch.startedAt` | somebody **approved** it: writing enqueued, status `writing`, credits going |
+| `slot.publishedAt` | a post went out — a fortnightly campaign approved on the 3rd puts nothing up until the 17th |
+
+The screen shows approval. The CSV keeps `campaign_created_date` **and**
+`campaign_approved_date`, because a campaign that sat unapproved for three
+weeks is a fact about the customer that only the two together can tell. A
+dash means not approved yet, which is a real answer rather than missing data.
+
+The fixture gives all three dates different values on purpose. A version
+showing the planning date or the publication date would also "show a date",
+and both would be wrong — asserting that *a* date appears would pass for
+every one of them.
+
+### The fixture that could not tell two implementations apart — again
+
+`CAMPAIGN NUMBERS FOLLOW THE CAMPAIGNS TAB` passed a mutation that numbered
+campaigns by first appearance among the posts. With no removed campaigns the
+two orderings **agree**, so the fixture had nothing to say — the identical
+fault as the money-page fixture whose pages had distinct titles AND distinct
+urls.
+
+A removed campaign separates them: the tab puts removed first whatever the
+dates, the post list does not care. So a campaign that is removed but whose
+newest post is not the newest overall comes out **first** on the tab and
+**third** among the posts. `AND THE TWO ORDERS ARE NOT THE SAME ORDER` is that
+fixture, and both mutations now fail against it.
+
+**Mutations run, all caught:** numbering BEFORE the filter (the old
+behaviour), dropping the number on the campaign line, and putting the created
+date, the publication date or a plain "some date" in the Approved column.
+92 assertions, green.
 
 ## A flat numbered list — 29 September 2026 (plugin 0.11.1)
 

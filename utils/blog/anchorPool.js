@@ -21,14 +21,25 @@
 //
 // The four buckets, and what each is FOR:
 //
-//   exact        the keyword itself. Strongest signal, most obviously
-//                manipulated, so it is only 15% of the mix.
-//   semantic     the keyword said differently. The workhorse at 50% — it
-//                describes the page without repeating one string.
+//   exact        the keyword itself. The strongest signal and the most
+//                obviously manipulated, so it is the bucket kept smallest
+//                relative to the work it does.
+//   semantic     the keyword said differently. The workhorse — it describes
+//                the page without repeating one string.
 //   descriptive  describes what the reader gets by clicking, without
 //                necessarily containing the keyword at all.
 //   branded      the business name. Natural on any real site, and the one
 //                bucket a competitor cannot imitate.
+//
+// THE SHARES ARE NOT WRITTEN HERE. They live in DEFAULT_MIX in anchors.js,
+// and this comment used to restate them: "only 15%" for exact, "50%" for
+// semantic. The code moved to 30/40/20/10 and the prose did not, so for
+// weeks the file's own description of itself was wrong — and a comment that
+// contradicts the code is worse than no comment, because the next reader
+// believes it and stops reading.
+//
+// A number duplicated in prose is a number that will drift. The fix is not
+// to correct it; it is to stop keeping a second copy.
 
 const { DEFAULT_MIX } = require('./anchors');
 

@@ -33,7 +33,7 @@ const Module = require('module');
 const { execFileSync } = require('child_process');
 
 let passed = 0, failed = 0;
-const DECLARED = 83;
+const DECLARED = 102;
 
 function test(name, fn) {
   try {
@@ -150,7 +150,7 @@ const report = require('./routes/blogReportRoute');
 
 Module._load = realLoad;
 
-const { rowsFor, day, esc, stateOf, readFilters } = report;
+const { rowsFor, day, shownDay, esc, stateOf, readFilters } = report;
 
 /* ------------------------------------------------------------------ *
  * Fixtures
@@ -785,7 +785,12 @@ await atest('THE CAMPAIGNS TAB SHOWS THE REMOVAL DATE', async () => {
 
   const res = await render('/blog-report', {});
 
-  assert.ok(res.body.includes('2026-09-28'), 'the removal date is not on the campaign line');
+  /* mm-dd-yyyy on screen, Edwin's format. The ISO spelling is asserted to be
+   * ABSENT as well: a page printing both would satisfy a test that only
+   * looked for one, and "2026-09-28" appearing anywhere in this table would
+   * mean a date cell somewhere still reads the machine format. */
+  assert.ok(res.body.includes('09-28-2026'), 'the removal date is not on the campaign line');
+  assert.ok(!res.body.includes('>2026-09-28<'), 'a date cell is still printing ISO');
 });
 
 await atest('the campaigns tab counts a campaign\'s posts', async () => {
@@ -1467,6 +1472,524 @@ test('there is a way to reach it from the sites page', () => {
   const sites = read('routes/blogSitesRoute.js');
   assert.match(sites, /href="\/blog-report"/,
     'nothing links to the report, so nobody will find it');
+});
+
+/* ------------------------------------------------------------------ *
+ * Row numbers
+ *
+ * A number is meant to be a NAME — something to say out loud or put in an
+ * email and have the other person find the same row. That only works if it
+ * is the same number for everybody, which means it cannot be a position in
+ * the filtered list: post 12 becoming post 3 when somebody picks a site from
+ * the dropdown is the failure this whole design is arranged to avoid.
+ * ------------------------------------------------------------------ */
+
+console.log('\nRow numbers\n');
+
+/** Three campaigns across two sites, six posts, all distinguishable. */
+function numbered() {
+  const at = d => new Date(`2026-09-${d}T09:00:00Z`);
+
+  given({
+    sites: [SITE_A, SITE_B],
+    campaigns: [
+      campaign({
+        _id: 'c-1', site: 'site-a', name: 'Slab Leak Detection',
+        slots: [
+          slot({ index: 0, topic: 'A1', publishedAt: at(20), publishAt: at(20) }),
+          slot({ index: 1, topic: 'A2', publishedAt: at(14), publishAt: at(14) }),
+        ],
+      }),
+      campaign({
+        _id: 'c-2', site: 'site-b', name: 'Water Cleanup',
+        targetPage: { title: 'Water Cleanup', url: 'https://hilltophomeloans.net/water' },
+        slots: [
+          slot({ index: 0, topic: 'B1', publishedAt: at(18), publishAt: at(18) }),
+          slot({ index: 1, topic: 'B2', publishedAt: at(10), publishAt: at(10) }),
+        ],
+      }),
+      campaign({
+        _id: 'c-3', site: 'site-a', name: 'Mold Mitigation',
+        targetPage: { title: 'Mold Mitigation', url: 'https://roofingamerica.xyz/mold' },
+        slots: [
+          slot({ index: 0, topic: 'C1', publishedAt: at(16), publishAt: at(16) }),
+          slot({ index: 1, topic: 'C2', publishedAt: at(12), publishAt: at(12) }),
+        ],
+      }),
+    ],
+  });
+}
+
+await atest('EVERY POST IS NUMBERED, 1 THROUGH N', async () => {
+  numbered();
+
+  const rows = await rowsFor('u1', {});
+
+  assert.deepStrictEqual(rows.map(r => r.n), [1, 2, 3, 4, 5, 6],
+    'the posts are not numbered 1..6 in the order they are shown');
+
+  // ...and in the order the table actually sorts them: newest first.
+  assert.deepStrictEqual(rows.map(r => r.topic), ['A1', 'B1', 'C1', 'A2', 'C2', 'B2'],
+    'the numbering does not follow the sort the reader sees');
+});
+
+await atest('A FILTER RENUMBERS FROM 1 — IT IS A ROW COUNTER', async () => {
+  /* This asserted the exact opposite first. The numbers were made stable
+   * across filters, so a filtered report read 2, 6, 17 and a row kept its
+   * number whatever was hidden — an identifier, which is a different and
+   * more interesting thing than what was asked for.
+   *
+   * What was asked for is what a numbered list normally does: count the rows
+   * in front of you. "Row 7" means the seventh line on the screen.
+   *
+   * SO THE SAME POST HAS A DIFFERENT NUMBER UNDER A DIFFERENT FILTER, and
+   * that is correct. The number describes a position in a list, not a post.
+   * Spelled out here because it looks like a bug to anybody who meets it
+   * without this sentence. */
+  numbered();
+
+  const all = await rowsFor('u1', {});
+  assert.deepStrictEqual(all.map(r => r.n), [1, 2, 3, 4, 5, 6], 'the full list is not 1..6');
+
+  const justB = await rowsFor('u1', { site: 'hilltophomeloans.net' });
+
+  assert.deepStrictEqual(justB.map(r => r.topic), ['B1', 'B2'], 'the filter did not apply');
+  assert.deepStrictEqual(justB.map(r => r.n), [1, 2],
+    'a filtered report is carrying the numbers from the unfiltered one');
+
+  // B1 is row 2 unfiltered and row 1 filtered. Asserted directly, because
+  // "the rows are numbered 1..n" is also true of a list that never changed.
+  assert.strictEqual(all.find(r => r.topic === 'B1').n, 2);
+});
+
+await atest('CAMPAIGN NUMBERS FOLLOW THE CAMPAIGNS TAB, NOT THE POST LIST', async () => {
+  /* The campaigns tab re-sorts — removed first, then by last activity — so
+   * numbering campaigns by where they first appear among the POSTS would
+   * give a tab whose numbers run down the page out of order. */
+  numbered();
+
+  const rows = await rowsFor('u1', {});
+  const seen = new Map();
+  for (const r of rows) if (!seen.has(r.campaign)) seen.set(r.campaign, r.campaignN);
+
+  assert.deepStrictEqual([...seen.values()].sort((a, b) => a - b), [1, 2, 3],
+    'the three campaigns are not numbered 1..3');
+
+  const html = (await render('/blog-report')).body;
+  const shown = [...html.matchAll(/<td class="rownum">(\d+)<\/td>/g)].map(m => Number(m[1]));
+
+  assert.deepStrictEqual(shown, [1, 2, 3],
+    'the campaigns tab does not show its numbers in order down the page');
+});
+
+await atest('AND THE TWO ORDERS ARE NOT THE SAME ORDER', async () => {
+  /* The test above could not tell the two implementations apart, and passed
+   * a mutation that numbered campaigns by where they first appear among the
+   * posts. With no removed campaigns both orders agree, so the fixture had
+   * nothing to say — the same fault as a fixture whose pages had distinct
+   * titles AND distinct urls.
+   *
+   * A REMOVED CAMPAIGN SEPARATES THEM. The campaigns tab puts removed first
+   * whatever their dates; the post list does not care. So a campaign that is
+   * removed but whose newest post is NOT the newest overall comes out first
+   * on the tab and third in the posts, and the two orderings disagree. */
+  const at = d => new Date(`2026-09-${d}T09:00:00Z`);
+
+  given({
+    sites: [SITE_A],
+    campaigns: [
+      campaign({ _id: 'c-1', name: 'Newest', removedAt: null,
+        slots: [slot({ topic: 'N1', publishedAt: at(20), publishAt: at(20) })] }),
+      campaign({ _id: 'c-2', name: 'Middle', removedAt: null,
+        slots: [slot({ topic: 'M1', publishedAt: at(18), publishAt: at(18) })] }),
+      campaign({ _id: 'c-3', name: 'Gone', removedAt: at(28),
+        slots: [slot({ topic: 'G1', publishedAt: at(16), publishAt: at(16) })] }),
+    ],
+  });
+
+  const rows = await rowsFor('u1', {});
+
+  // Post order is by publication: Newest, Middle, Gone.
+  assert.deepStrictEqual(rows.map(r => r.campaign), ['Newest', 'Middle', 'Gone'],
+    'the posts are not in publication order');
+
+  // Campaign order is removed-first: Gone, Newest, Middle.
+  const number = new Map(rows.map(r => [r.campaign, r.campaignN]));
+  assert.deepStrictEqual(
+    [number.get('Gone'), number.get('Newest'), number.get('Middle')], [1, 2, 3],
+    'campaigns were numbered by the post list rather than by the campaigns tab');
+
+  // ...and that is what the tab prints, top to bottom.
+  const html = (await render('/blog-report')).body;
+  const shown = [...html.matchAll(/<td class="rownum">(\d+)<\/td>\s*<td>\s*<a[^>]*>([^<]+)</g)]
+    .map(m => [Number(m[1]), m[2].trim()]);
+
+  assert.deepStrictEqual(shown, [[1, 'Gone'], [2, 'Newest'], [3, 'Middle']],
+    'the numbers do not run in order down the campaigns tab');
+});
+
+await atest('the campaigns tab counts its rows the same way', async () => {
+  numbered();
+
+  const all = (await render('/blog-report')).body;
+  assert.deepStrictEqual(
+    [...all.matchAll(/<td class="rownum">(\d+)<\/td>/g)].map(m => Number(m[1])),
+    [1, 2, 3], 'the unfiltered campaigns tab is not 1..3');
+
+  const one = (await render('/blog-report', { campaign: 'Mold Mitigation' })).body;
+
+  assert.deepStrictEqual(
+    [...one.matchAll(/<td class="rownum">(\d+)<\/td>/g)].map(m => Number(m[1])),
+    [1], 'the one surviving campaign did not become row 1');
+});
+
+await atest('THE CSV CARRIES THE SAME NUMBERS THE PAGE SHOWS', async () => {
+  /* The export exists so somebody can quote a row back at you. A number that
+   * only exists on the web page is the one thing they cannot quote. */
+  numbered();
+
+  const rows = await rowsFor('u1', { site: 'hilltophomeloans.net' });
+  const csv = (await render('/blog-report.csv', { site: 'hilltophomeloans.net' })).body;
+
+  const [head, ...body] = csv.replace(/^﻿/, '').trim().split('\r\n');
+  const cols = head.split(',');
+
+  assert.strictEqual(cols[0], 'post_number', 'the CSV does not lead with the post number');
+  assert.ok(cols.includes('campaign_number'), 'the CSV has no campaign number');
+
+  const postCol = cols.indexOf('post_number');
+  const campCol = cols.indexOf('campaign_number');
+  const cell = (line, i) => line.split(',')[i].replace(/^"|"$/g, '');
+
+  assert.deepStrictEqual(body.map(l => Number(cell(l, postCol))), rows.map(r => r.n),
+    'the CSV and the page disagree about which row is which');
+  assert.deepStrictEqual(body.map(l => Number(cell(l, postCol))), [1, 2],
+    'the CSV of a filtered report is not numbered 1..n');
+  assert.deepStrictEqual(body.map(l => Number(cell(l, campCol))), rows.map(r => r.campaignN),
+    'the CSV campaign numbers do not match the page');
+});
+
+await atest('THE CAMPAIGNS TAB SHOWS WHEN EACH ONE WAS APPROVED', async () => {
+  /* APPROVED, NOT CREATED, and the difference is the whole point. Creation
+   * is when the plan was drawn up — a draft, nothing written, nothing
+   * charged, and it may never be approved at all. Approval is when the
+   * writing was enqueued and the credits went. "When did this campaign
+   * start" means the second one.
+   *
+   * Two campaigns on one site can share a name, and this account has several
+   * such pairs; the approval date is what tells them apart at a glance. */
+  const planned  = new Date('2026-08-04T10:00:00Z');
+  const approved = new Date('2026-08-21T14:00:00Z');
+  const published = new Date('2026-09-10T09:00:00Z');
+
+  given({
+    sites: [SITE_A],
+    campaigns: [
+      campaign({
+        _id: 'c-live', name: 'quality plumbing leander',
+        createdAt: planned,
+        batch: { startedAt: approved },
+        slots: [slot({ topic: 'Older', publishedAt: published, publishAt: published })],
+      }),
+    ],
+  });
+
+  const html = (await render('/blog-report')).body;
+
+  assert.match(html, /<th>Approved<\/th>/, 'the campaigns tab has no Approved column');
+  assert.ok(html.includes(shownDay(approved)), 'the approval date is not shown');
+
+  /* ALL THREE DATES ARE DIFFERENT IN THIS FIXTURE, which is the only thing
+   * that makes the assertion mean anything. A version showing the planning
+   * date, or the publication date, would also "show a date" — and both would
+   * be wrong. */
+  assert.ok(!html.includes(shownDay(planned)),
+    'the column is showing the planning date, not the approval date');
+
+  const rows = await rowsFor('u1', {});
+  assert.strictEqual(day(rows[0].campaignApprovedAt), day(approved));
+  assert.notStrictEqual(day(approved), day(planned), 'the fixture cannot tell the two apart');
+  assert.notStrictEqual(day(approved), day(published), 'the fixture cannot tell the two apart');
+});
+
+await atest('a campaign nobody has approved yet shows a dash', async () => {
+  /* A REAL ANSWER, not missing data: planned, not started, credits still
+   * yours. A blank cell reads as a page that failed to render. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      _id: 'c-draft', status: 'draft',
+      createdAt: new Date('2026-09-02T10:00:00Z'),
+      slots: [slot({ status: 'pending', publishedAt: null, publishedUrl: '', publishedTitle: '' })],
+    })],
+  });
+
+  const rows = await rowsFor('u1', {});
+  assert.strictEqual(rows[0].campaignApprovedAt, null, 'an unapproved campaign carries a date');
+
+  const html = (await render('/blog-report')).body;
+  assert.ok(html.includes('&mdash;'), 'the unapproved campaign has an empty cell, not a dash');
+});
+
+await atest('and the CSV carries both dates', async () => {
+  /* The planning date stays in the export even though the screen dropped it.
+   * A campaign that sat unapproved for three weeks is a fact about the
+   * customer that only the two dates together can tell. */
+  const planned  = new Date('2026-08-04T10:00:00Z');
+  const approved = new Date('2026-08-21T14:00:00Z');
+
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({ createdAt: planned, batch: { startedAt: approved } })],
+  });
+
+  const csv = (await render('/blog-report.csv')).body;
+  const [head, row] = csv.replace(/^\uFEFF/, '').trim().split('\r\n');
+  const cols = head.split(',');
+  const cell = i => row.split(',')[i].replace(/^"|"$/g, '');
+
+  assert.ok(cols.includes('campaign_created_date'), 'the CSV lost the planning date');
+  assert.ok(cols.includes('campaign_approved_date'), 'the CSV has no approval date');
+
+  assert.strictEqual(cell(cols.indexOf('campaign_created_date')), day(planned));
+  assert.strictEqual(cell(cols.indexOf('campaign_approved_date')), day(approved));
+});
+
+
+await atest('THE DATE BOXES STILL SPEAK ISO, OR THE FILTER SILENTLY EMPTIES', async () => {
+  /* THE REASON day() WAS NOT SIMPLY REFORMATTED.
+   *
+   * The screen shows mm-dd-yyyy now. Three of day()'s callers are not screen
+   * text, and the worst of them is <input type="date">: the HTML spec
+   * requires its value to be yyyy-mm-dd, and a browser given anything else
+   * does not complain — it renders the box EMPTY. Reformatting day() would
+   * have left somebody who filtered to a date range looking at a filter bar
+   * that appeared to have forgotten it, with the table filtered anyway.
+   *
+   * The query string is the same story: readFilters() parses from= and to=
+   * with /^(\d{4})-(\d{2})-(\d{2})$/, so a reformatted link would fall
+   * through to Date's loose parsing, and "09-28-2026" is not a date it
+   * reliably reads. */
+  given({ sites: [SITE_A], campaigns: [campaign()] });
+
+  const html = (await render('/blog-report', { from: '2026-09-01', to: '2026-09-30' })).body;
+
+  assert.match(html, /name="from"[^>]*value="2026-09-01"/,
+    'the From box is not carrying an ISO value — it will render empty');
+  assert.match(html, /name="to"[^>]*value="2026-09-30"/,
+    'the To box is not carrying an ISO value — it will render empty');
+
+  // The CSV link this page builds has to survive readFilters() on the way back.
+  assert.ok(html.includes('from=2026-09-01') && html.includes('to=2026-09-30'),
+    'the CSV link carries dates the filter parser cannot read');
+});
+
+await atest('the CSV keeps ISO dates, whatever the screen shows', async () => {
+  /* Not a copy of the screen, on purpose. ISO sorts correctly as plain text
+   * and is the one spelling a spreadsheet cannot read as the wrong day:
+   * 09-10 is the 9th of October to most of the world and the 10th of
+   * September here, and the file says nothing about which was meant. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({ removedAt: new Date('2026-09-28T10:00:00Z') })],
+  });
+
+  const csv = (await render('/blog-report.csv')).body;
+
+  assert.ok(csv.includes('2026-09-28'), 'the CSV is no longer using ISO dates');
+  assert.ok(!csv.includes('09-28-2026'), 'the display format leaked into the export');
+
+  assert.match(String((await render('/blog-report.csv')).headers['content-disposition']),
+    /blog-report-\d{4}-\d{2}-\d{2}\.csv/, 'the filename no longer sorts by date');
+});
+
+
+/* ------------------------------------------------------------------ *
+ * The date column says which kind of date it is
+ *
+ * From Edwin's own export: eight rows with published_date empty and
+ * planned_date filled, every one of them `scheduled`, under two removed
+ * campaigns. The screen showed eight dates in a column headed PUBLISHED,
+ * immediately under a headline reading "0 confirmed live".
+ *
+ * The CSV was right the whole time. Only the screen conflated the two, and
+ * nothing here asserted the cell at all — the fix passed 94 tests without
+ * changing one of them, which is how it stayed wrong.
+ * ------------------------------------------------------------------ */
+
+console.log('\nThe date column\n');
+
+await atest('A PUBLISHED POST SHOWS ITS DATE PLAINLY', async () => {
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      slots: [slot({
+        status: 'published',
+        publishAt:   new Date('2026-09-12T09:00:00Z'),
+        publishedAt: new Date('2026-09-12T09:00:00Z'),
+      })],
+    })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('09-12-2026'), 'the publication date is missing');
+  assert.ok(!html.includes('due 09-12-2026'), 'a published post is marked as merely due');
+});
+
+await atest('A POST THAT HAS NOT PUBLISHED IS MARKED DUE', async () => {
+  /* Edwin's case exactly: scheduled, never published, campaign since
+   * removed. The planned date is worth showing — it is the main reason to
+   * look at a scheduled row — but not under a claim that it happened. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      removedAt: new Date('2026-09-28T10:00:00Z'),
+      slots: [slot({
+        status: 'scheduled',
+        publishAt:   new Date('2026-09-16T09:00:00Z'),
+        publishedAt: null,
+        publishedUrl: '',
+        publishedTitle: '',
+      })],
+    })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('due 09-16-2026'),
+    'the planned date is not marked as planned');
+
+  /* AND THE BARE DATE IS ABSENT. Asserting "due" is present would pass just
+   * as well on a page printing both — which is the shape the bug had. */
+  assert.ok(!/>\s*09-16-2026/.test(html),
+    'the date is still shown bare somewhere, as though it had happened');
+});
+
+await atest('THE HEADING NO LONGER PROMISES MORE THAN THE COLUMN DELIVERS', async () => {
+  given({ sites: [SITE_A], campaigns: [campaign()] });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('<th>Date</th>'), 'the column has no heading');
+  assert.ok(!html.includes('<th>Published</th>'),
+    'the column still claims every date in it is a publication date');
+});
+
+await atest('eight scheduled posts do not read as eight published ones', async () => {
+  /* The whole export, reproduced: two campaigns, four scheduled posts each,
+   * both removed. The headline and the table have to agree. */
+  const at = d => new Date(`2026-09-${d}T09:00:00Z`);
+  const four = start => [0, 1, 2, 3].map(i => slot({
+    index: i,
+    topic: `T${start + i}`,
+    status: 'scheduled',
+    publishAt: at(start + i),
+    publishedAt: null,
+    publishedUrl: '',
+    publishedTitle: '',
+  }));
+
+  given({
+    sites: [SITE_A],
+    campaigns: [
+      campaign({ _id: 'c-a', name: 'Commercial Kitchen Faucet Installation',
+        removedAt: at(28), slots: four(13) }),
+      campaign({ _id: 'c-b', name: 'Slab Leak Detection',
+        removedAt: at(28), slots: four(13) }),
+    ],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('0 confirmed live'), 'the headline changed meaning');
+
+  const due = (html.match(/due \d\d-\d\d-\d{4}/g) || []).length;
+  assert.strictEqual(due, 8, `expected 8 dates marked due, got ${due}`);
+});
+
+
+await atest('THE ANCHOR TEXT SAYS WHAT IT IS', async () => {
+  /* Quotation marks alone do not name the thing. A grey quoted fragment
+   * under a page name reads as a subtitle or a tagline; that it is the
+   * clickable words carrying the link is the one fact somebody auditing
+   * this page came for. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({ slots: [slot({ moneyAnchor: 'what the work involves' })] })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('Anchor text: &ldquo;what the work involves&rdquo;'),
+    'the anchor phrase is shown without saying that is what it is');
+});
+
+await atest('A POST THAT PUBLISHED BEFORE ITS CAMPAIGN WENT SAYS SO', async () => {
+  /* Two facts that look contradictory side by side: a real publication date
+   * next to a pill reading "Campaign removed". The order reconciles them —
+   * it went out, THEN the campaign was deleted — and the pill has one word
+   * to work with, so the row has to say it. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      removedAt: new Date('2026-09-28T10:00:00Z'),
+      slots: [slot({
+        status: 'published',
+        publishAt:   new Date('2026-09-20T09:00:00Z'),
+        publishedAt: new Date('2026-09-20T09:00:00Z'),
+      })],
+    })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('09-20-2026'), 'the publication date is gone');
+  assert.ok(html.includes('published, but the campaign was removed'),
+    'nothing explains a real date beside a "Campaign removed" pill');
+});
+
+await atest('and a post that NEVER published does not claim it did', async () => {
+  /* The note must not fire on a row reading "due". Explaining a publication
+   * that did not happen is the fault this whole column was fixed for. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      removedAt: new Date('2026-09-28T10:00:00Z'),
+      slots: [slot({
+        status: 'scheduled',
+        publishAt:   new Date('2026-09-14T09:00:00Z'),
+        publishedAt: null,
+        publishedUrl: '',
+        publishedTitle: '',
+      })],
+    })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('due 09-14-2026'), 'the planned date is not marked due');
+  assert.ok(!html.includes('published, but the campaign was removed'),
+    'a post that never published is described as published');
+});
+
+await atest('a published post on a LIVE campaign gets no note', async () => {
+  // Nothing happened to it, so there is nothing to explain.
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      removedAt: null,
+      slots: [slot({
+        status: 'published',
+        publishedAt: new Date('2026-09-20T09:00:00Z'),
+      })],
+    })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(!html.includes('the campaign was removed'),
+    'an ordinary published post carries a note about nothing');
 });
 
 console.log('');

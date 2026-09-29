@@ -52,6 +52,34 @@ class IE_Publisher {
 	const LOG_OPTION = 'ie_log';
 
 	/**
+	 * Removals that were reported at the time, and the moment they happened.
+	 *
+	 * THE REASON THIS EXISTS, in one screenshot: six campaigns on the blog
+	 * report all reading "removed 09-28-2026", a date Edwin was sure was
+	 * wrong. It was. He removed them earlier; the server could not be told,
+	 * because that site's licence was being refused for eight days, and the
+	 * hourly sweep eventually noticed they were missing and stamped them all
+	 * with the day it noticed.
+	 *
+	 * IE_Api::removed() is deliberately unfailable — a customer must be able
+	 * to clear a campaign off their own screen whether or not the server is
+	 * reachable — and remove_campaign() deletes the local record immediately
+	 * afterwards. So a report that failed used to be gone for good: the
+	 * record it would have been rebuilt from no longer existed, and the only
+	 * thing left to notice was the campaign's absence, at whatever later date
+	 * somebody noticed it.
+	 *
+	 * The queue is what survives that. Id and timestamp, nothing else, so it
+	 * needs no record to retry from.
+	 */
+	const PENDING_REMOVALS = 'ie_pending_removals';
+
+	/** Enough for a bad week. Beyond this the oldest are dropped: an
+	 *  unbounded option on a site that cannot reach the server is a row in
+	 *  wp_options that grows for ever. */
+	const MAX_PENDING_REMOVALS = 100;
+
+	/**
 	 * How many posts to insert in one run.
 	 *
 	 * Each insert is a few database writes plus a permalink lookup. Twelve is
@@ -540,6 +568,37 @@ class IE_Publisher {
 			return $post_id;
 		}
 
+		/* THE SEO TITLE, WHICH WAS NEVER WRITTEN AT ALL.
+		 *
+		 * The generated theme filters `pre_get_document_title` and returns
+		 * '<prefix>_page_title' when the post has one. Its own pages get that
+		 * meta at theme activation; posts published by this plugin never did,
+		 * so the filter fell through on every single one and WordPress's
+		 * default took over — "Post Title - Site Name".
+		 *
+		 * That is how a post ended up titled
+		 *
+		 *   Cloudy Glasses and White Faucet Scale Usually Mean Hard Water — roofingamerica.xyz
+		 *
+		 * The domain is dead weight in a search result: it is already shown
+		 * underneath, and here it eats characters from the end of a headline
+		 * that was written to fit. Setting the meta is enough to stop it — no
+		 * theme change, so it fixes sites whose theme is already installed.
+		 *
+		 * The post's own headline, not a second title written separately. One
+		 * that drifts from the H1 is a maintenance problem nobody asked for,
+		 * and the headline is already written to work as a search result.
+		 *
+		 * BOTH KEYS, for the same reason as the description below: the theme
+		 * reads the prefixed one, and the plugin's own key is what survives a
+		 * change of theme. */
+		$seo_title = isset( $written['title'] ) ? sanitize_text_field( $written['title'] ) : '';
+
+		if ( '' !== $seo_title ) {
+			update_post_meta( $post_id, '_ie_meta_title', $seo_title );
+			update_post_meta( $post_id, IE_Settings::active_theme_prefix() . '_page_title', $seo_title );
+		}
+
 		if ( ! empty( $written['metaDescription'] ) ) {
 			$description = sanitize_text_field( $written['metaDescription'] );
 
@@ -881,7 +940,7 @@ class IE_Publisher {
 		// that would close its ring. Unwrapping
 		// is the right thing to do and still costs a link that was planned, so
 		// the owner is told which post to look at rather than left to find it.
-		$stats = array( 'restored' => 0, 'unwrapped' => 0, 'waiting' => 0, 'posts' => 0, 'short' => array() );
+		$stats = array( 'restored' => 0, 'unwrapped' => 0, 'waiting' => 0, 'posts' => 0, 'titles' => 0, 'short' => array() );
 
 		/* NOT 'trash'. Editing a post in the owner's bin would rewrite content
 		 * they threw away and bump its modified date — the one thing that
@@ -901,6 +960,37 @@ class IE_Publisher {
 
 			if ( ! $post ) {
 				continue;
+			}
+
+			/* BACKFILL THE SEO TITLE, for posts published before the plugin
+			 * started writing it.
+			 *
+			 * insert_post() sets it now, but a post already on the site keeps
+			 * whatever meta it was given — which was none — so its <title>
+			 * goes on carrying "- Site Name" for ever. Every one of those is a
+			 * live search result with the domain eating the end of a headline.
+			 *
+			 * DONE HERE rather than on upgrade: this pass already walks every
+			 * post carrying _ie_campaign, is already capped, and is already
+			 * described as safe to run more than once. A second walk of the
+			 * same posts to set one meta key would be a second thing to
+			 * remember.
+			 *
+			 * ABOVE the campaign-record check on purpose. A post whose
+			 * campaign was removed still has a title tag, and it is still
+			 * wrong. Nothing about this needs the record.
+			 *
+			 * Never overwrites: a title somebody edited by hand is theirs. */
+			$prefix = IE_Settings::active_theme_prefix();
+
+			if ( $prefix && '' === (string) get_post_meta( $post_id, $prefix . '_page_title', true ) ) {
+				$headline = (string) $post->post_title;
+
+				if ( '' !== $headline ) {
+					update_post_meta( $post_id, '_ie_meta_title', $headline );
+					update_post_meta( $post_id, $prefix . '_page_title', $headline );
+					$stats['titles']++;
+				}
 			}
 
 			$campaign_id = get_post_meta( $post_id, '_ie_campaign', true );
@@ -1109,11 +1199,28 @@ class IE_Publisher {
 				? $campaign['server_campaign_id']
 				: $campaign['id'];
 
+			/* THE MOMENT IT HAPPENED, taken here and not on the server.
+			 *
+			 * The server used to stamp its own clock when the report arrived,
+			 * which is the same thing only when the report arrives at once.
+			 * When it does not — and on this account it did not for eight
+			 * days — the date describes when the server found out, which is
+			 * not a fact anybody wanted recorded. */
+			$at = gmdate( 'c' );
+
 			/* Cannot fail this call. IE_Api::removed() swallows its own errors
 			 * and logs them — a site that is offline, or whose licence has
 			 * been revoked, must still be able to remove a campaign from its
 			 * own screen. */
-			IE_Api::removed( $server_id );
+			$result = IE_Api::removed( $server_id, $at );
+
+			/* QUEUED WHEN IT DID NOT GET THROUGH, because the local record is
+			 * deleted three lines below and nothing can rebuild this from it
+			 * afterwards. The queue carries the id and the time and needs
+			 * neither. */
+			if ( is_wp_error( $result ) || ! IE_Settings::is_connected() ) {
+				self::queue_removal( $server_id, $at );
+			}
 		}
 
 		IE_Campaigns::delete( $campaign_id );
@@ -1277,8 +1384,91 @@ class IE_Publisher {
 	 * buying posts — so "missed schedule" is the normal case here, not an edge
 	 * one. Left alone, a twelve-week campaign publishes nothing at all.
 	 */
+	/**
+	 * Remember a removal whose report did not get through.
+	 *
+	 * Deduplicated on the campaign id, keeping the FIRST time recorded: a
+	 * customer who removes, reinstalls and removes again should keep the
+	 * original date, which is the same rule markRemoved() applies on the
+	 * server.
+	 */
+	public static function queue_removal( $campaign_id, $at ) {
+		$queue = get_option( self::PENDING_REMOVALS, array() );
+		$queue = is_array( $queue ) ? $queue : array();
+
+		foreach ( $queue as $row ) {
+			if ( isset( $row['id'] ) && (string) $row['id'] === (string) $campaign_id ) {
+				return false;
+			}
+		}
+
+		$queue[] = array( 'id' => (string) $campaign_id, 'at' => (string) $at );
+
+		if ( count( $queue ) > self::MAX_PENDING_REMOVALS ) {
+			$queue = array_slice( $queue, -self::MAX_PENDING_REMOVALS );
+		}
+
+		update_option( self::PENDING_REMOVALS, $queue, false );
+		self::log( sprintf( 'removal of %s queued for retry (%s)', $campaign_id, $at ) );
+
+		return true;
+	}
+
+	/**
+	 * Retry the removals that never reached the server.
+	 *
+	 * ONLY DROPS A ROW ON SUCCESS, the same rule send_slot_reports() follows
+	 * and for the same reason: one unreachable minute must not become
+	 * permanent silence about something that really happened.
+	 *
+	 * @return int how many were finally reported
+	 */
+	public static function flush_removed_reports() {
+		$queue = get_option( self::PENDING_REMOVALS, array() );
+		$queue = is_array( $queue ) ? $queue : array();
+
+		if ( empty( $queue ) || ! IE_Settings::is_connected() ) {
+			return 0;
+		}
+
+		$left = array();
+		$sent = 0;
+
+		foreach ( $queue as $row ) {
+			$id = isset( $row['id'] ) ? (string) $row['id'] : '';
+			$at = isset( $row['at'] ) ? (string) $row['at'] : '';
+
+			if ( '' === $id ) {
+				continue;
+			}
+
+			$result = IE_Api::removed( $id, $at );
+
+			if ( is_wp_error( $result ) ) {
+				$left[] = $row;
+				continue;
+			}
+
+			$sent++;
+		}
+
+		update_option( self::PENDING_REMOVALS, $left, false );
+
+		if ( $sent ) {
+			self::log( sprintf( '%d queued removal(s) finally reported', $sent ) );
+		}
+
+		return $sent;
+	}
+
 	public static function run_catch_up() {
 		$rescued = self::publish_missed();
+
+		/* BEFORE the early return below, for the same reason sweep_deleted()
+		 * is: a site whose campaigns have all finished takes that return on
+		 * every run, and a site that removed a campaign while it could not
+		 * reach the server is very often exactly that site. */
+		self::flush_removed_reports();
 
 		/* BEFORE THE EARLY RETURN BELOW, deliberately.
 		 *

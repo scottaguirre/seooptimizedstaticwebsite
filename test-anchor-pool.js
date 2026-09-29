@@ -16,7 +16,7 @@
 
 const assert = require('assert');
 const { buildAnchorPool, pluralise } = require('./utils/blog/anchorPool');
-const { DEFAULT_MIX } = require('./utils/blog/anchors');
+const { DEFAULT_MIX, bucketCounts } = require('./utils/blog/anchors');
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -233,6 +233,39 @@ test('only the exact bucket is allowed to run short', () => {
 test('the mix still totals 100', () => {
   const total = Object.values(DEFAULT_MIX).reduce((a, b) => a + b, 0);
   assert.strictEqual(total, 100, JSON.stringify(DEFAULT_MIX));
+});
+
+test('THE MIX IS WHAT THE COMMENTS SAY IT IS', () => {
+  /* A COMMENT NOBODY CAN CHECK IS A COMMENT THAT GOES STALE.
+   *
+   * anchorPool.js's header described exact as "only 15%" and semantic as
+   * "50%" for weeks after the code moved to 30/40/20/10, and the docblock on
+   * bucketCounts() carried a third set again. Nothing failed, because prose
+   * is not executed — the file's own description of itself was simply wrong,
+   * and a comment that contradicts the code is worse than none, since the
+   * next reader believes it and stops reading.
+   *
+   * The header no longer restates the numbers at all; it points at
+   * DEFAULT_MIX. This pins the one example that still has to carry them. */
+  assert.deepStrictEqual(DEFAULT_MIX,
+    { exact: 30, semantic: 40, descriptive: 20, branded: 10 },
+    'the mix changed — the worked example in anchors.js needs rewriting with it');
+
+  /* The example in bucketCounts()'s docblock, asserted rather than trusted.
+   *
+   * NINE, not four, and that is the point of the example: at 4, 7 and 12
+   * plain rounding happens to total correctly. Nine is where it gives ten
+   * slots for a nine-post campaign. An example chosen from the cases where
+   * the bug does not bite argues for the wrong thing. */
+  const plain = Object.entries(DEFAULT_MIX)
+    .map(([, share]) => Math.round((share / 100) * 9))
+    .reduce((a, b) => a + b, 0);
+
+  assert.strictEqual(plain, 10, 'nine posts no longer demonstrate the rounding fault');
+
+  assert.deepStrictEqual(bucketCounts(9),
+    { exact: 3, semantic: 3, descriptive: 2, branded: 1 },
+    'bucketCounts(9) no longer matches the worked example in its own docblock');
 });
 
 console.log('');

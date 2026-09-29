@@ -81,6 +81,39 @@ function page({ title, body, status = 200 }) {
     td, th { vertical-align: top; }
     .muted { color: rgba(255,255,255,.55); }
     .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* A DATE IS ONE WORD. Without this the column squeezes and "09-29-2026"
+       breaks across two lines mid-date, which is both ugly and briefly
+       unreadable — the eye has to reassemble it. */
+    .date { white-space: nowrap; }
+
+    /* Dimmer than .muted, because this date is the weakest claim on the
+       page: not what happened, only what is meant to. */
+    .due { color: rgba(255,255,255,.38); font-style: italic; }
+
+    /* WHITE-SPACE RESET, because it sits inside .date, which is nowrap so a
+       date never breaks across two lines mid-date. Without this the note
+       inherits it and drags the column to the width of the whole sentence. */
+    .note {
+      white-space: normal;
+      color: rgba(255,255,255,.38);
+      font-size: .72rem;
+      line-height: 1.25;
+      margin-top: .2rem;
+    }
+
+    /* THE ROW NUMBER. Right-aligned and tabular so 9 and 10 put their last
+       digit in the same column — a ragged number column drags the eye down
+       the wrong edge of the table. Muted, because it labels the row rather
+       than saying anything about it, and narrow so it takes width from
+       nothing that carries information. */
+    .rownum {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: rgba(255,255,255,.45);
+      width: 3.2rem;
+      padding-right: .9rem;
+    }
     a { color: #7fb8ff; }
     .pill {
       display:inline-block; padding:.1rem .5rem; border-radius:1rem;
@@ -182,10 +215,44 @@ function esc(value) {
  */
 const EXCEL_BOM = '\uFEFF';
 
+/**
+ * A date as a MACHINE reads it: yyyy-mm-dd.
+ *
+ * DO NOT "TIDY" THIS INTO THE DISPLAY FORMAT. It has three callers and two of
+ * them are not text on a screen:
+ *
+ *   - the value of <input type="date">, which the HTML spec requires to be
+ *     yyyy-mm-dd. Anything else is rejected silently by the browser: the box
+ *     renders EMPTY, so the filter you just applied looks like it was never
+ *     applied at all.
+ *   - the from= and to= in the query string this page builds, which
+ *     readFilters() parses back with a /^(\d{4})-(\d{2})-(\d{2})$/ test.
+ *   - the CSV and its filename, where ISO sorts correctly as plain text and
+ *     is the one format a spreadsheet cannot read as the wrong day. 09-10
+ *     is the 9th of October to most of the world and the 10th of September
+ *     to the US, and the file gives no clue which was meant.
+ *
+ * Use shownDay() for anything a person reads.
+ */
 function day(value) {
   if (!value) return '';
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
+
+/**
+ * A date as Edwin reads it: mm-dd-yyyy.
+ *
+ * SCREEN ONLY, and built on day() so the two can never disagree about which
+ * day they mean — this reorders the parts and does no date arithmetic of its
+ * own, which is where a second implementation would drift.
+ */
+function shownDay(value) {
+  const iso = day(value);
+  if (!iso) return '';
+
+  const [y, m, d] = iso.split('-');
+  return `${m}-${d}-${y}`;
 }
 
 /**
@@ -261,6 +328,27 @@ async function rowsFor(userId, filters = {}) {
         campaignId: String(campaign._id),
         campaign: campaignName(campaign),
         campaignStatus: campaign.status,
+        /* THREE DIFFERENT DAYS, AND THEY ARE ROUTINELY WEEKS APART.
+         *
+         * createdAt is when the campaign was PLANNED. It is a draft at that
+         * point: nothing written, nothing charged, and it may never be
+         * approved at all.
+         *
+         * batch.startedAt is when somebody APPROVED it — the moment the
+         * writing is enqueued, the status becomes 'writing', and the credits
+         * start being spent. That is the day a customer means by "when did
+         * this campaign start", and the one the report shows.
+         *
+         * publishedAt on a slot is a third thing again: a campaign approved
+         * on the 3rd with a fortnightly schedule puts nothing on the site
+         * until the 17th.
+         *
+         * Both are carried. The screen shows approval because that is the
+         * question; the CSV keeps the planning date too, because a campaign
+         * that sat unapproved for three weeks is a fact about the customer
+         * that only those two dates together can tell. */
+        campaignCreatedAt: campaign.createdAt || null,
+        campaignApprovedAt: (campaign.batch && campaign.batch.startedAt) || null,
         removedAt: campaign.removedAt || null,
         moneyPage: pageName(campaign.targetPage),
         moneyPageUrl: (campaign.targetPage && campaign.targetPage.url) || '',
@@ -282,22 +370,59 @@ async function rowsFor(userId, filters = {}) {
     }
   }
 
-  const filtered = rows.filter(row => keep(row, f));
-  filtered.forEach(row => { row.state = stateOf(row); });
+  rows.forEach(row => { row.state = stateOf(row); });
 
   // Newest publication first; anything unpublished sorts after, by its
   // planned date. An agency reading this wants "what went out lately".
-  filtered.sort((a, b) => {
-    const at = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
-    const bt = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
-    if (at !== bt) return bt - at;
+  rows.sort(byNewest);
 
-    const ap = a.publishAt ? new Date(a.publishAt).getTime() : 0;
-    const bp = b.publishAt ? new Date(b.publishAt).getTime() : 0;
-    return bp - ap;
-  });
+  const filtered = rows.filter(row => keep(row, f));
+
+  /* A ROW COUNTER, AND NOTHING MORE.
+   *
+   * This started life as a stable identifier: numbered before filtering, so
+   * a row kept its number whatever was hidden and a filtered report read
+   * 2, 6, 17. That answers a question nobody asked. What Edwin wanted was
+   * the ordinary thing a numbered list does — count the rows in front of
+   * you, 1..n, starting at 1 — so that "row 7" means the seventh line on
+   * the screen.
+   *
+   * Numbered AFTER the filter for that reason, and in rowsFor() rather than
+   * in the template so the page and the CSV cannot disagree about what row
+   * seven is.
+   *
+   * The consequence, stated so nobody 'fixes' it later: the same post has a
+   * different number under a different filter. That is correct here. The
+   * number describes a position in a list, not a post.
+   */
+  filtered.forEach((row, i) => { row.n = i + 1; });
+
+  /* The campaigns tab counts its own rows, from its own order — it sorts
+   * removed-first, so it cannot borrow the post list's numbering. Built from
+   * the filtered rows, exactly like the table it labels. */
+  const campaignNumbers = new Map();
+  campaignsFrom(filtered).forEach((c, i) => { campaignNumbers.set(campaignKey(c), i + 1); });
+  filtered.forEach(row => { row.campaignN = campaignNumbers.get(campaignKey(row)) || 0; });
 
   return filtered;
+}
+
+function byNewest(a, b) {
+  const at = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+  const bt = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+  if (at !== bt) return bt - at;
+
+  const ap = a.publishAt ? new Date(a.publishAt).getTime() : 0;
+  const bp = b.publishAt ? new Date(b.publishAt).getTime() : 0;
+  return bp - ap;
+}
+
+/* ONE KEY, USED BY BOTH SIDES OF THE NUMBERING. campaignsFrom() groups on
+ * this and rowsFor() looks numbers up with it; two spellings of "which
+ * campaign is this" would hand rows a number belonging to another campaign,
+ * silently, and only on the accounts where a name is reused. */
+function campaignKey(row) {
+  return row.campaignId || `${row.campaign}\u0000${row.site}`;
 }
 
 /**
@@ -317,13 +442,20 @@ function campaignsFrom(rows) {
   const byName = new Map();
 
   for (const row of rows) {
-    const key = row.campaignId || `${row.campaign}\u0000${row.site}`;
+    const key = campaignKey(row);
 
     if (!byName.has(key)) {
       byName.set(key, {
         campaignId: row.campaignId,
         campaign: row.campaign,
         site: row.site,
+        /* Carried rather than counted here, because this function is called
+         * twice: once to hand out the numbers and once to build the table.
+         * Counting inside it would number the campaigns twice and the second
+         * count would be the one on screen. */
+        n: row.campaignN || 0,
+        createdAt: row.campaignCreatedAt,
+        approvedAt: row.campaignApprovedAt,
         campaignStatus: row.campaignStatus,
         removedAt: row.removedAt,
         posts: 0,
@@ -746,9 +878,20 @@ router.get('/blog-report', requireAuth, async (req, res) => {
         <table class="table table-striped table-hover align-middle">
           <thead>
             <tr>
+              <th class="rownum">#</th>
               <th>Campaign</th>
               <th>Site</th>
               <th>Status</th>
+              ${/* THE TWO DATES SIT TOGETHER, approved then removed, so a
+                    campaign's whole life is read left to right in one place
+                    rather than at opposite ends of the row.
+
+                    APPROVED, NOT CREATED. Creation is when the plan was
+                    drawn up and is a draft nobody has paid for; approval is
+                    when the writing started and the credits went. Those are
+                    weeks apart on a campaign somebody thought about, and the
+                    second one is what "when did this start" means. */ ''}
+              <th>Approved</th>
               <th>Removed</th>
               <th class="num">Posts</th>
               <th class="num">Live</th>
@@ -758,6 +901,7 @@ router.get('/blog-report', requireAuth, async (req, res) => {
           <tbody>
             ${campaigns.map(c => `
               <tr>
+                <td class="rownum">${c.n}</td>
                 ${/* BY ID, NOT BY NAME. Two campaigns can share a name on
                       one site — re-planning a money page does it, and this
                       account has three such pairs — so a drill-through
@@ -776,7 +920,17 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                       carry the same signal and are read together. */ ''}
                 <td class="${c.removedAt ? 'text-danger' : ''}"
                     ${c.removedAt ? 'title="What the campaign was doing on the day it was deleted from WordPress. Nothing has changed it since, and nothing can: the site no longer reports on it."' : ''}>${esc(campaignLabel(c))}</td>
-                <td class="${c.removedAt ? 'text-danger' : 'muted'}">${esc(day(c.removedAt)) || '&mdash;'}</td>
+                ${/* A DASH MEANS NOT APPROVED YET, and it is a real answer
+                      rather than missing data: the campaign is planned, the
+                      credits are still yours, and nothing has been written.
+                      A blank cell would read as a rendering fault.
+
+                      Worth the column because several campaigns on this
+                      account share a name — "quality plumbing leander"
+                      twice, "Unclogging Sewer Line Services" twice — and the
+                      approval date is what tells them apart at a glance. */ ''}
+                <td class="muted date">${esc(shownDay(c.approvedAt)) || '&mdash;'}</td>
+                <td class="date ${c.removedAt ? 'text-danger' : 'muted'}">${esc(shownDay(c.removedAt)) || '&mdash;'}</td>
                 <td class="num">${c.posts}</td>
                 ${/* A DASH, NOT A ZERO, once the campaign is gone.
                       Its posts are almost certainly still on the site — that
@@ -806,7 +960,10 @@ router.get('/blog-report', requireAuth, async (req, res) => {
         <table class="table table-striped table-hover align-middle">
           <thead>
             <tr>
-              <th>Published</th>
+              <th class="rownum">#</th>
+              ${/* NOT "Published", because the column holds two different
+                    facts: when a post went out, and when one is due to. */ ''}
+              <th>Date</th>
               <th>Post</th>
               <th>Links to</th>
               <th>Keyword</th>
@@ -824,7 +981,39 @@ router.get('/blog-report', requireAuth, async (req, res) => {
           <tbody>
             ${rows.map(r => `
               <tr>
-                <td class="muted">${esc(day(r.publishedAt) || day(r.publishAt))}</td>
+                <td class="rownum">${r.n}</td>
+                ${/* A DATE UNDER "PUBLISHED" FOR A POST THAT NEVER PUBLISHED.
+                      This cell fell back to publishAt with nothing to mark
+                      the difference, so eight scheduled posts showed eight
+                      dates in a column headed PUBLISHED — directly under a
+                      headline reading "0 confirmed live". The CSV was honest
+                      the whole time, carrying published_date empty and
+                      planned_date filled; only the screen conflated them.
+
+                      Same fault as the plugin's "6 of 6 scheduled, 1 live"
+                      on a campaign whose posts were all deleted: a value
+                      that cannot be true is worse than no value. The STATE
+                      pill already says which a row is; the date was
+                      contradicting it.
+
+                      "due" rather than a second column, because one of the
+                      two would be empty on every row. */ ''}
+                <td class="muted date">${r.publishedAt
+                  ? esc(shownDay(r.publishedAt))
+                  : (r.publishAt ? `<span class="due">due ${esc(shownDay(r.publishAt))}</span>` : '')}
+                  ${/* PUBLISHED, AND THEN THE CAMPAIGN WENT. Two facts that
+                        contradict each other at a glance: a real publication
+                        date beside a pill reading "Campaign removed". Both
+                        are true and the order is what reconciles them — it
+                        went out, and the campaign was deleted afterwards.
+                        The pill cannot say that; it has one word.
+
+                        Only when BOTH are true. A row that never published
+                        already says "due", and a note under it would be
+                        explaining something that did not happen. */ ''}
+                  ${r.publishedAt && r.removedAt
+                    ? `<div class="note">published, but the campaign was removed</div>`
+                    : ''}</td>
                 <td>
                   ${/* NOT A LINK ONCE THE POST IS GONE — the same guard the
                         plugin's tables carry. The URL is still stored and
@@ -836,14 +1025,20 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                     ? `<a href="${esc(r.url)}" target="_blank" rel="noreferrer">${esc(r.title || r.topic)}</a>`
                     : esc(r.title || r.topic)}
                   ${r.deletedAt
-                    ? `<div class="text-warning" style="font-size:.78rem">deleted ${esc(day(r.deletedAt))}</div>`
+                    ? `<div class="text-warning" style="font-size:.78rem">deleted ${esc(shownDay(r.deletedAt))}</div>`
                     : ''}
                 </td>
                 <td>
                   ${r.moneyPageUrl
                     ? `<a href="${esc(r.moneyPageUrl)}" target="_blank" rel="noreferrer">${esc(r.moneyPage)}</a>`
                     : esc(r.moneyPage)}
-                  ${r.anchor ? `<div class="muted" style="font-size:.78rem">&ldquo;${esc(r.anchor)}&rdquo;</div>` : ''}
+                  ${/* NAMED, because quotation marks alone do not say what
+                        the phrase IS. A grey quoted fragment under a page
+                        name reads as a subtitle, a tagline, or the start of
+                        the post — and the one thing it actually is, the
+                        clickable words carrying the link, is the thing
+                        anybody auditing this page came to see. */ ''}
+                  ${r.anchor ? `<div class="muted" style="font-size:.78rem">Anchor text: &ldquo;${esc(r.anchor)}&rdquo;</div>` : ''}
                 </td>
                 <td class="muted">${esc(r.keyword)}</td>
                 <td>
@@ -852,7 +1047,7 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                   <a href="/blog-report?campaign=${encodeURIComponent(r.campaign)}"
                      class="report-link">${esc(r.campaign)}</a>
                   ${r.removedAt
-                    ? `<div class="text-danger" style="font-size:.78rem">removed ${esc(day(r.removedAt))}</div>`
+                    ? `<div class="text-danger" style="font-size:.78rem">removed ${esc(shownDay(r.removedAt))}</div>`
                     : ''}
                 </td>
                 <td class="muted">${esc(r.site)}</td>
@@ -896,10 +1091,18 @@ router.get('/blog-report.csv', requireAuth, async (req, res) => {
   try {
     const rows = await rowsFor(req.user._id, readFilters(req.query));
 
+    /* post_number AND campaign_number, matching the two tabs on screen.
+     *
+     * The export exists so somebody can quote a row back at you, and a row
+     * number that only exists on the web page is the one thing they cannot
+     * quote. They are the SAME numbers: assigned before any filter, so an
+     * export of a filtered report carries the numbers those rows have on the
+     * full report rather than 1..n of whatever survived the filter. */
     const header = [
-      'published_date', 'planned_date', 'post_title', 'post_url',
+      'post_number', 'published_date', 'planned_date', 'post_title', 'post_url',
       'links_to_page', 'links_to_url', 'anchor_text', 'keyword',
-      'campaign', 'campaign_status', 'campaign_removed_date',
+      'campaign_number', 'campaign', 'campaign_status',
+      'campaign_created_date', 'campaign_approved_date', 'campaign_removed_date',
       'site', 'site_status', 'post_state', 'post_deleted_date', 'credits',
     ];
 
@@ -932,9 +1135,10 @@ router.get('/blog-report.csv', requireAuth, async (req, res) => {
      */
     for (const r of rows) {
       lines.push([
-        day(r.publishedAt), day(r.publishAt), r.title || r.topic, r.url,
+        r.n, day(r.publishedAt), day(r.publishAt), r.title || r.topic, r.url,
         r.moneyPage, r.moneyPageUrl, r.anchor, r.keyword,
-        r.campaign, r.campaignStatus, day(r.removedAt),
+        r.campaignN, r.campaign, r.campaignStatus,
+        day(r.campaignCreatedAt), day(r.campaignApprovedAt), day(r.removedAt),
         r.site, r.siteStatus, r.slotStatus, day(r.deletedAt), r.credits,
       ].map(cell).join(','));
     }
@@ -965,6 +1169,7 @@ module.exports.readFilters = readFilters;
 module.exports.keep = keep;
 module.exports.esc = esc;
 module.exports.day = day;
+module.exports.shownDay = shownDay;
 module.exports.filterBar = filterBar;
 module.exports.campaignName = campaignName;
 module.exports.anyFilter = anyFilter;
