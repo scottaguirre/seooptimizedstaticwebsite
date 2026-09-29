@@ -77,6 +77,32 @@ const { buildLinkPlan } = require('./blog/linkPlan');
 const WRITE_ATTEMPTS = Number(process.env.BLOG_WRITE_ATTEMPTS) || 2;
 
 /**
+ * Faults worth spending another API call on.
+ *
+ * BY CODE, NOT BY MESSAGE. Matching on the text of a failure ties this rule to
+ * the wording of a sentence somebody will reasonably reword one day, and the
+ * retry would switch itself off with nothing to show for it.
+ *
+ * What is here is what a different roll of the dice plausibly fixes: links
+ * crowded into one paragraph, a post well short of the length asked for, a
+ * required link dropped or altered. What is NOT here is deliberate: a "guide"
+ * title, a how-to title, filler phrasing and vagueness are prompt problems,
+ * and asking the same model the same question again mostly buys another
+ * identical answer at twice the cost.
+ */
+const REWRITE_WORTHY = new Set([
+  'links-crowded',
+  'short',
+  'money-link',
+  'next-link',
+  'prev-link',
+]);
+
+function worthRewriting(quality) {
+  return (quality?.codes || []).some(code => REWRITE_WORTHY.has(code));
+}
+
+/**
  * Turn a written post into the payload the plugin receives.
  *
  * The tokens are left INTACT and the plugin substitutes them.
@@ -170,6 +196,7 @@ async function writeOneSlot({ campaign, slot, user, job, onProgress }) {
   const { slot: planSlot, ctx, targets, pending } = buildLinkPlan(campaign, index);
 
   let post = null;
+  let quality = null;
   let lastError = null;
 
   for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt++) {
@@ -179,7 +206,7 @@ async function writeOneSlot({ campaign, slot, user, job, onProgress }) {
         current: slot.topic,
       });
 
-      post = await writePost(planSlot, ctx, {
+      const candidate = await writePost(planSlot, ctx, {
         // Both are the first knobs to turn if the writing disappoints, and
         // both are environment-tunable so a prompt experiment does not need a
         // deploy.
@@ -188,7 +215,36 @@ async function writeOneSlot({ campaign, slot, user, job, onProgress }) {
         verbosity: process.env.BLOG_VERBOSITY || 'high',
       });
 
-      break;
+      post = candidate;
+      quality = checkPost(candidate, planSlot);
+
+      /* THE CHECK MOVED INSIDE THE LOOP, AND NOTHING HAS BEEN CHARGED YET.
+       *
+       * It used to run after this loop, which is after the point of no
+       * return: the comment there said a failing post ships because "it was
+       * written, so it was paid for", and rewriting would mean "charging
+       * twice". That was true where it stood. Up here the charge has not
+       * happened — markSlotReady() and chargeCredits() are both below — so a
+       * second attempt costs us one API call and the customer nothing. The
+       * same economics as the existing retry on a thrown error.
+       *
+       * ONLY FOR FAULTS A REWRITE CAN FIX, by code rather than by message.
+       * Three links in one paragraph, a post half the length asked for, a
+       * missing money-page link: all of those are a different roll of the
+       * dice away from being right. A "guide" title or filler phrasing is a
+       * prompt problem, and asking the same model the same question again
+       * mostly buys another identical answer. */
+      if (quality.ok || attempt === WRITE_ATTEMPTS || !worthRewriting(quality)) {
+        break;
+      }
+
+      log.info('blog.post.rewriting', {
+        campaignId: String(campaignId),
+        slotIndex: index,
+        attempt,
+        of: WRITE_ATTEMPTS,
+        codes: (quality.codes || []).slice(0, 5),
+      });
 
     } catch (err) {
       lastError = err;
@@ -218,17 +274,19 @@ async function writeOneSlot({ campaign, slot, user, job, onProgress }) {
     return { ok: false, reason: lastError?.message || 'no post produced' };
   }
 
-  // checkPost takes THE SLOT, not an options bag. That matters more than it
-  // looks: qualityCheck.js uses slot.money.anchor, slot.nextAnchor and
-  // slot.prevAnchor to confirm the model emitted each required link token
-  // verbatim. Passed anything else, those three checks silently skip, and a
-  // post that dropped its money-page link passes as clean — which defeats the
-  // most important check in the file.
-  //
-  // A post that fails does NOT release the slot: it was written, so it was
-  // paid for. The warnings are recorded and it ships. The alternative is
-  // charging for nothing, or rewriting and charging twice.
-  const quality = checkPost(post, planSlot);
+  /* The verdict was computed in the loop above, on the copy that survived.
+   *
+   * checkPost takes THE SLOT, not an options bag. That matters more than it
+   * looks: qualityCheck.js uses slot.money.anchor, slot.nextAnchor and
+   * slot.prevAnchor to confirm the model emitted each required link token
+   * verbatim. Passed anything else, those three checks silently skip, and a
+   * post that dropped its money-page link passes as clean — which defeats the
+   * most important check in the file.
+   *
+   * A post that still fails after its rewrites does NOT release the slot: it
+   * was written, so it is charged for, and the warnings are recorded against
+   * it. The alternative is charging for nothing. */
+  quality = quality || checkPost(post, planSlot);
 
   // Logged, not just stored.
   //
@@ -525,10 +583,26 @@ async function writeCampaign(job, { onProgress }) {
 
   /* ------------------------------------------------------------ the finish */
 
-  // Nothing written at all means nothing to publish. Back to draft so the
-  // customer can fix whatever it was and approve again, rather than leaving a
-  // campaign stuck in 'writing' that no code will ever move.
-  const anythingLive = (campaign.slots || []).some(
+  /* Nothing written at all means nothing to publish. Back to draft so the
+   * customer can fix whatever it was and approve again, rather than leaving a
+   * campaign stuck in 'writing' that no code will ever move.
+   *
+   * RE-READ, AND THAT IS THE WHOLE BUG THIS LINE ONCE HAD.
+   *
+   * `campaign` was loaded before the batch started. Every slot written since
+   * was marked ready by markSlotReady(), which is a findOneAndUpdate on the
+   * COLLECTION — it never touches this in-memory document. So this test read
+   * slots that still said 'pending', decided nothing had been written, and
+   * set the campaign back to 'draft' — immediately after writing and charging
+   * for every post in it.
+   *
+   * Nothing then ever reached 'active', so the completion check in
+   * /api/blog/published (which requires 'active') could never fire either.
+   * Campaigns with every post live sat at "In progress" for ever, and every
+   * campaign on the account read as an unapproved draft. */
+  const fresh = await BlogCampaign.findById(campaign._id).select('slots').lean();
+
+  const anythingLive = ((fresh && fresh.slots) || []).some(
     s => s.status === 'ready' || s.status === 'scheduled' || s.status === 'published'
   );
 

@@ -135,6 +135,27 @@ function ${p}_import_section( $post_id, $section ) {
         update_post_meta( $post_id, $base . 'notice', $section['notice'] );
     }
 
+    // Reviews, numbered the same way pricing rows are, so an owner replaces
+    // them one at a time in wp-admin rather than editing a blob.
+    //
+    // THE NOTE IS IMPORTED WITH THEM rather than treated as decoration. It is
+    // the line saying these are samples to be replaced, and an import that
+    // dropped it would leave four unlabelled five-star reviews carrying the
+    // business's real name. See utils/generateSampleReviews.js.
+    if ( isset( $section['reviews'] ) && is_array( $section['reviews'] ) ) {
+        $reviews = array_values( $section['reviews'] );
+        update_post_meta( $post_id, $base . 'review_count', count( $reviews ) );
+        foreach ( $reviews as $i => $review ) {
+            update_post_meta( $post_id, $base . 'review_text_' . $i,  isset( $review['text'] ) ? $review['text'] : '' );
+            update_post_meta( $post_id, $base . 'review_name_' . $i,  isset( $review['name'] ) ? $review['name'] : '' );
+            update_post_meta( $post_id, $base . 'review_stars_' . $i, isset( $review['stars'] ) ? $review['stars'] : 5 );
+        }
+    }
+
+    if ( isset( $section['note'] ) ) {
+        update_post_meta( $post_id, $base . 'note', $section['note'] );
+    }
+
     // FAQ pairs, numbered so each gets its own editable field
     if ( isset( $section['faqs'] ) && is_array( $section['faqs'] ) ) {
         $faqs = array_values( $section['faqs'] );
@@ -189,6 +210,7 @@ function ${p}_section_descriptors( $sections ) {
             'key', 'label', 'type',
             'heading', 'subheading', 'paragraphs', 'images',
             'cards', 'trust_points', 'badges', 'pricing', 'notice', 'faqs',
+            'reviews', 'note',
             'video_url', 'map_embed', 'address_override',
         );
 

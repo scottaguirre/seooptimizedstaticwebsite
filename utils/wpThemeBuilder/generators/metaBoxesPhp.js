@@ -267,6 +267,46 @@ function ${p}_render_content_meta_box( $post ) {
             continue;
         }
 
+        if ( $type === 'reviews' ) {
+            ${p}_text_field( $post->ID, $key, 'heading', __( 'Heading', '${themeSlug}' ) );
+
+            // Said plainly, in the place the owner will actually be looking.
+            // The reviews themselves each open by saying they are examples,
+            // but somebody editing in wp-admin should not have to read four
+            // of them to work out what the section is.
+            echo '<p class="description" style="color:#b32d2e;font-weight:600;">' .
+                 esc_html__( 'These are EXAMPLE reviews, not real ones. Replace the text below with genuine reviews from your customers before publishing — or delete the section.', '${themeSlug}' ) .
+                 '</p>';
+
+            ${p}_text_field( $post->ID, $key, 'note', __( 'Note shown above the reviews', '${themeSlug}' ) );
+
+            $review_count = (int) get_post_meta( $post->ID, '${p}_s_' . $key . '_review_count', true );
+            for ( $i = 0; $i < $review_count; $i++ ) {
+                echo '<div style="border-left:3px solid #2271b1;padding-left:12px;margin-bottom:14px;">';
+
+                // A PLAIN FIELD, NOT ${p}_rich_field. wp_editor wraps what it
+                // stores in <p>...</p>, and this text is rendered inside
+                // <p class="review-text"> to match the static build — which
+                // would nest a paragraph inside a paragraph, the same bug
+                // injectIndexInterlinks.js has its own test for. A plain
+                // field also means esc_html on output, so the static site and
+                // the theme escape identically.
+                ${p}_text_field( $post->ID, $key, 'review_text_' . $i,
+                    sprintf( __( 'Review %d', '${themeSlug}' ), $i + 1 ) );
+
+                echo '<div style="display:flex;gap:10px;">';
+                ${p}_text_field( $post->ID, $key, 'review_name_' . $i,
+                    sprintf( __( 'Review %d — name', '${themeSlug}' ), $i + 1 ) );
+                ${p}_text_field( $post->ID, $key, 'review_stars_' . $i,
+                    sprintf( __( 'Review %d — stars (0-5)', '${themeSlug}' ), $i + 1 ) );
+                echo '</div>';
+                echo '</div>';
+            }
+
+            echo '</div>';
+            continue;
+        }
+
         if ( $type === 'faq' ) {
             ${p}_text_field( $post->ID, $key, 'heading', __( 'Heading', '${themeSlug}' ) );
 
@@ -322,10 +362,17 @@ function ${p}_render_content_meta_box( $post ) {
             );
         }
 
-        // Video URL. A text-images section with a video shows the video in
-        // place of its images, so this is where a client changes or removes
-        // it. Only offered on sections that actually support one.
-        if ( $type === 'text-images' ) {
+        // Video URL. The section that has a video slot shows the video in
+        // place of its image, so this is where a client changes or removes it.
+        //
+        // GATED ON THE SECTION, NOT THE TYPE. This used to test the section
+        // type for 'text-images', and the comment above it claimed it was
+        // "only offered on sections that actually support one" — which was
+        // wrong, because sections 2 and 3 are that type too. They carry two
+        // images and no video slot, so the field appeared three times on the
+        // About page and two of them could produce a page the downloaded site
+        // has no way to render. Only section 4 declares supportsVideo.
+        if ( ! empty( $s['supports_video'] ) ) {
             ${p}_text_field( $post->ID, $key, 'video_url',
                 __( 'Video URL (leave blank to show the image instead)', '${themeSlug}' ) );
         }

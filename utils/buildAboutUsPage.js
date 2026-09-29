@@ -23,6 +23,7 @@ const { getPreset, assetPath, imageAlt } = require('./seoPresets');
 const { canonicalTag } = require('./canonicalUrl');
 const { titleFor, capabilities, imageFolderFor } = require('./businessShape');
 const { buildCaseStudySection } = require('./generateCaseStudy');
+const { buildReviewsSection, reviewRows } = require('./generateSampleReviews');
 
 /**
  * The trust points under Section 1's opening paragraph.
@@ -69,7 +70,11 @@ const  buildAboutUsPage =  async function (
             faqs = [],
             serviceCards = [],
             pricing = [],
-            caseStudy = null
+            caseStudy = null,
+            // Example reviews for the "What Customers Are Saying" section.
+            // Defaults to null so every existing caller keeps working and
+            // simply renders no section — same contract as caseStudy above.
+            reviews = null
 
     ){
         // This file used to keep its own categoryMap, keyed on SLUGS while
@@ -269,6 +274,10 @@ const  buildAboutUsPage =  async function (
                 // Returns '' when this business type gets no case study, or
                 // when the generation failed — the page reflows either way.
                 .replace(/{{CASE_STUDY}}/g, () => (buildCaseStudySection(caseStudy)))
+                // Example reviews, each one saying so in its first sentence.
+                // Returns '' when there are none, so the page reflows without
+                // the section rather than showing an empty heading.
+                .replace(/{{REVIEWS}}/g, () => (buildReviewsSection(reviews)))
                 .replace(/{{FAVICON_PATH}}/g, () => (globalValues.favicon))
                 .replace(/{{LOGO_PATH}}/g, () => (globalValues.logo))
                 .replace(/{{LOGO_ALT}}/g, () => (`Logo image of ${globalValues.businessName} in ${globalValues.location}. ${nearMeTerm}`))
@@ -558,6 +567,33 @@ const  buildAboutUsPage =  async function (
                 }));
             }
 
+            // The example reviews, immediately after the case study — the same
+            // order the static page above uses.
+            //
+            // A REVIEWS section type of its own, NOT a TEXT section.
+            //
+            // The first attempt here was a TEXT section carrying the reviews
+            // flattened to paragraphs. It needed no renderer changes, and the
+            // exported theme got the wording and "5 out of 5" while the
+            // downloaded site got cards, a grid and amber stars. That is not
+            // what this export is for: the WordPress theme mirrors the static
+            // site, so a section that arrives looking different has not
+            // arrived.
+            //
+            // So contentModel.js carries a REVIEWS type, the PHP renderer
+            // draws the same markup from the same star path, and each review
+            // is its own editable row in wp-admin the way each pricing row
+            // is. See utils/wpThemeBuilder/generators/sectionRendererPhp.js.
+            const reviewsModelSection = CM.reviewsSection(reviewRows(reviews), {
+                heading: reviews && reviews.heading,
+                // Carried explicitly: it is the line that says these are
+                // samples, and it has to survive the export.
+                note: reviews && reviews.note,
+            });
+            if (reviewsModelSection) {
+                modelSections.push(reviewsModelSection);
+            }
+
             // The FAQ SECTION is kept in every mode — Rank Fast drops the
             // JSON-LD, not the questions on the page. The flag below tells the
             // WordPress exporter which it is; without it the theme would
@@ -591,6 +627,22 @@ const  buildAboutUsPage =  async function (
                 ],
                 extra: {
                     videoUrl: globalValues.youtubeVideoUrl || '',
+
+                    // THE ONLY SECTION ON ANY PAGE WITH A VIDEO SLOT.
+                    //
+                    // The meta box used to offer "Video URL" on every
+                    // text-images section, because that is the type, and
+                    // sections 2 and 3 are the same type. They have two
+                    // images and no video slot — the static template has no
+                    // way to render one there — so a customer could set a
+                    // video in wp-admin and get a page the downloaded site
+                    // could never produce.
+                    //
+                    // Declared rather than inferred. The alternative was
+                    // keying off mediaLayout: 'side', which happens to be
+                    // unique to this section today and says nothing about
+                    // video to anyone reading it later.
+                    supportsVideo: true,
 
                     // THE SECTION DECLARES ITS OWN LAYOUT.
                     //

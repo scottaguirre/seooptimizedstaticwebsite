@@ -20,7 +20,7 @@ error_reporting( E_ALL );
  * ------------------------------------------------------------------ */
 
 define( 'ABSPATH', '/tmp/' );
-define( 'IE_VERSION', '0.3.2' );
+define( 'IE_VERSION', '0.8.0' );   // only used in markup; kept current so nothing reads as stale
 define( 'IE_FILE', '/tmp/x.php' );
 define( 'IE_DIR', '/tmp/' );
 define( 'IE_URL', 'http://site/' );
@@ -33,6 +33,7 @@ function esc_attr_e( $s, $d = null ) { echo htmlspecialchars( $s, ENT_QUOTES ); 
 function esc_html( $s ) { return htmlspecialchars( (string) $s, ENT_QUOTES ); }
 function esc_attr( $s ) { return htmlspecialchars( (string) $s, ENT_QUOTES ); }
 function esc_js( $s ) { return addslashes( (string) $s ); }
+function wp_strip_all_tags( $s ) { return trim( strip_tags( (string) $s ) ); }
 function esc_url( $u ) { return htmlspecialchars( (string) $u, ENT_QUOTES ); }
 function esc_url_raw( $u ) { return (string) $u; }
 function esc_textarea( $s ) { return htmlspecialchars( (string) $s, ENT_QUOTES ); }
@@ -51,7 +52,28 @@ function current_time( $t ) { return date( 'Y-m-d H:i:s' ); }
 function wp_nonce_field( $a ) { echo '<input type="hidden" name="_wpnonce" value="n">'; }
 function wp_nonce_url( $u, $a ) { return $u . '&_wpnonce=n'; }
 function wp_create_nonce( $a ) { return 'n'; }
-function get_edit_post_link( $id ) { return 'http://site/wp-admin/post.php?post=' . (int) $id . '&action=edit'; }
+/* NULL FOR A POST THAT IS NOT THERE, exactly as WordPress answers.
+ *
+ * A stub that always returns a URL cannot detect the bug this models:
+ * esc_url( null ) is '', so a row linked to a missing post renders
+ * <a href="">Topic</a> — a link that looks live and reloads the same page.
+ * Returning a URL unconditionally made the test for it pass with the guard
+ * removed, which is a test that proves nothing. */
+function get_edit_post_link( $id ) {
+	$id = (int) $id;
+
+	if ( null !== $GLOBALS['ie_existing_posts'] ) {
+		$live = array();
+		foreach ( $GLOBALS['ie_existing_posts'] as $k => $v ) {
+			$live[] = is_string( $v ) ? (int) $k : (int) $v;
+		}
+		if ( ! in_array( $id, $live, true ) ) {
+			return null;
+		}
+	}
+
+	return 'http://site/wp-admin/post.php?post=' . $id . '&action=edit';
+}
 function get_transient( $k ) { return $GLOBALS['ie_transient']; }
 function set_transient( $k, $v, $t = 0 ) { $GLOBALS['ie_transient'] = $v; return true; }
 function delete_transient( $k ) { $GLOBALS['ie_transient'] = false; return true; }
@@ -62,8 +84,76 @@ function checked( $a, $b = true, $echo = true ) { $r = ( $a == $b ) ? ' checked'
 function add_action() {}
 function add_filter() {}
 function wp_safe_redirect( $u ) { $GLOBALS['ie_redirect'] = $u; }
-function get_option( $k, $d = null ) { return $d; }
-function update_option() { return true; }
+/* A REAL OPTION STORE, because IE_Campaigns is no longer stubbed.
+ *
+ * `ie_campaigns` is served from the fixture global so that every existing
+ * test can keep assigning $GLOBALS['ie_campaigns'] = array( ... ) and have the
+ * REAL IE_Campaigns read it. Keyed by campaign id, which is how
+ * IE_Campaigns::save() stores them and how ::get() looks them up — a plain
+ * list means get( 'c1' ) finds nothing and every write silently does nothing.
+ * That exact mistake cost an hour in test-deleted-posts.php. */
+function get_option( $k, $d = null ) {
+	if ( 'ie_campaigns' === $k ) {
+		$out = array();
+		foreach ( (array) $GLOBALS['ie_campaigns'] as $c ) {
+			$out[ $c['id'] ] = $c;
+		}
+		return $out;
+	}
+	return array_key_exists( $k, $GLOBALS['ie_options'] ) ? $GLOBALS['ie_options'][ $k ] : $d;
+}
+function update_option( $k, $v, $autoload = null ) {
+	if ( 'ie_campaigns' === $k ) {
+		$GLOBALS['ie_campaigns'] = array_values( (array) $v );
+		return true;
+	}
+	$GLOBALS['ie_options'][ $k ] = $v;
+	return true;
+}
+
+function absint( $n ) { return abs( (int) $n ); }
+function wp_list_pluck( $rows, $field ) {
+	return array_map( function ( $r ) use ( $field ) {
+		return isset( $r[ $field ] ) ? $r[ $field ] : null;
+	}, (array) $rows );
+}
+function get_permalink( $id ) { return 'http://site/post-' . (int) $id . '/'; }
+
+/* WHICH POSTS STILL EXIST.
+ *
+ * null means "all of them", so every test written before deleted-post
+ * detection existed behaves exactly as it did. A test that wants a deleted
+ * post sets $GLOBALS['ie_existing_posts'] to the ids that remain.
+ *
+ * It honours post_status, because without that a trashed post is
+ * indistinguishable from a live one — which is the bug that shipped in 0.4.3
+ * and passed a source-grep test for weeks. */
+function get_posts( $args ) {
+	$wanted = isset( $args['post__in'] ) ? array_map( 'intval', $args['post__in'] ) : array();
+
+	if ( null === $GLOBALS['ie_existing_posts'] ) {
+		return $wanted;
+	}
+
+	$statuses = isset( $args['post_status'] ) ? (array) $args['post_status'] : array( 'publish' );
+	$out      = array();
+
+	foreach ( $GLOBALS['ie_existing_posts'] as $key => $value ) {
+		if ( is_string( $value ) ) {
+			$id     = (int) $key;
+			$status = $value;
+		} else {
+			$id     = (int) $value;
+			$status = 'publish';
+		}
+
+		if ( in_array( $id, $wanted, true ) && in_array( $status, $statuses, true ) ) {
+			$out[] = $id;
+		}
+	}
+
+	return $out;
+}
 function plugin_dir_path( $f ) { return '/tmp/'; }
 function plugin_dir_url( $f ) { return 'http://site/'; }
 function is_wp_error( $t ) { return $t instanceof WP_Error; }
@@ -102,6 +192,8 @@ function paginate_links( $args ) {
 
 $GLOBALS['ie_transient'] = false;
 $GLOBALS['ie_campaigns'] = array();
+$GLOBALS['ie_options'] = array();
+$GLOBALS['ie_existing_posts'] = null;   // null = every post still exists
 
 class IE_Settings {
 	public static function is_connected() { return true; }
@@ -110,17 +202,57 @@ class IE_Settings {
 	public static function target_pages() {
 		return array( 12 => array( 'title' => 'quality plumbing leander', 'url' => 'http://site/quality-plumbing-leander/' ) );
 	}
+	public static function credits() { return 7000; }
+	public static function server_url() { return 'https://threecomets.com'; }
+	public static function set( $v ) { return true; }
+	public static function business() {
+		return array( 'name' => 'Quality Plumbing', 'trade' => 'plumber', 'town' => 'Leander', 'phone' => '' );
+	}
+	public static function active_theme_prefix() { return 'theme'; }
 }
 
-class IE_Campaigns {
-	public static function all() { return $GLOBALS['ie_campaigns']; }
-	public static function orphans( $c ) { return array(); }
-	public static function upcoming( $n = 10, $now = null ) { return $GLOBALS['ie_upcoming']; }
-	public static function collisions( $now = null ) { return array(); }
-}
+/* THE REAL IE_Campaigns, NOT A COPY OF IT.
+ *
+ * There used to be a hand-written stub here with four methods on it. The real
+ * class grew post_missing() in 0.4.3 and the stub did not, so all 23 render
+ * tests below died on one undefined method — and nothing said so, because
+ * this suite was not in deploy.sh (that loop runs `node "$suite"` and this is
+ * PHP). It sat broken for weeks while class-ie-admin.php was edited daily.
+ *
+ * A stub of a class you own is a copy that must be maintained, and it will be
+ * forgotten. The real class needs nothing but WordPress, and WordPress is
+ * already stubbed above. */
+require_once __DIR__ . '/interlink-engine/includes/class-ie-campaigns.php';
 
 class IE_Api {}
-class IE_Publisher { public static function get_log() { return array(); } }
+class IE_Publisher {
+	public static function get_log() { return array(); }
+	public static function log( $m ) {}
+	public static function pause( $id ) { return 0; }
+	public static function resume( $id ) { return 0; }
+	public static function run_campaign( $id ) { return array(); }
+	public static function publish_now( $id ) { return 1; }
+	public static function on_transition( $a, $b, $c ) {}
+	public static function sweep_deleted() { return array( 'slots' => 0, 'campaigns' => 0 ); }
+	public static function flush_deleted_reports() { return 0; }
+
+	/* The card renders these counts into its confirmation dialogs. Served
+	 * from a global so a test can set them, rather than returning a fixed
+	 * pair — a stub that cannot express the numbers cannot catch a dialog
+	 * that names the wrong ones. */
+	public static function count_campaign_posts( $id ) {
+		return isset( $GLOBALS['ie_post_counts'][ $id ] )
+			? $GLOBALS['ie_post_counts'][ $id ]
+			: array( 'published' => 0, 'drafts' => 0 );
+	}
+	public static function remove_campaign( $id ) { return array( 'published' => 0, 'drafts' => 0 ); }
+	public static function remove_campaign_posts( $id ) { return array( 'published' => 0, 'drafts' => 0 ); }
+	public static function delete_remaining_drafts( $id ) { return 0; }
+	public static function repair_links() { return array( 'restored' => 0, 'unwrapped' => 0, 'waiting' => 0, 'posts' => 0, 'short' => array() ); }
+	public static function ring_close_target( $c, $p ) { return ''; }
+	public static function abandon_remaining( $id ) { return 0; }
+	public static function post_for_slot( $c, $i ) { return 0; }
+}
 
 require __DIR__ . '/interlink-engine/includes/class-ie-admin.php';
 
@@ -128,7 +260,8 @@ require __DIR__ . '/interlink-engine/includes/class-ie-admin.php';
  * Fixtures
  * ------------------------------------------------------------------ */
 
-$GLOBALS['ie_upcoming'] = array();
+$GLOBALS['ie_upcoming']    = array();
+$GLOBALS['ie_post_counts'] = array();
 
 function slot( $i, $status, $days_from_now = 1, $topic = null ) {
 	return array(
@@ -185,7 +318,12 @@ function ok( $cond, $msg ) { if ( ! $cond ) { throw new Exception( $msg ); } }
  * looked exactly like an off-by-one in the pagination.
  */
 function cards( $html ) {
-	preg_match_all( '/finished campaign \\d+/', $html, $m );
+	/* COUNTS THE REMOVE LINK, one per card, rather than the campaign's label.
+	 * The label is printed twice now — once as the heading and once inside
+	 * the removal dialog, which names the campaign it is about to destroy —
+	 * so counting labels reported exactly double and read as a pagination
+	 * bug. A marker that appears once per card cannot drift that way. */
+	preg_match_all( '/action=ie_delete_campaign/', $html, $m );
 	return count( $m[0] );
 }
 function has( $hay, $needle, $msg = null ) { ok( false !== strpos( $hay, $needle ), $msg ? $msg : "expected to find: $needle" ); }
@@ -254,7 +392,7 @@ test( 'the completed tab holds only the finished one', function () {
 test( 'the tab counts are right', function () {
 	$html = render();
 	ok( preg_match( '/In progress\s*<span class="ie-count">1<\/span>/', $html ), 'In progress count wrong' );
-	ok( preg_match( '/Waiting for you\s*<span class="ie-count ie-count-need">1<\/span>/', $html ), 'drafts count/colour wrong' );
+	ok( preg_match( '/Campaigns needing approval\s*<span class="ie-count ie-count-need">1<\/span>/', $html ), 'drafts count/colour wrong' );
 	ok( preg_match( '/Completed\s*<span class="ie-count">1<\/span>/', $html ), 'Completed count wrong' );
 } );
 
@@ -373,6 +511,8 @@ echo "\nEmpty states\n";
 
 test( 'a brand new install is told what a campaign is', function () {
 	$GLOBALS['ie_campaigns'] = array();
+$GLOBALS['ie_options'] = array();
+$GLOBALS['ie_existing_posts'] = null;   // null = every post still exists
 	$html = render();
 	has( $html, 'No campaigns yet' );
 	has( $html, 'Plan your first campaign', 'no way forward from the empty state' );
@@ -380,7 +520,9 @@ test( 'a brand new install is told what a campaign is', function () {
 
 test( 'each empty tab says something true rather than nothing', function () {
 	$GLOBALS['ie_campaigns'] = array();
-	has( render( 'drafts' ), 'Nothing waiting' );
+$GLOBALS['ie_options'] = array();
+$GLOBALS['ie_existing_posts'] = null;   // null = every post still exists
+	has( render( 'drafts' ), 'Nothing needs approval' );
 	has( render( 'done' ), 'No campaigns have finished yet' );
 } );
 
@@ -395,7 +537,7 @@ test( 'suggesting topics returns to the form that shows them', function () {
 	ok( 'new' === $m->invoke( null, 'discarded' ), 'discarding topics leaves the form' );
 } );
 
-test( 'a planned campaign lands in Waiting for you', function () {
+test( 'a planned campaign lands in Campaigns needing approval', function () {
 	$m = new ReflectionMethod( 'IE_Admin', 'tab_for_status' );
 	$m->setAccessible( true );
 	ok( 'drafts' === $m->invoke( null, 'planned' ), 'a new plan does not land on drafts' );
@@ -430,6 +572,266 @@ test( 'a campaign label carrying markup is escaped', function () {
 test( 'a hostile tab value cannot reach the output', function () {
 	$html = render( '"><script>alert(1)</script>' );
 	hasnt( $html, '<script>alert(1)</script>', 'the tab parameter reached the page' );
+} );
+
+echo "\nDeleted posts on the screen\n";
+
+/* These are RENDER tests, and that is the whole point of them.
+ *
+ * Until this harness worked, the two guards below were asserted by grepping
+ * class-ie-admin.php for a fragment of PHP — in test-deleted-posts.php, with
+ * comments saying so and saying why. Source greps have missed four real bugs
+ * in this codebase, one of which passed for weeks by asserting the exact bug
+ * its own name forbade. A guard proved by a grep is a guard nobody has seen
+ * work. */
+
+test( 'A DELETED POST READS "Post deleted", NOT "Overdue"', function () {
+	/* "Overdue" is this plugin's alarm for WP-Cron having stopped. A deleted
+	 * post raising it sends whoever reads it after a scheduler that is working
+	 * perfectly — an evening of it, on a real site. */
+	$c = campaign( 'c-gone', 'slab leak detection',
+		array( slot( 0, 'scheduled', -5 ) ), true );
+
+	$GLOBALS['ie_campaigns']      = array( $c );
+	$GLOBALS['ie_existing_posts'] = array();   // the post is gone
+	IE_Campaigns::forget_post_cache();
+
+	$html = render( 'running' );
+
+	has( $html, 'Post deleted', 'a deleted post is not labelled' );
+	hasnt( $html, '>Overdue<', 'a deleted post is still raising the WP-Cron alarm' );
+
+	$GLOBALS['ie_existing_posts'] = null;
+	IE_Campaigns::forget_post_cache();
+} );
+
+test( 'PUBLISH EARLY IS NOT OFFERED FOR A DELETED POST', function () {
+	/* The stored slot status still reads 'scheduled' for a deleted post, so
+	 * gating on that alone put a working link on six dead rows. Pressing one
+	 * reported SUCCESS: wp_update_post() answers 0 for a missing post id
+	 * rather than a WP_Error, which is exactly what the handler checked for. */
+	$c = campaign( 'c-gone', 'slab leak detection',
+		array( slot( 0, 'scheduled', -5 ) ), true );
+
+	$GLOBALS['ie_campaigns']      = array( $c );
+	$GLOBALS['ie_existing_posts'] = array();
+	IE_Campaigns::forget_post_cache();
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Publish early', 'Publish early was offered for a post that does not exist' );
+
+	$GLOBALS['ie_existing_posts'] = null;
+	IE_Campaigns::forget_post_cache();
+} );
+
+test( 'a live post still gets its Publish early link', function () {
+	// The guard must not become a blanket removal.
+	$c = campaign( 'c-live', 'slab leak detection',
+		array( slot( 0, 'scheduled', 3 ) ), true );
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+	IE_Campaigns::forget_post_cache();
+
+	has( render( 'running' ), 'Publish early', 'a healthy scheduled post lost its link' );
+} );
+
+test( 'a deleted post is not linked to an editor that cannot open it', function () {
+	/* get_edit_post_link() returns null for a missing post, esc_url( null ) is
+	 * '', and the row then rendered <a href="">Topic</a> — a link that looks
+	 * live and reloads the same page. Somebody clicking it learns nothing,
+	 * which is worse than it plainly not being clickable. */
+	$c = campaign( 'c-gone', 'slab leak detection',
+		array( slot( 0, 'scheduled', -5, 'A Warm Floor Spot' ) ), true );
+
+	$GLOBALS['ie_campaigns']      = array( $c );
+	$GLOBALS['ie_existing_posts'] = array();
+	IE_Campaigns::forget_post_cache();
+
+	$html = render( 'running' );
+
+	has( $html, 'A Warm Floor Spot', 'the topic vanished entirely' );
+	hasnt( $html, 'href=""', 'a deleted post is still wrapped in an empty link' );
+
+	$GLOBALS['ie_existing_posts'] = null;
+	IE_Campaigns::forget_post_cache();
+} );
+
+test( 'THE CHECK FOR DELETED POSTS BUTTON IS ON THE SCREEN', function () {
+	/* The sweep rides on WP-Cron, which fires on page loads. A site whose
+	 * campaigns have all FINISHED is never pinged by the server, so on a site
+	 * with no visitors it may not run for weeks — and that is precisely the
+	 * site where posts get tidied up. Without this button the only advice is
+	 * "go and load your own home page". */
+	$c = campaign( 'c-done2', 'water cleanup leander',
+		array( slot( 0, 'published', -5 ) ), true );
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+	IE_Campaigns::forget_post_cache();
+
+	$html = render( 'done' );
+
+	has( $html, 'Check for deleted posts', 'the button is gone' );
+	has( $html, 'action=ie_check_deleted', 'the button posts nowhere' );
+} );
+
+/* ---------------------------------------------------------------------
+ * The two dialogs in front of Remove
+ * ------------------------------------------------------------------ */
+
+test( 'A CANCELLED CAMPAIGN LEAVES THE RUNNING TAB', function () {
+	/* Its unpublished posts were thrown away, so the slots naming them go on
+	 * reading 'scheduled' for posts that no longer exist — work that is never
+	 * coming. Without this it sat on the running tab for ever with nothing
+	 * left to do and no way to close it out. */
+	$c = campaign( 'c-over', 'slab leak detection',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+	$c['status'] = 'cancelled';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	hasnt( render( 'running' ), 'slab leak detection',
+		'a closed-out campaign is still on the running tab' );
+	has( render( 'done' ), 'slab leak detection',
+		'a closed-out campaign is not on the finished tab either' );
+} );
+
+test( 'a campaign still running is not sent to the finished tab', function () {
+	// The guard against closing out everything.
+	$c = campaign( 'c-live', 'slab leak detection',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	has( render( 'running' ), 'slab leak detection', 'a live campaign vanished' );
+} );
+
+test( 'THE REPAIR LINKS BUTTON IS ON THE SCREEN', function () {
+	/* It lives at the foot of the screen rather than on a campaign card,
+	 * because the campaigns it helps most no longer have cards — they were
+	 * removed, which is what broke their links in the first place. */
+	$c = campaign( 'c-1', 'slab leak detection', array( slot( 0, 'scheduled', 2 ) ), true );
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	has( $html, 'Repair internal links', 'the repair button is missing' );
+	has( $html, 'action=ie_repair_links', 'the repair button goes nowhere' );
+	has( $html, 'Safe to run more than once', 'nothing says it is safe to press twice' );
+} );
+
+test( 'the repair button is not offered on an empty screen', function () {
+	// Nothing to repair, and a button that cannot do anything is noise on the
+	// one screen where a new customer most needs the path to be obvious.
+	$GLOBALS['ie_campaigns'] = array();
+
+	hasnt( render( 'running' ), 'action=ie_repair_links', 'a useless button was offered' );
+} );
+
+test( 'REMOVE NAMES WHAT IT IS ABOUT TO DESTROY', function () {
+	/* The old dialog said "Posts already written stay exactly where they
+	 * are" — which was true, and was the problem: a campaign removed halfway
+	 * went on publishing on schedule. Remove now removes, so the dialog has
+	 * to say so in numbers the reader can check against their own site. */
+	$c = campaign( 'c-doomed', 'slab leak detection',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+
+	$GLOBALS['ie_campaigns']   = array( $c );
+	$GLOBALS['ie_post_counts'] = array( 'c-doomed' => array( 'published' => 4, 'drafts' => 8 ) );
+
+	$html = render( 'running' );
+
+	has( $html, '4 published articles and 8 drafts', 'the dialog does not name the damage' );
+	has( $html, 'restore them from Trash for 30 days', 'the dialog does not say it is undoable' );
+	hasnt( $html, 'stay exactly where they are',
+		'the dialog still promises the posts survive, which is no longer true' );
+
+	$GLOBALS['ie_post_counts'] = array();
+} );
+
+test( 'THERE ARE TWO DIALOGS, NOT ONE', function () {
+	/* A checkbox left unticked is a destructive action that quietly did not
+	 * happen, and the user walks away believing the articles are gone. Two
+	 * dialogs naming the same counts make the second a real second look. */
+	// Two slots, one still outstanding — bucket() sends a fully published
+	// campaign to the Done tab, and this card has to be on the running one.
+	$c = campaign( 'c-doomed', 'slab leak detection',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+
+	$GLOBALS['ie_campaigns']   = array( $c );
+	$GLOBALS['ie_post_counts'] = array( 'c-doomed' => array( 'published' => 4, 'drafts' => 8 ) );
+
+	$html = render( 'running' );
+
+	has( $html, 'Are you sure you want to send 4 published articles and 8 drafts to Trash?',
+		'the second confirmation is missing' );
+	hasnt( $html, 'type="checkbox"', 'the destructive step was put behind a checkbox' );
+
+	$GLOBALS['ie_post_counts'] = array();
+} );
+
+test( 'the singular reads properly', function () {
+	// "1 published articles and 1 drafts" is the kind of thing that makes a
+	// serious dialog look careless at exactly the wrong moment.
+	// Two slots, one still outstanding — bucket() sends a fully published
+	// campaign to the Done tab, and this card has to be on the running one.
+	$c = campaign( 'c-doomed', 'slab leak detection',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+
+	$GLOBALS['ie_campaigns']   = array( $c );
+	$GLOBALS['ie_post_counts'] = array( 'c-doomed' => array( 'published' => 1, 'drafts' => 1 ) );
+
+	$html = render( 'running' );
+
+	has( $html, '1 published article and 1 draft', 'the plurals are not guarded' );
+	hasnt( $html, '1 published articles', 'the plurals are not guarded' );
+
+	$GLOBALS['ie_post_counts'] = array();
+} );
+
+test( 'THE SAFE BUTTON APPEARS ON A PAUSED CAMPAIGN', function () {
+	/* The reason Remove no longer has to be two things at once: stopping a
+	 * campaign and binning what has not published is the common case, and it
+	 * belongs on the card that owns those posts. */
+	$c = campaign( 'c-held', 'slab leak detection',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+	$c['status'] = 'paused';
+
+	$GLOBALS['ie_campaigns']   = array( $c );
+	$GLOBALS['ie_post_counts'] = array( 'c-held' => array( 'published' => 4, 'drafts' => 8 ) );
+
+	$html = render( 'running' );
+
+	has( $html, 'Delete the 8 remaining drafts', 'the safe button is missing' );
+	has( $html, 'The published articles stay on your site.',
+		'the safe button does not say what it protects' );
+
+	$GLOBALS['ie_post_counts'] = array();
+} );
+
+test( 'the safe button is not offered when there is nothing left to delete', function () {
+	$c = campaign( 'c-held', 'slab leak detection',
+		array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 4 ) ), true );
+	$c['status'] = 'paused';
+
+	$GLOBALS['ie_campaigns']   = array( $c );
+	$GLOBALS['ie_post_counts'] = array( 'c-held' => array( 'published' => 4, 'drafts' => 0 ) );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'remaining draft', 'a button that would do nothing was offered' );
+
+	$GLOBALS['ie_post_counts'] = array();
+} );
+
+test( 'the second tab asks for approval rather than announcing a debt', function () {
+	/* "Waiting for you" said something was owed without saying what, and the
+	 * thing worth knowing before clicking is that approving is the moment
+	 * credits are spent. */
+	$html = render( 'running' );
+
+	has( $html, 'Campaigns needing approval' );
+	hasnt( $html, 'Waiting for you', 'the old tab name is back' );
 } );
 
 echo "\n$passed passed, $failed failed\n";

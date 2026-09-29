@@ -74,6 +74,8 @@ for suite in \
   test-business-type-picker.js \
   test-page-meta.js \
   test-page-titles.js \
+  test-reviews-section.js \
+  test-wp-video-slot.js \
   test-location-pages.js \
   test-phone.js \
   test-app-header.js \
@@ -89,6 +91,11 @@ for suite in \
   test-keyword-pairs.js \
   test-keyword-budget.js \
   test-blog-plan.js \
+  test-blog-report.js \
+  test-post-quality.js \
+  test-campaign-reconcile.js \
+  test-blog-sites-delete.js \
+  test-licence-binding.js \
   test-anchor-pool.js \
   test-home-anchors.js \
   test-blog-states.js \
@@ -110,6 +117,40 @@ do
     exit 1
   fi
 done
+
+# The PHP suites, which this loop cannot reach.
+#
+# test-deleted-posts.php sat outside the list for its whole life, because the
+# loop above runs `node "$suite"` and it is a PHP file. So it ran on the days
+# somebody remembered to run it. test-admin-tabs.php shows where that ends: it
+# has been failing 23 of its 29 assertions since a stub fell behind the code,
+# and nothing said so, because nothing ran it.
+#
+# A missing `php` is NOT a failure — plenty of machines that deploy this app do
+# not have it — but it is said out loud, so a check that did not happen is
+# never mistaken for one that passed.
+if command -v php > /dev/null 2>&1; then
+  for suite in \
+    wp-plugin/test-deleted-posts.php \
+    wp-plugin/test-topic-merge.php \
+    wp-plugin/test-admin-tabs.php \
+    wp-plugin/test-orphan-links.php
+  do
+    if ! php "$suite" > /dev/null; then
+      echo
+      echo "FAILED: ${suite}"
+      echo "Nothing was deployed. The server is still running the previous build."
+      echo "Run it directly to see which assertion failed:"
+      echo
+      echo "  php ${suite}"
+      echo
+      exit 1
+    fi
+  done
+else
+  echo "php is not installed here — the plugin's PHP suites were SKIPPED, not passed."
+fi
+
 echo "Tests passed."
 echo
 

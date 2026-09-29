@@ -131,6 +131,35 @@ function normaliseSection(section) {
   }
   if (section.notice) out.notice = String(section.notice);
 
+  /* REVIEWS.
+   *
+   * THIS FUNCTION IS A WHITELIST, AND THAT IS THE TRAP. `out` is built field
+   * by field, so a section property with no line here is dropped silently on
+   * the way to WordPress — no error, no warning, just a section that arrives
+   * with its content missing and gets skipped as empty.
+   *
+   * That is what happened: the REVIEWS type was wired through the content
+   * model, the activation import, the meta boxes and the renderer, every one
+   * of them tested, and the reviews still never reached WordPress because
+   * they were thrown away here, one step before the import.
+   *
+   * themeActivationPhp.js has a comment about the identical failure in its
+   * own descriptor whitelist — "any hint added to the model later was
+   * silently dropped on import" — which is the same lesson this file had not
+   * yet learned. If a new structured section type is added, it needs a line
+   * HERE as well as everywhere else, and a test that walks a real section
+   * through normaliseSection rather than just checking the source. */
+  if (Array.isArray(section.reviews) && section.reviews.length) {
+    out.reviews = section.reviews.map(r => ({
+      text: String(r.text || ''),
+      name: String(r.name || ''),
+      stars: Number(r.stars) || 0,
+    }));
+  }
+  // The line that says the reviews are samples to be replaced. Separate from
+  // `notice` above, which belongs to the pricing table.
+  if (section.note) out.note = String(section.note);
+
   if (Array.isArray(section.faqs) && section.faqs.length) {
     out.faqs = section.faqs.map(f => ({
       question: String(f.question || ''),
@@ -138,6 +167,12 @@ function normaliseSection(section) {
     }));
   }
   if (section.videoUrl) out.video_url = section.videoUrl;
+
+  // Does this section have a video slot at all? Separate from whether one is
+  // SET — a section with an empty video_url still needs the field in wp-admin
+  // so the owner can add one, and a section without the slot must not show it.
+  // See the comment on supportsVideo in buildAboutUsPage.js.
+  if (section.supportsVideo) out.supports_video = true;
   if (section.mapEmbed) out.map_embed = section.mapEmbed;
   if (section.addressOverride) out.address_override = section.addressOverride;
 

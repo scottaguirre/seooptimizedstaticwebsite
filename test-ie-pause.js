@@ -100,6 +100,29 @@ function current_time($type, $gmt = 0) {
 function get_permalink($id) { return 'https://example.com/post-' . (int) $id . '/'; }
 function wp_date($f, $t = null) { return gmdate($f, $t ? $t : time()); }
 
+/* IE_Campaigns::upcoming() has called post_missing() since 0.4.3, and that
+ * asks WordPress which of these posts still exist. Without this the whole
+ * stub dies with "Call to undefined function get_posts()" the moment any
+ * case touches upcoming() — a missing stub, not a broken feature, but it
+ * fails a suite deploy.sh runs and so blocks every deploy.
+ *
+ * $GLOBALS['posts'] is what seed_campaign() writes, so it is already the
+ * right source of truth for "what is on this site". */
+function absint($n) { return abs((int) $n); }
+
+function get_posts($args) {
+  $wanted   = isset($args['post__in']) ? array_map('intval', $args['post__in']) : array();
+  $statuses = isset($args['post_status']) ? (array) $args['post_status'] : array('publish');
+
+  $out = array();
+  foreach ($wanted as $id) {
+    if (!isset($GLOBALS['posts'][$id])) { continue; }
+    if (!in_array($GLOBALS['posts'][$id]['post_status'], $statuses, true)) { continue; }
+    $out[] = $id;
+  }
+  return $out;
+}
+
 function sanitize_text_field($s) { return $s; }
 function esc_url($s) { return $s; }
 function esc_attr($s) { return $s; }

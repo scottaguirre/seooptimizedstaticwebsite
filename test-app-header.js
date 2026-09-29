@@ -350,6 +350,39 @@ test('the icon font is loaded, or the profile menu is invisible', () => {
   assert.ok(/bootstrap-icons/.test(appHeaderAssets()), appHeaderAssets());
 });
 
+test('GREEN BUTTONS ARE LEGIBLE ON THE NAVY BACKGROUND', () => {
+  /* Bootstrap's btn-outline-success paints #198754 — a dark green chosen to
+   * sit on white. On #082d5b it scores 3.0:1, below the 4.5 a reader needs,
+   * and the first thing anybody asked about it was whether the button was
+   * greyed out. A control that looks unavailable is worse than a plain one,
+   * because nobody tries it.
+   *
+   * CONTRAST IS COMPUTED, not eyeballed. "It looks fine to me" is how the
+   * original shipped. */
+  const css = appHeaderAssets();
+
+  assert.ok(/\.btn-outline-success/.test(css),
+    'the success button is left at Bootstrap\'s light-background green');
+
+  const colour = /--bs-btn-color:\s*#([0-9a-f]{6})/i.exec(css);
+  assert.ok(colour, 'no colour is set for the success button');
+
+  const channel = hex => {
+    const v = parseInt(hex, 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  const lum = hex => 0.2126 * channel(hex.slice(0, 2))
+    + 0.7152 * channel(hex.slice(2, 4))
+    + 0.0722 * channel(hex.slice(4, 6));
+
+  const a = lum(colour[1]);
+  const b = lum('082d5b');
+  const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+  assert.ok(ratio >= 4.5,
+    `the green scores ${ratio.toFixed(2)}:1 on the navy background, below 4.5`);
+});
+
 test('the header supplies its own colour, so both headers look the same', () => {
   // .header-background lives in form.html's inline <style>. Without it the
   // header falls back to Bootstrap's bg-dark — nearly black, against the navy

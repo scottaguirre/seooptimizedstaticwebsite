@@ -15,6 +15,12 @@ const { makePhpIdentifier } = require('../wpHelpers/phpHelpers');
 
 const { HERO_LAYOUT } = require('../../stripUnusedHero');
 
+// The star's outline, taken from the module that draws it in the static
+// build rather than copied. Two hand-kept copies of an SVG path is how an
+// exported theme ends up with a subtly different star from the downloaded
+// site, which nobody would think to look for.
+const { STAR_PATH } = require('../../generateSampleReviews');
+
 function generateSectionRendererPhp(options = {}) {
   const { themeSlug = 'local-business-theme', styleKey = '' } = options;
 
@@ -1044,6 +1050,102 @@ function ${p}_render_pricing( $post_id, $s ) {
 }
 
 /**
+ * Reviews, stored one per numbered field so the owner replaces them
+ * individually in wp-admin — the same shape as the pricing rows above.
+ */
+function ${p}_review_rows( $post_id, $key ) {
+    $count = (int) get_post_meta( $post_id, ${p}_key( $key, 'review_count' ), true );
+    $rows  = array();
+
+    for ( $i = 0; $i < $count; $i++ ) {
+        $text = ${p}_field( $post_id, $key, 'review_text_' . $i );
+        if ( $text === '' ) {
+            continue;
+        }
+
+        $stars = ${p}_field( $post_id, $key, 'review_stars_' . $i );
+        $stars = ( $stars === '' ) ? 5 : (int) $stars;
+        $stars = max( 0, min( 5, $stars ) );
+
+        $rows[] = array(
+            'text'  => $text,
+            'name'  => ${p}_field( $post_id, $key, 'review_name_' . $i ),
+            'stars' => $stars,
+        );
+    }
+
+    return $rows;
+}
+
+/**
+ * Five stars.
+ *
+ * ONE aria-label on the wrapper and aria-hidden on every star, exactly as the
+ * static build does it — without that a screen reader says "star" five times
+ * per card, twenty times down the section.
+ */
+function ${p}_review_stars( $count ) {
+    $filled = max( 0, min( 5, (int) $count ) );
+    $star   = '<svg class="review-star" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><path d="${STAR_PATH}"/></svg>';
+    ?>
+    <div class="review-stars" role="img"
+         aria-label="<?php echo esc_attr( sprintf( __( '%d out of 5 stars', '${themeSlug}' ), $filled ) ); ?>">
+      <?php echo str_repeat( $star, $filled ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- fixed markup, no variables ?>
+    </div>
+    <?php
+}
+
+/**
+ * "What Customers Are Saying".
+ *
+ * MARKUP AND CLASSES MIRROR buildReviewsSection() IN
+ * utils/generateSampleReviews.js, down to the grid columns and the star path,
+ * because the theme reuses the stylesheet from the static build. An earlier
+ * version of this section shipped to WordPress as plain paragraphs and the
+ * exported theme looked nothing like the downloaded site; the export is a
+ * mirror, so "the words arrived" is not the bar.
+ *
+ * esc_html on the text, matching the static build — the meta box uses a plain
+ * field rather than wp_editor precisely so both sides escape the same way and
+ * no <p> is nested inside <p class="review-text">.
+ */
+function ${p}_render_reviews( $post_id, $s ) {
+    $key  = $s['key'];
+    $rows = ${p}_review_rows( $post_id, $key );
+    if ( empty( $rows ) ) {
+        return;
+    }
+
+    $heading = ${p}_field( $post_id, $key, 'heading' );
+    if ( $heading === '' ) {
+        $heading = __( 'What Customers Are Saying', '${themeSlug}' );
+    }
+
+    $note = ${p}_field( $post_id, $key, 'note' );
+    ?>
+    <section class="reviews-section">
+      <div class="container section-padding">
+        <h2><?php echo esc_html( $heading ); ?></h2>
+        <?php if ( $note !== '' ) : ?>
+          <p class="reviews-note"><?php echo esc_html( $note ); ?></p>
+        <?php endif; ?>
+        <div class="row g-4">
+          <?php foreach ( $rows as $row ) : ?>
+            <div class="col-md-6 col-lg-3">
+              <div class="review-card">
+                <?php ${p}_review_stars( $row['stars'] ); ?>
+                <p class="review-text"><?php echo esc_html( $row['text'] ); ?></p>
+                <p class="review-author"><?php echo esc_html( $row['name'] ); ?></p>
+              </div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+    </section>
+    <?php
+}
+
+/**
  * FAQ, from Google's People Also Ask questions.
  *
  * Stored as numbered question/answer pairs so the admin can show one labelled
@@ -1413,6 +1515,14 @@ function ${p}_section_is_empty( $post_id, $s ) {
 
     if ( $s['type'] === 'service-cards' ) {
         return empty( ${p}_service_cards( $post_id, $s['key'] ) );
+    }
+
+    // Without this the check below falls through to the generic one, finds no
+    // paragraphs on a reviews section — it keeps its content in numbered
+    // review_* fields — and decides the section is empty. Everything else
+    // would be wired correctly and the cards would simply never appear.
+    if ( $s['type'] === 'reviews' ) {
+        return empty( ${p}_review_rows( $post_id, $s['key'] ) );
     }
 
     if ( ${p}_field( $post_id, $s['key'], 'heading' ) !== '' ) {
@@ -1822,6 +1932,10 @@ function ${p}_render_sections( $post_id ) {
 
             case 'pricing':
                 ${p}_render_pricing( $post_id, $s );
+                break;
+
+            case 'reviews':
+                ${p}_render_reviews( $post_id, $s );
                 break;
 
             case 'faq':

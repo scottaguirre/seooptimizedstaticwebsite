@@ -45,6 +45,7 @@ const { addUsedQuestions } = require('./generateLocationFaq');
 const { generateServiceCards } = require('./buildServiceCards');
 const { generatePricing } = require('./buildPricingTable');
 const { generateCaseStudy } = require('./generateCaseStudy');
+const { generateSampleReviews } = require('./generateSampleReviews');
 const { buildSitemap } = require('./buildSitemap');
 const { buildHtaccess } = require('./buildHtaccess');
 const { stripUnusedHero } = require('./stripUnusedHero');
@@ -866,6 +867,30 @@ async function runGeneration(ctx) {
     });
 
 
+    // Four EXAMPLE reviews for the home page, below the case study.
+    //
+    // RUNS ON SAMPLE BUILDS TOO, unlike the pricing table and the case study
+    // above. Those are skipped for a design sample because they are claims —
+    // a price the business has not set, a job it has not done. These are the
+    // opposite: the section EXISTS to be looked at, and a design sample with
+    // the reviews section missing fails to show the one thing it was built to
+    // show.
+    //
+    // Every review opens with "This is an example review, not a real customer
+    // review." That sentence is added in code rather than asked of the model,
+    // so it cannot be dropped, reworded, or lost to a retry. The customer
+    // replaces the text before publishing; until they do, nothing on the page
+    // claims to be something it is not.
+    //
+    // None of it reaches the JSON-LD. See utils/generateSampleReviews.js.
+    console.log('⭐ Generating example reviews...');
+    const reviews = await generateSampleReviews({
+      businessType: globalValues.businessType,
+      businessName: globalValues.businessName,
+      location: globalValues.location,
+    });
+
+
     // Create about-us.html, & save in dist
     await report({ stage: 'Writing the home page', current: 'About Us', done: pagesDone });
 
@@ -879,7 +904,8 @@ async function runGeneration(ctx) {
             faqs,
             serviceCards,
             pricing,
-            caseStudy
+            caseStudy,
+            reviews
     );
 
 

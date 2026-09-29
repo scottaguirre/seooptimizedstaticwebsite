@@ -40,6 +40,7 @@ const SECTION_TYPES = {
   FAQ: 'faq',
   PRICING: 'pricing',
   SERVICE_CARDS: 'service-cards',
+  REVIEWS: 'reviews',
   NAP_MAP: 'nap-map',
 };
 
@@ -312,6 +313,45 @@ function pricingSection(rows = [], opts = {}) {
 }
 
 /**
+ * Reviews section. One row per review, the same way pricing stores one row
+ * per service, so the WordPress admin can expose a labelled field per review
+ * and the owner can paste in their real ones.
+ *
+ * A TYPE OF ITS OWN RATHER THAN A TEXT SECTION, and that was a correction.
+ * The first attempt flattened the reviews into paragraphs — it needed no
+ * renderer changes, and WordPress got the wording without the cards, the grid
+ * or the stars. The rule here is that the exported theme mirrors the
+ * downloaded site, so "the content survives" is not the bar.
+ *
+ * `note` rides along for the same reason the pricing `notice` does: it is
+ * what tells the owner these are samples to be replaced, and a section that
+ * loses it on export is four unlabelled five-star reviews with a real
+ * business's name on them.
+ */
+function reviewsSection(rows = [], opts = {}) {
+  const items = (rows || [])
+    .filter(r => r && String(r.text || '').trim())
+    .map(r => ({
+      text: String(r.text).trim(),
+      name: String(r.name || '').trim(),
+      stars: Math.max(0, Math.min(5, Number(r.stars) || 0)),
+    }));
+
+  if (!items.length) return null;
+
+  return {
+    key: 'reviews',
+    label: 'Reviews',
+    type: SECTION_TYPES.REVIEWS,
+    heading: opts.heading || 'What Customers Are Saying',
+    paragraphs: [],
+    images: [],
+    note: opts.note || '',
+    reviews: items,
+  };
+}
+
+/**
  * Turn a legal page's rendered template into model sections.
  *
  * The privacy / terms / accessibility templates are boilerplate: one
@@ -452,6 +492,7 @@ module.exports = {
   sectionsFromLegalHtml,
   faqSection,
   pricingSection,
+  reviewsSection,
   serviceCardsSection,
   writeModel,
   readModel,

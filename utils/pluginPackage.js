@@ -29,6 +29,12 @@ const { log } = require('./logger');
 
 const PLUGIN_SLUG = 'interlink-engine';
 
+/* What the customer's browser calls the file. See ensureZip() for why this is
+ * deliberately NOT the same string as the slug above. */
+const DOWNLOAD_NAME = 'three-comets-blog-generator';
+
+let nameCache = { mtimeMs: 0, value: '' };
+
 const SOURCE_DIR = path.join(__dirname, '..', 'wp-plugin', PLUGIN_SLUG);
 const MAIN_FILE = path.join(SOURCE_DIR, `${PLUGIN_SLUG}.php`);
 
@@ -70,6 +76,42 @@ function readVersion() {
 
   versionCache = { mtimeMs: stat.mtimeMs, value: match[1] };
   return match[1];
+}
+
+/**
+ * What the plugin calls itself, read from its own header.
+ *
+ * ONE SOURCE OF TRUTH, AND IT IS THE PLUGIN FILE. The name appears in the
+ * Plugins list, in the wp-admin menu and in the setup steps on the account
+ * page, and those must agree — a customer told to open "Interlink Engine"
+ * and looking at a menu that says something else has no way to know they are
+ * the same thing.
+ *
+ * Read rather than declared here for the same reason the version is: the
+ * plugin header is the thing a person edits when they rename it, and a copy
+ * on this side is a copy that goes stale silently.
+ *
+ * Falls back rather than throwing. A missing name must not take the account
+ * page down — worst case a sentence reads a little generically.
+ */
+function readName() {
+  try {
+    const stat = fs.statSync(MAIN_FILE);
+
+    if (nameCache.value && nameCache.mtimeMs === stat.mtimeMs) {
+      return nameCache.value;
+    }
+
+    const head = fs.readFileSync(MAIN_FILE, 'utf8').slice(0, 8192);
+    const match = /^[\s*]*Plugin Name:\s*(.+?)\s*$/m.exec(head);
+
+    if (!match) return 'the plugin';
+
+    nameCache = { mtimeMs: stat.mtimeMs, value: match[1] };
+    return match[1];
+  } catch (_) {
+    return 'the plugin';
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -159,8 +201,21 @@ let inFlight = null;
  */
 async function ensureZip() {
   const version = readVersion();
-  const filename = `${PLUGIN_SLUG}-${version}.zip`;
-  const zipPath = path.join(CACHE_DIR, filename);
+
+  /* TWO NAMES, AND THE SEPARATION IS THE POINT.
+   *
+   * PLUGIN_SLUG is the folder inside the ZIP, and WordPress identifies a
+   * plugin BY THAT FOLDER. Rename it and the next upload installs a SECOND
+   * copy beside the first, leaving the old one active and the new one
+   * deactivated — which on a customer's site looks like nothing happening at
+   * all, with no error to explain it.
+   *
+   * DOWNLOAD_NAME is a label on a file in someone's Downloads folder. It can
+   * say whatever the product is called this month, because nothing depends on
+   * it. The cache path stays keyed on the slug, since that is what actually
+   * identifies the contents. */
+  const filename = `${DOWNLOAD_NAME}-${version}.zip`;
+  const zipPath = path.join(CACHE_DIR, `${PLUGIN_SLUG}-${version}.zip`);
 
   const newest = newestSourceMtime(SOURCE_DIR);
 
@@ -209,10 +264,12 @@ function versionOrNull() {
 
 module.exports = {
   PLUGIN_SLUG,
+  DOWNLOAD_NAME,
   SOURCE_DIR,
   CACHE_DIR,
   ensureZip,
   readVersion,
+  readName,
   versionOrNull,
   isAvailable,
 };

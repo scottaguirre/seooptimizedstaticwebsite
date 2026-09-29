@@ -118,15 +118,29 @@ function buildPrompt(slot, ctx) {
   const { business, targetPage } = ctx;
   const links = [];
 
+  /* WHERE EACH LINK GOES, not only that it appears.
+   *
+   * This used to say "EXACTLY ONCE, verbatim" and nothing about placement, so
+   * all three routinely landed in the same paragraph. That is not the model
+   * misbehaving — nobody had asked for anything else — and three links stacked
+   * in one paragraph is the loudest "this was written by a machine" signal on
+   * the page. A reader does not count links; they feel the clump.
+   *
+   * Spread across the post it reads as a writer referring to things as they
+   * come up, which is what it is meant to be. qualityCheck.js verifies this
+   * rather than trusting it, because an instruction with no check behind it is
+   * a hope. */
   links.push(
     `- Use this phrase EXACTLY ONCE, verbatim, wrapped like this: {{money}}${slot.money.anchor}{{/money}}\n` +
-    `  It becomes a link to the ${targetPage.title} page. Build a sentence where that phrase belongs.`
+    `  It becomes a link to the ${targetPage.title} page. Build a sentence where that phrase belongs.\n` +
+    `  PUT IT IN THE OPENING SECTION — the one before any subheading.`
   );
 
   if (slot.prevAnchor) {
     links.push(
       `- Use this phrase EXACTLY ONCE, verbatim, wrapped like this: {{prev}}${slot.prevAnchor}{{/prev}}\n` +
-      `  It refers back to an earlier post about "${slot.prevTitle}".`
+      `  It refers back to an earlier post about "${slot.prevTitle}".\n` +
+      `  PUT IT IN A MIDDLE SECTION — not the opening, not the last one.`
     );
   }
 
@@ -134,7 +148,8 @@ function buildPrompt(slot, ctx) {
     links.push(
       `- Use this phrase EXACTLY ONCE, verbatim, wrapped like this: {{next}}${slot.nextAnchor}{{/next}}\n` +
       `  It refers to "${slot.nextTopic}". Mention it as a passing aside. Do NOT tell the reader to go\n` +
-      `  and read it, and do not call it an article or a post — that piece may not exist yet.`
+      `  and read it, and do not call it an article or a post — that piece may not exist yet.\n` +
+      `  PUT IT IN THE FINAL SECTION.`
     );
   }
 
@@ -158,7 +173,7 @@ THE SEARCH THIS POST MUST SATISFY
   — say the thing it is asking about.
 ` : ''}
 LENGTH
-  700-900 words, in 3-5 sections.
+  1000-1300 words, in 4-6 sections.
 
 REQUIRED CONCRETENESS
   At least six specific details across the post — part names, temperatures,
@@ -172,6 +187,10 @@ LINKS — mandatory, and the phrases must appear verbatim inside the wrappers sh
 ${links.join('\n')}
 
 Add no other links. Never use "click here", "read more" or "learn more" as link text.
+
+NO TWO OF THOSE PHRASES MAY SHARE A PARAGRAPH, and no two may share a section.
+Three links in one paragraph is the clearest sign a post was not written by a
+person. Spread them as instructed above.
 
 Return JSON and nothing else, in this exact shape:
 {

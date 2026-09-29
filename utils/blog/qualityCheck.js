@@ -118,31 +118,44 @@ const FILLER = [
   function checkPost(post, slot = {}) {
     const failures = [];
     const warnings = [];
+
+    /* EVERY FAILURE CARRIES A CODE.
+     *
+     * The caller retries a post whose faults a rewrite can plausibly fix, and
+     * the only alternative to a code is matching on the message text — which
+     * ties the retry rule to the wording of a sentence somebody will
+     * reasonably reword one day, silently turning the retry off. */
+    const codes = [];
+    const fail = (code, message) => { codes.push(code); failures.push(message); };
   
     const text = textOf(post);
     const stats = specificity(text);
   
     // --- structural ---------------------------------------------------------
   
-    if (!post.title) failures.push('no title');
+    if (!post.title) fail('no-title', 'no title');
     // Anywhere in the title, not just the start: "How to X: The Ultimate Guide"
     // is both a how-to and a guide, and should be caught as both.
     if (/\b(ultimate|complete|definitive) guide\b/i.test(post.title || '')) {
-      failures.push('title is a "guide" — competes with the service page');
+      fail('guide-title', 'title is a "guide" — competes with the service page');
     }
     if (/^how to\b/i.test(post.title || '')) {
-      failures.push('title is a how-to — teaches the reader not to call');
+      fail('howto-title', 'title is a how-to — teaches the reader not to call');
     }
   
     const meta = post.metaDescription || '';
-    if (!meta) failures.push('no meta description');
+    if (!meta) fail('no-meta', 'no meta description');
     else if (meta.length > 155) warnings.push(`meta description is ${meta.length} chars (over 155)`);
     else if (post.title && meta.toLowerCase().startsWith(post.title.toLowerCase().slice(0, 30))) {
       warnings.push('meta description restates the title');
     }
   
-    if (stats.words < 550) failures.push(`only ${stats.words} words`);
-    if (stats.words > 1400) warnings.push(`${stats.words} words — long enough to be padded`);
+    /* MOVED WITH THE PROMPT, which now asks for 1000-1300 words in 4-6
+     * sections. A floor of 550 against a 1000-word target is not a floor, it
+     * is a formality: a post could come back at half the length asked for and
+     * pass clean. */
+    if (stats.words < 850) { fail('short', `only ${stats.words} words`); }
+    if (stats.words > 1800) warnings.push(`${stats.words} words — long enough to be padded`);
   
     const headings = (post.sections || []).filter(s => s.heading).length;
     if (headings < 2) warnings.push(`only ${headings} subheading(s)`);
@@ -150,30 +163,110 @@ const FILLER = [
     // --- required links -----------------------------------------------------
   
     if (slot.money && !text.includes(`{{money}}${slot.money.anchor}{{/money}}`)) {
-      failures.push('money-page anchor missing or altered');
+      fail('money-link', 'money-page anchor missing or altered');
     }
     if (slot.nextAnchor && !text.includes(`{{next}}${slot.nextAnchor}{{/next}}`)) {
-      failures.push('forward anchor missing or altered');
+      fail('next-link', 'forward anchor missing or altered');
     }
     if (slot.prevAnchor && !text.includes(`{{prev}}${slot.prevAnchor}{{/prev}}`)) {
-      failures.push('backward anchor missing or altered');
+      fail('prev-link', 'backward anchor missing or altered');
     }
   
     // --- voice --------------------------------------------------------------
   
     const filler = findFiller(text);
-    if (filler.length) failures.push(`filler: ${filler.slice(0, 5).join(' · ')}`);
+    if (filler.length) fail('filler', `filler: ${filler.slice(0, 5).join(' · ')}`);
   
     const risky = findRisky(text);
     for (const r of risky) warnings.push(`unverifiable claim — ${r}`);
   
     if (stats.density < 1) {
-      failures.push(`vague: ${stats.density} concrete markers per 100 words`);
+      fail('vague', `vague: ${stats.density} concrete markers per 100 words`);
     } else if (stats.density < 1.6) {
       warnings.push(`thin on specifics: ${stats.density} per 100 words`);
     }
   
-    return { ok: failures.length === 0, failures, warnings, stats };
+    // --- link placement -----------------------------------------------------
+
+    const spread = linkSpread(post, slot);
+
+    if (spread.sameParagraph) {
+      fail('links-crowded',
+        `${spread.sameParagraph} link phrases share one paragraph`);
+    } else if (spread.sameSection) {
+      // A section apiece is the instruction; sharing one is worth saying but
+      // is not the thing a reader notices.
+      warnings.push(`${spread.sameSection} link phrases share one section`);
+    }
+
+    if (spread.placed.money && spread.placed.money.section !== 0 && spread.sections > 1) {
+      warnings.push('the money-page link is not in the opening section');
+    }
+
+    return { ok: failures.length === 0, failures, codes, warnings, stats, spread };
+  }
+
+  /**
+   * Where the three link phrases actually landed.
+   *
+   * WHY THIS IS MEASURED AND NOT ASSUMED. The prompt asks for one per section —
+   * money in the opening, prev in the middle, next at the end — and for weeks
+   * it asked for nothing at all, so all three routinely landed in the same
+   * paragraph. A reader does not count links; they feel the clump, and it is
+   * the clearest sign on the page that nobody wrote this.
+   *
+   * Returns the worst crowding found, plus where each one is, so the caller
+   * can say something useful rather than just "bad".
+   */
+  function linkSpread(post, slot = {}) {
+    const wanted = [];
+
+    if (slot.money && slot.money.anchor) {
+      wanted.push(['money', `{{money}}${slot.money.anchor}{{/money}}`]);
+    }
+    if (slot.prevAnchor) wanted.push(['prev', `{{prev}}${slot.prevAnchor}{{/prev}}`]);
+    if (slot.nextAnchor) wanted.push(['next', `{{next}}${slot.nextAnchor}{{/next}}`]);
+
+    const sections = post.sections || [];
+    const placed = {};
+
+    sections.forEach((section, si) => {
+      (section.paragraphs || []).forEach((paragraph, pi) => {
+        for (const [name, token] of wanted) {
+          if (!placed[name] && String(paragraph).includes(token)) {
+            placed[name] = { section: si, paragraph: pi };
+          }
+        }
+      });
+    });
+
+    // Counted by how many share the MOST crowded spot, not by how many pairs
+    // collide: "3 link phrases share one paragraph" is a sentence somebody can
+    // act on; "3 collisions" is not.
+    const worst = (key) => {
+      const seen = {};
+      let most = 0;
+
+      for (const name of Object.keys(placed)) {
+        const at = key === 'paragraph'
+          ? `${placed[name].section}:${placed[name].paragraph}`
+          : String(placed[name].section);
+
+        seen[at] = (seen[at] || 0) + 1;
+        most = Math.max(most, seen[at]);
+      }
+
+      return most > 1 ? most : 0;
+    };
+
+    return {
+      placed,
+      sections: sections.length,
+      found: Object.keys(placed).length,
+      wanted: wanted.length,
+      sameParagraph: worst('paragraph'),
+      sameSection: worst('section'),
+    };
   }
   
   /**
@@ -243,7 +336,7 @@ const FILLER = [
   }
   
   module.exports = {
-    checkPost, crossCheck, formatReport,
+    checkPost, crossCheck, formatReport, linkSpread,
     findFiller, findRisky, specificity, textOf,
     FILLER, RISKY,
   };

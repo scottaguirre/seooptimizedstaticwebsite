@@ -71,6 +71,228 @@ class IE_Publisher {
 		// campaign running in draft mode goes draft -> publish and would
 		// otherwise never switch its placeholders on.
 		add_action( 'transition_post_status', array( __CLASS__, 'on_transition' ), 10, 3 );
+
+		/* THE POST GOING AWAY IS AN EVENT TOO, and until now nothing listened
+		 * for it. 0.4.3 taught the admin screens to NOTICE a deleted post —
+		 * they query WordPress as they draw — but that knowledge never left
+		 * wp-admin, so the server went on reporting those posts as published,
+		 * with a working link and a credit charge, in the customer's own
+		 * billing report.
+		 *
+		 * BOTH HOOKS, because both mean gone. before_delete_post is the
+		 * permanent one; wp_trash_post is the common one, and a trashed post
+		 * is off the site and will never publish on its schedule.
+		 *
+		 * untrashed_post is here so the door swings both ways. Somebody
+		 * trashes a post by accident and puts it straight back — without this
+		 * the mark would stay until the next hourly sweep, and a report that
+		 * takes an hour to stop being wrong is one people learn to distrust. */
+		add_action( 'before_delete_post', array( __CLASS__, 'on_post_gone' ), 10, 1 );
+		add_action( 'wp_trash_post', array( __CLASS__, 'on_post_gone' ), 10, 1 );
+		add_action( 'untrashed_post', array( __CLASS__, 'on_post_back' ), 10, 1 );
+	}
+
+	/**
+	 * Campaigns touched by a deletion in THIS request, and whether the
+	 * shutdown handler has been booked yet.
+	 */
+	private static $touched_campaigns = array();
+	private static $flush_hooked      = false;
+
+	/** A post is being deleted or trashed, or has come back out of the trash. */
+	public static function on_post_gone( $post_id ) {
+		self::note_post_change( $post_id );
+	}
+
+	/** Same treatment: what changed is which posts exist. */
+	public static function on_post_back( $post_id ) {
+		self::note_post_change( $post_id );
+	}
+
+	/**
+	 * Remember the campaign and report ONCE, at the end of the request.
+	 *
+	 * NOT A CALL PER POST, and that is the whole point of this indirection.
+	 *
+	 * These hooks fire once per post. Selecting twelve posts in wp-admin and
+	 * choosing Delete fires them twelve times inside a single request, and the
+	 * first version of this made twelve separate HTTP calls to our server,
+	 * back to back, each with a twenty-second timeout — while the owner's
+	 * browser sat waiting on all of them. Bulk delete is exactly how somebody
+	 * clears out a campaign's posts, so that was the common case, not the
+	 * unlucky one.
+	 *
+	 * Now the hooks only note which campaigns are affected. One reconciliation
+	 * per campaign goes out at 'shutdown', so twelve deletes across one
+	 * campaign cost one call instead of twelve.
+	 *
+	 * SHUTDOWN ALSO MAKES THE ANSWER HONEST. These hooks run BEFORE WordPress
+	 * does the work: at before_delete_post the row is still in the database,
+	 * and at wp_trash_post the status has not changed yet. Asking "is this
+	 * post missing?" there gets "no" for a post that is about to vanish, which
+	 * is why the first version had to carry the answer in by hand. By shutdown
+	 * the deed is done and the site can simply be asked.
+	 *
+	 * It does not make the call asynchronous — PHP still runs it before the
+	 * process ends — but it takes it off the per-post path and out of the page
+	 * render.
+	 */
+	private static function note_post_change( $post_id ) {
+		$hits = IE_Campaigns::slots_for_post( $post_id );
+
+		// The overwhelmingly common case: a post this plugin knows nothing
+		// about. One cached option read and an array scan, no network.
+		if ( empty( $hits ) ) {
+			return;
+		}
+
+		foreach ( $hits as $hit ) {
+			self::$touched_campaigns[ $hit['campaign_id'] ] = true;
+		}
+
+		if ( ! self::$flush_hooked ) {
+			self::$flush_hooked = true;
+			add_action( 'shutdown', array( __CLASS__, 'flush_deleted_reports' ), 1 );
+		}
+	}
+
+	/**
+	 * Send one reconciliation per campaign touched in this request.
+	 *
+	 * Public because it is a hook callback. Safe to call twice — the queue is
+	 * emptied before anything else happens.
+	 */
+	public static function flush_deleted_reports() {
+		if ( empty( self::$touched_campaigns ) ) {
+			return 0;
+		}
+
+		$ids = array_keys( self::$touched_campaigns );
+		self::$touched_campaigns = array();
+
+		if ( ! IE_Settings::is_connected() ) {
+			return 0;
+		}
+
+		// The lookup ran earlier in this request, against a site that has
+		// since changed.
+		IE_Campaigns::forget_post_cache();
+
+		return self::send_slot_reports( IE_Campaigns::slot_report_due( $ids ) );
+	}
+
+	/**
+	 * The one place a reconciliation is actually sent.
+	 *
+	 * Shared by the shutdown flush and the hourly sweep so the two can never
+	 * come to disagree about what is sent or when the local record is updated.
+	 *
+	 * @param array $due campaign id => array of slot indexes currently missing
+	 */
+	private static function send_slot_reports( $due ) {
+		$sent = 0;
+
+		foreach ( $due as $campaign_id => $state ) {
+			$missing = isset( $state['missing'] ) ? $state['missing'] : array();
+			$live    = isset( $state['live'] ) ? $state['live'] : array();
+
+			$result = IE_Api::posts_deleted( $campaign_id, $missing, true, $live );
+
+			// ONLY on success. A failed report must leave the local record
+			// alone, or one unreachable minute becomes permanent silence
+			// about a post that really is gone. The sweep will retry.
+			if ( is_wp_error( $result ) ) {
+				continue;
+			}
+
+			IE_Campaigns::mark_slots_reported( $campaign_id, $missing, $live );
+			$sent++;
+		}
+
+		return $sent;
+	}
+
+	/**
+	 * The hourly reconciliation of what is really on the site.
+	 *
+	 * THIS IS NOT A BELT-AND-BRACES COPY OF THE HOOKS. It is the only thing
+	 * that can report:
+	 *
+	 *   - a post deleted while the server was unreachable;
+	 *   - a post removed by something that does not fire the usual hooks — a
+	 *     direct database edit, a migration, a restore from a backup taken
+	 *     before the post existed;
+	 *   - and a post deleted BEFORE THIS CODE EXISTED, which is the case that
+	 *     matters today. No hook fires retroactively, and there are fourteen
+	 *     of them sitting in one report right now.
+	 *
+	 * It goes quiet once the server agrees with the site — deleted_report_due()
+	 * compares against what was last sent — so a site with deleted posts does
+	 * not make an HTTP call every hour for the rest of its life.
+	 */
+	public static function sweep_deleted() {
+		if ( ! IE_Settings::is_connected() ) {
+			return array( 'slots' => 0, 'campaigns' => 0 );
+		}
+
+		IE_Campaigns::forget_post_cache();
+
+		$sent    = self::send_slot_reports( IE_Campaigns::slot_report_due() );
+		$dropped = self::report_campaigns_present();
+
+		if ( $sent ) {
+			self::log( sprintf( 'reported deleted posts for %d campaign(s)', $sent ) );
+		}
+
+		if ( $dropped ) {
+			self::log( sprintf( '%d campaign(s) no longer on this site were reported', $dropped ) );
+		}
+
+		return array( 'slots' => $sent, 'campaigns' => $dropped );
+	}
+
+	/**
+	 * Tell the server which campaigns this site still has.
+	 *
+	 * THE QUESTION THE SLOT SWEEP CANNOT ASK. That sweep reconciles the slots
+	 * inside campaigns we HOLD. A campaign removed from this WordPress is not
+	 * in our records at all, so nothing walks it, and its posts stay on the
+	 * server's books forever — counted as live work and charged for on the
+	 * customer's own report.
+	 *
+	 * IE_Api::removed() covers a removal as it happens, but only since 0.4.4.
+	 * Anything removed before that was never reported and is reachable by
+	 * nothing except this call.
+	 *
+	 * SILENT WHEN THERE IS NOTHING TO SAY. campaign_report_due() returns null
+	 * once the server's list matches ours, so this costs one call when the set
+	 * changes rather than one an hour forever. It also returns null rather
+	 * than an empty array for a site with no campaigns: an empty list is the
+	 * one message that can destroy a record, and a plugin that has lost its
+	 * options looks exactly like a site that has removed everything.
+	 *
+	 * @return int campaigns the server marked removed
+	 */
+	private static function report_campaigns_present() {
+		// Each entry is array( 'id' => …, 'status' => … ). The status is part
+		// of the message now, so it is part of what decides there is one.
+		$due = IE_Campaigns::campaign_report_due();
+
+		if ( ! is_array( $due ) || empty( $due ) ) {
+			return 0;
+		}
+
+		$result = IE_Api::campaigns_present( $due );
+
+		// ONLY on success, as everywhere else here: a failed report must leave
+		// the local record alone so the next sweep tries again.
+		if ( is_wp_error( $result ) || null === $result ) {
+			return 0;
+		}
+
+		IE_Campaigns::mark_campaigns_reported( $due );
+
+		return isset( $result['removed'] ) ? (int) $result['removed'] : 0;
 	}
 
 	/* ---------------------------------------------------------------------
@@ -408,31 +630,574 @@ class IE_Publisher {
 		}
 
 		$slot_index = (int) get_post_meta( $post->ID, '_ie_slot', true );
+		$url        = get_permalink( $post->ID );
 
 		$campaign = IE_Campaigns::get( $campaign_id );
-		if ( ! $campaign ) {
-			return;
+
+		/* A MISSING CAMPAIGN RECORD IS NOT A REASON TO STOP, and treating it
+		 * as one was a silent, expensive bug.
+		 *
+		 * This used to `return` here. Removing a campaign from the Campaigns
+		 * screen deletes its record but touches no posts — so every post still
+		 * scheduled went on to publish, WordPress core did it on the date as
+		 * always, this hook woke up, found no record and gave up. The result:
+		 *
+		 *   - the placeholders waiting on that post stayed <span> forever,
+		 *     INCLUDING those in posts that published weeks earlier and were
+		 *     working perfectly until the removal
+		 *   - the server was never told it went live, so the report shows it
+		 *     Scheduled indefinitely
+		 *
+		 * None of which is visible. A dead placeholder renders as ordinary
+		 * prose in the middle of a sentence: no broken link, no error, no log
+		 * line, nothing to see on the page. Only the HTML source shows it.
+		 *
+		 * Nothing was actually lost when the record went. Every post carries
+		 * `_ie_campaign` and `_ie_slot`, and deleting the option does not touch
+		 * post meta — so the work below can be done from the posts themselves.
+		 * The record is an optimisation now, not a prerequisite. */
+		if ( $campaign ) {
+			IE_Campaigns::update_slot( $campaign_id, $slot_index, array(
+				'status'       => 'published',
+				'published_at' => current_time( 'mysql' ),
+				// Re-read rather than trusted: a post the owner renamed between
+				// scheduling and publication has a different permalink now, and
+				// every link about to be written points at it.
+				'url'          => $url,
+			) );
+		} else {
+			self::log( sprintf( '%s/%d: no local record, working from post meta',
+				$campaign_id, $slot_index ) );
 		}
 
-		IE_Campaigns::update_slot( $campaign_id, $slot_index, array(
-			'status'       => 'published',
-			'published_at' => current_time( 'mysql' ),
-			// Re-read rather than trusted: a post the owner renamed between
-			// scheduling and publication has a different permalink now, and
-			// every link about to be written points at it.
-			'url'          => get_permalink( $post->ID ),
-		) );
-
-		$switched = self::activate_for_slot( $campaign_id, $slot_index, get_permalink( $post->ID ) );
+		$switched = self::activate_for_slot( $campaign_id, $slot_index, $url );
 
 		self::log( sprintf( '%s/%d published as post %d, %d link(s) switched on',
 			$campaign_id, $slot_index, $post->ID, $switched ) );
 
-		$server_id = isset( $campaign['server_campaign_id'] )
+		/* The local id IS the server id — create_from_plan() keys the record by
+		 * the server's campaign id, and `_ie_campaign` is written from that
+		 * same key. So post meta alone is enough to report this. */
+		$server_id = ( $campaign && ! empty( $campaign['server_campaign_id'] ) )
 			? $campaign['server_campaign_id']
-			: $campaign['id'];
+			: $campaign_id;
 
 		IE_Api::published( $server_id, $slot_index, get_post_time( 'c', true, $post->ID ) );
+	}
+
+	/**
+	 * The most posts one orphaned campaign may be assumed to have.
+	 *
+	 * A campaign is capped at 52 topics (IE_Admin::MAX_TOPICS), so this is
+	 * nearly double the largest legitimate answer. It exists because the
+	 * fallback below queries by meta VALUE rather than reading a known list,
+	 * and an unbounded query driven by a value out of post meta is not
+	 * something to leave open on a customer's site.
+	 */
+	const MAX_ORPHAN_SIBLINGS = 100;
+
+	/**
+	 * The other posts of this campaign — from the record if there is one,
+	 * from the posts themselves if there is not.
+	 *
+	 * THE RECORD IS THE FAST PATH, NOT THE ONLY PATH. One cached option read
+	 * answers this for every campaign the site still has, which is nearly all
+	 * of them. The query below runs only when that record is gone: removed
+	 * from the Campaigns screen, or lost with the option.
+	 *
+	 * @return int[] post ids, never including the publishing post itself
+	 */
+	public static function campaign_post_ids( $campaign_id, $except_slot = null ) {
+		$campaign = IE_Campaigns::get( $campaign_id );
+		$ids      = array();
+
+		if ( $campaign && ! empty( $campaign['slots'] ) ) {
+			foreach ( $campaign['slots'] as $slot ) {
+				$post_id = isset( $slot['post_id'] ) ? (int) $slot['post_id'] : 0;
+
+				if ( ! $post_id ) {
+					continue;
+				}
+
+				// A post cannot hold a placeholder for itself. With no slot
+				// named, nothing is excluded and this is every post the
+				// campaign made.
+				if ( null !== $except_slot && (int) $slot['index'] === (int) $except_slot ) {
+					continue;
+				}
+
+				$ids[] = $post_id;
+			}
+
+			return $ids;
+		}
+
+		/* NOT 'trash'. A trashed post is one the owner threw away; editing it
+		 * would rewrite content sitting in their bin and bump its modified
+		 * date, which is the single thing that makes a deletion look like an
+		 * edit. 'inherit' and 'auto-draft' are revisions and noise. */
+		$found = get_posts( array(
+			'post_type'        => 'post',
+			'post_status'      => array( 'publish', 'future', 'draft', 'pending', 'private' ),
+			'numberposts'      => self::MAX_ORPHAN_SIBLINGS,
+			'fields'           => 'ids',
+			'meta_key'         => '_ie_campaign',
+			'meta_value'       => (string) $campaign_id,
+			'suppress_filters' => false,
+		) );
+
+		foreach ( (array) $found as $post_id ) {
+			$post_id = (int) $post_id;
+
+			// The same exclusion, reached the same way the slot index was:
+			// from the post's own meta.
+			if ( null !== $except_slot
+				&& (int) get_post_meta( $post_id, '_ie_slot', true ) === (int) $except_slot ) {
+				continue;
+			}
+
+			$ids[] = $post_id;
+		}
+
+		return $ids;
+	}
+
+	/**
+	 * Which post holds one slot of a campaign.
+	 *
+	 * Record first, post meta second — the same two paths as everything else
+	 * here, for the same reason: a removed campaign has no record and its
+	 * posts still have to be reachable.
+	 *
+	 * @return int post id, or 0 if there is none
+	 */
+	public static function post_for_slot( $campaign_id, $slot_index ) {
+		$campaign = IE_Campaigns::get( $campaign_id );
+
+		if ( $campaign && ! empty( $campaign['slots'] ) ) {
+			foreach ( $campaign['slots'] as $slot ) {
+				if ( (int) $slot['index'] === (int) $slot_index ) {
+					return isset( $slot['post_id'] ) ? (int) $slot['post_id'] : 0;
+				}
+			}
+
+			return 0;
+		}
+
+		foreach ( self::campaign_post_ids( $campaign_id ) as $post_id ) {
+			if ( (int) get_post_meta( $post_id, '_ie_slot', true ) === (int) $slot_index ) {
+				return (int) $post_id;
+			}
+		}
+
+		return 0;
+	}
+
+	/** How many posts one repair pass will look at. */
+	const MAX_REPAIR_POSTS = 200;
+
+	/**
+	 * Which post would close the ring for one that has lost a forward link.
+	 *
+	 * THE RING CLOSES BACKWARDS TO THE FIRST POST. linkPlan.js gives the last
+	 * slot of a campaign `next = slots[0]` — so when a campaign is cut short,
+	 * the post that ends up last should point where the real last post would
+	 * have: at the beginning. That is the sentence a person needs to write,
+	 * and naming the target is the difference between a notice that reports a
+	 * problem and one that hands over the fix.
+	 *
+	 * WHY THE PLUGIN DOES NOT WRITE IT ITSELF. The anchor text in the dead
+	 * placeholder was chosen to describe the post that never arrived. Pointing
+	 * those exact words at a different article gives a link that promises one
+	 * thing and delivers another — worse for a reader, and worse for search,
+	 * than no link at all. A person can write a sentence that genuinely refers
+	 * to the first post. This cannot.
+	 *
+	 * @return string the target's title, or '' if there is no sensible one
+	 */
+	public static function ring_close_target( $campaign_id, $except_post_id ) {
+		$candidates = array();
+
+		foreach ( self::campaign_post_ids( $campaign_id ) as $post_id ) {
+			$post_id = (int) $post_id;
+
+			if ( $post_id === (int) $except_post_id ) {
+				continue;
+			}
+
+			$post = get_post( $post_id );
+
+			// Only somewhere a reader can actually go today.
+			if ( ! $post || 'publish' !== $post->post_status ) {
+				continue;
+			}
+
+			$candidates[ (int) get_post_meta( $post_id, '_ie_slot', true ) ] = $post_id;
+		}
+
+		if ( empty( $candidates ) ) {
+			return '';
+		}
+
+		// The earliest surviving post: where the ring closes back to.
+		ksort( $candidates );
+		$first = reset( $candidates );
+
+		return (string) get_the_title( $first );
+	}
+
+	/**
+	 * Go back and finish the link swaps that never happened.
+	 *
+	 * WHY THIS HAS TO EXIST AT ALL. The fix in 0.8.1 works at the moment a
+	 * post publishes — it repairs the swap as it happens. Every post that
+	 * published BEFORE that fix, under a campaign that had been removed, had
+	 * its swap fail silently and nothing retries it. Those placeholders are
+	 * frozen, not decaying: they will sit there for as long as the posts do.
+	 *
+	 * Nothing was lost when the campaign records went, which is the only
+	 * reason this is possible. The campaign id and slot index are stamped on
+	 * each post, and deleting an option does not touch post meta.
+	 *
+	 * THREE OUTCOMES PER PLACEHOLDER, and the middle one is the judgement:
+	 *
+	 *   the target is published   ->  swap it for a real link. This is the
+	 *                                 work that was missed.
+	 *   the target is gone        ->  unwrap it. Deleted, trashed, or never
+	 *                                 written: no link is ever coming, and a
+	 *                                 span that waits forever is just cruft.
+	 *   the target is a draft or  ->  LEAVE IT. A paused campaign's posts are
+	 *   still scheduled               drafts, and resuming publishes them. To
+	 *                                 unwrap those would destroy the links of
+	 *                                 a campaign that is merely paused.
+	 *
+	 * Safe to run twice: a span that has already become an anchor is not
+	 * found again, and neither is one already unwrapped.
+	 *
+	 * @return array{restored:int,unwrapped:int,waiting:int,posts:int}
+	 */
+	public static function repair_links() {
+		// 'short' maps the TITLE of each post left one link lighter to the post
+		// that would close its ring. Unwrapping
+		// is the right thing to do and still costs a link that was planned, so
+		// the owner is told which post to look at rather than left to find it.
+		$stats = array( 'restored' => 0, 'unwrapped' => 0, 'waiting' => 0, 'posts' => 0, 'short' => array() );
+
+		/* NOT 'trash'. Editing a post in the owner's bin would rewrite content
+		 * they threw away and bump its modified date — the one thing that
+		 * makes a deletion look like an edit. */
+		$posts = get_posts( array(
+			'post_type'        => 'post',
+			'post_status'      => array( 'publish', 'future', 'draft', 'pending', 'private' ),
+			'numberposts'      => self::MAX_REPAIR_POSTS,
+			'fields'           => 'ids',
+			'meta_key'         => '_ie_campaign',
+			'suppress_filters' => false,
+		) );
+
+		foreach ( (array) $posts as $post_id ) {
+			$post_id = (int) $post_id;
+			$post    = get_post( $post_id );
+
+			if ( ! $post ) {
+				continue;
+			}
+
+			$campaign_id = get_post_meta( $post_id, '_ie_campaign', true );
+			if ( ! $campaign_id ) {
+				continue;
+			}
+
+			$pending = IE_Links::pending_ids( $post->post_content );
+			if ( empty( $pending ) ) {
+				continue;
+			}
+
+			$content = $post->post_content;
+			$changed = false;
+
+			foreach ( $pending as $token ) {
+				if ( ! preg_match( '/^slot-(\d+)$/', $token, $m ) ) {
+					// Not a token this plugin writes. Leave it alone entirely
+					// rather than guessing what somebody else's markup means.
+					continue;
+				}
+
+				$slot_index = (int) $m[1];
+				$target_id  = self::post_for_slot( $campaign_id, $slot_index );
+				$target     = $target_id ? get_post( $target_id ) : null;
+
+				if ( $target && 'publish' === $target->post_status ) {
+					$result = IE_Links::activate( $content, $token, get_permalink( $target_id ) );
+
+					if ( $result['count'] ) {
+						$content             = $result['content'];
+						$changed             = true;
+						$stats['restored']  += $result['count'];
+					}
+
+					continue;
+				}
+
+				if ( ! $target || 'trash' === $target->post_status ) {
+					$result = IE_Links::unwrap( $content, $token );
+
+					if ( $result['count'] ) {
+						$content             = $result['content'];
+						$changed             = true;
+						$stats['unwrapped'] += $result['count'];
+
+						$title = get_the_title( $post_id );
+
+						if ( $title && ! isset( $stats['short'][ $title ] ) ) {
+							// Keyed by title so a post that lost two links is
+							// named once, and the lookup below runs once too.
+							$stats['short'][ $title ] = self::ring_close_target( $campaign_id, $post_id );
+						}
+					}
+
+					continue;
+				}
+
+				// A draft or a future post. Its day may still come.
+				$stats['waiting']++;
+			}
+
+			if ( ! $changed ) {
+				continue;
+			}
+
+			wp_update_post( array(
+				'ID'                => $post_id,
+				'post_content'      => $content,
+				// Explicit, so the re-crawl signal is not left to chance —
+				// a restored link nobody crawls is not a restored link.
+				'post_modified'     => current_time( 'mysql' ),
+				'post_modified_gmt' => current_time( 'mysql', 1 ),
+			) );
+
+			$stats['posts']++;
+		}
+
+		self::log( sprintf( 'link repair: %d restored, %d unwrapped, %d still waiting, across %d post(s)',
+			$stats['restored'], $stats['unwrapped'], $stats['waiting'], $stats['posts'] ) );
+
+		return $stats;
+	}
+
+	/**
+	 * How many of a campaign's posts are live, and how many are not.
+	 *
+	 * For the confirmation dialogs, which have to name the damage BEFORE it is
+	 * done — "4 published articles and 8 drafts" is the only part of that
+	 * sentence a reader can act on.
+	 *
+	 * Counted from the posts rather than from slot statuses. A slot says what
+	 * the plugin last heard; the post says what is on the site now, and the
+	 * two disagree exactly when somebody has been editing by hand — which is
+	 * the moment a confirmation dialog most needs to be right.
+	 *
+	 * @return array{published:int,drafts:int}
+	 */
+	public static function count_campaign_posts( $campaign_id ) {
+		$counts = array( 'published' => 0, 'drafts' => 0 );
+
+		foreach ( self::campaign_post_ids( $campaign_id ) as $post_id ) {
+			$post = get_post( $post_id );
+
+			if ( ! $post || 'trash' === $post->post_status ) {
+				continue;
+			}
+
+			if ( 'publish' === $post->post_status ) {
+				$counts['published']++;
+			} else {
+				$counts['drafts']++;
+			}
+		}
+
+		return $counts;
+	}
+
+	/**
+	 * Move every post a campaign made to Trash.
+	 *
+	 * TRASH, NOT DELETE, and that is the whole reason this is allowed to exist
+	 * at all. wp_delete_post() is final; wp_trash_post() gives the owner
+	 * thirty days to discover that the campaign they threw away was the wrong
+	 * one. A destructive action a customer cannot undo has no place behind a
+	 * button on a settings screen, however many dialogs sit in front of it.
+	 *
+	 * Trashing is also how the server finds out: wp_trash_post fires the hook
+	 * that queues a deleted-post report. The caller must flush that queue
+	 * BEFORE deleting the local record — see handle_delete_campaign().
+	 *
+	 * @return array{published:int,drafts:int} what was actually trashed
+	 */
+	public static function remove_campaign_posts( $campaign_id ) {
+		$counts = array( 'published' => 0, 'drafts' => 0 );
+
+		foreach ( self::campaign_post_ids( $campaign_id ) as $post_id ) {
+			$post = get_post( $post_id );
+
+			if ( ! $post || 'trash' === $post->post_status ) {
+				continue;
+			}
+
+			/* The same refusal activate_for_slot() makes. A slot's post_id is
+			 * a small integer, and a stale record pointing at an unrelated
+			 * page would put somebody's About page in the bin. */
+			if ( ! get_post_meta( $post_id, '_ie_campaign', true ) ) {
+				self::log( sprintf( 'refused to trash post %d: not created by this plugin', $post_id ) );
+				continue;
+			}
+
+			if ( 'publish' === $post->post_status ) {
+				$counts['published']++;
+			} else {
+				$counts['drafts']++;
+			}
+
+			wp_trash_post( $post_id );
+		}
+
+		self::log( sprintf( '%s: trashed %d published and %d unpublished post(s)',
+			$campaign_id, $counts['published'], $counts['drafts'] ) );
+
+		return $counts;
+	}
+
+	/**
+	 * Remove a campaign: its posts, its record, and the server's belief in it.
+	 *
+	 * THE ORDER IS THE WHOLE FUNCTION, and it lives here rather than in the
+	 * admin handler because a handler cannot be tested — it checks a nonce,
+	 * checks capabilities and ends in a redirect. The sequence below is the
+	 * part that breaks silently, so it belongs somewhere a test can drive it.
+	 *
+	 *   1. Trash the posts. wp_trash_post() fires the hook that queues a
+	 *      deleted-post report, and that queue is built by looking each post
+	 *      up in the campaign record — which still exists at this point.
+	 *
+	 *   2. Flush the queue NOW rather than leaving it to shutdown. Shutdown
+	 *      runs after step 4, by which time the record is gone and
+	 *      slot_report_due() finds nothing to report. The deletions would
+	 *      never reach the server and the Blog Report would go on showing a
+	 *      dozen live articles that are sitting in the bin.
+	 *
+	 *   3. Tell the server the campaign itself is gone — before step 4,
+	 *      because the server's campaign id lives inside the record.
+	 *
+	 *   4. Only then delete the record.
+	 *
+	 * Every step but the first is a report that cannot be retried: once the
+	 * record is gone no sweep can reach it. That is the strongest argument
+	 * for the two dialogs in front of this, and for Pause campaign being the
+	 * button people are pointed at first.
+	 *
+	 * @return array{published:int,drafts:int} what was moved to Trash
+	 */
+	public static function remove_campaign( $campaign_id ) {
+		$campaign = IE_Campaigns::get( $campaign_id );
+
+		$trashed = self::remove_campaign_posts( $campaign_id );
+
+		self::flush_deleted_reports();
+
+		if ( $campaign ) {
+			$server_id = isset( $campaign['server_campaign_id'] ) && $campaign['server_campaign_id']
+				? $campaign['server_campaign_id']
+				: $campaign['id'];
+
+			/* Cannot fail this call. IE_Api::removed() swallows its own errors
+			 * and logs them — a site that is offline, or whose licence has
+			 * been revoked, must still be able to remove a campaign from its
+			 * own screen. */
+			IE_Api::removed( $server_id );
+		}
+
+		IE_Campaigns::delete( $campaign_id );
+
+		return $trashed;
+	}
+
+	/**
+	 * Trash the posts of a campaign that have NOT published.
+	 *
+	 * The other half of the pair, and the one most people want. Pause a
+	 * campaign, decide the rest of it is wrong, and throw away what has not
+	 * gone out — while everything already on the site stays exactly where it
+	 * is, earning its keep.
+	 *
+	 * Doing this by hand means finding eight drafts among however many posts
+	 * the site has and being sure none of them is something else. One button
+	 * on the campaign that owns them is both safer and quicker.
+	 *
+	 * @return int how many were trashed
+	 */
+	public static function delete_remaining_drafts( $campaign_id ) {
+		$gone = 0;
+
+		foreach ( self::campaign_post_ids( $campaign_id ) as $post_id ) {
+			$post = get_post( $post_id );
+
+			if ( ! $post || 'trash' === $post->post_status ) {
+				continue;
+			}
+
+			// THE LINE THAT MAKES THIS THE SAFE BUTTON. Anything the public
+			// can already read is somebody's published work.
+			if ( 'publish' === $post->post_status ) {
+				continue;
+			}
+
+			if ( ! get_post_meta( $post_id, '_ie_campaign', true ) ) {
+				self::log( sprintf( 'refused to trash post %d: not created by this plugin', $post_id ) );
+				continue;
+			}
+
+			wp_trash_post( $post_id );
+			$gone++;
+		}
+
+		self::log( sprintf( '%s: trashed %d unpublished post(s), published posts untouched',
+			$campaign_id, $gone ) );
+
+		return $gone;
+	}
+
+	/**
+	 * Throw away what a paused campaign has left, and close it out.
+	 *
+	 * WHY 'cancelled' AND NOT 'completed'. The campaign produced four posts of
+	 * twelve. Calling that completed is the small lie this codebase keeps
+	 * getting punished for — "26 published of 48", "Published" on a post that
+	 * was deleted, "Overdue" on a post that no longer exists. Six months on,
+	 * nobody could tell it apart from a campaign that ran its course.
+	 *
+	 * 'cancelled' already meant exactly this — the schema documents it as
+	 * "abandoned" — and the server already refuses to write or publish for a
+	 * cancelled campaign, which is precisely the behaviour wanted here. It had
+	 * never been set because nothing had ever had cause to. This is that
+	 * cause.
+	 *
+	 * ONLY WHEN SOMETHING WAS ACTUALLY ABANDONED. A campaign whose posts had
+	 * all published already has nothing to throw away, and marking that one
+	 * cancelled would be the same lie in the other direction.
+	 *
+	 * @return int how many posts were moved to Trash
+	 */
+	public static function abandon_remaining( $campaign_id ) {
+		$gone = self::delete_remaining_drafts( $campaign_id );
+
+		if ( $gone > 0 ) {
+			// paused_at goes with it: the campaign is not paused any more,
+			// it is over, and a leftover timestamp would have resume trying
+			// to shift dates that no longer exist.
+			IE_Campaigns::set_status( $campaign_id, 'cancelled', array( 'paused_at' => null ) );
+		}
+
+		return $gone;
 	}
 
 	/**
@@ -446,22 +1211,16 @@ class IE_Publisher {
 	 * @return int how many spans became anchors
 	 */
 	public static function activate_for_slot( $campaign_id, $slot_index, $url ) {
-		$campaign = IE_Campaigns::get( $campaign_id );
-		if ( ! $campaign || '' === $url ) {
+		if ( '' === $campaign_id || '' === $url ) {
 			return 0;
 		}
 
 		$token = IE_Campaigns::slot_token( $slot_index );
 		$total = 0;
 
-		foreach ( $campaign['slots'] as $slot ) {
-			$post_id = isset( $slot['post_id'] ) ? (int) $slot['post_id'] : 0;
-
-			// A post cannot hold a placeholder for itself.
-			if ( ! $post_id || (int) $slot['index'] === (int) $slot_index ) {
-				continue;
-			}
-
+		// NOT `$campaign['slots']`. A removed campaign has no record and its
+		// posts still need their links — see the long note in on_transition().
+		foreach ( self::campaign_post_ids( $campaign_id, $slot_index ) as $post_id ) {
 			$post = get_post( $post_id );
 			if ( ! $post ) {
 				continue;
@@ -521,9 +1280,18 @@ class IE_Publisher {
 	public static function run_catch_up() {
 		$rescued = self::publish_missed();
 
+		/* BEFORE THE EARLY RETURN BELOW, deliberately.
+		 *
+		 * A site whose campaigns have all finished has no work pending, so it
+		 * takes that return on every single run — and a finished campaign is
+		 * exactly the kind whose posts get tidied up months later. Putting the
+		 * sweep after it would mean the sites most likely to have deleted
+		 * posts were the ones that never looked. */
+		$reported = self::sweep_deleted();
+
 		$pending = IE_Campaigns::campaigns_with_work();
 		if ( empty( $pending ) ) {
-			return array( 'rescued' => $rescued, 'ran' => 0 );
+			return array( 'rescued' => $rescued, 'ran' => 0, 'reported' => $reported );
 		}
 
 		// One campaign per run. A site catching up on a month of work should
@@ -531,7 +1299,7 @@ class IE_Publisher {
 		$next = $pending[0];
 		self::run_campaign( $next );
 
-		return array( 'rescued' => $rescued, 'ran' => 1 );
+		return array( 'rescued' => $rescued, 'ran' => 1, 'reported' => $reported );
 	}
 
 	/**
@@ -686,7 +1454,7 @@ class IE_Publisher {
 	 *
 	 * Resume touches only posts carrying this. Without it there is no way to
 	 * tell a post we held from one the owner drafted by hand while the
-	 * campaign was stopped, and resume would publish something they had
+	 * campaign was paused, and resume would publish something they had
 	 * deliberately pulled.
 	 */
 	const HELD_META = '_ie_held_until';
@@ -807,7 +1575,7 @@ class IE_Publisher {
 			}
 
 			// The owner published it, rescheduled it, or deleted it to trash
-			// while the campaign was stopped. Whatever they did wins — this
+			// while the campaign was paused. Whatever they did wins — this
 			// only undoes its own change.
 			if ( 'draft' !== $post->post_status ) {
 				delete_post_meta( $post_id, self::HELD_META );
@@ -817,7 +1585,7 @@ class IE_Publisher {
 			$when = strtotime( $held ) + $shift;
 
 			if ( $when <= time() ) {
-				// Its turn came and went while the campaign was stopped, which
+				// Its turn came and went while the campaign was paused, which
 				// happens when a post was already overdue at the moment of the
 				// pause. Writing it back as 'future' with a past date is the
 				// classic missed-schedule post: WordPress accepts it and then

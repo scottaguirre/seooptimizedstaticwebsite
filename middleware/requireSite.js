@@ -80,10 +80,24 @@ function signaturesMatch(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-function deny(res, reason, status = 401) {
-  // Deliberately vague to the caller, specific in the log. Telling a caller
-  // whether the site id was unknown, the signature wrong, or the clock skewed
-  // hands an attacker a debugging tool.
+function deny(res, reason, status = 401, context = {}) {
+  /* Deliberately vague to the caller, specific in the log. Telling a caller
+   * whether the site id was unknown, the signature wrong, or the clock skewed
+   * hands an attacker a debugging tool.
+   *
+   * THE LOG IS THE OTHER HALF OF THAT BARGAIN, and it was not being kept.
+   * Four of the refusals below wrote nothing at all — site-revoked,
+   * missing-headers, bad-site-id and bad-timestamp — so the likeliest support
+   * call of all ("my licence was revoked and nothing works") left no trace
+   * anywhere. We spent an evening on a bad-signature failure that had been
+   * happening daily for eight days, precisely because silence looked the same
+   * as nothing happening.
+   *
+   * Vague to the caller is only defensible when it is specific to US. So the
+   * logging happens HERE, once, rather than at each call site where it can be
+   * and repeatedly was forgotten. */
+  log.security('blog.auth.denied', { reason, status, ...context });
+
   return res.status(status).json({ error: 'Not authorised', reason });
 }
 
@@ -101,19 +115,23 @@ async function requireSite(req, res, next) {
     const timestamp = String(req.headers['x-il-timestamp'] || '');
     const signature = String(req.headers['x-il-signature'] || '');
 
+    // What the plugin says it is. Compared AFTER the signature is verified —
+    // see the check further down for why that order matters.
+    const reportedUrl = String(req.headers['x-il-site-url'] || '');
+
     if (!siteId || !timestamp || !signature) {
-      return deny(res, 'missing-headers');
+      return deny(res, 'missing-headers', 401, { ip: req.ip, requestId: req.id });
     }
 
     if (!/^[a-f0-9]{24}$/i.test(siteId)) {
       // Not a possible ObjectId. Rejected before querying so a malformed id
       // cannot become a database error.
-      return deny(res, 'bad-site-id');
+      return deny(res, 'bad-site-id', 401, { ip: req.ip, requestId: req.id });
     }
 
     const sent = Number(timestamp);
     if (!Number.isFinite(sent)) {
-      return deny(res, 'bad-timestamp');
+      return deny(res, 'bad-timestamp', 401, { siteId, requestId: req.id });
     }
 
     const skew = Math.abs(Math.floor(Date.now() / 1000) - sent);
@@ -121,24 +139,24 @@ async function requireSite(req, res, next) {
       log.security('blog.auth.clockSkew', {
         requestId: req.id, siteId, skewSeconds: skew,
       });
-      return deny(res, 'clock-skew');
+      return deny(res, 'clock-skew', 401, { siteId, skewSeconds: skew, requestId: req.id });
     }
 
     const site = await BlogSite.findById(siteId);
     if (!site) {
       log.security('blog.auth.unknownSite', { requestId: req.id, siteId, ip: req.ip });
-      return deny(res, 'unknown-site');
+      return deny(res, 'unknown-site', 401, { siteId, ip: req.ip, requestId: req.id });
     }
 
     if (site.status !== 'active') {
-      return deny(res, `site-${site.status}`, 403);
+      return deny(res, `site-${site.status}`, 403, { siteId, siteUrl: site.siteUrl, requestId: req.id });
     }
 
     if ((site.failedAuthCount || 0) >= MAX_FAILED_AUTH) {
       log.security('blog.auth.lockedOut', {
         requestId: req.id, siteId, failures: site.failedAuthCount,
       });
-      return deny(res, 'locked', 403);
+      return deny(res, 'locked', 403, { siteId, failures: site.failedAuthCount, requestId: req.id });
     }
 
     const expected = sign(site.secret, {
@@ -161,7 +179,59 @@ async function requireSite(req, res, next) {
         ip: req.ip,
         path: req.path,
       });
-      return deny(res, 'bad-signature');
+      return deny(res, 'bad-signature', 401, { siteId, siteUrl: site.siteUrl, path: req.path, requestId: req.id });
+    }
+
+    /* IS THIS THE SITE THIS LICENCE BELONGS TO?
+     *
+     * models/BlogSite.js has described siteUrl as "compared on every
+     * subsequent request" since the day it was written. It never was. The
+     * comment described a protection that did not exist, and the gap it left
+     * is the most expensive bug in this system:
+     *
+     * Paste one licence key into a second WordPress — or, far easier, CLONE a
+     * site, because the id and secret live in wp_options and a duplicate
+     * carries them without anyone typing anything — and the second site works
+     * immediately while the first one dies. Silently. Its secret is stale, so
+     * every call is refused, and the only thing anyone sees is "Not
+     * authorised". On one real site that ran for eight days: every "this post
+     * went live" callback rejected, the server's record quietly drifting from
+     * the site's, and a report claiming 26 published posts for a site
+     * carrying 12.
+     *
+     * AFTER THE SIGNATURE, DELIBERATELY. The message below names the other
+     * site, which is information — so it is only ever shown to a caller who
+     * has already proved it holds the secret. Checked earlier, it would be a
+     * way to ask which domain any site id belongs to.
+     *
+     * A MISSING HEADER IS NOT A MISMATCH. Plugins older than 0.7.0 do not
+     * send it, and refusing them would break every existing customer on
+     * upgrade day. They keep working exactly as before; the protection
+     * arrives as they update.
+     *
+     * 409, not 401: the credentials are fine. It is the identity that is
+     * wrong, and that is a conflict to resolve rather than a rejection to
+     * retry. */
+    if (reportedUrl && site.siteUrl) {
+      const seen = BlogSite.normaliseSiteUrl(reportedUrl);
+
+      if (seen && seen !== site.siteUrl) {
+        log.security('blog.auth.siteUrlMismatch', {
+          requestId: req.id,
+          siteId,
+          registeredTo: site.siteUrl,
+          reported: seen,
+          path: req.path,
+        });
+
+        return res.status(409).json({
+          error: `This licence key is registered to ${site.siteUrl}, not to ${seen}. `
+               + 'Each WordPress site needs its own licence key — using one on two sites '
+               + 'disconnects the other. Create a key for this site on your account page.',
+          reason: 'site-url-mismatch',
+          registeredTo: site.siteUrl,
+        });
+      }
     }
 
     // Success clears both counters.

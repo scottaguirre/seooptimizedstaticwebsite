@@ -52,6 +52,23 @@ class IE_Admin {
 	 */
 	const DONE_PER_PAGE = 10;
 
+	/**
+	 * How many topics one press of "Suggest topics" asks for.
+	 *
+	 * Twelve is the server's ceiling per request (routes/blogTopicsRoute.js
+	 * clamps to 3..12). Asking for fewer than it will give just means more
+	 * presses.
+	 */
+	const SUGGEST_BATCH = 12;
+
+	/**
+	 * The most topics one campaign may carry.
+	 *
+	 * A weekly post for a year. Every one becomes a post that costs credits
+	 * on approval, so this is a spending limit as much as a layout one.
+	 */
+	const MAX_TOPICS = 52;
+
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_post_ie_connect', array( __CLASS__, 'handle_connect' ) );
@@ -63,13 +80,146 @@ class IE_Admin {
 		add_action( 'admin_post_ie_pause_campaign', array( __CLASS__, 'handle_pause_campaign' ) );
 		add_action( 'admin_post_ie_resume_campaign', array( __CLASS__, 'handle_resume_campaign' ) );
 		add_action( 'admin_post_ie_delete_campaign', array( __CLASS__, 'handle_delete_campaign' ) );
+		add_action( 'admin_post_ie_delete_drafts', array( __CLASS__, 'handle_delete_drafts' ) );
+		add_action( 'admin_post_ie_repair_links', array( __CLASS__, 'handle_repair_links' ) );
 		add_action( 'admin_post_ie_discard_draft', array( __CLASS__, 'handle_discard_draft' ) );
+		add_action( 'admin_post_ie_check_deleted', array( __CLASS__, 'handle_check_deleted' ) );
 	}
 
+	/**
+	 * Run the deleted-post reconciliation now, rather than waiting for cron.
+	 *
+	 * WHY THIS BUTTON HAS TO EXIST.
+	 *
+	 * The sweep rides on WP-Cron, and WP-Cron is not a timer — it fires when
+	 * somebody loads a page. The server pings sites that have work in flight,
+	 * and those pings fire it for free. But a site whose campaigns have all
+	 * FINISHED has no work, so the server never knocks, and a finished site
+	 * with no visitors may not run cron for weeks.
+	 *
+	 * That is precisely the site where this matters: posts get tidied up
+	 * months after a campaign ends. So the one case the automatic path serves
+	 * worst is the one where deletions actually happen, and the owner needs a
+	 * way to say "look now" without being told to go and load their own home
+	 * page.
+	 */
+	public static function handle_check_deleted() {
+		check_admin_referer( 'ie_check_deleted' );
+		self::require_caps();
+
+		$swept  = IE_Publisher::sweep_deleted();
+		$slots  = isset( $swept['slots'] ) ? (int) $swept['slots'] : 0;
+		$gone   = isset( $swept['campaigns'] ) ? (int) $swept['campaigns'] : 0;
+		$sent   = $slots + $gone;
+
+		/* BACK TO THE TAB THEY PRESSED IT ON. Deleted posts turn up most
+		 * often under Completed — a campaign that finished months ago whose
+		 * posts have since been tidied — and dropping someone onto "In
+		 * progress" after they asked a question about a finished campaign
+		 * hides the answer they just asked for.
+		 *
+		 * Whitelisted rather than passed through: this value goes into a
+		 * redirect URL. */
+		$tab   = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : '';
+		$extra = in_array( $tab, array( 'running', 'drafts', 'done', 'new' ), true )
+			? array( 'tab' => $tab )
+			: array();
+
+		/* TWO DIFFERENT FINDINGS, REPORTED SEPARATELY.
+		 *
+		 *   $slots  campaigns still here whose posts have been deleted
+		 *   $gone   campaigns removed from this site altogether, which the
+		 *           server was still counting
+		 *
+		 * Both are "the record was wrong and is now right", but they are not
+		 * the same news and adding them together would name a number that
+		 * describes nothing. The counts are of CAMPAIGNS, not posts — "3
+		 * updated" against 12 deleted posts would read as though nine had been
+		 * missed — and the wording says so. */
+		$parts = array();
+
+		if ( $slots ) {
+			$parts[] = sprintf(
+				/* translators: %d: number of campaigns */
+				_n(
+					'%d campaign had posts that are no longer on this site',
+					'%d campaigns had posts that are no longer on this site',
+					$slots,
+					'interlink-engine'
+				),
+				$slots
+			);
+		}
+
+		if ( $gone ) {
+			$parts[] = sprintf(
+				/* translators: %d: number of campaigns */
+				_n(
+					'%d campaign that was removed from this site was still on record',
+					'%d campaigns that were removed from this site were still on record',
+					$gone,
+					'interlink-engine'
+				),
+				$gone
+			);
+		}
+
+		if ( $parts ) {
+			self::redirect( 'interlink-engine', 'checked', sprintf(
+				/* translators: %s: one or two findings, already joined */
+				__( 'Checked. %s. Your record has been brought up to date.', 'interlink-engine' ),
+				implode( ', and ', $parts )
+			), $extra );
+		}
+
+		// NOT an error, and not silence either. "Nothing to report" is the
+		// healthy answer, and a button that appears to do nothing when pressed
+		// is one nobody presses twice.
+		self::redirect( 'interlink-engine', 'checked',
+			__( 'Checked. Every post these campaigns made is still on the site.', 'interlink-engine' ),
+			$extra );
+	}
+
+	/**
+	 * THE NAME ON SCREEN CHANGED; NOTHING ELSE DID.
+	 *
+	 * The plugin is "Three Comets Blog Generator" to the person using it. The
+	 * menu SLUG is still 'interlink-engine', the folder is still
+	 * interlink-engine/, the options are still ie_*, the classes are still
+	 * IE_* and the text domain is still 'interlink-engine'.
+	 *
+	 * Every one of those is deliberate, and the reasons differ:
+	 *
+	 *   the folder   WordPress identifies a plugin by its directory. Rename it
+	 *                and the next upload installs a SECOND plugin beside the
+	 *                first, leaving the old one active and the new one
+	 *                deactivated. On a customer's site that is silence, not an
+	 *                error.
+	 *
+	 *   the options  ie_campaigns holds every campaign on the site. Rename the
+	 *                key and the plugin wakes up believing it has never run.
+	 *
+	 *   the slug     admin.php?page=interlink-engine is in bookmarks, in this
+	 *                file's own redirects, and in every link the server has
+	 *                ever emailed.
+	 *
+	 * A display name is cheap to change. An identifier is not, and the two are
+	 * only ever confused once.
+	 */
 	public static function menu() {
 		add_menu_page(
-			__( 'Interlink Engine', 'interlink-engine' ),
-			__( 'Interlink', 'interlink-engine' ),
+			__( 'Three Comets Blog Generator', 'interlink-engine' ),
+			/* THE SIDEBAR GETS THE BRAND, NOT THE FUNCTION.
+			 *
+			 * This label sits in a customer's wp-admin — often an agency's
+			 * client, who never bought anything from us and never will. It is
+			 * the one place the product's name is seen daily by someone who
+			 * did not install it, so it says who made this rather than what
+			 * it does. The page heading underneath carries the full name.
+			 *
+			 * It is also the practical choice: the sidebar is narrow, and
+			 * anything much longer wraps to two lines. */
+			__( 'Three Comets', 'interlink-engine' ),
 			'manage_options',
 			'interlink-engine',
 			array( __CLASS__, 'render_campaigns' ),
@@ -155,6 +305,29 @@ class IE_Admin {
 									<?php esc_html_e( 'Leave blank unless you are moving this site to another account. Saving with this empty changes only the server address.', 'interlink-engine' ); ?>
 								</p>
 							<?php endif; ?>
+							<?php
+							/* THE ONE DELIBERATE ACT IN AN OTHERWISE SILENT DISASTER.
+							 *
+							 * A licence key used on a second WordPress issues that site a
+							 * fresh secret and leaves the first holding a dead one. The
+							 * first site does not fail loudly — it fails invisibly, every
+							 * call refused, for as long as nobody reads a report closely.
+							 * Eight days, on the site this was written for.
+							 *
+							 * The server refuses to do it without this box ticked, and its
+							 * refusal names the site that would be disconnected. So the
+							 * box is never the first anyone hears of it: it is the second
+							 * step, after being told exactly what it costs. */
+							?>
+							<p style="margin-top:.6rem">
+								<label for="ie_move">
+									<input type="checkbox" name="move_licence" id="ie_move" value="1">
+									<?php esc_html_e( 'This licence is moving from another site', 'interlink-engine' ); ?>
+								</label>
+							</p>
+							<p class="description" style="margin-top:0">
+								<?php esc_html_e( 'Only tick this if you want the other site disconnected. Two sites cannot share one licence key — the second one to connect takes it, and the first stops publishing.', 'interlink-engine' ); ?>
+							</p>
 						</td>
 					</tr>
 					<tr>
@@ -243,7 +416,13 @@ class IE_Admin {
 				__( 'Paste your licence key to connect this site.', 'interlink-engine' ) );
 		}
 
-		$result = IE_Api::activate( $key, $server );
+		/* Ticked only when the owner has been told what it costs. The server
+		 * refuses a licence already registered elsewhere without it, and says
+		 * which site it would disconnect — so the box is never the first time
+		 * anyone hears about the other site. */
+		$moving = ! empty( $_POST['move_licence'] );
+
+		$result = IE_Api::activate( $key, $server, $moving );
 
 		self::redirect(
 			'interlink-connection',
@@ -303,8 +482,18 @@ class IE_Admin {
 				}
 			}
 
+			/* A CANCELLED CAMPAIGN IS FINISHED, whatever its slots still say.
+			 *
+			 * Its unpublished posts were thrown away, so the slots that named
+			 * them go on reading 'scheduled' for posts that no longer exist —
+			 * outstanding work that is never coming. Without this the campaign
+			 * sat on the running tab for ever with nothing left to do and no
+			 * way to close it out, which is the gap "Delete the remaining
+			 * drafts" would otherwise have left behind. */
 			if ( empty( $campaign['batch_started'] ) ) {
 				$out['drafts'][] = $campaign;
+			} elseif ( isset( $campaign['status'] ) && 'cancelled' === $campaign['status'] ) {
+				$out['done'][] = $campaign;
 			} elseif ( $outstanding ) {
 				$out['running'][] = $campaign;
 			} else {
@@ -370,8 +559,77 @@ class IE_Admin {
 					self::render_running_tab( $buckets['running'], empty( $campaigns ) );
 					break;
 			}
+
+			self::render_check_deleted( $tab, $campaigns );
 			?>
 		</div>
+		<?php
+	}
+
+	/**
+	 * "Check for deleted posts", at the foot of the screen.
+	 *
+	 * WHY A BUTTON AND NOT JUST THE HOURLY SWEEP.
+	 *
+	 * The sweep rides on WP-Cron, and WP-Cron fires when somebody loads a
+	 * page rather than on a clock. Sites with a campaign in flight get pinged
+	 * by the server every few minutes and so run it constantly, for free. A
+	 * site whose campaigns have all FINISHED is never pinged — there is no
+	 * work — so on a site with no visitors the sweep may not run for weeks.
+	 *
+	 * That is exactly the site where it matters. Posts get tidied up long
+	 * after a campaign ends, which means the automatic path serves its most
+	 * important case worst. Rather than tell an owner to go and load their own
+	 * home page, there is a button.
+	 *
+	 * AT THE FOOT, AND QUIET. It answers a question somebody already has —
+	 * "does this list still match my site?" — rather than announcing a problem
+	 * nobody has. Putting it at the top would imply the screen is not to be
+	 * trusted until you press it, which is the opposite of what it is for.
+	 *
+	 * Hidden on the "New campaign" tab, where there is nothing to check yet.
+	 */
+	private static function render_check_deleted( $tab, $campaigns ) {
+		if ( 'new' === $tab || empty( $campaigns ) ) {
+			return;
+		}
+
+		$url = wp_nonce_url(
+			admin_url( 'admin-post.php?action=ie_check_deleted&tab=' . rawurlencode( $tab ) ),
+			'ie_check_deleted'
+		);
+		?>
+		<p style="margin-top:2rem">
+			<a href="<?php echo esc_url( $url ); ?>" class="button">
+				<?php esc_html_e( 'Check for deleted posts', 'interlink-engine' ); ?>
+			</a>
+		</p>
+		<p class="description" style="margin-top:-.5rem">
+			<?php esc_html_e( 'Compares this list against the posts actually on your site. It runs on its own every hour, but a site with no visitors may not get round to it.', 'interlink-engine' ); ?>
+		</p>
+
+		<?php
+		/* REPAIR LINKS, and it is here rather than on a campaign card because
+		 * the campaigns it helps most no longer have cards.
+		 *
+		 * Until 0.8.1, removing a campaign stopped its links ever being built:
+		 * the posts still published, but the placeholders waiting on them
+		 * stayed placeholders. That fix works at the moment a post publishes,
+		 * so it does nothing for posts that published before it. Those
+		 * placeholders are frozen — invisible on the page, and permanent. */
+		$repair_url = wp_nonce_url(
+			admin_url( 'admin-post.php?action=ie_repair_links&tab=' . rawurlencode( $tab ) ),
+			'ie_repair_links'
+		);
+		?>
+		<p style="margin-top:1.5rem">
+			<a href="<?php echo esc_url( $repair_url ); ?>" class="button">
+				<?php esc_html_e( 'Repair internal links', 'interlink-engine' ); ?>
+			</a>
+		</p>
+		<p class="description" style="margin-top:-.5rem">
+			<?php esc_html_e( 'Finds links between your posts that were never switched on, and switches them on. Safe to run more than once.', 'interlink-engine' ); ?>
+		</p>
 		<?php
 	}
 
@@ -387,7 +645,11 @@ class IE_Admin {
 
 		$labels = array(
 			'running' => __( 'In progress', 'interlink-engine' ),
-			'drafts'  => __( 'Waiting for you', 'interlink-engine' ),
+			// "Campaigns needing approval", not "Waiting for you". The old
+			// label said something was owed but never what — and the thing a
+			// person most needs to know before clicking is that approving is
+			// the moment credits are spent.
+			'drafts'  => __( 'Campaigns needing approval', 'interlink-engine' ),
 			'done'    => __( 'Completed', 'interlink-engine' ),
 			'new'     => __( 'New campaign', 'interlink-engine' ),
 		);
@@ -463,7 +725,7 @@ class IE_Admin {
 	private static function render_drafts_tab( $drafts ) {
 		if ( empty( $drafts ) ) {
 			?>
-			<p><?php esc_html_e( 'Nothing waiting. A campaign appears here once it is planned, and stays until you approve it.', 'interlink-engine' ); ?></p>
+			<p><?php esc_html_e( 'Nothing needs approval. A campaign appears here once it is planned, and stays until you approve it.', 'interlink-engine' ); ?></p>
 			<p>
 				<a class="button" href="<?php echo esc_url( self::tab_url( 'new' ) ); ?>">
 					<?php esc_html_e( 'Plan a campaign', 'interlink-engine' ); ?>
@@ -581,6 +843,10 @@ class IE_Admin {
 			.ie-pill-sched{color:#1a5d8a;background:#e4eff7}
 			.ie-pill-wait{color:#7a5c00;background:#fbf3d8}
 			.ie-pill-late{color:#8a1f1f;background:#fbeaea}
+			/* GREY, NOT RED. "Post deleted" is usually the owner's own doing
+			   and needs no alarm — and it must not look like Overdue, which
+			   is the alarm and means something entirely different. */
+			.ie-pill-gone{color:#50575e;background:#e9eaec}
 			.ie-pill-done{color:#4b5563;background:#eceef0}
 			/* widefat sets display on cells, so the hidden attribute alone
 			   is not reliably enough to hide a column here. */
@@ -685,7 +951,17 @@ class IE_Admin {
 						<?php endif; ?>
 					</td>
 					<td>
-						<?php if ( $row['post_id'] ) : ?>
+						<?php
+						/* NOT A LINK WHEN THE POST IS GONE.
+						 *
+						 * get_edit_post_link() returns null for a post that
+						 * does not exist, esc_url( null ) is '', and the row
+						 * then rendered <a href="">Topic</a> — a link that
+						 * looks live, and reloads the same page when clicked.
+						 * Somebody clicking it learns nothing at all, which is
+						 * worse than it plainly not being clickable. */
+						?>
+						<?php if ( $row['post_id'] && empty( $row['deleted'] ) ) : ?>
 							<a href="<?php echo esc_url( get_edit_post_link( $row['post_id'] ) ); ?>">
 								<?php echo esc_html( $row['topic'] ); ?>
 							</a>
@@ -701,7 +977,12 @@ class IE_Admin {
 						// the table underneath called "waiting to collect" —
 						// one screen, one post, two names.
 						?>
-						<?php if ( $row['overdue'] ) : ?>
+						<?php if ( ! empty( $row['deleted'] ) ) : ?>
+							<?php /* Checked FIRST. A deleted post must never reach the
+							        Overdue branch below, which is the WP-Cron alarm. */ ?>
+							<span class="ie-pill ie-pill-gone"
+							      title="<?php esc_attr_e( 'The post this row refers to no longer exists on this site. It was deleted, or moved to Trash. Nothing will publish for it.', 'interlink-engine' ); ?>"><?php esc_html_e( 'Post deleted', 'interlink-engine' ); ?></span>
+						<?php elseif ( $row['overdue'] ) : ?>
 							<?php // Scheduled, date passed, still not public. WP-Cron has not run. ?>
 							<span class="ie-pill ie-pill-late"><?php esc_html_e( 'Overdue', 'interlink-engine' ); ?></span>
 						<?php elseif ( 'scheduled' === $row['status'] ) : ?>
@@ -726,8 +1007,22 @@ class IE_Admin {
 		// half they were actually asking about.
 		$scheduled = 0;
 		$live      = 0;
+		$gone      = 0;
 
 		foreach ( $campaign['slots'] as $slot ) {
+			/* A DELETED POST COUNTS AS NEITHER.
+			 *
+			 * This heading read "6 of 6 scheduled, 1 live, publishing on
+			 * schedule" for a campaign whose posts had all been deleted. Every
+			 * number in it came from the stored slot status, which no longer
+			 * described anything real — and the sentence sent us looking for a
+			 * publishing fault for an evening. A count that cannot be true is
+			 * worse than no count. */
+			if ( IE_Campaigns::post_missing( $slot ) ) {
+				$gone++;
+				continue;
+			}
+
 			if ( 'published' === $slot['status'] ) {
 				$live++;
 				$scheduled++;
@@ -740,16 +1035,51 @@ class IE_Admin {
 		?>
 		<div class="card" style="max-width:none;padding:1rem 1.25rem;margin-bottom:1.25rem">
 			<h2 style="margin-top:0">
-				<?php echo esc_html( $campaign['label'] ? $campaign['label'] : $campaign['target_page']['title'] ); ?>
+				<?php echo esc_html( IE_Campaigns::label_of( $campaign ) ); ?>
 				<span style="font-weight:400;color:#666">
 					— <?php echo esc_html( sprintf(
 						/* translators: 1: posts on the site, 2: total, 3: how many are public */
 						__( '%1$d of %2$d scheduled, %3$d live', 'interlink-engine' ),
 						$scheduled, count( $campaign['slots'] ), $live
 					) ); ?>,
-					<?php echo esc_html( 'draft' === $campaign['publish_mode'] ? __( 'saving as drafts', 'interlink-engine' ) : __( 'publishing on schedule', 'interlink-engine' ) ); ?>
+					<?php if ( $gone ) : ?>
+						<?php
+						/* Said here rather than only on the rows, because the
+						 * heading is the line somebody reads before deciding
+						 * whether anything is wrong. "publishing on schedule"
+						 * under a table of dead rows is the sentence that sent
+						 * us hunting a scheduler fault. */
+						echo esc_html( sprintf(
+							/* translators: %d: how many of this campaign's posts no longer exist */
+							_n( '%d post deleted', '%d posts deleted', $gone, 'interlink-engine' ),
+							$gone
+						) );
+						?>
+					<?php else : ?>
+						<?php echo esc_html( 'draft' === $campaign['publish_mode'] ? __( 'saving as drafts', 'interlink-engine' ) : __( 'publishing on schedule', 'interlink-engine' ) ); ?>
+					<?php endif; ?>
 				</span>
 			</h2>
+
+			<?php if ( $gone ) : ?>
+				<?php
+				/* THE EXPLANATION, ONCE, IN PLAIN WORDS.
+				 *
+				 * A pill on a row says what is true; this says what to do
+				 * about it. Without it the owner knows a post is gone and
+				 * still has no idea whether the campaign is broken, whether
+				 * they were charged again, or what to press. */
+				?>
+				<div class="notice notice-warning inline" style="margin:.5rem 0 1rem">
+					<p style="margin:.5rem 0">
+						<strong><?php esc_html_e( 'Some of this campaign’s posts are no longer on the site.', 'interlink-engine' ); ?></strong>
+						<?php esc_html_e( 'They were deleted, or moved to Trash. Nothing further will publish for those rows, and this is not a fault with the schedule — the rest of the campaign is unaffected.', 'interlink-engine' ); ?>
+					</p>
+					<p style="margin:.5rem 0">
+						<?php esc_html_e( 'If you deleted them on purpose, use “Remove campaign” to clear the record. If it was a mistake, check Trash — a restored post keeps its place here.', 'interlink-engine' ); ?>
+					</p>
+				</div>
+			<?php endif; ?>
 
 			<p style="margin-top:0">
 				<?php esc_html_e( 'Feeding:', 'interlink-engine' ); ?>
@@ -811,9 +1141,11 @@ class IE_Admin {
 				</thead>
 				<tbody>
 				<?php foreach ( $campaign['slots'] as $slot ) : ?>
+					<?php $slot_gone = IE_Campaigns::post_missing( $slot ); ?>
 					<tr>
 						<td>
-							<?php if ( $slot['post_id'] ) : ?>
+							<?php // Not a link when there is nothing behind it — see the same guard in "Coming up". ?>
+							<?php if ( $slot['post_id'] && ! $slot_gone ) : ?>
 								<a href="<?php echo esc_url( get_edit_post_link( $slot['post_id'] ) ); ?>"><?php echo esc_html( $slot['topic'] ); ?></a>
 							<?php else : ?>
 								<?php echo esc_html( $slot['topic'] ); ?>
@@ -843,8 +1175,15 @@ class IE_Admin {
 							 *
 							 * So: Live, Scheduled, Arriving, Overdue, Failed.
 							 */
-							if ( 'published' === $slot['status'] ) :
+							/* Deleted is checked BEFORE the stored status, because
+							 * the stored status is exactly what cannot be trusted
+							 * once the post is gone: it still says 'published' or
+							 * 'scheduled' and will say so forever. */
+							if ( $slot_gone ) :
 								?>
+								<span class="ie-pill ie-pill-gone"
+								      title="<?php esc_attr_e( 'The post this row refers to no longer exists on this site. It was deleted, or moved to Trash. Nothing will publish for it.', 'interlink-engine' ); ?>"><?php esc_html_e( 'Post deleted', 'interlink-engine' ); ?></span>
+							<?php elseif ( 'published' === $slot['status'] ) : ?>
 								<span class="ie-pill ie-pill-live"><?php esc_html_e( 'Live', 'interlink-engine' ); ?></span>
 							<?php elseif ( 'scheduled' === $slot['status'] ) : ?>
 								<?php
@@ -886,7 +1225,19 @@ class IE_Admin {
 							 * plan, not just when it happens.
 							 */
 							?>
-							<?php if ( 'scheduled' === $slot['status'] ) : ?>
+							<?php
+							/* AND NOT WHEN THE POST IS GONE.
+							 *
+							 * $slot['status'] still says 'scheduled' for a
+							 * deleted post — that stored status is exactly what
+							 * stops being true — so gating on it alone offered
+							 * "Publish early" on six rows with nothing behind
+							 * them. Pressing it would have reported success:
+							 * wp_update_post() on a missing id returns 0 rather
+							 * than a WP_Error, so the handler's is_wp_error()
+							 * check waves it straight through. */
+							?>
+							<?php if ( 'scheduled' === $slot['status'] && ! $slot_gone ) : ?>
 								<a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_publish_now&campaign=' . rawurlencode( $campaign['id'] ) . '&slot=' . (int) $slot['index'] ), 'ie_publish_now' ) ); ?>"
 								   onclick="return confirm('<?php echo esc_js( __( 'Publish this one now? It will be dated today instead of its planned day.', 'interlink-engine' ) ); ?>')">
 									<?php esc_html_e( 'Publish early', 'interlink-engine' ); ?>
@@ -971,7 +1322,7 @@ class IE_Admin {
 			$approved = ! empty( $campaign['batch_started'] );
 
 			/**
-			 * A stopped campaign offers neither button.
+			 * A paused campaign offers neither button.
 			 *
 			 * run_campaign() already refuses one that is not active, so pressing
 			 * it would be harmless — but it returns a skip rather than an error,
@@ -1076,20 +1427,117 @@ class IE_Admin {
 						<?php esc_html_e( 'Resume campaign', 'interlink-engine' ); ?>
 					</a>
 					<span class="description">
-						<?php esc_html_e( 'Held posts go back on the schedule, each moved forward by however long the campaign was stopped.', 'interlink-engine' ); ?>
+						<?php esc_html_e( 'Held posts go back on the schedule, each moved forward by however long the campaign was paused.', 'interlink-engine' ); ?>
 					</span>
+
+					<?php
+					/* THE BUTTON FOR THE COMMON CASE, and the reason "Remove
+					 * campaign" no longer has to be two things at once.
+					 *
+					 * Pausing a campaign and deciding the rest of it is wrong
+					 * is ordinary. Doing it by hand means finding eight drafts
+					 * among however many posts the site has, and being sure
+					 * none of them is something else. This touches only the
+					 * posts that have not published, so the worst it can do is
+					 * bin content nobody has ever read — and even that goes to
+					 * Trash. */
+					$ie_held = IE_Publisher::count_campaign_posts( $campaign['id'] );
+					?>
+					<?php if ( $ie_held['drafts'] > 0 ) : ?>
+						<a class="button"
+						   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_delete_drafts&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_delete_drafts' ) ); ?>"
+						   onclick="return confirm('<?php echo esc_js( sprintf(
+								/* translators: %d: number of unpublished posts */
+								_n(
+									'Send %d post that has not published to Trash? Posts already on your site stay exactly where they are.',
+									'Send %d posts that have not published to Trash? Posts already on your site stay exactly where they are.',
+									$ie_held['drafts'],
+									'interlink-engine'
+								),
+								$ie_held['drafts']
+							) ); ?>')">
+							<?php echo esc_html( sprintf(
+								/* translators: %d: number of unpublished posts */
+								_n( 'Delete the %d remaining draft', 'Delete the %d remaining drafts', $ie_held['drafts'], 'interlink-engine' ),
+								$ie_held['drafts']
+							) ); ?>
+						</a>
+						<span class="description">
+							<?php esc_html_e( 'The published articles stay on your site.', 'interlink-engine' ); ?>
+						</span>
+					<?php endif; ?>
 				<?php else : ?>
 					<a class="button"
 					   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_pause_campaign&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_pause_campaign' ) ); ?>"
-					   onclick="return confirm('<?php echo esc_js( __( 'Stop this campaign? Scheduled posts are held back as drafts and nothing new is written. Posts already published stay up.', 'interlink-engine' ) ); ?>')">
-						<?php esc_html_e( 'Stop publishing', 'interlink-engine' ); ?>
+					   onclick="return confirm('<?php echo esc_js( __( 'Pause this campaign? Scheduled posts are held back as drafts and nothing new is written. Posts already published stay up.', 'interlink-engine' ) ); ?>')">
+						<?php esc_html_e( 'Pause campaign', 'interlink-engine' ); ?>
 					</a>
 				<?php endif; ?>
 
+				<?php
+				/* REMOVE MEANS REMOVE NOW, AND IT DID NOT USED TO.
+				 *
+				 * It deleted the plugin's record and left every post where it
+				 * was — so a campaign "removed" halfway went on publishing on
+				 * schedule, and its old confirmation said so: "Posts already
+				 * written stay exactly where they are." That is not what
+				 * anybody presses this for. The reason to remove a campaign is
+				 * that its articles were wrong; a button that keeps the wrong
+				 * articles and only forgets how to manage them is the one
+				 * outcome nobody wanted.
+				 *
+				 * Keeping the published posts is now Pause campaign, plus the
+				 * button above for the drafts. This one does the other thing,
+				 * properly, and says exactly what it is about to do.
+				 *
+				 * TWO DIALOGS, NOT A CHECKBOX. A checkbox left unticked is a
+				 * destructive action that quietly did not happen — the user
+				 * walks away believing the articles are gone. Both dialogs name
+				 * the same counts, so the second is a real second look rather
+				 * than a formality. Counted at RENDER time for the wording and
+				 * again at DELETION time for the work, because the numbers in
+				 * a dialog are a claim and the numbers in the bin are a fact. */
+				$ie_doomed = IE_Publisher::count_campaign_posts( $campaign['id'] );
+
+				$ie_what = sprintf(
+					/* translators: 1: number of published articles, 2: number of unpublished posts */
+					__( '%1$s and %2$s', 'interlink-engine' ),
+					sprintf(
+						/* translators: %d: number of published articles */
+						_n( '%d published article', '%d published articles', $ie_doomed['published'], 'interlink-engine' ),
+						$ie_doomed['published']
+					),
+					sprintf(
+						/* translators: %d: number of unpublished posts */
+						_n( '%d draft', '%d drafts', $ie_doomed['drafts'], 'interlink-engine' ),
+						$ie_doomed['drafts']
+					)
+				);
+
+				$ie_first = sprintf(
+					/* translators: 1: campaign name, 2: e.g. "4 published articles and 8 drafts" */
+					__( 'Remove "%1$s"? This moves %2$s to Trash. You can restore them from Trash for 30 days.', 'interlink-engine' ),
+					/* STRIPPED, because this ends up inside an onclick attribute.
+					 * esc_js() escapes quotes and ampersands but leaves < and >
+					 * alone — correct for a JS string, and it still puts a raw
+					 * "<script>" into the page when a campaign is labelled with
+					 * one. Harmless where it lands, and not something to leave
+					 * lying around in a page this plugin renders. The label is a
+					 * name; it has no business carrying markup. */
+					wp_strip_all_tags( IE_Campaigns::label_of( $campaign ) ),
+					$ie_what
+				);
+
+				$ie_second = sprintf(
+					/* translators: %s: e.g. "4 published articles and 8 drafts" */
+					__( 'Are you sure you want to send %s to Trash?', 'interlink-engine' ),
+					$ie_what
+				);
+				?>
 				<a class="button-link-delete" style="margin-left:auto"
 				   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_delete_campaign&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_delete_campaign' ) ); ?>"
-				   onclick="return confirm('<?php echo esc_js( __( 'Remove this campaign? Posts already written stay exactly where they are.', 'interlink-engine' ) ); ?>')">
-					<?php esc_html_e( 'Remove campaign', 'interlink-engine' ); ?>
+				   onclick="return confirm('<?php echo esc_js( $ie_first ); ?>') && confirm('<?php echo esc_js( $ie_second ); ?>')">
+					<?php esc_html_e( 'Remove campaign and its articles', 'interlink-engine' ); ?>
 				</a>
 			</p>
 		</div>
@@ -1368,10 +1816,31 @@ class IE_Admin {
 			<p class="submit">
 				<button type="submit" name="action" value="ie_suggest" class="button"
 					data-busy="<?php esc_attr_e( 'Asking for topics…', 'interlink-engine' ); ?>">
-					<?php echo $topics
-						? esc_html__( 'Suggest different topics', 'interlink-engine' )
+					<?php
+					/* "DIFFERENT" SAID REPLACE, AND IT USED TO MEAN IT. The
+					 * button adds now, so the label says add — and carries the
+					 * running total, because the number of topics IS the size
+					 * of the campaign and the price of approving it. */
+					echo $topics
+						? esc_html( sprintf(
+							/* translators: 1: how many more, 2: how many there are now */
+							__( 'Add %1$d more topics (%2$d so far)', 'interlink-engine' ),
+							self::SUGGEST_BATCH,
+							count( $topics )
+						) )
 						: esc_html__( 'Suggest topics for me', 'interlink-engine' ); ?>
 				</button>
+				<?php if ( $topics && count( $topics ) < self::MAX_TOPICS ) : ?>
+					<span class="description" style="margin-left:.5rem">
+						<?php
+						echo esc_html( sprintf(
+							/* translators: %d: the maximum topics per campaign */
+							__( 'Press again for more, up to %d — a weekly post for a year.', 'interlink-engine' ),
+							self::MAX_TOPICS
+						) );
+						?>
+					</span>
+				<?php endif; ?>
 
 				<?php
 				/**
@@ -1660,31 +2129,65 @@ class IE_Admin {
 			self::redirect( 'interlink-engine', 'error', __( 'Choose a page for the campaign to feed.', 'interlink-engine' ), array( 'tab' => 'new' ) );
 		}
 
-		// Topics already on screen are what NOT to propose again, so pressing
-		// the button twice gives a different set rather than the same one.
-		$draft = self::draft();
-		$avoid = array();
-		if ( $draft && ! empty( $draft['topics'] ) ) {
-			$avoid = wp_list_pluck( $draft['topics'], 'topic' );
-		}
+		/* THE BUTTON ADDS. IT USED TO REPLACE.
+		 *
+		 * Pressing it twice threw away the first six topics and put six new
+		 * ones in their place. The only way to reach a year of posts was to
+		 * write all fifty-two by hand, which is the work this button exists
+		 * to avoid — and nothing on screen said the first set was about to go.
+		 *
+		 * FROM THE FORM, NOT FROM THE STORED DRAFT. collect_topics() reads
+		 * what is actually on screen, so edits and unticked rows survive the
+		 * press. Reading the transient instead would quietly restore topics
+		 * the owner had just corrected or removed.
+		 */
+		$existing = self::collect_topics();
+		$avoid    = wp_list_pluck( $existing, 'topic' );
 
-		$result = IE_Api::suggest( self::target_page_payload( $form ), 6, $avoid );
+		/* TWELVE, WHICH IS ALL THE SERVER WILL GIVE AT ONCE. Asking for six
+		 * when twelve are available made a year's plan nine presses instead
+		 * of five, for no reason anyone chose. */
+		$result = IE_Api::suggest( self::target_page_payload( $form ), self::SUGGEST_BATCH, $avoid );
 
 		if ( is_wp_error( $result ) ) {
 			self::redirect( 'interlink-engine', 'error', $result->get_error_message(), array( 'tab' => 'new' ) );
 		}
 
+		$merged = self::merge_topics(
+			$existing,
+			isset( $result['topics'] ) ? $result['topics'] : array()
+		);
+
+		$topics = $merged['topics'];
+		$added  = $merged['added'];
+		$capped = $merged['capped'];
+
 		set_transient(
 			self::DRAFT_TRANSIENT . get_current_user_id(),
 			array(
 				'form'     => $form,
-				'topics'   => isset( $result['topics'] ) ? $result['topics'] : array(),
+				'topics'   => $topics,
 				'warnings' => isset( $result['warnings'] ) ? $result['warnings'] : array(),
 			),
 			DAY_IN_SECONDS
 		);
 
-		self::redirect( 'interlink-engine', 'suggested', '' );
+		if ( $capped ) {
+			self::redirect( 'interlink-engine', 'suggested', sprintf(
+				/* translators: %d: the maximum number of topics */
+				__( 'That is %d topics, which is as many as one campaign takes.', 'interlink-engine' ),
+				self::MAX_TOPICS
+			), array( 'tab' => 'new' ) );
+		}
+
+		self::redirect( 'interlink-engine', 'suggested', sprintf(
+			/* translators: 1: topics just added, 2: total now on screen */
+			_n( '%1$d topic added — %2$d in this campaign so far.',
+				'%1$d topics added — %2$d in this campaign so far.',
+				count( $added ), 'interlink-engine' ),
+			count( $added ),
+			count( $topics )
+		), array( 'tab' => 'new' ) );
 	}
 
 	public static function handle_create_campaign() {
@@ -1803,6 +2306,67 @@ class IE_Admin {
 	}
 
 	/**
+	 * Fold newly suggested topics into the ones already on screen.
+	 *
+	 * PURE, AND SEPARATED FOR THAT REASON. Everything around it needs the
+	 * whole of wp-admin to run; this is the part with the decisions in it, so
+	 * it is a function that takes two arrays and returns a third and can be
+	 * tested by wp-plugin/test-topic-merge.php without WordPress at all.
+	 *
+	 * THREE RULES:
+	 *
+	 *   ADD, NEVER REPLACE. The button used to throw away the topics already
+	 *   on screen, so the only route to a year of posts was to type all
+	 *   fifty-two by hand — the exact work the button exists to avoid.
+	 *
+	 *   NO DUPLICATES, case-insensitively. The server is ASKED to avoid what
+	 *   is on screen, but a request is not a guarantee, and two rows with the
+	 *   same topic become two posts competing for one search.
+	 *
+	 *   A CEILING, BECAUSE THIS SPENDS MONEY. Every topic becomes a post that
+	 *   costs credits on approval, and the button is easy to lean on.
+	 *
+	 * @return array{topics: array, added: array, capped: bool}
+	 */
+	public static function merge_topics( $existing, $fresh ) {
+		$existing = is_array( $existing ) ? array_values( $existing ) : array();
+		$fresh    = is_array( $fresh ) ? $fresh : array();
+
+		$seen = array();
+		foreach ( $existing as $row ) {
+			if ( ! empty( $row['topic'] ) ) {
+				$seen[] = strtolower( trim( $row['topic'] ) );
+			}
+		}
+
+		$added = array();
+
+		foreach ( $fresh as $row ) {
+			$topic = isset( $row['topic'] ) ? trim( (string) $row['topic'] ) : '';
+
+			if ( '' === $topic || in_array( strtolower( $topic ), $seen, true ) ) {
+				continue;
+			}
+
+			$seen[]  = strtolower( $topic );
+			$added[] = $row;
+		}
+
+		$topics = array_merge( $existing, $added );
+		$capped = count( $topics ) > self::MAX_TOPICS;
+
+		if ( $capped ) {
+			// Kept from the FRONT. The earlier topics are the ones the owner
+			// has already looked at and possibly edited; dropping those and
+			// keeping the newest arrivals would discard their work.
+			$topics = array_slice( $topics, 0, self::MAX_TOPICS );
+			$added  = array_slice( $added, 0, max( 0, self::MAX_TOPICS - count( $existing ) ) );
+		}
+
+		return array( 'topics' => $topics, 'added' => $added, 'capped' => $capped );
+	}
+
+	/**
 	 * Topics from whichever form was on screen.
 	 *
 	 * The edit table when suggestions were shown, the textarea otherwise. The
@@ -1917,13 +2481,13 @@ class IE_Admin {
 			self::redirect_error( 'interlink-engine', $result, 'drafts' );
 		}
 
-		// A stopped campaign. run_campaign() returns a skip rather than an
+		// A paused campaign. run_campaign() returns a skip rather than an
 		// error, and the branches below would report "0 posts added" to
 		// somebody who had just asked for posts. The button is hidden while a
-		// campaign is stopped, so reaching here means a stale tab or a
+		// campaign is paused, so reaching here means a stale tab or a
 		// bookmarked URL — which is exactly when a clear sentence matters.
 		if ( ! empty( $result['skipped'] ) ) {
-			self::redirect( 'interlink-engine', 'error', __( 'That campaign is stopped. Resume it first.', 'interlink-engine' ) );
+			self::redirect( 'interlink-engine', 'error', __( 'That campaign is paused. Resume it first.', 'interlink-engine' ) );
 		}
 
 		// Still writing. Not a failure, and said plainly so nobody presses the
@@ -1964,6 +2528,24 @@ class IE_Admin {
 			self::redirect( 'interlink-engine', 'error', __( 'That post could not be found.', 'interlink-engine' ) );
 		}
 
+		/* THE SLOT HAVING AN ID IS NOT THE SAME AS THE POST EXISTING.
+		 *
+		 * A deleted post leaves its id behind on the slot, so the check above
+		 * passes and publish_now() runs against nothing. wp_update_post()
+		 * answers 0 for a missing id — not a WP_Error — so the is_wp_error()
+		 * test below lets it through and the owner is told the post was
+		 * published. It was not, and there is nothing to publish.
+		 *
+		 * The link is no longer rendered for these rows, but this URL is
+		 * reachable by hand and by an old browser tab. */
+		if ( IE_Campaigns::post_missing( $found[1] ) ) {
+			self::redirect(
+				'interlink-engine',
+				'error',
+				__( 'That post no longer exists on this site — it was deleted, or moved to Trash.', 'interlink-engine' )
+			);
+		}
+
 		// publish_now(), not wp_publish_post(): this post is dated in the future
 		// and the owner is choosing to publish it early, so the date has to move
 		// to now — otherwise it goes live claiming to be from next Thursday.
@@ -1999,8 +2581,8 @@ class IE_Admin {
 		self::redirect( 'interlink-engine', 'paused', sprintf(
 			/* translators: %d: number of scheduled posts held back as drafts */
 			_n(
-				'Campaign stopped. %d scheduled post was held as a draft.',
-				'Campaign stopped. %d scheduled posts were held as drafts.',
+				'Campaign paused. %d scheduled post was held as a draft.',
+				'Campaign paused. %d scheduled posts were held as drafts.',
 				(int) $held,
 				'interlink-engine'
 			),
@@ -2023,8 +2605,8 @@ class IE_Admin {
 		self::redirect( 'interlink-engine', 'resumed', sprintf(
 			/* translators: %d: number of posts put back on the schedule */
 			_n(
-				'Campaign resumed. %d post is scheduled again, moved forward by the time it was stopped.',
-				'Campaign resumed. %d posts are scheduled again, moved forward by the time it was stopped.',
+				'Campaign resumed. %d post is scheduled again, moved forward by the time it was paused.',
+				'Campaign resumed. %d posts are scheduled again, moved forward by the time it was paused.',
 				(int) $released,
 				'interlink-engine'
 			),
@@ -2037,9 +2619,166 @@ class IE_Admin {
 		self::require_caps();
 
 		$campaign_id = isset( $_GET['campaign'] ) ? sanitize_text_field( wp_unslash( $_GET['campaign'] ) ) : '';
-		IE_Campaigns::delete( $campaign_id );
 
-		self::redirect( 'interlink-engine', 'removed', '' );
+		/* TELL THE SERVER FIRST, THEN DELETE.
+		 *
+		 * The other way round loses the id: IE_Campaigns::delete() takes the
+		 * record with it, and the server's campaign id lives inside that
+		 * record. There would be nothing left to report.
+		 *
+		 * The call cannot fail this handler. IE_Api::removed() swallows its
+		 * own errors and logs them — a site that is offline, or whose licence
+		 * has been revoked, must still be able to remove a campaign from its
+		 * own screen. See the comment on that method. */
+		/* The sequence lives in IE_Publisher::remove_campaign(), not here: the
+		 * order of those four steps is load-bearing and a handler cannot be
+		 * tested — it checks a nonce, checks capabilities and ends in a
+		 * redirect. See the note on that function. */
+		$trashed = IE_Publisher::remove_campaign( $campaign_id );
+
+		self::redirect( 'interlink-engine', 'removed', sprintf(
+			/* translators: 1: number of published articles, 2: number of unpublished posts */
+			__( '%1$s and %2$s moved to Trash. You can restore them for 30 days.', 'interlink-engine' ),
+			sprintf(
+				/* translators: %d: number of published articles */
+				_n( '%d published article', '%d published articles', $trashed['published'], 'interlink-engine' ),
+				$trashed['published']
+			),
+			sprintf(
+				/* translators: %d: number of unpublished posts */
+				_n( '%d draft', '%d drafts', $trashed['drafts'], 'interlink-engine' ),
+				$trashed['drafts']
+			)
+		) );
+	}
+
+	/**
+	 * Throw away the posts of a paused campaign that never published.
+	 *
+	 * The safe half of the pair. Everything the public can already read is
+	 * left alone, which is what lets this sit on the card behind one dialog
+	 * rather than two.
+	 */
+	/**
+	 * Go back and finish the link swaps that never happened.
+	 *
+	 * The work is IE_Publisher::repair_links(); this only reports it. The
+	 * numbers matter, because "it worked" tells nobody whether anything was
+	 * actually wrong — and the honest answer is often zero, which is good news
+	 * and has to read like it.
+	 */
+	public static function handle_repair_links() {
+		check_admin_referer( 'ie_repair_links' );
+		self::require_caps();
+
+		$tab = isset( $_GET['tab'] ) ? sanitize_text_field( wp_unslash( $_GET['tab'] ) ) : 'running';
+		if ( ! in_array( $tab, array( 'running', 'drafts', 'done', 'new' ), true ) ) {
+			$tab = 'running';
+		}
+
+		$stats = IE_Publisher::repair_links();
+
+		if ( ! $stats['restored'] && ! $stats['unwrapped'] ) {
+			self::redirect( 'interlink-engine', 'repaired',
+				__( 'Nothing to repair — every link between your posts is already in place.', 'interlink-engine' ),
+				array( 'tab' => $tab ) );
+		}
+
+		$parts = array();
+
+		if ( $stats['restored'] ) {
+			$parts[] = sprintf(
+				/* translators: 1: number of links, 2: number of posts */
+				_n( '%1$d link restored across %2$d post', '%1$d links restored across %2$d posts', $stats['restored'], 'interlink-engine' ),
+				$stats['restored'], $stats['posts']
+			);
+		}
+
+		if ( $stats['unwrapped'] ) {
+			$parts[] = sprintf(
+				/* translators: %d: number of placeholders removed */
+				_n(
+					'%d placeholder was waiting for a post that no longer exists, and has been removed',
+					'%d placeholders were waiting for posts that no longer exist, and have been removed',
+					$stats['unwrapped'],
+					'interlink-engine'
+				),
+				$stats['unwrapped']
+			);
+		}
+
+		$message = implode( ', and ', $parts ) . '.';
+
+		/* NAME THE POSTS. Unwrapping is correct and still costs a link that
+		 * was planned — the article now has one fewer route out of it. The
+		 * plugin cannot write the replacement: the anchor text was chosen to
+		 * describe the post that never arrived, so pointing it anywhere else
+		 * gives a link whose words promise one article and deliver another.
+		 * A person can write that sentence. So say which post needs one. */
+		if ( ! empty( $stats['short'] ) ) {
+			$named = array();
+
+			foreach ( $stats['short'] as $title => $suggestion ) {
+				$named[] = $suggestion
+					? sprintf(
+						/* translators: 1: the post that lost a link, 2: the post to link it to */
+						__( '"%1$s" — linking it to "%2$s" would close the ring', 'interlink-engine' ),
+						$title, $suggestion
+					)
+					: sprintf(
+						/* translators: %s: the post that lost a link */
+						__( '"%s"', 'interlink-engine' ),
+						$title
+					);
+			}
+
+			$message .= ' ' . sprintf(
+				/* translators: %s: list of posts, each with a suggested target */
+				_n(
+					'This post is now one internal link lighter: %s.',
+					'These posts are now one internal link lighter: %s.',
+					count( $named ),
+					'interlink-engine'
+				),
+				implode( '; ', $named )
+			);
+		}
+
+		self::redirect( 'interlink-engine', 'repaired', $message, array( 'tab' => $tab ) );
+	}
+
+	public static function handle_delete_drafts() {
+		check_admin_referer( 'ie_delete_drafts' );
+		self::require_caps();
+
+		$campaign_id = isset( $_GET['campaign'] ) ? sanitize_text_field( wp_unslash( $_GET['campaign'] ) ) : '';
+
+		// abandon_remaining(), not delete_remaining_drafts(): throwing away
+		// what is left also ends the campaign, and leaving it Paused for ever
+		// with nothing to resume was the gap this closes.
+		$gone = IE_Publisher::abandon_remaining( $campaign_id );
+
+		// Same reason as above: the report is queued by the trash hook and
+		// would otherwise wait for shutdown. Here the record survives, so it
+		// would in fact still work — flushed anyway so the two paths cannot
+		// come to differ, which is how the first one broke.
+		IE_Publisher::flush_deleted_reports();
+
+		if ( ! $gone ) {
+			self::redirect( 'interlink-engine', 'drafts-deleted',
+				__( 'Nothing left to delete — every post in this campaign has published.', 'interlink-engine' ) );
+		}
+
+		self::redirect( 'interlink-engine', 'drafts-deleted', sprintf(
+			/* translators: %d: number of posts moved to Trash */
+			_n(
+				'%d post that had not published moved to Trash. Your published articles are untouched, and the campaign is now closed.',
+				'%d posts that had not published moved to Trash. Your published articles are untouched, and the campaign is now closed.',
+				$gone,
+				'interlink-engine'
+			),
+			$gone
+		) );
 	}
 
 	/* --------------------------------------------------------------------
@@ -2165,7 +2904,14 @@ class IE_Admin {
 			// collect themselves. The old wording left people watching a
 			// static page wondering when to press something.
 			'writing'   => array( 'info', __( 'Writing your posts now — about a minute each. They will appear on their own; you do not need to do anything, and you can leave this page.', 'interlink-engine' ) ),
-			'removed'   => array( 'success', __( 'Campaign removed. The posts it wrote are untouched.', 'interlink-engine' ) ),
+			/* The headline is empty on purpose for both of these: the handler
+			 * passes the counts it actually trashed, and a fixed sentence above
+			 * them would either repeat that or contradict it. The old wording
+			 * here — "The posts it wrote are untouched" — is exactly what this
+			 * button no longer does. */
+			'removed'        => array( 'success', '' ),
+			'drafts-deleted' => array( 'success', '' ),
+			'repaired'       => array( 'success', '' ),
 			'discarded' => array( 'info', __( 'Draft topics discarded.', 'interlink-engine' ) ),
 			'error'     => array( 'error', __( 'That did not work.', 'interlink-engine' ) ),
 			// Deliberately not phrased as a failure. Nothing broke and nothing
@@ -2173,6 +2919,12 @@ class IE_Admin {
 			// waiting. Saying "that did not work" about a topped-up balance
 			// away would read as a bug in the plugin.
 			'credits'   => array( 'warning', __( 'Not enough credits to write this campaign.', 'interlink-engine' ) ),
+			// EMPTY HEADLINE ON PURPOSE. Every other entry here is a fixed
+			// sentence with an optional detail appended, but this one has two
+			// entirely different outcomes — "3 campaigns updated" and
+			// "everything is still on the site" — and neither is a suffix to
+			// a shared opening. The handler sends the whole sentence.
+			'checked'   => array( 'success', '' ),
 		);
 
 		if ( ! isset( $map[ $status ] ) ) {

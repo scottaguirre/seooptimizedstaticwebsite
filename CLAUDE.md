@@ -141,6 +141,19 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
     node test-email-html.js        # the HTML email body and its escaping
+    node test-blog-report.js       # /blog-report and its CSV; stubs express + the models
+    node test-campaign-reconcile.js # markMissingRemoved: the grace window and the site scope
+    node test-blog-sites-delete.js # removing a revoked licence; revoked + no campaigns only
+    node test-licence-binding.js   # one licence one site; the URL check and old-plugin safety
+
+    php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
+    php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
+
+The two PHP suites run in `deploy.sh` behind a `command -v php` check, and when
+php is absent it says **"SKIPPED, not passed"** — a check that did not happen
+must never read as one that did. `test-deleted-posts.php` spent its whole life
+outside that loop because the loop runs `node "$suite"`, so it ran on the days
+somebody remembered.
 
     node test-blog-api.js          # needs NOTHING — no database, no network
     node test-blog-scheduler.js    # runs; only its findWork section needs MONGO_URI
@@ -223,6 +236,54 @@ these to a live site for the first time:
 Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
 
 ## Outstanding
+
+**From the 27–28 September sessions**
+
+*The blog report headline.* It counts posts under removed campaigns as
+published — 26 of 48 on roofingamerica, for a site carrying 12. Split it:
+`12 published · 36 under removed campaigns · 0 scheduled`. One number is being
+asked to describe two different things. Also: do not render links for those
+rows (they 404), and the footer paragraph still claims posts from a removed
+campaign "stay on the site", which is only true when the campaign alone was
+removed.
+
+*Filtering the blog report.* `?campaign=&site=&from=&to=&state=`, server side,
+**inside `rowsFor()`** so the CSV keeps matching the screen. Campaign name
+becomes a link that filters to it. Group by campaign. "removed" in red.
+Browser-side filtering is quicker to build and breaks the export.
+
+*Fifty campaigns in the plugin.* The Campaigns screen is card-based and does
+not scale. Group by the money page each campaign feeds — that hierarchy is
+already in the data — one row per campaign in a table, the card only on open,
+plus a filter box. Leave "Coming up" alone; it does not grow with campaign
+count.
+
+*Longer posts, links spread out.* `utils/blog/writePost.js` says "700-900
+words, in 3-5 sections" — move to 1000–1300 in 4–6, and move `qualityCheck.js`
+with it (it fails under 550, warns over 1400). **The link placement is not
+specified at all**: the prompt says each phrase must appear "EXACTLY ONCE,
+verbatim" and says nothing about where, so three links in one paragraph is not
+the model misbehaving. money → opening, prev → middle, next → final, no two in
+one paragraph — and **check it in qualityCheck.js**, which already verifies
+each wrapper exists but not where. An instruction with no check behind it is a
+hope.
+
+*`wp-plugin/test-admin-tabs.php` is dead.* 6 passing, 23 failing since a stub
+fell behind the code; not in `deploy.sh`, so nothing runs it. It is the only
+harness that can RENDER `class-ie-admin.php`, which is why two guards in
+`test-deleted-posts.php` are still source greps. **Fix it before reworking the
+Campaigns screen** — otherwise that rework has no net under it.
+
+*hilltophomeloans.net needs its own key.* It still holds key 1096 with a stale
+secret. Since 0.7.0 it gets a clear refusal instead of silence, but it needs
+minting, pasting, and updating to the current plugin (it was on 0.4.1).
+
+*DMARC reporting.* `_dmarc.threecomets.com` is `v=DMARC1; p=none` — valid, but
+with no `rua=` nobody sends the aggregate reports, so it monitors into a void.
+Add `rua=mailto:hello@threecomets.com` now that forwarding works. Unverified:
+Resend's DKIM was NXDOMAIN at `resend._domainkey` on both the root and
+`send.threecomets.com`; SPF and MX there are correctly Resend's, so the
+selector is probably just different — check their dashboard.
 
 **Keyword volumes in the wizard — next up, 23 September**
 
@@ -958,6 +1019,422 @@ looked at a single string, which is why all three shipped.
 "plumber near me" is a poor target for this field: "near me" is a modifier
 Google supplies, not part of the service. The guards stop the output being
 embarrassing; they do not make it a good choice.
+
+## One licence, two sites — 27–28 September 2026
+
+The most expensive bug in this system so far, and it had been running for
+eight days before anyone looked at a log.
+
+**What it did.** A licence key was pasted into a second WordPress. Activation
+mints a fresh secret on every call, so the second site worked immediately and
+the first one died — every request refused, for ever, with `Not authorised`
+and nothing else. The first site did not fail loudly. It failed invisibly:
+twelve "this post went live" callbacks rejected, the server's record quietly
+drifting from the site's, and a blog report claiming **26 published posts for
+a site carrying 12**.
+
+**How it was found.** Not by reasoning. By this:
+
+```
+ssh ubuntu@15.204.123.104 "grep -h 'blog.auth' /home/ubuntu/app/logs/app.log | tail -20"
+```
+
+`log.security` goes through pino to `logs/app.log`, **not** to pm2's stdout.
+`pm2 logs | grep blog.auth` returns nothing and looks like "no failures".
+
+One `badSignature` per day, on the exact days posts published, on
+`/api/blog/published`. That is the whole diagnosis, and it was sitting there
+the entire time.
+
+**Do not grep for `reason`.** The OpenAI usage logs contain
+`reasoning_tokens`, which drowns the signal. Ask for `blog.auth` instead.
+
+### The order of checks in requireSite is evidence
+
+Worth knowing, because it settled a question nothing else could:
+
+1. headers present → 2. site id shape → 3. timestamp → 4. clock skew →
+5. site exists → 6. **status is active** → 7. lockout → 8. **signature** →
+9. **site URL matches**
+
+A `site-revoked` refusal happens at step 6 and never reaches step 8. So a
+`badSignature` in the log **proves the site is active**. That is how the
+hilltophomeloans/roofingamerica muddle was untangled: the failing site id had
+to be the active row, whatever the label said.
+
+### siteUrl described a guard that did not exist
+
+`models/BlogSite.js` had said, since the day it was written:
+
+> Compared on every subsequent request: a signature valid for site A must not
+> authorise work against site B, even with the same licence key.
+
+`middleware/requireSite.js` never compared it. A comment describing a
+protection that does not exist is worse than no comment, because everybody who
+reads it stops looking.
+
+**`siteUrl` was written ONCE, at activation** (`routes/blogApiRoute.js`), and
+never checked again. So the row's label is a snapshot of whichever install
+activated last — which is why a row full of plumbing campaigns from
+roofingamerica.xyz was titled hilltophomeloans.net.
+
+### Cloning is the easy way to hit this
+
+You do not have to type the key. The site id and signing secret live in
+`wp_options`, so **duplicating a WordPress carries them**. Staging copies,
+backup restores onto a new domain, "let me clone this site as a template" —
+all of them silently produce two installs sharing one identity, and the one
+that activates last wins.
+
+### The fix, in plugin 0.7.0
+
+- `X-IL-Site-Url` on every request. The server compares it to the registered
+  domain and refuses a mismatch with **409**, naming the other site.
+- **Checked AFTER the signature.** That message is information; only a caller
+  already holding the secret may have it. Before the signature, it would be a
+  way to ask which domain any site id belongs to.
+- **A missing header is not a mismatch.** Plugins older than 0.7.0 send none,
+  and refusing them would break every existing customer on upgrade day. A fix
+  that is worse than the bug is not a fix.
+- Activation refuses to move a licence off a live site without an explicit
+  `moveSite` flag — the "this licence is moving from another site" tick box.
+  The refusal names the site that would be disconnected, so the box is never
+  the first anyone hears of it.
+- `Not authorised` is replaced, **in the plugin**, with what to do about it.
+  The server stays vague on purpose; the plugin knows it is connected and is
+  not a stranger.
+
+### Four refusals were writing no log line at all
+
+`site-revoked`, `missing-headers`, `bad-site-id` and `bad-timestamp` logged
+nothing. The single likeliest support call — "my licence was revoked and
+nothing works" — left no trace anywhere.
+
+The logging now lives inside `deny()` itself, once, rather than at each call
+site where it can be and repeatedly was forgotten.
+
+**Reconnecting does NOT orphan campaigns.** I got this wrong and said the
+opposite first. `findByLicenceKey()` returns the **existing** row and replaces
+only the secret; `site._id` never changes, so every campaign stays attached.
+Re-pasting the key is safe, and it also rewrites `siteUrl` from what the
+plugin reports, which fixes a wrong label at the same time.
+
+## Events need sweeps behind them — 27–28 September 2026
+
+The pattern that came up three times in one session, each time as a separate
+bug with the same shape.
+
+**An event fires once and nothing retries it. One lost call is permanent.**
+
+| The event | What was lost | The sweep that fixes it |
+|---|---|---|
+| a post is deleted | nothing was ever sent | reconcile which slots are missing |
+| a campaign is removed | only since 0.4.4 | reconcile which campaigns the site has |
+| `/api/blog/published` | one bad week = 12 posts stuck "scheduled" | reconcile which slots are live |
+
+### A reconciliation is not a retry
+
+The call says **"these and only these"**, not "here is one more". That shape
+is what lets a post restored from the trash lose its Deleted mark. An
+events-only design makes deletion a one-way door: trash a post by accident,
+restore it thirty seconds later, and the billing record carries the mark for
+ever.
+
+A record that can only ever get worse is not a record of anything.
+
+### An empty list is the one message that can destroy a record
+
+A plugin whose options have been lost — partial restore, botched migration,
+fresh install on an old domain — reports **zero campaigns**, which is
+indistinguishable from a site that has genuinely removed every one.
+
+The second case is already covered, because each of those removals fires its
+own callback as it happens. **So the ambiguous message is the one to
+swallow.** `campaign_report_due()` returns `null` rather than an empty array
+to say "nothing to report", and the route refuses an empty list as well.
+
+### The other guards worth keeping
+
+- **A 30-minute grace window** on `markMissingRemoved`. A campaign is created
+  on the server during `/plan` and stored by the plugin when it reads the
+  response; in between it exists on one side only. A sweep landing in that
+  window would mark a campaign removed on the day it was born.
+- **A slot cannot be both live and missing.** If the post is gone, "it
+  published" is stale news about something that no longer exists.
+- **The date comes from what the server already knows** (`scheduledFor`, then
+  `publishAt`), never from the plugin. A WordPress site reports local time in
+  its own timezone; our own stored value cannot be wrong by a timezone.
+- **Report only when the set CHANGES.** Otherwise a site with one deleted post
+  makes an HTTP call every hour for the rest of its life about news the server
+  already has.
+- **Mark as sent only on success.** One unreachable minute must not become
+  permanent silence about a post that really is gone.
+
+### One call per request, not one per post
+
+The delete hooks fire once per post. Bulk-deleting twelve posts fired twelve
+separate HTTP calls, back to back, each with a twenty-second timeout, while
+the owner's browser waited on all of them. Bulk delete is exactly how someone
+clears out a campaign's posts — the common case, not the unlucky one.
+
+The hooks now only note which campaigns are affected; one reconciliation per
+campaign goes out at `shutdown`.
+
+**Shutdown also makes the answer honest.** `before_delete_post` fires BEFORE
+WordPress does the work — the row is still in the database, and at
+`wp_trash_post` the status has not changed yet. Asking "is this post missing?"
+there gets "no" about a post that is about to vanish. By shutdown the deed is
+done and the site can simply be asked.
+
+### WP-Cron does not reach a finished site
+
+The sweep rides on WP-Cron, which fires on page loads, not on a clock. The
+server pings sites with work in flight, and those pings run it for free — but
+`findWork()` only returns campaigns that are `writing`/`active` with ready or
+overdue slots. **A site whose campaigns have all finished is never pinged.**
+
+That is precisely the site where deletions happen: posts get tidied up months
+after a campaign ends. Hence the **Check for deleted posts** button.
+
+## Source greps have now missed four real bugs — 28 September 2026
+
+Add this one to the pile, because it is the worst of the four:
+
+```php
+test( 'A TRASHED POST COUNTS AS GONE', function () {
+    ok( strpos( $source, "'trash'" ) !== false, ... );
+} );
+```
+
+The docblock above `post_missing()` said **"TRASHED COUNTS AS GONE"**. The code
+asked WordPress for trashed posts, found them, and called them alive. And the
+test named after the rule asserted that the string `'trash'` **appeared in the
+source** — which is the broken behaviour.
+
+**It passed for weeks by confirming the exact bug its own name forbids.**
+
+The stub could not model post statuses, so behaviour could not be asked about,
+so somebody grepped instead. The stub now honours `post_status`, and the test
+asks the question directly.
+
+**The running total: four bugs have passed source-grep tests in this codebase.**
+`php -l`, `node --check` and real-data tests caught all four.
+
+### And a test can break in the other direction
+
+`test-page-titles.js` has a rule that route files must never spell out the
+product name — one constant, not fourteen copies. Its comment says why: *"a
+route that spells the name out passes every other test in this file and
+quietly survives the next rename."*
+
+During a rename, I typed `"Three Comets Blog Generator"` straight into
+`routes/blogSitesRoute.js` and the deploy refused. The test was right and I was
+wrong. The plugin's display name is now read from its own `Plugin Name:`
+header, the way the version already was.
+
+### Mutation testing found three things this session
+
+- A mutation that **silently failed to apply** (a perl regex that did not
+  match tabs) looked exactly like a passing test. Now every mutation asserts
+  its anchor was found before rewriting. **An unproven test is worse than no
+  test.**
+- A stub that compared `query.user` unconditionally meant removing the
+  ownership guard made the stub match nothing and fail the *wrong* tests. A
+  field the query does not mention must not be filtered on — that is how Mongo
+  behaves, and the only way a stub can detect a guard being removed.
+- Three mutations passed before one failed, on the "older plugins still work"
+  case, because it is guarded twice. Both guards had to go before the test
+  noticed.
+
+## The plugin, 0.4.2 → 0.8.0 — 27–28 September 2026
+
+| | |
+|---|---|
+| 0.4.2 | "Waiting for you" → "Campaigns needing approval" |
+| 0.4.3 | notices a deleted post, greys the row, stops the false Overdue alarm |
+| 0.4.4 | tells the server when a campaign is removed |
+| 0.4.5 | no "Publish early" on a deleted row — link **and** handler |
+| 0.5.0 | reports deleted posts to the server at all |
+| 0.5.1 | one call per request; the Check for deleted posts button |
+| 0.6.0 | reports which campaigns the site still has |
+| 0.7.0 | one licence, one site — enforced |
+| 0.7.1 | reports which posts are live |
+| 0.7.2 | renamed to Three Comets Blog Generator |
+| 0.7.3 | sidebar says "Three Comets" |
+| 0.8.0 | the topic button adds instead of replacing |
+
+### wp_update_post returns 0, not a WP_Error
+
+For a missing post id it answers `0`. So `is_wp_error()` waves it through and
+the handler **reports success** for a post that does not exist. 0.4.3 fixed the
+state pill and left the action column alone, so six dead rows each kept a
+working "Publish early".
+
+### get_edit_post_link returns null for a missing post
+
+`esc_url( null )` is `''`, so the row renders `<a href="">`, which reloads the
+same page. Somebody clicking it learns nothing at all — worse than it plainly
+not being clickable.
+
+### "Overdue" is the WP-Cron alarm
+
+A deleted post raising it sends people after a scheduler that is working
+perfectly. Deleted must be checked **before** the stored status in every
+branch, because the stored status is exactly what stops being true.
+
+### What renaming a plugin may and may not touch
+
+Display name, menu label, download filename: free.
+
+**Never rename:**
+
+- **the folder** — WordPress identifies a plugin by its directory. Rename
+  `interlink-engine/` and the next upload installs a SECOND plugin beside the
+  first: old one active, new one deactivated, no error anywhere. On a
+  customer's site that reads as nothing happening.
+- **`ie_campaigns` / `ie_settings`** — that is every campaign on the site.
+- **the menu slug** — `page=interlink-engine` is in bookmarks and in the
+  plugin's own redirects.
+- **the text domain** — every `__()` names it.
+
+A display name is cheap. An identifier is not, and the two are only ever
+confused once.
+
+### "Suggest different topics" replaced what was on screen
+
+The word "different" was accurate and nobody read it that way. The obvious
+move when you want twelve posts is to press it twice, and pressing it twice
+left you with six — so the only route to a year of posts was to type all
+fifty-two by hand, which is the work the button exists to avoid.
+
+It now **adds**, asks for **12** (the server's ceiling in
+`routes/blogTopicsRoute.js`; it was only ever asking for 6), reads topics from
+the **form** so edits survive, refuses duplicates case-insensitively, and stops
+at **52**. When it caps it keeps the EARLIER topics — those are the ones that
+may already have been edited.
+
+`IE_Admin::merge_topics()` is deliberately pure so
+`wp-plugin/test-topic-merge.php` can test it without WordPress. The handler
+around it needs nonces, transients and redirects, and the harness that could
+render those has been broken for weeks.
+
+## The blog report — 27–28 September 2026
+
+`/blog-report` and `/blog-report.csv`, one row per slot across every site.
+
+- **The page and the CSV share `rowsFor()`**, and a test enforces it. A report
+  and its export disagreeing is the kind of thing nobody notices until a
+  customer quotes one at you. **Any filtering must go inside `rowsFor()`.**
+- **CSV injection guard:** a field starting with `= + - @` executes as a
+  formula in Excel. These fields come from a customer's WordPress.
+- **`EXCEL_BOM` is written as an escape, not the character.** A raw U+FEFF
+  inside a string literal is invisible, and any editor or paste could drop it
+  with nothing visible in the diff.
+- **`deletedAt` is a DATE, not a status.** `status` is the record of what the
+  slot DID — written, charged for, published — and all of that stays true
+  after the post is deleted. "Published then deleted" and "never published"
+  must never collapse into one value: the first was paid for and the second
+  was not.
+- **Deleted is checked before the stored status** in `slotPill()`, for the same
+  reason as in the plugin.
+- **The column-count test strips comments first.** It counts commas in source
+  text, and prose is full of them — a comment inside the array failed a
+  correct change, and could as easily have hidden a real mismatch.
+
+**Still wrong, and known:** the headline counts posts under removed campaigns
+as published. On roofingamerica that is 26 of 48 for a site carrying 12. The
+split — `12 published · 36 under removed campaigns · 0 scheduled` — is
+outstanding.
+
+## Reading the answer back — 28 September 2026
+
+`device_commit_files` returned `"written"` for a change to
+`routes/blogReportRoute.js`. The change was not there. Something on the Mac
+re-saved the file afterwards — most likely an editor writing a stale buffer.
+
+**The receipt is not the outcome.** Stage the file again and grep it. It costs
+one call and it is the difference between "I changed it" and "it is changed".
+
+## Three wrong diagnoses before the data — 27 September 2026
+
+The plugin was showing six overdue posts. In order, I claimed: WP-Cron had
+stopped; the licence had been revoked; then finally the truth — **the posts had
+been deleted**, which was Edwin's own first guess.
+
+What settled it was not more reasoning. It was:
+
+- Posts → All Posts: **12 items, all Published**, no drafts, no trash
+- the campaign screens claiming **19**
+- none of the overdue titles existing
+- Water Softener's posts, scheduled 13–17 Sep, all published **19 Sep 02:06** —
+  five in one minute, which is `publish_missed()` catching up, which means
+  **WP-Cron works**
+
+Campaign records live in `wp_options`, separate from the posts, and nothing
+watched whether the post still existed.
+
+**When a screen and a database disagree, stop theorising and go and count
+something.**
+
+## Server patched and rebooted — 24 September 2026
+
+Twelve days of "needs a quiet moment" turned out to be twenty minutes. Write
+down the recipe so the next one is not another twelve days.
+
+**Look before touching.** The single question that matters is whether the app
+comes back on its own:
+
+```
+ssh ubuntu@15.204.123.104 'apt list --upgradable 2>/dev/null | wc -l; \
+  systemctl is-enabled pm2-ubuntu; systemctl is-enabled nginx; \
+  systemctl is-enabled mongod 2>&1'
+```
+
+`pm2-ubuntu` must say **enabled** — that is the systemd unit that resurrects
+pm2 after a reboot. Without it the box comes back and the site stays down
+until somebody SSHes in. `mongod` says `not-found`, which is the right answer:
+the database is Atlas, so a reboot cannot touch the data.
+
+**The upgrade, with the flags that matter over SSH:**
+
+```
+ssh ubuntu@15.204.123.104 'sudo DEBIAN_FRONTEND=noninteractive apt-get update && \
+  sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confold"'
+```
+
+`keyboard-configuration` and `console-setup` throw a full-screen purple
+config dialog when they feel like it, which on a remote box is a good way to
+hang the session with the package system half-configured.
+`DEBIAN_FRONTEND=noninteractive` suppresses it and `--force-confold` keeps the
+existing config files instead of asking.
+
+**Reading the output.** Two lines look alarming and are not:
+
+- *"The following upgrades have been deferred due to phasing: apparmor
+  libapparmor1"* — Ubuntu's staged rollout, not a failure. They arrive on
+  their own in a few days.
+- *"User sessions running outdated binaries: PM2 v7.0.3"* — the Node upgrade.
+  The running process holds the old binary in memory until it restarts, which
+  is what the reboot is for.
+
+**Then reboot, wait a minute, and check all four things:**
+
+```
+curl -s -o /dev/null -w "site: %{http_code}\n" https://threecomets.com && \
+  ssh ubuntu@15.204.123.104 'uname -r; node -v; pm2 list'
+curl -s -o /dev/null -w "login: %{http_code}\n" https://threecomets.com/login
+```
+
+Verified on the night: kernel `6.8.0-142-generic`, node `v22.23.3`, webgen
+online with **restart count 0** — a resurrect rather than a crash loop, which
+is the difference the count tells you — root `302` to the login page, and
+`/login` itself `200`. **Check `/login` and not just `/`.** A root that
+redirects proves nginx is up; it does not prove the app is rendering anything.
+
+31 packages, none of them nginx, no kernel package in the list (the pending
+kernel had been installed earlier and was only waiting on the boot). Two
+orphans, `libfwupd2` and `libgusb2`, are still there for `apt autoremove`
+whenever somebody cares.
 
 ## Stripe went live — 24 September 2026
 

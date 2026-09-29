@@ -124,12 +124,54 @@ router.post('/api/blog/activate', blogActivateLimiter, async (req, res) => {
       return res.status(403).json({ error: 'This licence is suspended. Please contact support.' });
     }
 
+    /* IS THIS LICENCE ALREADY LIVING SOMEWHERE ELSE?
+     *
+     * THIS LINE IS WHERE THE DAMAGE HAPPENS. A new secret is minted below,
+     * and the moment it is, whatever install held the old one is dead — every
+     * call it makes is refused, for ever, with no explanation anywhere.
+     *
+     * That is correct and necessary when a site is reconnecting. It is a
+     * disaster when someone pastes their key into a SECOND site, which the
+     * page invites by saying "each site needs its own key" and then not
+     * enforcing it. It cost eight days of silently failing callbacks on a
+     * real site, and the owner had no way to know: the second site worked
+     * perfectly, so nothing looked wrong until a report was read closely.
+     *
+     * So a licence that is already registered to a different domain is
+     * REFUSED, unless the request says plainly that it is being moved. The
+     * refusal is not a wall — it takes one tick of a box to pass — but it
+     * turns a silent, invisible, irreversible act into a deliberate one.
+     *
+     * Only when we have actually SEEN the other site. A row whose siteUrl was
+     * never filled in, or a site that has never once called home, has nothing
+     * to protect. */
+    const reportedUrl = BlogSite.normaliseSiteUrl(siteUrl);
+    const movingFrom = site.siteUrl && reportedUrl && site.siteUrl !== reportedUrl;
+
+    if (movingFrom && site.lastSeenAt && !body.moveSite) {
+      log.security('blog.activate.wouldDisconnect', {
+        requestId: req.id,
+        siteId: String(site._id),
+        registeredTo: site.siteUrl,
+        reported: reportedUrl,
+      });
+
+      return res.status(409).json({
+        error: `This licence key is already connected to ${site.siteUrl}. `
+             + 'Connecting it here will disconnect that site, and its posts will stop publishing. '
+             + 'If you are moving the licence, tick "this licence is moving from another site" and save again. '
+             + 'If both sites should keep working, create a second key on your account page.',
+        reason: 'licence-in-use',
+        registeredTo: site.siteUrl,
+      });
+    }
+
     // A NEW secret on every activation, which is what makes "deactivate and
     // reactivate" a real remedy: whatever the old install knew stops working.
     // It also means a site moved to a new host cannot be impersonated by
     // whoever still has the files on the old one.
     site.secret = BlogSite.generateSecret();
-    site.siteUrl = BlogSite.normaliseSiteUrl(siteUrl);
+    site.siteUrl = reportedUrl;
     site.themePrefix = String(themePrefix || '').slice(0, 100);
     site.failedAuthCount = 0;
     site.lastSeenAt = new Date();
@@ -788,6 +830,277 @@ router.post('/api/blog/published', blogApiLimiter, requireSite, async (req, res)
   } catch (err) {
     log.error('blog.published.failed', err, { requestId: req.id });
     res.status(500).json({ error: 'Could not record that publication.' });
+  }
+});
+
+
+/**
+ * The customer removed this campaign from their WordPress.
+ *
+ * WHY THE SERVER NEEDS TELLING AT ALL
+ *
+ * "Remove campaign" in wp-admin used to wipe the local record and tell nobody.
+ * The campaign lived on here reading 'active' or 'completed' forever, so the
+ * history this app keeps described a site that had moved on without it — and
+ * nothing could tell a campaign that finished from one the customer threw
+ * away.
+ *
+ * THIS CHANGES NOTHING BUT A DATE. Not the status, not the slots, not what was
+ * charged. See BlogCampaign.removedAt for why removal is a date rather than a
+ * state of its own.
+ *
+ * ALWAYS 200 WHEN THE CAMPAIGN IS OURS, including when nothing was written
+ * because it had already been recorded. The plugin deletes its local copy
+ * immediately after calling this, so answering 4xx for "already removed"
+ * would leave a customer unable to clear a campaign off their own screen over
+ * bookkeeping they cannot see and did not cause.
+ */
+router.post('/api/blog/removed', blogApiLimiter, requireSite, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const campaign = await ownedCampaign(req, body.campaignId);
+
+    if (!campaign) {
+      // Genuinely unknown, or belongs to a different site — ownedCampaign has
+      // already logged the second as a security event.
+      return res.status(404).json({ error: 'Campaign not found.' });
+    }
+
+    const recorded = await BlogCampaign.markRemoved(campaign._id);
+
+    log.info('blog.removed.ok', {
+      requestId: req.id,
+      siteId: String(req.site._id),
+      campaignId: String(campaign._id),
+      // false means it was already on record — a retry, or a reinstall.
+      // Worth seeing in the log, not worth failing over.
+      recorded,
+    });
+
+    res.json({ ok: true, recorded });
+
+  } catch (err) {
+    log.error('blog.removed.failed', err, { requestId: req.id });
+    res.status(500).json({ error: 'Could not record that removal.' });
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * Posts deleted from the site
+ *
+ * A DIFFERENT EVENT FROM /removed ABOVE, and conflating them was the bug.
+ *
+ *   /removed        the owner threw the CAMPAIGN away. The plan is gone; the
+ *                   posts it published usually stay on the site.
+ *   /posts-deleted  the owner deleted POSTS. The campaign is still there and
+ *                   still running; some of what it produced is not.
+ *
+ * Until this existed, only the first was reported. The plugin could see a
+ * deleted post — 0.4.3 taught it to — but the knowledge never left wp-admin,
+ * so the blog report went on billing for posts that answered 404.
+ *
+ * WHY THE SLOT INDEX AND NOT THE WORDPRESS POST ID. The id is the plugin's
+ * handle on its own site; the index is the identity we share. A site restored
+ * from a backup renumbers its posts, and matching on wpPostId would then mark
+ * the wrong slots, or none. The index cannot drift: it is fixed when the plan
+ * is made and never reused.
+ *
+ * ALWAYS 200 WHEN THE CAMPAIGN IS OURS, including when every slot named was
+ * already on record — which is the COMMON case, because the plugin's hourly
+ * sweep re-reports what it still sees missing. A 4xx there would fill a
+ * customer's log with failures for a system working exactly as designed.
+ * ---------------------------------------------------------------------- */
+
+// One campaign's worth, with room to spare. A campaign is a dozen posts; a
+// body naming thousands of slots is not a customer tidying their blog.
+const MAX_DELETED_SLOTS = 200;
+
+router.post('/api/blog/posts-deleted', blogApiLimiter, requireSite, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const campaign = await ownedCampaign(req, body.campaignId);
+
+    if (!campaign) {
+      return res.status(404).json({ error: 'Campaign not found.' });
+    }
+
+    const slots = Array.isArray(body.slots)
+      ? body.slots.slice(0, MAX_DELETED_SLOTS)
+      : [];
+
+    /* TWO SHAPES OF CALL, and the flag is what tells them apart.
+     *
+     *   reconcile: false   the delete hook firing. "This slot just went."
+     *                      Says nothing about any other slot.
+     *   reconcile: true    the hourly sweep. "These and ONLY these are
+     *                      missing." Authoritative for the whole campaign.
+     *
+     * The second is what lets a post restored from the trash come back to
+     * life here. Without it a customer who trashed a post by accident and put
+     * it straight back would carry a Deleted mark against a live post
+     * forever, in the document they would reach for to check a bill.
+     *
+     * An empty list is therefore MEANINGFUL when reconciling — it means
+     * nothing is missing any more — and a mistake otherwise. */
+    const reconcile = body.reconcile === true;
+
+    if (!slots.length && !reconcile) {
+      return res.status(400).json({ error: 'No slots named.' });
+    }
+
+    const recorded = await BlogCampaign.markSlotsDeleted(campaign._id, slots);
+    const restored = reconcile
+      ? await BlogCampaign.clearSlotsDeleted(campaign._id, slots)
+      : 0;
+
+    /* AND WHICH SLOTS ARE LIVE.
+     *
+     * The route's name is now narrower than its job — this reconciles slot
+     * STATE, not only deletions — but it keeps the name because renaming it
+     * would 404 on every plugin older than 0.7.1.
+     *
+     * The live half exists because /published is an EVENT with no retry: one
+     * rejected call and a post that is plainly live on the customer's blog is
+     * recorded here as pending, for ever. Older plugins send no `live` key at
+     * all, so they are unaffected.
+     *
+     * AFTER the deletion handling, deliberately. If a slot appears in both
+     * lists the plugin has contradicted itself, and markSlotsLive refuses to
+     * resurrect a deleted slot — the deletion is the more recent truth. */
+    const live = Array.isArray(body.live)
+      ? await BlogCampaign.markSlotsLive(campaign._id, body.live.slice(0, MAX_DELETED_SLOTS))
+      : 0;
+
+    log.info('blog.postsDeleted.ok', {
+      requestId: req.id,
+      siteId: String(req.site._id),
+      campaignId: String(campaign._id),
+      named: slots.length,
+      reconcile,
+      // Usually 0 on a sweep: everything named was already known gone.
+      recorded,
+      restored,
+      // Anything but 0 means a "this post went live" message was lost.
+      live,
+    });
+
+    res.json({ ok: true, recorded, restored, live });
+
+  } catch (err) {
+    log.error('blog.postsDeleted.failed', err, { requestId: req.id });
+    res.status(500).json({ error: 'Could not record those deletions.' });
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * Which campaigns the site still has
+ *
+ * The slot sweep reconciles the campaigns the plugin HOLDS. This reconciles
+ * which campaigns it holds at all — and those are different questions, with
+ * the second one unanswerable from the first.
+ *
+ * /api/blog/removed reports a campaign being removed, but only from plugin
+ * 0.4.4 onward. Anything removed before that was never reported and cannot be
+ * recovered from anywhere: the campaign simply stops being mentioned, while
+ * this side goes on counting its posts as live work. On one real site that was
+ * six campaigns and fourteen published posts that existed nowhere but here.
+ *
+ * AN EMPTY LIST IS REFUSED, and that is the important guard. A plugin whose
+ * options have been lost — a partial database restore, a botched migration, a
+ * fresh install on an old domain — reports zero campaigns, which is
+ * indistinguishable from a site that has genuinely removed every one. The
+ * second case is already covered: each of those removals fires /removed as it
+ * happens. So the ambiguous message is the one worth ignoring.
+ * ---------------------------------------------------------------------- */
+
+// Generous. A site running fifty campaigns is unusual but not suspicious; a
+// body naming ten thousand ids is not a WordPress.
+const MAX_PRESENT_CAMPAIGNS = 500;
+
+router.post('/api/blog/campaigns-present', blogApiLimiter, requireSite, async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    /* TWO SHAPES, BECAUSE OLDER PLUGINS ARE STILL OUT THERE.
+     *
+     *   campaignIds: ['abc…']                      up to 0.9.0
+     *   campaigns:   [{ id: 'abc…', status: '…' }] from 0.9.1
+     *
+     * A site running the old plugin must keep working exactly as before, and
+     * silently: it is not broken, it is just older. */
+    const reported = Array.isArray(body.campaigns)
+      ? body.campaigns
+      : (Array.isArray(body.campaignIds) ? body.campaignIds.map(id => ({ id })) : []);
+
+    const seen = [];
+
+    for (const entry of reported) {
+      const id = String((entry && entry.id) || '');
+
+      if (!/^[a-f0-9]{24}$/i.test(id)) continue;
+
+      seen.push({ id, status: String((entry && entry.status) || '') });
+
+      if (seen.length >= MAX_PRESENT_CAMPAIGNS) break;
+    }
+
+    const ids = seen.map(c => c.id);
+
+    if (!ids.length) {
+      // 200, not 4xx. Nothing is wrong with the site and nothing it can do
+      // would change this answer — the plugin is not at fault for having no
+      // campaigns, and an error here would show up in a customer's log as a
+      // failure every hour forever.
+      log.info('blog.campaignsPresent.skipped', {
+        requestId: req.id,
+        siteId: String(req.site._id),
+        reason: 'empty-list',
+      });
+      return res.json({ ok: true, removed: 0, skipped: 'empty-list' });
+    }
+
+    const removed = await BlogCampaign.markMissingRemoved(req.site._id, ids);
+
+    /* THE SITE IS THE AUTHORITY ON WHAT THE OWNER DID, and only on that.
+     *
+     * Pausing and cancelling happen in wp-admin and used to reach this side
+     * not at all — no event, no sweep, nothing. So a campaign the customer
+     * stopped weeks ago still read "In progress" here, and the report's
+     * filter could not honestly offer either word.
+     *
+     * CARRIED BY THE SWEEP RATHER THAN FIRED AS AN EVENT, deliberately. This
+     * codebase has lost the same fact four times to one-shot events with no
+     * retry behind them — deleted posts, removed campaigns, publications. A
+     * status that rides on a reconciliation is re-sent every run, so a failed
+     * send costs an hour rather than being wrong forever, and it repairs
+     * campaigns that drifted before this code existed. */
+    const statuses = await BlogCampaign.applyReportedStatuses(req.site._id, seen);
+
+    /* AND THEN LOOK AT THE SLOTS. The completion check used to live only in
+     * /api/blog/published, but slots also become published through the live
+     * reconciliation — which is how everything repaired after the orphaned
+     * publish bug got there. Campaigns finished by that road stayed 'active'
+     * for ever: the plugin's own screen called them Completed while the
+     * account page called them In progress. Run here so the hourly sweep
+     * settles it whichever road the slots took. */
+    const finished = await BlogCampaign.settleFinished(req.site._id, ids);
+
+    log.info('blog.campaignsPresent.ok', {
+      requestId: req.id,
+      siteId: String(req.site._id),
+      present: ids.length,
+      statuses,
+      finished,
+      // Almost always 0. Anything else is a campaign that was removed in
+      // WordPress without this side ever being told.
+      removed,
+    });
+
+    res.json({ ok: true, removed, statuses, finished });
+
+  } catch (err) {
+    log.error('blog.campaignsPresent.failed', err, { requestId: req.id });
+    res.status(500).json({ error: 'Could not reconcile campaigns.' });
   }
 });
 

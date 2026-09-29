@@ -70,6 +70,37 @@ function appHeaderAssets() {
     }
     .header-background { background: #082d5b !important; }
     .padding-right-header { padding-right: 50px !important; }
+
+    /* BOOTSTRAP'S GREEN IS A LIGHT-BACKGROUND GREEN, and these pages are navy.
+     *
+     * btn-outline-success paints #198754 — a dark, saturated green chosen to
+     * sit on white. On #082d5b it barely separates from the page and reads as
+     * a DISABLED button: the first thing anyone asked about it was whether it
+     * was greyed out. A control that looks unavailable is worse than a plain
+     * one, because the reader does not even try it.
+     *
+     * Bootstrap 5.3 builds buttons from CSS variables, so this re-points the
+     * colour without touching the class anywhere it is used. The lighter
+     * green is roughly Bootstrap's own dark-mode success emphasis, brightened
+     * enough to carry on a background this dark; the hover still fills solid,
+     * so the button behaves exactly as it always did.
+     *
+     * Here rather than in a route file because every logged-in page draws
+     * this header — fixing it in one route would have left the same washed-out
+     * green on every other page that ever uses the class. */
+    .btn-outline-success {
+      --bs-btn-color: #5ddc95;
+      --bs-btn-border-color: #5ddc95;
+      --bs-btn-hover-color: #06281a;
+      --bs-btn-hover-bg: #5ddc95;
+      --bs-btn-hover-border-color: #5ddc95;
+      --bs-btn-active-color: #06281a;
+      --bs-btn-active-bg: #46c47e;
+      --bs-btn-active-border-color: #46c47e;
+      --bs-btn-disabled-color: rgba(93,220,149,.45);
+      --bs-btn-disabled-border-color: rgba(93,220,149,.45);
+      --bs-btn-focus-shadow-rgb: 93,220,149;
+    }
   </style>`;
 }
 

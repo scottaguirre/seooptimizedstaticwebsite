@@ -112,6 +112,19 @@ class IE_Api {
 				'Content-Type' => 'application/json',
 				'Accept'       => 'application/json',
 				'X-IE-Version' => IE_VERSION,
+				/* WHICH SITE IS SPEAKING.
+				 *
+				 * Not a credential and not signed — anyone can claim anything
+				 * here. Its job is to catch an ACCIDENT, not an attacker: one
+				 * licence key pasted into two WordPress sites, or, far more
+				 * easily, a site cloned while the plugin was connected, which
+				 * copies the id and secret out of wp_options without anyone
+				 * typing a thing.
+				 *
+				 * The server compares it to the domain the licence is
+				 * registered to and refuses a mismatch, so the second site is
+				 * told plainly instead of the first one dying in silence. */
+				'X-IL-Site-Url' => home_url(),
 			), $extra_headers ),
 			'body'    => $payload,
 		) );
@@ -131,6 +144,33 @@ class IE_Api {
 			$message = is_array( $data ) && ! empty( $data['error'] )
 				? $data['error']
 				: sprintf( 'Server returned %d', $code );
+
+			/* "NOT AUTHORISED" IS NOT A MESSAGE, IT IS A SHRUG.
+			 *
+			 * The server is deliberately vague about WHY a signature failed —
+			 * saying whether the site id was unknown, the signature wrong or
+			 * the clock skewed would hand an attacker a debugging tool, and
+			 * that is the right call. But the owner of this site is not an
+			 * attacker, and for them the vagueness is the whole problem.
+			 *
+			 * On a real site this exact string was all anyone saw while every
+			 * call failed for eight days. The cause was ordinary — the
+			 * licence key had been used on a second WordPress, which issues a
+			 * fresh secret and leaves this one holding a dead key — and the
+			 * fix is one paste. Neither was guessable from "Not authorised".
+			 *
+			 * So the plugin, which knows it is connected and is not a
+			 * stranger, says the useful thing. */
+			if ( in_array( (int) $code, array( 401, 403 ), true )
+				&& ( ! is_array( $data ) || empty( $data['reason'] ) || 'bad-signature' === $data['reason'] ) ) {
+				$message = __(
+					'This site\'s connection is no longer valid. This usually means the licence key '
+					. 'has since been used on another WordPress site, which disconnects this one. '
+					. 'Paste your licence key again on the Connection screen to reconnect — or, if the '
+					. 'other site should keep working, create a second key on your account page.',
+					'interlink-engine'
+				);
+			}
 
 			// The whole decoded body travels with the error, not just the
 			// status. The server sends structured detail alongside its
@@ -169,7 +209,7 @@ class IE_Api {
 	 * from one press of a button. The address is now used for this attempt and
 	 * only persisted once the far end has proved it is really the server.
 	 */
-	public static function activate( $licence_key, $server_url = '' ) {
+	public static function activate( $licence_key, $server_url = '', $moving = false ) {
 		$target = $server_url ? untrailingslashit( $server_url ) : IE_Settings::server_url();
 
 		$business = IE_Settings::business();
@@ -177,6 +217,16 @@ class IE_Api {
 		$payload = wp_json_encode( array(
 			'licenceKey'  => $licence_key,
 			'siteUrl'     => home_url(),
+			/* SAYS OUT LOUD THAT THIS WILL DISCONNECT ANOTHER SITE.
+			 *
+			 * The server refuses a key already registered to a different
+			 * domain unless this is true. It is not a security measure —
+			 * anyone can set it — it exists so that taking a licence off a
+			 * working site is a thing somebody CHOSE rather than a thing that
+			 * happened to them. Without it the act is silent, instant and
+			 * irreversible, and the site that loses the licence finds out
+			 * days later, if at all. */
+			'moveSite'    => (bool) $moving,
 			'themePrefix' => IE_Settings::active_theme_prefix(),
 			'timezone'    => wp_timezone_string(),
 			'business'    => array(
@@ -366,6 +416,192 @@ class IE_Api {
 
 		if ( is_wp_error( $result ) ) {
 			IE_Publisher::log( 'published callback failed: ' . $result->get_error_message() );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Tell the server this campaign has been removed from the site.
+	 *
+	 * Removing used to be entirely local: the record was wiped here and the
+	 * server went on believing the campaign was running. Its history — what
+	 * was published, what was charged — is kept over there deliberately, and
+	 * a history that cannot tell a finished campaign from a discarded one is
+	 * not much of a history.
+	 *
+	 * SWALLOWED ON FAILURE, and that is the important part. This runs the
+	 * moment somebody presses "Remove campaign", and the removal has to happen
+	 * whether or not the server answers, whether or not the licence has been
+	 * revoked, and whether or not this site is online. A customer unable to
+	 * clear something off their own screen because a remote call failed would
+	 * be a far worse bug than a missing row in a report they never see.
+	 *
+	 * So the return value is for the log, not for the caller's decision.
+	 */
+	public static function removed( $campaign_id ) {
+		$result = self::post( '/api/blog/removed', array(
+			'campaignId' => $campaign_id,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			IE_Publisher::log( 'removal callback failed: ' . $result->get_error_message() );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Tell the server some of a campaign's posts are no longer on this site.
+	 *
+	 * A DIFFERENT EVENT FROM removed() ABOVE. That one says the owner threw
+	 * the campaign away; this one says the campaign is alive and running and
+	 * some of what it produced has been deleted.
+	 *
+	 * Conflating the two is what let this go unnoticed. The plugin could see a
+	 * deleted post from 0.4.3 onward — it greys the row out and says so — but
+	 * that knowledge never left wp-admin, and the only deletion the server
+	 * ever heard about was a whole campaign being removed. So the blog report
+	 * went on listing published posts, with links and a credit charge, for
+	 * fourteen posts that answered 404.
+	 *
+	 * BEST EFFORT, AND THE FAILURE IS SWALLOWED, for the same reason the
+	 * removal callback's is: nothing an owner does inside their own WordPress
+	 * may depend on our server being reachable. Deleting a post has to work on
+	 * a site that is offline, firewalled or revoked — and by the time we are
+	 * called it has already happened, so there is nothing to roll back.
+	 *
+	 * A LOST CALL COSTS NOTHING, which is what makes that acceptable.
+	 * IE_Publisher::sweep_deleted() re-reports anything still missing that has
+	 * not been acknowledged, so an unreachable server makes the news late
+	 * rather than lost. That sweep is also the only thing that can report a
+	 * post deleted before this code existed — no hook fires retroactively.
+	 *
+	 * @param string $campaign_id
+	 * @param int[]  $slot_indexes
+	 */
+	public static function posts_deleted( $campaign_id, $slot_indexes, $reconcile = false, $live = array() ) {
+		$slots = array_values( array_unique( array_map( 'intval', (array) $slot_indexes ) ) );
+		$alive = array_values( array_unique( array_map( 'intval', (array) $live ) ) );
+
+		/* An empty list means something only when reconciling: "nothing is
+		 * missing any more", which is how a post restored from the trash gets
+		 * its Deleted mark taken off. From the delete hook it means the caller
+		 * found no slot for that post, and there is nothing to say. */
+		if ( empty( $slots ) && ! $reconcile ) {
+			return null;
+		}
+
+		$result = self::post( '/api/blog/posts-deleted', array(
+			'campaignId' => $campaign_id,
+			'slots'      => $slots,
+			'reconcile'  => (bool) $reconcile,
+			/* WHICH SLOTS ARE LIVE, in the same breath as which are gone.
+			 *
+			 * The endpoint's name is now narrower than its job — it is a
+			 * reconciliation of slot STATE, not only of deletions — but it
+			 * keeps that name because renaming it would 404 on every plugin
+			 * older than this one.
+			 *
+			 * Sent here rather than in a call of its own because the two
+			 * answers come from the same walk of the same campaign, and a
+			 * second round trip to say the other half would double the cost
+			 * of being careful. */
+			'live'       => $alive,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			IE_Publisher::log( 'deleted-post callback failed: ' . $result->get_error_message() );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Tell the server which campaigns this site still has.
+	 *
+	 * THE SAME RECONCILIATION, ONE LEVEL UP. posts_deleted() reconciles the
+	 * slots inside a campaign we hold; this reconciles which campaigns we hold
+	 * at all — and the second cannot be derived from the first. A campaign
+	 * that has been removed from this WordPress is not in our records to
+	 * sweep, so its posts stay on the server's books forever, counted as live
+	 * work and billed for on the customer's own report.
+	 *
+	 * removed() covers a removal as it happens, but only since 0.4.4. Every
+	 * campaign removed before that was never reported and is invisible to
+	 * everything except this call.
+	 *
+	 * THE EMPTY CASE IS NOT SENT. A site with no campaigns has nothing to say,
+	 * and a plugin whose options have been lost would otherwise announce that
+	 * every campaign is gone. The server refuses an empty list too — belt and
+	 * braces, because this is the one message that can destroy a record.
+	 *
+	 * @param string[] $campaign_ids
+	 */
+	public static function campaigns_present( $campaigns ) {
+		/* TWO SHAPES IN, ONE SHAPE OUT. The sweep hands over
+		 * array( 'id' => …, 'status' => … ) entries; older callers hand over
+		 * bare ids. Both are accepted so this can be called from either. */
+		$ids    = array();
+		$states = array();
+
+		foreach ( (array) $campaigns as $entry ) {
+			if ( is_array( $entry ) ) {
+				$id     = isset( $entry['id'] ) ? (string) $entry['id'] : '';
+				$status = isset( $entry['status'] ) ? (string) $entry['status'] : '';
+			} else {
+				$id     = (string) $entry;
+				$status = '';
+			}
+
+			if ( '' === $id || isset( $states[ $id ] ) ) {
+				continue;
+			}
+
+			$ids[]          = $id;
+			$states[ $id ]  = $status;
+		}
+
+		if ( empty( $ids ) ) {
+			return null;
+		}
+
+		/* THE STATUS RIDES WITH THE SWEEP, and that is the whole design.
+		 *
+		 * Pausing and cancelling happen here, in wp-admin, and used to reach
+		 * the server not at all — there was no IE_Api::paused() and no
+		 * equivalent. So a campaign the owner stopped weeks ago still read
+		 * "In progress" on their account page.
+		 *
+		 * NOT A NEW EVENT. Four facts have already been lost in this plugin to
+		 * one-shot calls with no retry behind them. A status carried by a
+		 * reconciliation is re-sent every run: a failed send costs an hour
+		 * instead of being wrong for ever, and it repairs campaigns that
+		 * drifted before this code existed.
+		 *
+		 * campaignIds is still sent alongside, so a server that has not been
+		 * updated yet goes on working from it. */
+		$payload = array();
+
+		foreach ( $ids as $id ) {
+			// The status the caller gave, or the record's if it gave none.
+			$status = $states[ $id ];
+
+			if ( '' === $status ) {
+				$campaign = IE_Campaigns::get( $id );
+				$status   = $campaign && isset( $campaign['status'] ) ? (string) $campaign['status'] : '';
+			}
+
+			$payload[] = array( 'id' => $id, 'status' => $status );
+		}
+
+		$result = self::post( '/api/blog/campaigns-present', array(
+			'campaignIds' => $ids,
+			'campaigns'   => $payload,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			IE_Publisher::log( 'campaign reconciliation failed: ' . $result->get_error_message() );
 		}
 
 		return $result;

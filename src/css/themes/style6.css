@@ -1405,3 +1405,87 @@ footer a {
 
     .pricing-unit { margin-left: 10px; }
 }
+
+
+/* ==========================================================================
+   Reviews — "What Customers Are Saying"
+   --------------------------------------------------------------------------
+   Appended to every theme: style.css ... style6.css
+
+   Inherits rather than hardcoding, the same way the pricing table does, so one
+   snippet suits all six themes:
+     - text uses the theme's body colour
+     - the card tint is a translucent black, reading as a shade of whatever
+       background sits behind it
+     - the stars are the ONE hard-coded colour. Everything else inherits,
+       but a star only reads as a rating when it is amber; in the body text
+       colour it reads as an icon. #f5a623 holds its contrast on a white
+       card and on a navy one, which plain yellow does not.
+
+   To tune one theme:
+     .reviews-section { --review-star: #e8b004; }
+
+   THE NOTE ABOVE THE CARDS IS NOT DECORATION. It says the reviews are a sample
+   and have to be replaced. It is deliberately legible rather than a whisper of
+   grey fine print — see utils/generateSampleReviews.js for why.
+   ========================================================================== */
+
+.reviews-section {
+    --review-card-bg:   rgba(0, 0, 0, .03);
+    --review-border:    rgba(0, 0, 0, .10);
+    --review-star:      #f5a623;
+    --review-radius:    10px;
+}
+
+.reviews-section .reviews-note {
+    margin: 6px 0 28px;
+    font-size: 15px;
+    opacity: .75;
+}
+
+.review-card {
+    height: 100%;
+    padding: 22px;
+    background: var(--review-card-bg);
+    border: 1px solid var(--review-border);
+    border-radius: var(--review-radius);
+    /* Cards in a row are only as tall as their content unless told otherwise,
+       and four reviews are never the same length. */
+    display: flex;
+    flex-direction: column;
+}
+
+.review-stars {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 12px;
+    color: var(--review-star);
+}
+
+.review-star {
+    /* fill, not stroke: the path in buildStars() is a solid star. */
+    fill: currentColor;
+    flex: 0 0 auto;
+}
+
+.review-text {
+    margin: 0 0 16px;
+    font-size: 15px;
+    line-height: 1.6;
+    /* Pushes the author line to the bottom of the card so the four names sit
+       on one line across the row regardless of review length. */
+    flex: 1 1 auto;
+}
+
+.review-author {
+    margin: 0;
+    font-weight: 600;
+    font-size: 14px;
+    opacity: .85;
+}
+
+@media (max-width: 575.98px) {
+    .review-card {
+        padding: 18px;
+    }
+}

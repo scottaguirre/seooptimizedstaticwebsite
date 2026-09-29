@@ -52,6 +52,12 @@ const blogApiRoute = require('./routes/blogApiRoute');
 const blogTopicsRoute = require('./routes/blogTopicsRoute');
 const blogSitesRoute = require('./routes/blogSitesRoute');
 
+// Every post ever published, across every site, with the page it links to —
+// and a CSV of it. Read-only, and built from the campaign records rather than
+// from anything the plugin has to keep, so a campaign removed in WordPress
+// still appears here. See the header of that file.
+const blogReportRoute = require('./routes/blogReportRoute');
+
 // Where the customer gets the plugin. Zipped from wp-plugin/ on demand, so
 // the download is always the version in this repository.
 const pluginDownloadRoute = require('./routes/pluginDownloadRoute');
@@ -317,6 +323,7 @@ app.use('/', requireAuth, productionRoute);   // /production
 app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
 app.use('/', requireAuth, blogSitesRoute);    // /blog-sites — licence keys
+app.use('/', requireAuth, blogReportRoute);   // /blog-report(.csv) — every post, every site
 app.use('/', requireAuth, pluginDownloadRoute); // /plugin/download — the WP plugin
 
 

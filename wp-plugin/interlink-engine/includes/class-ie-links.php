@@ -72,6 +72,47 @@ class IE_Links {
 	}
 
 	/**
+	 * Turn a placeholder back into the words it was wrapping.
+	 *
+	 * FOR A LINK THAT IS NEVER COMING. A campaign cut short leaves its last
+	 * published article holding a placeholder for a post that was deleted, or
+	 * was never written — and that span waits forever. It renders as ordinary
+	 * prose, so nobody sees it, but the post goes on advertising that it is
+	 * waiting for something, and every repair pass has to look at it again.
+	 *
+	 * The prose was written as prose: the sentence reads correctly with the
+	 * span gone, because the model wrote a phrase and the wrapper was added
+	 * afterwards. Removing the marker changes nothing a reader can see.
+	 *
+	 * The mirror image of activate(), deliberately — same pattern, same null
+	 * guard, so the two cannot come to disagree about what a placeholder is.
+	 *
+	 * @return array{content:string,count:int}
+	 */
+	public static function unwrap( $content, $topic_id ) {
+		$id      = preg_quote( $topic_id, '#' );
+		$pattern = '#<span([^>]*?)\s+data-il-link="' . $id . '"([^>]*)>(.*?)</span>#is';
+
+		$count = 0;
+
+		$out = preg_replace_callback(
+			$pattern,
+			function ( $m ) use ( &$count ) {
+				$count++;
+				return $m[3];
+			},
+			$content
+		);
+
+		// Same reason as activate(): null on failure would blank the post.
+		if ( null === $out ) {
+			return array( 'content' => $content, 'count' => 0 );
+		}
+
+		return array( 'content' => $out, 'count' => $count );
+	}
+
+	/**
 	 * Which topics is this post still waiting on?
 	 */
 	public static function pending_ids( $content ) {

@@ -39,7 +39,7 @@ const BlogSite = require('../models/BlogSite');
 const BlogCampaign = require('../models/BlogCampaign');
 const requireAuth = require('../middleware/requireAuth');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
-const { versionOrNull } = require('../utils/pluginPackage');
+const { versionOrNull, readName } = require('../utils/pluginPackage');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
@@ -192,7 +192,7 @@ function setupSteps(req, res, { withKeyButton = true } = {}) {
           <li>
             <strong>Connect.</strong>
             <div class="small text-dark mt-1">
-              In WordPress: <strong>Settings &rarr; Interlink Engine</strong>. Paste
+              In WordPress: <strong>Blog Generator &rarr; Connection</strong>. Paste
               the key, set the server address to
               <code class="user-select-all">${esc(baseUrl(req))}</code>,
               and press Connect. The site appears in your list above within a
@@ -233,7 +233,19 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
         <td>${bySite.get(String(s._id)) || 0}</td>
         <td class="small">${when(s.lastSeenAt)}</td>
         <td class="text-end">
-          ${s.status === 'revoked' ? '' : `
+          ${s.status === 'revoked' ? `
+          ${/* Only offered when there is no history to lose. A revoked
+                licence that published posts is the only surviving record of
+                which site they went to, so the button is simply absent
+                rather than present-and-refusing — a control that does
+                nothing when pressed is worse than no control. */ ''}
+          ${(bySite.get(String(s._id)) || 0) === 0 ? `
+          <form action="/blog-sites/${s._id}/delete" method="POST" class="d-inline"
+                onsubmit="return confirm('Remove this licence from the list? It is already revoked and has no campaigns, so nothing is lost. This cannot be undone.');">
+            ${res.locals.csrfField || ''}
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Remove</button>
+          </form>` : `
+          <span class="small text-dark" title="This licence published posts. Removing it would leave those campaigns with no record of which site they belong to.">kept for its history</span>`}` : `
           <form action="/blog-sites/${s._id}/revoke" method="POST" class="d-inline"
                 onsubmit="return confirm('Revoke this licence? The plugin on that site will stop working immediately.');">
             ${res.locals.csrfField || ''}
@@ -245,9 +257,15 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
     send(res, page({
       title: 'Blog Automation — Sites',
       body: `
-        <h1 class="mb-2">Blog Automation</h1>
+        <div class="d-flex flex-wrap align-items-start gap-3 mb-2">
+          <h1 class="mb-0">Blog Automation</h1>
+          <!-- The report answers "what has this actually done for me", which is
+               the question this page raises and cannot answer: it counts
+               campaigns, and a count is not a record. -->
+          <a class="btn btn-sm btn-outline-success ms-auto" href="/blog-report">Blog report</a>
+        </div>
         <p class="text-white">
-          Each WordPress site running the Interlink Engine plugin needs its own
+          Each WordPress site running the ${esc(readName())} plugin needs its own
           licence key. You have <strong>${Number(req.user.credits || 0).toLocaleString()}</strong>
           credits; each published post costs <strong>${CREDITS_PER_POST}</strong>.
         </p>
@@ -424,6 +442,88 @@ router.post('/blog-sites/:id/revoke', requireAuth, async (req, res) => {
 
   } catch (err) {
     log.error('blogSites.revoke.failed', err, { requestId: req.id });
+    res.redirect('/blog-sites');
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * Clearing a dead licence off the list
+ *
+ * A key that was minted, used briefly and revoked leaves a row that is never
+ * going to do anything again. One is untidy; after a year of trying things
+ * out the list is mostly rubbish and the rows that matter are hard to pick
+ * out from the ones that are not.
+ *
+ * ONLY A REVOKED LICENCE, AND ONLY ONE WITH NO CAMPAIGNS. Those two
+ * conditions are the whole safety of this.
+ *
+ * The campaign rule is the one that matters. A campaign's `site` is required,
+ * so deleting a row its campaigns point at leaves them referencing something
+ * that no longer exists — and those campaigns are the RECORD OF WHAT WAS
+ * CHARGED. The blog report survives it (a row whose site is missing renders
+ * with a blank site name rather than throwing, and there is a test for that)
+ * but surviving is not the same as being right: the customer would
+ * permanently lose the ability to say which site a post was published on, by
+ * pressing a tidy-up button.
+ *
+ * So a licence with history cannot be deleted here at all. Someone who wants
+ * that row gone actually wants its campaigns gone too, and that is a
+ * different decision belonging on a different screen.
+ * ---------------------------------------------------------------------- */
+
+router.post('/blog-sites/:id/delete', requireAuth, async (req, res) => {
+  try {
+    if (!/^[a-f0-9]{24}$/i.test(String(req.params.id || ''))) {
+      return res.redirect('/blog-sites');
+    }
+
+    // Scoped to this user AND to revoked in the query, for the reason the
+    // revoke handler above gives: an ownership check written as a separate
+    // `if` is one careless edit away from not happening.
+    const site = await BlogSite.findOne({
+      _id: req.params.id,
+      user: req.user._id,
+      status: 'revoked',
+    });
+
+    if (!site) {
+      log.security('blogSites.delete.refused', {
+        requestId: req.id,
+        userId: String(req.user._id),
+        siteId: req.params.id,
+        // Not owned, not found, or still active. All three refuse the same
+        // way; telling them apart would make this a way to probe for ids.
+        reason: 'not-owned-or-not-revoked',
+      });
+      return res.redirect('/blog-sites');
+    }
+
+    // Counted at the moment of deletion rather than trusted from the page
+    // that drew the button. That page may be minutes old.
+    const campaigns = await BlogCampaign.countDocuments({ site: site._id });
+
+    if (campaigns > 0) {
+      log.info('blogSites.delete.hasCampaigns', {
+        requestId: req.id,
+        siteId: String(site._id),
+        campaigns,
+      });
+      return res.redirect('/blog-sites');
+    }
+
+    await BlogSite.deleteOne({ _id: site._id, user: req.user._id });
+
+    log.info('blogSites.deleted', {
+      requestId: req.id,
+      userId: String(req.user._id),
+      siteId: String(site._id),
+      siteUrl: site.siteUrl,
+    });
+
+    res.redirect('/blog-sites');
+
+  } catch (err) {
+    log.error('blogSites.delete.failed', err, { requestId: req.id });
     res.redirect('/blog-sites');
   }
 });

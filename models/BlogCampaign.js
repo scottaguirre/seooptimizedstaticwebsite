@@ -154,6 +154,33 @@ const slotSchema = new mongoose.Schema({
   publishedTitle: { type: String, default: '' },
   publishedAt: { type: Date },
 
+  /**
+   * The owner deleted this post from their WordPress.
+   *
+   * A DATE, AND DELIBERATELY NOT A STATUS — the same decision as removedAt on
+   * the campaign below, for the same reason. `status` is the record of what
+   * this slot DID: it was written, it was charged for, it published. All of
+   * that stays true after the post is deleted, and overwriting it would
+   * destroy the only evidence that the credits bought something.
+   *
+   * So the two facts are kept apart. status says what happened; deletedAt
+   * says it is no longer on the site. "Published, then deleted" and "never
+   * published" must never collapse into one value: the first was paid for and
+   * the second was not.
+   *
+   * WHY THIS WAS MISSING UNTIL NOW, which is the part worth recording. The
+   * plugin got deleted-post detection first, in 0.4.3, and it was entirely
+   * local — it queried WordPress as the admin screen drew, greyed the row out
+   * and told NOBODY. Meanwhile /api/blog/removed tracked a CAMPAIGN being
+   * removed, a different event, so nothing on this side ever learned that a
+   * post had gone. The blog report went on printing "Published", a credit
+   * charge and a link for fourteen posts that answered 404.
+   *
+   * A report the customer cannot trust is worse than no report. It is the
+   * document they would quote back when disputing a bill.
+   */
+  deletedAt: { type: Date },
+
   error: { type: String, default: '' },
   attempts: { type: Number, default: 0 },
 }, { _id: false });
@@ -277,6 +304,32 @@ const blogCampaignSchema = new mongoose.Schema({
    * reason: it is a property of the set.
    */
   crossCheck: { type: mongoose.Schema.Types.Mixed },
+
+  /**
+   * When the customer removed this campaign from their WordPress.
+   *
+   * A DATE, NOT A STATUS. Removing is not a state a campaign is IN — it is
+   * something that happened TO one, and it can happen to a campaign in any
+   * state. Folding it into `status` would overwrite the only record of
+   * whether the thing had completed, been paused or been cancelled first, and
+   * "completed, then removed in October" is a different fact from "cancelled
+   * halfway, then removed in October". The report shows both.
+   *
+   * WHY THE RECORD IS KEPT AT ALL. blogSitesRoute.js already refuses to
+   * delete a BlogSite on revoke, for the reason it gives there: "campaigns
+   * reference it, and their history — what was published, what was charged —
+   * has to survive". The same argument applies one level down. A campaign
+   * that charged 450 credits does not stop having charged them because
+   * somebody later tidied up their WordPress.
+   *
+   * WORDPRESS CANNOT BE THE HOME FOR THIS. Removing the campaign there is
+   * precisely the act being recorded, and a tombstone kept on the machine
+   * that was just cleared out is not a record of anything.
+   *
+   * Unset for every campaign still on its site, which is most of them, so
+   * `removedAt: { $exists: false }` is the live set.
+   */
+  removedAt: { type: Date, index: true },
 
   createdAt: { type: Date, default: Date.now },
 });
@@ -502,6 +555,414 @@ blogCampaignSchema.methods.missedSchedule = function (now = new Date(), graceMs 
   return (this.slots || []).filter(
     s => s.status === 'scheduled' && s.publishAt && s.publishAt <= cutoff
   );
+};
+
+/**
+ * Record that the customer removed this campaign from their WordPress.
+ *
+ * ONLY EVER SETS THE DATE. Nothing about the campaign's own history is
+ * touched — not the status, not the slots, not what was charged. The
+ * removal is a new fact about an old record, not a correction to it.
+ *
+ * FIRST REMOVAL WINS. The plugin calls this before deleting its local copy,
+ * and that call is best-effort: a site that is offline at the moment simply
+ * does not report, and a customer who reinstalls and removes the campaign
+ * again would otherwise overwrite the original date with a later one that
+ * describes nothing. `removedAt: null` in the filter makes the write a
+ * no-op the second time.
+ *
+ * @returns {Promise<boolean>} true when this call was the one that recorded it
+ */
+blogCampaignSchema.statics.markRemoved = async function (campaignId, when = new Date()) {
+  const result = await this.updateOne(
+    { _id: campaignId, removedAt: null },
+    { $set: { removedAt: when } }
+  );
+
+  return (result.modifiedCount || result.nModified || 0) > 0;
+};
+
+/**
+ * Record that some of this campaign's posts no longer exist in WordPress.
+ *
+ * IDEMPOTENT, AND THE FIRST TIME WINS. The plugin reports a deletion twice by
+ * design: once from the hook that fires as the post goes, and again from the
+ * hourly sweep that reconciles every slot against what is really on the site.
+ * The sweep is not a belt-and-braces duplicate — it is the only thing that can
+ * catch a post deleted while the site was offline, or deleted before this
+ * feature existed at all. So a repeat is the normal case, not an error, and a
+ * slot that already carries a date keeps it: the day the post went is a fact,
+ * and the sweep that noticed weeks later must not overwrite it with today.
+ *
+ * Returns how many slots were NEWLY marked, which is what the caller logs.
+ * That number is read before the write rather than inferred from it, because
+ * modifiedCount counts modified DOCUMENTS — one, always, however many slots
+ * inside it changed — and reporting "1 post deleted" for six would be a quiet
+ * little lie in exactly the place this whole feature exists to stop one.
+ */
+blogCampaignSchema.statics.markSlotsDeleted = async function (
+  campaignId, slotIndexes, when = new Date()
+) {
+  const wanted = new Set(
+    (Array.isArray(slotIndexes) ? slotIndexes : [])
+      .map(n => Number(n))
+      .filter(n => Number.isInteger(n) && n >= 0)
+  );
+
+  if (!wanted.size) return 0;
+
+  const campaign = await this.findById(campaignId)
+    .select('slots.index slots.deletedAt')
+    .lean();
+
+  if (!campaign) return 0;
+
+  const fresh = (campaign.slots || [])
+    .filter(s => wanted.has(Number(s.index)) && !s.deletedAt)
+    .map(s => Number(s.index));
+
+  if (!fresh.length) return 0;
+
+  await this.updateOne(
+    { _id: campaignId },
+    { $set: { 'slots.$[el].deletedAt': when } },
+    { arrayFilters: [{ 'el.index': { $in: fresh } }] }
+  );
+
+  return fresh.length;
+};
+
+/**
+ * The other half of a reconciliation: slots NOT named are on the site.
+ *
+ * Only ever called for a sweep, which reports the complete set of missing
+ * slots for one campaign. Anything carrying a deletedAt that the site no
+ * longer lists as missing has come back — restored from the trash, or put
+ * back from a backup — and the mark has to come off.
+ *
+ * WITHOUT THIS, DELETION IS A ONE-WAY DOOR. Trashing a post by accident and
+ * restoring it thirty seconds later would leave it marked Deleted for good,
+ * in the one document a customer would reach for to check a bill. A record
+ * that can only ever get worse is not a record of anything.
+ *
+ * Returns how many were restored.
+ */
+blogCampaignSchema.statics.clearSlotsDeleted = async function (campaignId, missingIndexes) {
+  const missing = new Set(
+    (Array.isArray(missingIndexes) ? missingIndexes : [])
+      .map(n => Number(n))
+      .filter(n => Number.isInteger(n) && n >= 0)
+  );
+
+  const campaign = await this.findById(campaignId)
+    .select('slots.index slots.deletedAt')
+    .lean();
+
+  if (!campaign) return 0;
+
+  const back = (campaign.slots || [])
+    .filter(s => s.deletedAt && !missing.has(Number(s.index)))
+    .map(s => Number(s.index));
+
+  if (!back.length) return 0;
+
+  await this.updateOne(
+    { _id: campaignId },
+    { $unset: { 'slots.$[el].deletedAt': '' } },
+    { arrayFilters: [{ 'el.index': { $in: back } }] }
+  );
+
+  return back.length;
+};
+
+/**
+ * Record that these slots are live on the site, whatever we thought before.
+ *
+ * WHY THIS IS NEEDED WHEN /published ALREADY EXISTS. That endpoint is an
+ * EVENT: the plugin fires it once, as the post goes public, and nothing
+ * retries it. One rejected call and this side believes a published post is
+ * still waiting — permanently, because the event never comes again.
+ *
+ * On one real site a licence key was used on a second WordPress, which left
+ * the first holding a stale secret. Every call it made was refused for eight
+ * days, including twelve "this post went live" messages. Twelve posts sat on
+ * the customer's blog, visible to anyone, recorded here as pending. No amount
+ * of waiting would ever have corrected it.
+ *
+ * THE DATE COMES FROM WHAT WE ALREADY KNOW, not from the plugin. A WordPress
+ * site reports its local time, in its own timezone, in a format that has to
+ * be parsed and trusted; scheduledFor is what WordPress was actually told to
+ * publish at, recorded here at scheduling time and already correct. Falling
+ * back to publishAt costs at most a few hours of accuracy and cannot be wrong
+ * by a timezone.
+ *
+ * A DELETED SLOT IS NEVER RESURRECTED. If the post is gone, "it published"
+ * is stale news about something that no longer exists, and the deletion is
+ * the more recent truth.
+ *
+ * Returns how many slots changed.
+ */
+blogCampaignSchema.statics.markSlotsLive = async function (campaignId, slotIndexes) {
+  const wanted = new Set(
+    (Array.isArray(slotIndexes) ? slotIndexes : [])
+      .map(n => Number(n))
+      .filter(n => Number.isInteger(n) && n >= 0)
+  );
+
+  if (!wanted.size) return 0;
+
+  const campaign = await this.findById(campaignId);
+  if (!campaign) return 0;
+
+  let changed = 0;
+
+  for (const slot of campaign.slots || []) {
+    if (!wanted.has(Number(slot.index))) continue;
+    if (slot.deletedAt) continue;
+    if (slot.status === 'published' && slot.publishedAt) continue;
+
+    // Only a slot that has been written and handed over can be live. A
+    // 'pending' or 'generating' slot claiming to be published would mean the
+    // two sides disagree about something more serious than a date.
+    if (!['scheduled', 'published'].includes(slot.status)) continue;
+
+    slot.status = 'published';
+    slot.publishedAt = slot.publishedAt || slot.scheduledFor || slot.publishAt || new Date();
+    changed++;
+  }
+
+  if (changed) await campaign.save();
+
+  return changed;
+};
+
+/**
+ * Mark every campaign for a site that the site no longer has.
+ *
+ * THE SAME TRICK AS markSlotsDeleted, ONE LEVEL UP. The plugin sends the ids
+ * it still holds and anything else belonging to that site has been removed
+ * from the WordPress.
+ *
+ * WHY IT IS NEEDED AT ALL, given /api/blog/removed exists. That callback only
+ * arrived in plugin 0.4.4. Every campaign removed before then went unreported,
+ * and the removal is not recoverable from anything else — the campaign simply
+ * stops being mentioned. On one real site that left six campaigns and fourteen
+ * published posts on the server that no longer existed anywhere, and no sweep
+ * of slots could ever find them: the plugin reconciles the campaigns it HAS,
+ * and these are exactly the ones it does not.
+ *
+ * TWO GUARDS, both against marking a campaign removed that is merely young or
+ * unknown:
+ *
+ *   graceMs   A campaign is created here during /plan and stored by the
+ *             plugin when it reads the response. Between those two moments it
+ *             exists on this side and nowhere else, and a reconciliation
+ *             landing in that window would delete a campaign being born.
+ *
+ *   present   An EMPTY list is refused by the caller, not here — see the
+ *             route. A plugin that has lost its options looks exactly like a
+ *             site that has removed everything.
+ *
+ * Returns how many were newly marked.
+ */
+/**
+ * Take the campaign statuses a site reports, for the ones it is allowed to.
+ *
+ * THE SITE OWNS WHAT THE OWNER DID; THIS SIDE OWNS ITS OWN PIPELINE.
+ *
+ * Pausing and cancelling happen in wp-admin, so the site is the only place
+ * that knows. 'draft' and 'writing' are the opposite: they describe a batch
+ * running HERE, and a sweep landing mid-batch must not knock a campaign out
+ * of it. So a narrow list is accepted, and only over a status that is not
+ * mid-flight.
+ *
+ * 'completed' is deliberately NOT accepted. This side sets it from the one
+ * moment the answer changes — the last slot reporting live — and a site that
+ * merely thinks it is finished would be guessing.
+ *
+ * REMOVAL IS NOT A STATUS and is not touched here. It is a date, so that
+ * "completed, then deleted" and "cancelled halfway, then deleted" stay
+ * tellable apart.
+ *
+ * @param {*} siteId
+ * @param {{id:string,status:string}[]} reported
+ * @return {Promise<number>} how many campaigns actually changed
+ */
+/**
+ * Mark finished any campaign whose slots have all landed.
+ *
+ * THE CHECK EXISTED IN ONE PLACE AND SLOTS ARRIVE BY TWO ROADS.
+ *
+ * /api/blog/published ends with "if nothing is outstanding and the campaign
+ * is active, it is completed" — correct, and only reached when a publication
+ * is reported as it happens. Slots ALSO become published through the live
+ * reconciliation in /api/blog/posts-deleted, which is how every campaign
+ * repaired after the orphaned-publish bug got there. That road had no such
+ * check, so two campaigns sat at 'active' with six of six posts live: the
+ * plugin's own screen called them Completed while the account page called
+ * them In progress, and neither was lying.
+ *
+ * DECIDED FROM THIS SIDE'S OWN SLOTS, never from what a site claims. A site
+ * cannot talk this side into calling a campaign finished — see the note on
+ * applyReportedStatuses() — but it does not have to: the answer is already
+ * here, in the slots, and only had to be looked at.
+ *
+ * 'failed' counts as landed. It is not coming, and a campaign held open for
+ * ever by one failure is a campaign nobody can close.
+ *
+ * @return {Promise<number>} how many campaigns were marked completed
+ */
+/**
+ * The same settle, for every campaign a USER owns.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM THE SWEEP. settleFinished() runs when a
+ * site reports in — and a site with nothing new to say correctly stays quiet,
+ * which means a campaign that is wrong on this side can stay wrong for ever
+ * while both ends behave perfectly. Two campaigns with every post live sat at
+ * "In progress" through four deploys and half a dozen presses of the button,
+ * because nothing on the site had changed and so nothing called.
+ *
+ * A truth derived entirely from this side's own data should not wait on
+ * anybody else's news. The report calls this as it builds, so the page
+ * repairs itself the moment somebody looks at it — which is also the moment
+ * a wrong answer would be seen.
+ */
+blogCampaignSchema.statics.settleFinishedForUser = function (userId) {
+  return this.settleFinished({ user: userId });
+};
+
+blogCampaignSchema.statics.settleFinished = async function (siteId, ids) {
+  /* NOT ONLY 'active', and that is not generosity — it is the repair.
+   *
+   * blogGenerator.js used to decide a finished batch's status from a STALE
+   * in-memory copy of the campaign, so it read "nothing was written" and set
+   * every campaign back to 'draft' straight after writing and charging for
+   * the whole thing. Nothing ever reached 'active', so the completion check
+   * that requires it never fired, and this sweep — which copied the same
+   * condition — found nothing either.
+   *
+   * The generator is fixed, but every campaign written before that fix is
+   * still sitting at 'draft' or 'writing' with all of its posts live, and no
+   * batch is ever going to run on them again to correct it.
+   *
+   * A REAL DRAFT CANNOT MATCH. Its slots are 'pending' — nothing has been
+   * written, so the outstanding count below is never zero. The only documents
+   * this reaches are ones whose posts are all on the site, which is the
+   * definition of finished whatever the bookkeeping says. */
+  /* Scoped by site or by user. The sweep knows a site; the report knows a
+   * user and every site under it. */
+  const scope = (siteId && typeof siteId === 'object' && !siteId._bsontype && siteId.user)
+    ? { user: siteId.user }
+    : { site: siteId };
+
+  const query = {
+    ...scope,
+    status: { $in: ['active', 'writing', 'draft'] },
+    removedAt: null,
+  };
+
+  if (Array.isArray(ids) && ids.length) {
+    query._id = { $in: ids };
+  }
+
+  const rows = await this.find(query).select('slots status').lean();
+
+  let finished = 0;
+
+  for (const row of rows) {
+    const slots = row.slots || [];
+
+    // A campaign with no slots at all has not finished; it has not started.
+    if (!slots.length) continue;
+
+    const outstanding = slots.filter(
+      s => s.status !== 'published' && s.status !== 'failed'
+    ).length;
+
+    if (outstanding) continue;
+
+    // Ownership and the status we read are both in the query, so a campaign
+    // that changed underneath us loses rather than being overwritten.
+    const result = await this.updateOne(
+      { _id: row._id, ...scope, status: row.status },
+      { $set: { status: 'completed' } }
+    );
+
+    finished += result.modifiedCount || 0;
+  }
+
+  return finished;
+};
+
+blogCampaignSchema.statics.applyReportedStatuses = async function (siteId, reported) {
+  const ACCEPTED = new Set(['active', 'paused', 'cancelled']);
+
+  // Mid-flight here. A sweep must not interrupt a batch this side is running.
+  const PROTECTED = new Set(['draft', 'writing']);
+
+  const wanted = new Map();
+
+  for (const entry of Array.isArray(reported) ? reported : []) {
+    const id = String((entry && entry.id) || '');
+    const status = String((entry && entry.status) || '');
+
+    if (!id || !ACCEPTED.has(status)) continue;
+
+    wanted.set(id, status);
+  }
+
+  if (!wanted.size) return 0;
+
+  const rows = await this.find({
+    _id: { $in: [...wanted.keys()] },
+    site: siteId,
+  }).select('status').lean();
+
+  let changed = 0;
+
+  for (const row of rows) {
+    const next = wanted.get(String(row._id));
+
+    if (!next || next === row.status) continue;
+    if (PROTECTED.has(row.status)) continue;
+
+    // Ownership is in the query, not trusted from the loop above.
+    const result = await this.updateOne(
+      { _id: row._id, site: siteId, status: row.status },
+      { $set: { status: next } }
+    );
+
+    changed += result.modifiedCount || 0;
+  }
+
+  return changed;
+};
+
+blogCampaignSchema.statics.markMissingRemoved = async function (
+  siteId, presentIds, { when = new Date(), graceMs = 30 * 60 * 1000 } = {}
+) {
+  const present = new Set(
+    (Array.isArray(presentIds) ? presentIds : []).map(id => String(id))
+  );
+
+  const candidates = await this.find({
+    site: siteId,
+    removedAt: null,
+    createdAt: { $lt: new Date(Date.now() - graceMs) },
+  }).select('_id').lean();
+
+  const gone = candidates
+    .map(c => String(c._id))
+    .filter(id => !present.has(id));
+
+  if (!gone.length) return 0;
+
+  const result = await this.updateMany(
+    { _id: { $in: gone }, removedAt: null },
+    { $set: { removedAt: when } }
+  );
+
+  return result.modifiedCount || result.nModified || 0;
 };
 
 module.exports = mongoose.model('BlogCampaign', blogCampaignSchema);

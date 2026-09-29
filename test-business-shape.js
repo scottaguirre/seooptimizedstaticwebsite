@@ -1142,7 +1142,20 @@ test('the WordPress model carries it, in the same place', () => {
 test('runGeneration generates one and hands it over', () => {
   const src = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
   assert.ok(/await generateCaseStudy\(\{/.test(src), 'nothing generates a case study');
-  assert.ok(/pricing,\s*\n\s*caseStudy\s*\n\s*\);/.test(src),
+
+  /* THE PATTERN USED TO END `caseStudy\s*\n\s*\);` — anchored on the case
+   * study being the LAST argument.
+   *
+   * That was true when this was written and it was never the point. Adding
+   * the reviews section after it failed this test while the property the
+   * test is named for — generated, then handed over — was still exactly
+   * true. A test that pins an accident reports a problem that is not there,
+   * and the tempting fix is to delete the test rather than to look at it.
+   *
+   * What matters is that caseStudy is passed, in its place after pricing;
+   * the call is positional, so that order is load-bearing. Whether anything
+   * follows it is not. */
+  assert.ok(/pricing,\s*\n\s*caseStudy\b/.test(src),
     'the case study is generated and then not passed to buildAboutUsPage');
 });
 

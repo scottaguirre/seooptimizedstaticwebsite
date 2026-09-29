@@ -1,12 +1,12 @@
 <?php
 /**
- * Plugin Name:       Interlink Engine
- * Plugin URI:        https://example.com/interlink-engine
+ * Plugin Name:       Three Comets Blog Generator
+ * Plugin URI:        https://threecomets.com
  * Description:       Plans a quarter of blog posts, writes them all at once, schedules them across the weeks, and wires every one into the service page you want to rank.
- * Version:           0.4.1
+ * Version:           0.9.2
  * Requires at least: 6.0
  * Requires PHP:      7.4
- * Author:            Quality Sites
+ * Author:            Three Comets
  * License:           GPL-2.0-or-later
  * Text Domain:       interlink-engine
  *
@@ -59,10 +59,313 @@
  * shows "Check now" with no price, and the page watches itself for ten minutes
  * so the posts are seen arriving rather than guessed at.
  *
+ * WHAT 0.8.0 CHANGED — THE TOPIC BUTTON ADDS INSTEAD OF REPLACING
+ *
+ * "Suggest different topics" replaced the six topics on screen with six new
+ * ones. The word "different" was accurate; nobody read it that way. The
+ * obvious move when you want twelve posts is to press it twice, and pressing
+ * it twice left you with six — the first set gone, with no warning that it
+ * was about to be.
+ *
+ * So the only route to a year of posts was to type all fifty-two by hand,
+ * which is exactly the work the button exists to avoid.
+ *
+ * It now ADDS, and:
+ *
+ *   - asks for TWELVE at a time, which is all the server will give in one
+ *     request. Asking for six made a year's plan nine presses instead of five
+ *     for no reason anyone had chosen.
+ *   - reads the topics from the FORM rather than the stored draft, so edits
+ *     and unticked rows survive the press.
+ *   - refuses duplicates itself, case-insensitively. The server is asked to
+ *     avoid what is on screen, but a request is not a guarantee, and two rows
+ *     with one topic become two posts competing for one search.
+ *   - stops at 52 — a weekly post for a year. Every topic becomes a post that
+ *     costs credits on approval, so the ceiling is a spending limit as much
+ *     as a layout one, and the topics KEPT are the earlier ones, because
+ *     those are the ones that may already have been edited.
+ *   - says the running total on the button itself, because the number of
+ *     topics is the size of the campaign and the price of approving it.
+ *
+ * The decision-making part is IE_Admin::merge_topics(), deliberately pure so
+ * that wp-plugin/test-topic-merge.php can test it without WordPress — the
+ * handler around it needs nonces, transients and redirects, and the harness
+ * that could render those has been broken for weeks.
+ *
+ * WHAT 0.7.3 CHANGED
+ *
+ * The wp-admin sidebar says "Three Comets" rather than "Blog Generator".
+ *
+ * That menu item sits in a customer's WordPress — often an agency's client,
+ * who never bought anything from us and never will. It is the one place the
+ * name is seen daily by somebody who did not install it, so it carries the
+ * brand rather than the function. The page heading underneath still gives
+ * the full name for anyone who needs to know what it does.
+ *
+ * WHAT 0.7.2 CHANGED — A NEW NAME ON SCREEN, AND NOTHING ELSE
+ *
+ * The plugin is now "Three Comets Blog Generator" wherever a person can read
+ * it: the Plugins list, the wp-admin menu, the download filename, and the
+ * setup steps on the account page.
+ *
+ * NOT RENAMED, DELIBERATELY, AND EACH FOR ITS OWN REASON:
+ *
+ *   the folder         WordPress identifies a plugin BY ITS DIRECTORY. Rename
+ *                      interlink-engine/ and the next upload installs a
+ *                      SECOND plugin beside the first — old one still active,
+ *                      new one deactivated, no error anywhere. On a
+ *                      customer's site that reads as nothing happening.
+ *
+ *   the options        ie_campaigns holds every campaign on the site, and
+ *                      ie_settings the connection. Rename either key and the
+ *                      plugin wakes up believing it has never run.
+ *
+ *   the menu slug      admin.php?page=interlink-engine is in bookmarks, in
+ *                      this plugin's own redirects, and in links the server
+ *                      has already sent people.
+ *
+ *   the text domain    every __() call names it. Changing it silently drops
+ *                      every translation.
+ *
+ *   IE_ class names    internal, and worth nothing to change.
+ *
+ * A display name is cheap. An identifier is not, and the two are only ever
+ * confused once.
+ *
+ * WHAT 0.7.1 CHANGED
+ *
+ * The hourly sweep now also reports which posts are LIVE, not only which are
+ * gone.
+ *
+ * "This post went live" was an EVENT: sent once, as the post goes public,
+ * with nothing behind it. One rejected call and the server believes a
+ * published post is still waiting — permanently, because the event never
+ * comes again.
+ *
+ * That is not hypothetical. On the site this was written for, a licence key
+ * used on a second WordPress left this one holding a stale secret; eight days
+ * of refused calls included twelve of these. Twelve posts sat on the
+ * customer's blog, visible to anyone with a browser, recorded on the server
+ * as pending. The report read "26 published of 48" for a site carrying 12,
+ * and no amount of waiting would ever have corrected it.
+ *
+ * on_transition() writes the local slot status BEFORE calling the server, so
+ * this side knew all along and simply had no way to say so twice. The sweep
+ * sends both halves in one call, because both come from one walk of one
+ * campaign, and goes quiet as soon as the two sides agree.
+ *
+ * The endpoint keeps the name /api/blog/posts-deleted even though it is now a
+ * reconciliation of slot STATE rather than of deletions alone. Renaming it
+ * would 404 on every older plugin, and a tidier name is not worth a broken
+ * customer.
+ *
+ * WHAT 0.7.0 CHANGED — ONE LICENCE, ONE SITE, ENFORCED AT LAST
+ *
+ * The rule was always printed on the account page: "Each WordPress site
+ * running the plugin needs its own licence key." Nothing
+ * enforced it, and a rule stated but not enforced is a trap.
+ *
+ * WHAT THE TRAP DID. Paste a key into a second WordPress — or, far more
+ * easily, CLONE a site, because the site id and signing secret live in
+ * wp_options and a duplicate carries them without anyone typing anything —
+ * and activation mints a fresh secret. The second site works immediately.
+ * The first one dies: every call refused, for ever, and the only thing on
+ * screen is "Not authorised".
+ *
+ * On the site this was written for it ran EIGHT DAYS. Every "this post went
+ * live" callback rejected, the server's record drifting from the site's, and
+ * the customer's own report claiming 26 published posts for a site carrying
+ * 12. Nothing anywhere said why. It was found by reading a log file.
+ *
+ * THREE CHANGES:
+ *
+ *   X-IL-Site-Url on every request. The server compares it to the domain the
+ *   licence is registered to and refuses a mismatch with a 409 naming the
+ *   other site. Checked AFTER the signature, because that message is
+ *   information and only a caller holding the secret may have it.
+ *
+ *   Activation refuses to take a licence off a live site unless the request
+ *   says plainly that is the intention — the "this licence is moving from
+ *   another site" box on the Connection screen. The refusal names the site
+ *   that would be disconnected, so the box is never the first anyone hears
+ *   of it. It is not a wall; it is the difference between choosing something
+ *   and having it happen to you.
+ *
+ *   "Not authorised" is replaced with what to do about it. The server stays
+ *   deliberately vague — saying which part of the signature failed would
+ *   hand an attacker a debugging tool — but the plugin knows it is connected
+ *   and is not a stranger, so it says the useful thing.
+ *
+ * OLDER PLUGINS ARE NOT LOCKED OUT. An install that sends no URL header is
+ * allowed through exactly as before. Refusing them would break every existing
+ * customer on the day this ships, which would be a worse bug than the one it
+ * fixes. The protection arrives for each site as it updates.
+ *
+ * WHAT 0.6.0 CHANGED — ANOTHER MINOR BUMP, ANOTHER NEW ENDPOINT
+ *
+ * The site now tells the server which campaigns it still HAS.
+ *
+ * 0.5.0 reconciles the slots inside campaigns this plugin holds. A campaign
+ * REMOVED from the WordPress is not in those records at all, so nothing walks
+ * it — and its posts stay on the server's books forever, counted as live work
+ * and charged for on the customer's own report, with links that 404.
+ *
+ * IE_Api::removed() covers a removal as it happens, but only since 0.4.4.
+ * Everything removed before that was never reported and is reachable by
+ * nothing except this. On the site that prompted all of this it was six
+ * campaigns and fourteen published posts, and pressing "Check for deleted
+ * posts" correctly answered "every post these campaigns made is still on the
+ * site" — because the campaigns holding the missing fourteen were themselves
+ * long gone.
+ *
+ * AN EMPTY LIST IS NEVER SENT, and the server refuses one anyway. This is the
+ * only message in the system that can destroy a record rather than correct
+ * one, and a plugin whose options have been lost — a partial restore, a
+ * botched migration, a fresh install on an old domain — reports zero
+ * campaigns, which is indistinguishable from a site that has genuinely
+ * removed every one. The second case is already covered, because each of
+ * those removals fires the removal callback as it happens. So the ambiguous
+ * message is the one worth swallowing.
+ *
+ * The server adds a grace window of its own: a campaign created in the last
+ * half hour is never marked removed. A campaign is created there during
+ * planning and stored here only when this plugin reads the response, and in
+ * between it exists on one side and not the other.
+ *
+ * WHAT 0.5.1 CHANGED
+ *
+ * Two rough edges on the deleted-post reporting 0.5.0 introduced.
+ *
+ * ONE CALL PER REQUEST, NOT ONE PER POST. The delete hooks fire once per
+ * post, so selecting twelve posts in wp-admin and choosing Delete fired them
+ * twelve times inside a single request — and 0.5.0 made twelve separate HTTP
+ * calls to the server, back to back, each with a twenty-second timeout, while
+ * the owner's browser waited on all of them. Bulk delete is how somebody
+ * clears out a campaign's posts, so that was the common case, not the unlucky
+ * one. The hooks now only note which campaigns are affected and one
+ * reconciliation per campaign goes out at 'shutdown'.
+ *
+ * That also made the answer honest. These hooks run BEFORE WordPress does the
+ * work — at before_delete_post the row is still in the database — so 0.5.0
+ * had to carry "this one is going" in by hand rather than ask the site. By
+ * shutdown the deed is done and the site can simply be asked.
+ *
+ * AND A BUTTON: "Check for deleted posts", at the foot of the Campaigns
+ * screen. The sweep rides on WP-Cron, which fires when somebody loads a page
+ * rather than on a clock. Sites with a campaign in flight are pinged by the
+ * server every few minutes and run it constantly; a site whose campaigns have
+ * all FINISHED is never pinged, because there is no work, so on a site with
+ * no visitors the sweep might not run for weeks.
+ *
+ * That is the site where it matters most — posts get tidied up long after a
+ * campaign ends — so the automatic path served its most important case worst.
+ * The alternative was telling an owner to go and load their own home page.
+ *
+ * WHAT 0.5.0 CHANGED — A MINOR BUMP, BECAUSE THE WIRE CHANGED
+ *
+ * The server is now told when a post is deleted. Until this, it never was.
+ *
+ * 0.4.3 taught the admin screens to NOTICE a missing post: they query
+ * WordPress as they draw, grey the row out and say "Post deleted". That
+ * knowledge never left wp-admin. The only deletion the server ever heard
+ * about was /api/blog/removed, which is a different event — the whole
+ * CAMPAIGN being thrown away, not the posts.
+ *
+ * So the customer's own blog report went on listing deleted posts as
+ * published, each with a working-looking link and a 75-credit charge beside
+ * it. On one site that was fourteen rows: it claimed 26 published where the
+ * site carried 12. A billing record that only ever overstates is worse than
+ * no record, because it is the document someone reaches for to check a bill.
+ *
+ * THREE WAYS IN, and each covers what the others cannot:
+ *
+ *   before_delete_post / wp_trash_post   the moment it happens
+ *   untrashed_post                       and the moment it comes back
+ *   sweep_deleted(), hourly              everything else
+ *
+ * The sweep is not a duplicate of the hooks. It is the only thing that can
+ * report a post deleted while the server was unreachable, removed by a
+ * database edit or a restore from backup, or deleted BEFORE THIS CODE
+ * EXISTED — no hook fires retroactively, and that last case is the one that
+ * matters on the day this ships.
+ *
+ * THE CALL IS A RECONCILIATION, not an event: "these and only these are
+ * gone". That is what lets a post pulled back out of the trash lose its
+ * Deleted mark. An events-only design makes deletion a one-way door, and
+ * somebody who trashes a post by accident and restores it thirty seconds
+ * later would carry the mark for good. The sweep stays silent once the
+ * server's picture matches the site's, so this costs one call per change
+ * rather than one per hour forever.
+ *
+ * ALSO FIXED: A TRASHED POST WAS BEING REPORTED AS ALIVE.
+ *
+ * post_missing() asked WordPress for trashed posts along with live ones, so
+ * it found them and called them present — while the docblock directly above
+ * it said "TRASHED COUNTS AS GONE". The test named "A TRASHED POST COUNTS AS
+ * GONE" asserted that the string 'trash' APPEARED in the source, which is
+ * the broken behaviour, so it passed by confirming the bug. It was a grep
+ * over the source; the stub could not model statuses, so behaviour could not
+ * be asked about. It can now, and the test asks.
+ *
+ * WHAT 0.4.5 CHANGED
+ *
+ * "Publish early" is no longer offered for a post that has been deleted, and
+ * the handler behind it refuses the request even when the URL is reached by
+ * hand or from an old tab.
+ *
+ * 0.4.3 fixed the state pill and the link on those rows and left the action
+ * column alone, so six dead rows each kept a working "Publish early". Pressing
+ * one would have reported success: wp_update_post() answers 0 for a missing
+ * post id rather than a WP_Error, which is exactly what the handler was
+ * checking for.
+ *
+ * WHAT 0.4.4 CHANGED
+ *
+ * "Remove campaign" now tells the server before it deletes the local record.
+ *
+ * It used to be entirely local, so the server went on believing a removed
+ * campaign was running — and the history it keeps, which is the only copy
+ * that survives a customer tidying their WordPress, could not tell a campaign
+ * that finished from one that was thrown away.
+ *
+ * The call is best-effort and cannot block the removal: a site that is
+ * offline, or whose licence has been revoked, must still be able to clear a
+ * campaign off its own screen. See IE_Api::removed().
+ *
+ * WHAT 0.4.3 CHANGED
+ *
+ * The screen now notices when a post has been deleted.
+ *
+ * A campaign lives in wp_options and remembers each slot's post_id. Nothing
+ * in that record watched the post, so deleting one left the row frozen: it
+ * went on saying "Live" for a post that was gone, or "Overdue" for one that
+ * was never coming. The topic stayed a link, to <a href="">, which reloaded
+ * the same page when clicked.
+ *
+ * "Overdue" is this plugin's alarm for WP-Cron having stopped, so a deleted
+ * post raised an alarm about the scheduler. On a real site that sent two
+ * people after a scheduler that was working perfectly, for an evening, while
+ * the heading said "6 of 6 scheduled, 1 live, publishing on schedule" about
+ * six posts that did not exist.
+ *
+ * Deleted slots are now excluded from those counts, shown as "Post deleted"
+ * in grey rather than Overdue in red, no longer linked, and the campaign
+ * carries one plain-English notice saying what happened and what to do. A
+ * slot with NO post_id is untouched — that is "Arriving", and always was.
+ *
+ * WHAT 0.4.2 CHANGED
+ *
+ * The second tab is now "Campaigns needing approval" rather than "Waiting for
+ * you". The old name announced that something was owed without saying what,
+ * and the thing worth knowing before clicking is that approving is the moment
+ * credits are spent. The empty state moved with it.
+ *
  * WHAT 0.3.2 CHANGED
  *
  * The Campaigns screen is now four tabs — In progress, Waiting for you,
  * Completed, New campaign — instead of one page carrying all of it at once.
+ * (That second tab is called "Campaigns needing approval" from 0.4.2; the old
+ * name is kept here because this paragraph is the record of what 0.3.2 did.)
  *
  * "Waiting for you" is the one that did not exist before, and its absence was
  * the real problem: a campaign that has been planned but not approved has had
@@ -138,7 +441,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'IE_VERSION', '0.4.1' );
+define( 'IE_VERSION', '0.9.2' );
 define( 'IE_FILE', __FILE__ );
 define( 'IE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IE_URL', plugin_dir_url( __FILE__ ) );
