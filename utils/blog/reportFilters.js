@@ -128,17 +128,30 @@ function keep(row, f) {
      *
      * Removal is a date, deliberately, so that "completed, then deleted from
      * WordPress" and "cancelled halfway, then deleted" stay tellable apart.
-     * Folding it into campaignStatusOf() would throw that away — asking for
-     * Completed would silently drop every completed campaign that had since
-     * been removed.
+     * Folding it into campaignStatusOf() would throw that away. So it is
+     * asked here instead: a separate question, from the same box, because
+     * removal is where people look for it.
      *
-     * So it is handled here instead: a separate question, asked from the
-     * same box. Removal is where people look for it, three times over, and
-     * an architecture argument that makes somebody hunt is a bad trade.
-     * Completed + Post state "Campaign removed" still composes exactly as
-     * before. */
+     * THE STATUS OPTIONS ARE PRESENT TENSE, and for a while they were not.
+     *
+     * campaignStatusOf() ignores removedAt, so "In progress" used to mean
+     * "its status WAS in-progress" — including campaigns deleted weeks ago.
+     * Edwin filtered to In progress and got eight rows, seven of which the
+     * page itself labelled "Was in progress", in red, in the next column.
+     *
+     * Seven of eight rows contradicting the filter that produced them is not
+     * a composable design, it is a sentence nobody reads as intended. The
+     * original reasoning — that Completed + "Campaign removed" composes into
+     * a question no merged dropdown could ask — was true and required the
+     * reader to know to compose it. The product's own author did not.
+     *
+     * So a status option now means "and it still exists". Removed campaigns
+     * are found with the Removed option, already in the same dropdown, where
+     * the STATUS column goes on saying what each one WAS. */
     if (f.campaignStatus === 'removed') {
       if (!row.removedAt) return false;
+    } else if (row.removedAt) {
+      return false;
     } else if (campaignStatusOf(row) !== f.campaignStatus) {
       return false;
     }

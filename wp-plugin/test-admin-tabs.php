@@ -79,7 +79,15 @@ function set_transient( $k, $v, $t = 0 ) { $GLOBALS['ie_transient'] = $v; return
 function delete_transient( $k ) { $GLOBALS['ie_transient'] = false; return true; }
 function get_current_user_id() { return 1; }
 function current_user_can( $c ) { return true; }
-function selected( $a, $b, $echo = true ) { $r = ( (string) $a === (string) $b ) ? ' selected' : ''; if ( $echo ) { echo $r; } return $r; }
+/* $b DEFAULTS TO true, exactly as WordPress declares it.
+ *
+ * This stub required two arguments when the real function requires one, so
+ * `selected( $cond )` — valid WordPress, used in the new-campaign form — was a
+ * fatal here and nowhere else. The first test ever to render that form found
+ * it. A stub with a NARROWER signature than the thing it stands for does not
+ * fail the code under test; it fails the test, and it reads like a bug in the
+ * plugin. Tenth instance of a stub that could not express what it stood for. */
+function selected( $a, $b = true, $echo = true ) { $r = ( (string) $a === (string) $b ) ? ' selected' : ''; if ( $echo ) { echo $r; } return $r; }
 function checked( $a, $b = true, $echo = true ) { $r = ( $a == $b ) ? ' checked' : ''; if ( $echo ) { echo $r; } return $r; }
 function add_action() {}
 function add_filter() {}
@@ -1259,6 +1267,47 @@ test( 'REMOVE STILL WORKS ON A FINISHED CAMPAIGN', function () {
 	same( 2, substr_count( $html, 'confirm(' ), 'the two dialogs did not survive' );
 
 	$GLOBALS['ie_post_counts'] = array();
+} );
+
+/* ===================================================================== */
+
+echo "\nThe new-campaign form\n";
+
+test( 'THE TWO FIELD LABELS SAY WHICH PAGE THEY MEAN', function () {
+	/* NOTHING HAD EVER RENDERED THIS FORM IN A TEST, which is how it kept
+	 * "Page to rank" and "Its search term" — names that read fine to whoever
+	 * wrote them and left the customer guessing. Edwin had to ask what the
+	 * second one referred to, after weeks of using it.
+	 *
+	 * "Its" was the worse of the two: a pronoun pointing at a dropdown that
+	 * can scroll off the screen names nothing at all. Pinned here so the next
+	 * edit that reaches for a pronoun fails first. */
+	$GLOBALS['ie_campaigns'] = array();
+
+	$html = render( 'new' );
+
+	has( $html, '>Target Page<', 'the page field lost its label' );
+	has( $html, '>Main Keyword of Target Page<', 'the keyword field lost its label' );
+
+	hasnt( $html, 'Page to rank', 'the old label is back' );
+	hasnt( $html, 'Its search term', 'the pronoun label is back' );
+} );
+
+test( 'the keyword box still fills itself from the chosen page', function () {
+	/* The labels changed; the machinery must not have. `data-keyword` on each
+	 * option is what lets the box fill in without a round trip, and it carries
+	 * the CLEANED term — no town, no state, lower case — because anchorPool.js
+	 * adds the town back and the anchor lands mid-sentence. A label edit that
+	 * disturbed this attribute would stay invisible until a customer got
+	 * "quality plumbing Leander in Leander" as live anchor text. */
+	$GLOBALS['ie_campaigns'] = array();
+
+	$html = render( 'new' );
+
+	has( $html, 'data-keyword="quality plumbing"',
+		'the cleaned search term no longer travels with the option' );
+	has( $html, 'id="ie_keyword"', 'the keyword box is gone' );
+	has( $html, 'id="ie_target"', 'the page dropdown is gone' );
 } );
 
 echo "\n$passed passed, $failed failed\n";

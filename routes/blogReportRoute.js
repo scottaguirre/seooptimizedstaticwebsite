@@ -590,7 +590,12 @@ function filterBar(f, campaigns, siteNames) {
     ['', 'Any state'],
     ['published', 'Published'],
     ['scheduled', 'Scheduled'],
-    ['deleted', 'Deleted from site'],
+    /* ONE WORD, MATCHING THE PILL. The dropdown said "Deleted from site"
+       while the pill on the row said "Deleted" — one state under two names on
+       the same screen, which leaves somebody wondering whether they are two
+       different things. The pill has no room for the longer phrase, so the
+       dropdown is the one that gives up the extra words. */
+    ['deleted', 'Deleted'],
     // WORD FOR WORD WHAT THE PILL IN THE TABLE SAYS. It read "Under a removed
     // campaign" while the State column said "Campaign removed" — the same fact
     // under two names, one of them in a box labelled "Post state" with the
@@ -867,7 +872,7 @@ router.get('/blog-report', requireAuth, async (req, res) => {
         <strong class="text-white">${rows.length}</strong> post${rows.length === 1 ? '' : 's'}
         &middot; ${published} confirmed live
         ${scheduled ? `&middot; ${scheduled} scheduled` : ''}
-        ${deleted ? `&middot; <span class="text-warning">${deleted} deleted from site</span>` : ''}
+        ${deleted ? `&middot; <span class="text-warning">${deleted} deleted</span>` : ''}
         ${removed ? `&middot; <span class="text-warning">${removed} under ${removedCampaigns} removed campaign${removedCampaigns === 1 ? '' : 's'}</span>` : ''}
       </p>
 
@@ -966,7 +971,13 @@ router.get('/blog-report', requireAuth, async (req, res) => {
               <th>Date</th>
               <th>Post</th>
               <th>Links to</th>
-              <th>Keyword</th>
+              ${/* NOT "Keyword", which never said WHOSE. The money page has a
+                    keyword too, and the two are deliberately different — a
+                    post aiming at the same query as the page it links to
+                    competes with it. This column is the search the POST was
+                    written to answer. Matches `this_post_main_topic` in the
+                    CSV. */ ''}
+              <th>Main topic</th>
               <th>Campaign</th>
               <th>Site</th>
               <th>State</th>
@@ -1037,8 +1048,16 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                         name reads as a subtitle, a tagline, or the start of
                         the post — and the one thing it actually is, the
                         clickable words carrying the link, is the thing
-                        anybody auditing this page came to see. */ ''}
-                  ${r.anchor ? `<div class="muted" style="font-size:.78rem">Anchor text: &ldquo;${esc(r.anchor)}&rdquo;</div>` : ''}
+                        anybody auditing this page came to see.
+
+                        "TO MONEY PAGE" spelled out even though the money page
+                        name is directly above it, so this label and the CSV
+                        column `anchor_text_to_money_page` are the SAME words.
+                        Somebody checking a spreadsheet row against the screen
+                        should not have to translate between two names for one
+                        value — and a post has other anchors, pointing at its
+                        sibling posts, which this is not. */ ''}
+                  ${r.anchor ? `<div class="muted" style="font-size:.78rem">Anchor text to money page: &ldquo;${esc(r.anchor)}&rdquo;</div>` : ''}
                 </td>
                 <td class="muted">${esc(r.keyword)}</td>
                 <td>
@@ -1098,9 +1117,30 @@ router.get('/blog-report.csv', requireAuth, async (req, res) => {
      * quote. They are the SAME numbers: assigned before any filter, so an
      * export of a filtered report carries the numbers those rows have on the
      * full report rather than 1..n of whatever survived the filter. */
+    /* TWO COLUMNS NAMED FOR WHAT THEY ARE, not for what an SEO calls them.
+     *
+     * `anchor_text` was not merely vague, it was AMBIGUOUS. A post contains
+     * several anchors: the one pointing at the money page, and one for every
+     * link to a sibling post in the same campaign (slot.linkPhrase, frozen at
+     * planning time). A column called `anchor_text` claims all of them and
+     * holds one. On screen the phrase sits inside the "Links to" column,
+     * directly beneath the money page name, so its neighbours say what it is;
+     * lifted into a spreadsheet it becomes a lone header with nothing around
+     * it. The name now carries the destination itself.
+     *
+     * `keyword` said whose keyword nowhere. The money page has one too, and
+     * the two must differ — a post competing with the page it feeds is worse
+     * than no post. This column is slot.targetQuery: the search THIS POST was
+     * written to answer.
+     *
+     * ALL UNDERSCORES, no hyphens. `this_post_main-topic` parses as
+     * `this_post_main` MINUS `topic` in pandas, SQL and Sheets QUERY(), so a
+     * header that reads fine in Excel would break every formula pointed at
+     * it. Renaming these breaks spreadsheets built on the old names — which
+     * is why the header is asserted in test-blog-report.js from now on. */
     const header = [
       'post_number', 'published_date', 'planned_date', 'post_title', 'post_url',
-      'links_to_page', 'links_to_url', 'anchor_text', 'keyword',
+      'links_to_page', 'links_to_url', 'anchor_text_to_money_page', 'this_post_main_topic',
       'campaign_number', 'campaign', 'campaign_status',
       'campaign_created_date', 'campaign_approved_date', 'campaign_removed_date',
       'site', 'site_status', 'post_state', 'post_deleted_date', 'credits',

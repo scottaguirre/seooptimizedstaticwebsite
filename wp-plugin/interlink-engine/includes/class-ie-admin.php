@@ -1824,7 +1824,7 @@ class IE_Admin {
 
 			<table class="form-table" role="presentation">
 				<tr>
-					<th scope="row"><label for="ie_target"><?php esc_html_e( 'Page to rank', 'interlink-engine' ); ?></label></th>
+					<th scope="row"><label for="ie_target"><?php esc_html_e( 'Target Page', 'interlink-engine' ); ?></label></th>
 					<td>
 						<select name="target_page_id" id="ie_target" required>
 							<option value=""><?php esc_html_e( 'Choose a page…', 'interlink-engine' ); ?></option>
@@ -1838,11 +1838,36 @@ class IE_Admin {
 								</option>
 							<?php endforeach; ?>
 						</select>
-						<p class="description"><?php esc_html_e( 'Every post will link to it. Pick the page that books jobs, not a blog page.', 'interlink-engine' ); ?></p>
+						<?php
+						/**
+						 * SHORTENED ON REQUEST, and what went with it: "Pick
+						 * the page that books jobs, not a blog page."
+						 *
+						 * That sentence was the ONLY thing anywhere guarding
+						 * against a campaign aimed at a blog index. The
+						 * dropdown does not filter them out, and the warnings
+						 * block above this form is filled from the server's
+						 * plan response — which arrives AFTER the credits are
+						 * spent. Recorded here so whoever next wonders why a
+						 * customer pointed thirty posts at /blog/ finds the
+						 * answer rather than rediscovering it.
+						 */
+						?>
+						<p class="description"><?php esc_html_e( 'Every post will link to it.', 'interlink-engine' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th scope="row"><label for="ie_keyword"><?php esc_html_e( 'Its search term', 'interlink-engine' ); ?></label></th>
+					<?php
+					/**
+					 * NOT "Its search term". "Its" pointed at the dropdown
+					 * above, and a pronoun whose antecedent can scroll off the
+					 * screen names nothing. The label now says which page it
+					 * means, and says "keyword" rather than "search term"
+					 * because that is the word used everywhere else this value
+					 * is discussed.
+					 */
+					?>
+					<th scope="row"><label for="ie_keyword"><?php esc_html_e( 'Main Keyword of Target Page', 'interlink-engine' ); ?></label></th>
 					<td>
 						<?php
 						/**

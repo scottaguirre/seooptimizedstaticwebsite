@@ -141,7 +141,7 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
     node test-email-html.js        # the HTML email body and its escaping
-    node test-blog-report.js       # /blog-report, its two tabs, row numbers, dates and CSV; 102
+    node test-blog-report.js       # /blog-report, its two tabs, row numbers, dates and CSV; 103
     node test-removal-time.js      # the removal time a site reports, and its bounds; needs nothing
     node test-business-refresh.js  # the business a site reports, and what may overwrite what; 9
     node test-post-quality.js      # length, the three wrappers, and where they sit
@@ -299,6 +299,28 @@ The point to land: a test that stays green when you break the thing it tests
 is not a test, and running it once against a deliberate break is the only way
 to know which kind you have.
 
+
+*Watch one new campaign reach `active`.* **The generator fix has never been
+observed doing the thing it fixes.**
+
+The 29 September fix made `blogGenerator.js` re-read the campaign before
+deciding its status, so a campaign that wrote posts ends at `active` instead
+of being reset to `draft`. It was confirmed by the report reading
+"2 campaigns · 12 posts · 12 confirmed live", both **Completed** — but that
+came from `settleFinished()` promoting them at the end. **No campaign has
+ever been seen sitting at `active`.**
+
+Every campaign in the 30 September export still reads `campaign_status:
+draft`, including campaign 8, which is live and publishing. That one was
+created 09-28, a day before the fix deployed, so it is expected — and it
+cannot self-correct, because `applyReportedStatuses()` treats `draft` as
+PROTECTED and refuses to let a site overwrite it (the guard that stops a site
+clobbering a campaign mid-write). It will go straight to `completed` when its
+last post publishes.
+
+So: plan one small campaign — two posts is enough — and check the CSV's
+`campaign_status`. **`active` means the fix works. `draft` means it does
+not**, and the evidence gathered so far cannot tell the two apart.
 
 **Raised 29 September, not yet ruled on by Edwin**
 
@@ -672,6 +694,35 @@ page's own layout.
 `${appHeaderAssets()}`. There is a test listing every such page.
 
 ## Deliberately dropped — do not re-propose
+
+**Twelve rows of roofingamerica.xyz's report name the wrong site, and that
+is HISTORICAL DAMAGE, not a bug.** Ruled on 30 September: *"if there is no
+bug then leave it."*
+
+In the 30 September export, posts 1–12 read:
+
+```
+post_url      https://hilltophomeloans.net/?p=101
+site          roofingamerica.xyz          ← the record, not the post
+```
+
+Two WordPress installs shared one licence key, so they shared one `BlogSite`
+record, and activation does `site.siteUrl = reportedUrl` — the record's URL
+flipped to whichever site last activated. Those twelve posts really were
+published to hilltophomeloans.net; the SITE column reports the record, and
+the record now says roofingamerica.xyz.
+
+**Cannot recur.** The licence binding was fixed in 0.7.0 — a second site now
+gets a clear refusal rather than silently taking the key. Nothing will
+correct the twelve, and nothing should try: the post URL on each row is the
+truth and is right there beside it.
+
+**DO NOT INVESTIGATE THIS AGAIN.** It has the shape of a live bug and is not
+one. Same for the two lesser oddities in that export: `campaign_status` reads
+`draft` on all 36 rows (residue of the generator bug, on campaigns removed on
+09-28 that nothing will ever update again), and rows 1–12 published BEFORE
+their planned date (the catch-up publishing posts whose schedule had already
+passed — which is what it is for).
 
 **A guard against bare URLs in blog prose.** Proposed twice and dropped twice,
 the second time explicitly: *"let's not do this."* The concern was real enough
@@ -1246,6 +1297,159 @@ Four mutations run, four caught: not queueing a failed report, retrying with
 Suites: 8 / 70 / 64 / 34 / 9. `test-removal-time.js` is new and in
 `deploy.sh`.
 
+## The campaign form's two labels — 0.14.1, 30 September 2026
+
+Same day, same fault, other end of the app. Having just renamed two CSV
+columns, Edwin looked at the new-campaign form and asked what **"Its search
+term"** referred to.
+
+    Page to rank     →  Target Page
+    Its search term  →  Main Keyword of Target Page
+
+    "Every post will link to it. Pick the page that books jobs,
+     not a blog page."      →  "Every post will link to it."
+
+**"Its" was the worse of the two.** A pronoun pointing at the dropdown above
+it — a dropdown that scrolls off the screen. An antecedent that can leave the
+viewport is not an antecedent. This is the same defect as `anchor_text`: a name
+that works only while you can see what surrounds it.
+
+**What the shortened description cost, recorded because it is a real loss.**
+"Pick the page that books jobs, not a blog page" was the ONLY guard anywhere
+against a campaign aimed at a blog index. The dropdown does not filter them;
+the warnings block above the form fills from the server's plan response, which
+arrives after the credits are spent. Raised with the specific failure, twice —
+once in chat, once as a comment beside the line. Edwin's form, Edwin's call. A
+`page_for_posts` check at plan time is the thing that would actually replace
+it, and it is not written.
+
+**The form had never been rendered by a test.** Which is exactly how it kept
+both names. The first test to render it died on a fatal — `selected( $cond )`,
+valid WordPress, one argument — because the stub in `test-admin-tabs.php`
+declared `$b` as required when WordPress declares it `= true`. **Tenth instance
+of a stub that could not express what it stood for**, and the first with the
+twist that the stub was NARROWER than the real thing rather than emptier: it
+did not hide a fault, it invented one, and it read like a bug in the plugin.
+*A stub's signature is part of the stub.*
+
+The second new test pins `data-keyword` on each option — the cleaned term that
+fills the keyword box without a round trip. A label edit that disturbed it
+would stay invisible until a customer got "quality plumbing Leander in Leander"
+as live anchor text, because `anchorPool.js` adds the town back.
+
+Four mutations, four caught: each label reverted, the pronoun reintroduced in a
+different wording (`Its keyword`), and `data-keyword` renamed.
+
+Suites: 66 / 70 / 34 / 9. Labels only — no server deploy, plugin upload only.
+
+## Two column names that told the reader nothing — 30 September 2026
+
+Edwin, looking at his own CSV export: *"What is the difference between keyword
+and anchor text?"* He had been using this report for weeks.
+
+The two columns are `slot.moneyAnchor` — the clickable words of the link out
+to the money page — and `slot.targetQuery`, the search the post itself was
+written to answer. Different jobs entirely, and deliberately never the same
+phrase: a post aiming at the same query as the page it links to competes with
+the page it is supposed to feed.
+
+**The defect was not only vagueness. `anchor_text` was AMBIGUOUS.** A post
+carries several anchors — one to the money page, and one for every link to a
+sibling post in the campaign (`slot.linkPhrase`, frozen at planning time so
+post 3 can link to post 5 before post 5 exists). A column called `anchor_text`
+claims all of them and holds one. No amount of documentation fixes a name that
+is wrong; the name had to carry the destination.
+
+**Where the defect was, and where it wasn't.** On the report page the anchor
+sits *inside* the "Links to" column, directly beneath the money page name — its
+neighbours say what it is. Lifted into a spreadsheet, the same value becomes a
+lone header read with nothing around it. Worth stating plainly before
+proposing anything, because half of what looked broken was already solved and
+changing it would have been churn.
+
+    anchor_text  →  anchor_text_to_money_page
+    keyword      →  this_post_main_topic
+
+Screen labels changed to match word for word — "Anchor text to money page:" and
+a **Main topic** header — so nobody checking a spreadsheet row against the
+screen has to translate between two names for one value.
+
+**The hyphen.** Edwin's first choice was `this_post_main-topic`. In Excel that
+is a harmless string; in pandas, SQL or Sheets `QUERY()` it parses as
+`this_post_main` MINUS `topic`. A header that reads correctly and cannot be
+referenced is worse than an ugly one, and it would have been the only
+hyphenated name among twenty. Flagged with the concrete failure rather than a
+style objection, and he changed it. *Raise a naming objection only when you can
+name what breaks.*
+
+**A rename is an interface change.** Nothing had ever asserted the CSV header —
+which is how `anchor_text` and `keyword` got there in the first place: names
+that read fine to whoever wrote the code and told a customer nothing. A rename
+lands as a broken formula in somebody else's spreadsheet, days later, with
+nothing to trace it to. `THE CSV COLUMN NAMES ARE PINNED` now asserts the two
+new names, the absence of the two old ones, and that **every** header matches
+`^[a-z][a-z0-9_]*$` — so the next hyphen fails here rather than in a client's
+file.
+
+That test failed on its first run, on `credits`, and it was right to: the file
+is written CRLF for Excel on Windows, so the last name on the line carried a
+`\r`. Fault in the test, not the header — but the same blind spot would have
+hidden a real trailing-whitespace bug.
+
+Six mutations run, six caught: each of the two CSV names reverted, the hyphen
+put back, the screen label reverted, the screen header reverted, and a hyphen
+introduced into an unrelated column (`site-status`) to prove the shape rule
+catches names the pinned list does not mention.
+
+Suites: 104 / 8 / 9 / 22. `test-blog-report.js` `DECLARED` raised to 104.
+
+## A filter that its own page contradicted — 30 September 2026
+
+Edwin set **Campaign status = In progress** and got eight rows. Seven of them
+the page itself labelled **"Was in progress"**, in red, in the very next
+column. One was actually in progress.
+
+`campaignStatusOf()` is blind to `removedAt` — deliberately — so a status
+option meant *"its status WAS this"*, not *"it is this now"*. Every campaign
+he had removed on 28 September was still mid-run when it went, so every one
+of them matched.
+
+**The original reasoning was sound and still produced the wrong screen.**
+Removal is stored as a date so "completed, then deleted" and "cancelled
+halfway, then deleted" stay tellable apart, and so Campaign status
+**Completed** + Post state **Campaign removed** composes into a question no
+merged dropdown could ask. All true. **It required the reader to know to
+compose them, and the product's own author read it the other way.**
+
+So a status option now means *"and it still exists"*. Removed campaigns are
+found with the **Removed** option already sitting in the same dropdown, where
+the STATUS column goes on saying what each one WAS.
+
+**What survived:** the row still carries `campaignStatus`, and the page still
+renders "Was completed" / "Was cancelled". The distinction removal-as-a-date
+exists to preserve is intact — it is reached by picking Removed and reading
+the column, rather than by a filter whose label says the opposite.
+
+**What it cost:** Completed no longer finds campaigns that finished and were
+then removed. That was the composition the old design was protecting, and it
+is now two steps instead of one.
+
+The drill-through is unaffected. `queryString({ view: 'posts', campaignId })`
+is built from those two keys alone, so clicking a campaign shows all of its
+posts whatever the status filter was — you have already chosen the campaign,
+and filtering it further by its own status could only remove rows for no
+reason.
+
+**The lesson is about evidence, not design.** Seven of eight rows
+contradicting the filter that produced them is not a composable interface, it
+is a sentence nobody reads as intended — and the page was already printing
+the contradiction in red. **When the screen argues with itself, the screen is
+the bug report.**
+
+Two mutations, both caught: reverting to the past-tense match fails the new
+assertion, and making Removed return nothing fails four.
+103 assertions, green, and green under `TZ=America/Chicago`.
+
 ### A date under "Published" for a post that never published
 
 Edwin's own CSV export, beside the screen it came from:
@@ -1285,6 +1489,26 @@ would explain something that did not happen.
 `.note` resets `white-space` because it sits inside `.date`, which is
 `nowrap` so a date cannot break mid-date. Without the reset the note inherits
 it and drags the column to the width of the whole sentence.
+
+**"Deleted from site" is now just "Deleted"**, Edwin's call. The pill on the
+row already said "Deleted" while the Post state dropdown said "Deleted from
+site" — one state under two names on one screen, which leaves a reader
+wondering whether they are two different things. The pill has no room for the
+longer phrase, so the dropdown gave up the extra words. The headline count
+follows.
+
+A test now asserts the two strings are **equal**, rather than that either one
+has a particular value: reverting the dropdown fails it, and so does renaming
+the pill. Checking only one is how they came to differ.
+
+**The accuracy question that was NOT settled.** Edwin first suggested "Sent
+to Trash". The detection cannot support it — `post_missing()` flags a post
+that is not in `publish, future, draft, pending, private`, which is equally
+true of a trashed post, a permanently deleted one, and a row WordPress no
+longer has. "Sent to Trash" would send somebody to look in a Trash folder for
+a post that is not there, and **a label that misdirects is worse than one
+that is merely blunt.** "Deleted" claims only that it is gone, which is all
+that is known.
 
 **And the anchor phrase is now labelled** `Anchor text: "what the work
 involves"`. Quotation marks alone do not name the thing — a grey quoted

@@ -33,7 +33,7 @@ const Module = require('module');
 const { execFileSync } = require('child_process');
 
 let passed = 0, failed = 0;
-const DECLARED = 102;
+const DECLARED = 104;
 
 function test(name, fn) {
   try {
@@ -584,11 +584,16 @@ await atest('draft, writing and active all read as in progress', async () => {
   assert.deepStrictEqual(rows.map(r => r.campaign).sort(), ['A', 'D', 'W']);
 });
 
-await atest('A REMOVED CAMPAIGN KEEPS THE STATUS IT HAD WHEN IT WAS REMOVED', async () => {
-  /* THE POINT OF STORING REMOVAL AS A DATE. Collapsing 'removed' into the
-   * status list would make "completed, then deleted from WordPress" and
-   * "cancelled halfway, then deleted" the same row, and the report exists to
-   * tell those apart. */
+await atest('A REMOVED CAMPAIGN STILL REMEMBERS THE STATUS IT HAD', async () => {
+  /* THE POINT OF STORING REMOVAL AS A DATE, and it survives the change to
+   * the FILTER. "Completed, then deleted from WordPress" and "cancelled
+   * halfway, then deleted" must stay tellable apart, and they do — the row
+   * keeps campaignStatus, and the STATUS column renders it as "Was
+   * completed" / "Was cancelled".
+   *
+   * What changed is only which rows a STATUS FILTER returns. The data is
+   * untouched, which is why this is asserted on the rows rather than through
+   * a filter that no longer asks this question. */
   given({
     sites: [SITE_A],
     campaigns: [
@@ -597,27 +602,50 @@ await atest('A REMOVED CAMPAIGN KEEPS THE STATUS IT HAD WHEN IT WAS REMOVED', as
     ],
   });
 
-  const done = await rowsFor('u1', readFilters({ campaignStatus: 'completed' }));
+  const removed = await rowsFor('u1', readFilters({ campaignStatus: 'removed' }));
+  const byName = new Map(removed.map(r => [r.campaign, r.campaignStatus]));
 
-  assert.deepStrictEqual(done.map(r => r.campaign), ['Finished then removed'],
+  assert.strictEqual(byName.get('Finished then removed'), 'completed');
+  assert.strictEqual(byName.get('Abandoned then removed'), 'cancelled',
     'removal swallowed the status the campaign had when it was removed');
 });
 
-await atest('campaign status and post state COMPOSE rather than override', async () => {
-  // The combination a single merged dropdown could not express: campaigns
-  // that finished their run and were then deleted from WordPress.
+await atest('A STATUS FILTER MEANS NOW, NOT "WAS"', async () => {
+  /* THE CHANGE, in one assertion. This test used to prove the opposite:
+   * Completed returned campaigns that had finished and been removed, on the
+   * argument that the two filters composed into a question no single
+   * dropdown could ask.
+   *
+   * True, and it required the reader to know to compose them. Edwin filtered
+   * to In progress and got eight rows, seven of them labelled "Was in
+   * progress" in red in the next column. Seven of eight rows contradicting
+   * their own filter is not composability, it is a sentence nobody reads as
+   * intended. */
   given({
     sites: [SITE_A],
     campaigns: [
       campaign({ _id: 'c-1', name: 'Finished and removed', status: 'completed', removedAt: new Date('2026-09-28') }),
       campaign({ _id: 'c-2', name: 'Finished, still there', status: 'completed' }),
       campaign({ _id: 'c-3', name: 'Running and removed', status: 'active', removedAt: new Date('2026-09-28') }),
+      campaign({ _id: 'c-4', name: 'Running, still there', status: 'active' }),
     ],
   });
 
-  const rows = await rowsFor('u1', readFilters({ campaignStatus: 'completed', state: 'removed' }));
+  assert.deepStrictEqual(
+    (await rowsFor('u1', readFilters({ campaignStatus: 'completed' }))).map(r => r.campaign),
+    ['Finished, still there'], 'Completed returned a campaign that no longer exists');
 
-  assert.deepStrictEqual(rows.map(r => r.campaign), ['Finished and removed']);
+  assert.deepStrictEqual(
+    (await rowsFor('u1', readFilters({ campaignStatus: 'running' }))).map(r => r.campaign),
+    ['Running, still there'], 'In progress returned a campaign that no longer exists');
+
+  /* AND THE REMOVED ONES ARE STILL REACHABLE, from the same dropdown. A
+   * change that made them findable nowhere would be worse than the problem
+   * it fixed. */
+  assert.deepStrictEqual(
+    (await rowsFor('u1', readFilters({ campaignStatus: 'removed' }))).map(r => r.campaign).sort(),
+    ['Finished and removed', 'Running and removed'],
+    'the removed campaigns became unreachable');
 });
 
 await atest('the campaign status box is on the page, beside the post state box', async () => {
@@ -1066,24 +1094,25 @@ await atest('CAMPAIGN STATUS "REMOVED" MATCHES EVERY REMOVED CAMPAIGN', async ()
     'the removed filter did not match on the removal date');
 });
 
-await atest('ASKING FOR REMOVED DOES NOT HIDE IT FROM THE OTHER STATUSES', async () => {
-  /* THE DISTINCTION THAT HAD TO SURVIVE. Removal is stored as a date so that
-   * "completed, then deleted" and "cancelled halfway, then deleted" stay
-   * tellable apart. Folding it into campaignStatusOf() would make Completed
-   * silently drop every completed campaign since removed. */
+await atest('THE STATUS COLUMN STILL SAYS WHAT A REMOVED CAMPAIGN WAS', async () => {
+  /* The half of the old design that had to survive, and did. The FILTER no
+   * longer returns removed campaigns under their old status, but the row
+   * still carries it and the page still renders "Was completed" — so
+   * "finished, then deleted" and "abandoned, then deleted" are still
+   * different rows on the screen, which is the distinction removal-as-a-date
+   * exists to preserve. */
   given({
     sites: [SITE_A],
     campaigns: [
       campaign({ _id: 'c-1', name: 'Finished then removed', status: 'completed', removedAt: new Date('2026-09-28') }),
-      campaign({ _id: 'c-2', name: 'Finished, still here', status: 'completed' }),
+      campaign({ _id: 'c-2', name: 'Gave up then removed',  status: 'cancelled', removedAt: new Date('2026-09-28') }),
     ],
   });
 
-  const rows = await rowsFor('u1', readFilters({ campaignStatus: 'completed' }));
+  const html = (await render('/blog-report', { campaignStatus: 'removed' })).body;
 
-  assert.deepStrictEqual(rows.map(r => r.campaign).sort(),
-    ['Finished then removed', 'Finished, still here'],
-    'a completed campaign vanished from Completed because it had been removed');
+  assert.ok(html.includes('Was completed'), 'a removed campaign lost the fact that it had finished');
+  assert.ok(html.includes('Was cancelled'), 'a removed campaign lost the fact that it was abandoned');
 });
 
 await atest('EVERY OPTION IS A STATUS SOMETHING ACTUALLY WRITES', async () => {
@@ -1909,11 +1938,17 @@ await atest('eight scheduled posts do not read as eight published ones', async (
 });
 
 
-await atest('THE ANCHOR TEXT SAYS WHAT IT IS', async () => {
+await atest('THE ANCHOR TEXT SAYS WHAT IT IS, AND WHERE IT POINTS', async () => {
   /* Quotation marks alone do not name the thing. A grey quoted fragment
    * under a page name reads as a subtitle or a tagline; that it is the
    * clickable words carrying the link is the one fact somebody auditing
-   * this page came for. */
+   * this page came for.
+   *
+   * AND WHERE IT POINTS, because "anchor text" alone is ambiguous rather
+   * than merely vague: a post carries an anchor to the money page AND one
+   * per link to a sibling post. Naming only the first is what this cell
+   * does, so it must say which one it is — in the same words the CSV
+   * column uses, so screen and spreadsheet need no translating. */
   given({
     sites: [SITE_A],
     campaigns: [campaign({ slots: [slot({ moneyAnchor: 'what the work involves' })] })],
@@ -1921,8 +1956,48 @@ await atest('THE ANCHOR TEXT SAYS WHAT IT IS', async () => {
 
   const html = (await render('/blog-report', { view: 'posts' })).body;
 
-  assert.ok(html.includes('Anchor text: &ldquo;what the work involves&rdquo;'),
-    'the anchor phrase is shown without saying that is what it is');
+  assert.ok(html.includes('Anchor text to money page: &ldquo;what the work involves&rdquo;'),
+    'the anchor phrase does not say it is the anchor, or does not say where it points');
+
+  assert.ok(html.includes('<th>Main topic</th>'),
+    'the column header went back to the unattributed "Keyword"');
+});
+
+await atest('THE CSV COLUMN NAMES ARE PINNED', async () => {
+  /* NOTHING ASSERTED THESE UNTIL NOW, which is how they drifted into
+   * `anchor_text` and `keyword` in the first place — names that read fine to
+   * whoever wrote the code and told a customer nothing.
+   *
+   * These names are an INTERFACE. Edwin's spreadsheets, and any client's,
+   * are built on the exact header text: a rename lands as a broken formula
+   * in somebody else's file, days later, with nothing to trace it to. So a
+   * rename must fail here first and be a deliberate act.
+   *
+   * The hyphen check is not pedantry. `this_post_main-topic` parses as
+   * `this_post_main` MINUS `topic` in pandas, SQL and Sheets QUERY() — a
+   * header that looks right in Excel and cannot be referenced anywhere else. */
+  given({ sites: [SITE_A], campaigns: [campaign({ slots: [slot({})] })] });
+
+  /* \r STRIPPED, not overlooked: the file is written with CRLF line endings
+   * for Excel on Windows, so the last name on the line carries a carriage
+   * return. Splitting on \n alone made this test fail on `credits` — a real
+   * fault in the test, not in the header. */
+  const header = (await render('/blog-report.csv')).body.split('\n')[0]
+    .replace(/^﻿/, '').split(',').map(name => name.trim());
+
+  for (const name of ['anchor_text_to_money_page', 'this_post_main_topic']) {
+    assert.ok(header.includes(name), `the CSV lost the column ${name}`);
+  }
+
+  for (const gone of ['anchor_text', 'keyword']) {
+    assert.ok(!header.includes(gone),
+      `${gone} is back — it never said whose, and a post has more than one anchor`);
+  }
+
+  for (const name of header) {
+    assert.ok(/^[a-z][a-z0-9_]*$/.test(name),
+      `${name} is not a plain underscore name, so a formula cannot reference it`);
+  }
 });
 
 await atest('A POST THAT PUBLISHED BEFORE ITS CAMPAIGN WENT SAYS SO', async () => {
@@ -1990,6 +2065,38 @@ await atest('a published post on a LIVE campaign gets no note', async () => {
 
   assert.ok(!html.includes('the campaign was removed'),
     'an ordinary published post carries a note about nothing');
+});
+
+
+await atest('THE FILTER AND THE PILL CALL IT THE SAME THING', async () => {
+  /* The dropdown said "Deleted from site" while the pill on the row said
+   * "Deleted" — one state under two names on one screen. Asserted together,
+   * because checking either alone is how they came to differ. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      slots: [slot({ status: 'published', deletedAt: new Date('2026-09-25T10:00:00Z') })],
+    })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(html.includes('<option value="deleted"'), 'the state is not offered in the filter');
+  assert.ok(!html.includes('Deleted from site'), 'the filter still uses the longer name');
+
+  /* AND THE TWO STRINGS ARE THE SAME STRING. Asserting the long one is gone
+   * would pass on a page that renamed only the dropdown and left the pill
+   * saying something else again. */
+  /* The pill carries a title attribute, so the closing > is not adjacent to
+   * the class. A regex that assumed it was found nothing and the test failed
+   * for its own reasons rather than the code's. */
+  const pill = /<span class="pill [^"]*"[^>]*>\s*([^<]+?)\s*<\/span>/.exec(html);
+  const option = /<option value="deleted"[^>]*>\s*([^<]+?)\s*<\/option>/.exec(html);
+
+  assert.ok(pill && option, 'could not find both the pill and the option');
+  assert.strictEqual(option[1], 'Deleted', 'the filter does not say Deleted');
+  assert.strictEqual(pill[1], option[1],
+    `the pill says "${pill[1]}" and the filter says "${option[1]}"`);
 });
 
 console.log('');
