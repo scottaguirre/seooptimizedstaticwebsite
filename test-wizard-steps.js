@@ -492,6 +492,76 @@ test('THE STEP NUMBERS ON SCREEN COME FROM THE ORDER, NOT FROM TYPING', () => {
   assert.ok(!/<h[34][^>]*>\s*\d+\.\s/.test(JS), 'a step heading hardcodes its number');
 });
 
+/* -------------------------------------------------------------------------
+ * The price range table checkbox
+ * ---------------------------------------------------------------------- */
+
+test('THE CHECKBOX IS HIDDEN, NOT UNTICKED, WHERE A TABLE IS NOT ALLOWED', () => {
+  /* An unticked box says "you could turn this on". A dentist cannot: a
+   * published price table for a physician has insurance-billing and
+   * state-disclosure implications, and the server refuses it whatever the
+   * form sends. Offering the control and ignoring it is worse than not
+   * offering it. */
+  const body = bodyOf('renderMainForm');
+
+  assert.ok(/canHavePricingTable\(state\.businessType\)\s*\?/.test(body),
+    'the checkbox is no longer gated on the business shape');
+  assert.ok(/name="global\[showPricingTable\]"/.test(body),
+    'the checkbox lost its field name, so nothing reaches the server');
+
+  /* The separator belongs INSIDE the conditional. Moved outside it, a
+   * dentist's form shows two rules with nothing between them — the tidy-up
+   * that "obviously" belongs with the other <hr> tags above. */
+  const block = body.slice(body.indexOf('canHavePricingTable(state.businessType) ?'));
+  const end = block.indexOf('` : \'\'}');
+
+  assert.ok(end > 0, 'the conditional around the pricing checkbox has changed shape');
+  assert.ok(/<hr>/.test(block.slice(0, end)),
+    'the rule above the pricing checkbox is outside the conditional, or gone');
+});
+
+test('it ships ticked, so the default build is unchanged', () => {
+  /* Opt-OUT. Every site built before today has a table; a box that defaulted
+   * to off would quietly remove it from the next build of an existing site. */
+  const body = bodyOf('renderMainForm');
+  const tag = body.match(/<input[^>]*id="showPricingTable"[^>]*>/);
+
+  assert.ok(tag, 'the checkbox is gone');
+  assert.ok(/\bchecked\b/.test(tag[0]), 'the checkbox no longer ships ticked');
+});
+
+test('ABSENT READS AS INCLUDED ON THE REVIEW STEP', () => {
+  /* The server treats a missing value as "on", because an unchecked box sends
+   * nothing and so does every caller that predates the field. The review
+   * screen has to agree with it, or step 8 promises one thing and the build
+   * delivers another. */
+  const body = bodyOf('pricingSummary');
+
+  assert.ok(/undefined[\s\S]*?return 'Included'/.test(body),
+    'a missing value no longer reads as Included');
+  assert.ok(/'Not included'/.test(body), 'there is no way to report it as off');
+});
+
+test('the review step reports the choice', () => {
+  const body = bodyOf('renderReviewStep');
+
+  assert.ok(/pricingSummary\(\)/.test(body),
+    'the review step no longer says whether a price table is coming');
+  assert.ok(/canHavePricingTable\(state\.businessType\)/.test(body),
+    'the row is shown even where no table is possible, which reports a choice nobody made');
+});
+
+test('the wizard keeps its own copy of the shape rule, and says so', () => {
+  /* It has to have one — it cannot call into Node to ask. The comment
+   * naming businessShape.js as the authority is what sends the next reader
+   * to the real rule, and test-business-shape.js is what stops the two
+   * drifting. */
+  assert.ok(/var SHAPES_WITH_PRICING = \[/.test(JS), 'SHAPES_WITH_PRICING is gone');
+  assert.ok(/businessShape\.js/.test(RAW.slice(RAW.indexOf('SHAPES_WITH_PRICING') - 1200,
+                                               RAW.indexOf('SHAPES_WITH_PRICING'))),
+    'the copy no longer points at the file that owns the rule');
+});
+
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);
 console.log('');

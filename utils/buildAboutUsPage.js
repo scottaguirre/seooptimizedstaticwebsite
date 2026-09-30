@@ -105,8 +105,23 @@ const  buildAboutUsPage =  async function (
         // and bar advertising rules. Both are suppressed for every other shape
         // and the sections simply reflow — an empty gap beats a fabricated
         // credential.
+        //
+        // TWO GATES, AND THE ORDER OF THE `&&` IS THE POINT. `caps.pricingTable`
+        // is the rule and comes first; `showPricingTable` is a preference and
+        // can only ever take the table away. Ticking the box cannot give a
+        // dentist a price list, because the shape gate is not reachable from
+        // the form.
+        //
+        // ABSENT MEANS ON, matching runGeneration: an unchecked checkbox sends
+        // nothing, and so does every caller that predates this field — the
+        // WordPress plugin, a cached wizard, a saved draft. Reading a missing
+        // value as "off" would strip the table from builds nobody had asked to
+        // change.
         const caps = capabilities(globalValues.businessType);
-        const pricingRows = caps.pricingTable ? pricing : [];
+        const wantsPricing = globalValues.showPricingTable === undefined
+          || globalValues.showPricingTable === null
+          || [true, 'true', 'on', '1'].includes(globalValues.showPricingTable);
+        const pricingRows = (caps.pricingTable && wantsPricing) ? pricing : [];
 
         // Everything that differs between Rank Fast and Rank GBPs on this
         // page — the image prefix, the alt/title wording, whether the FAQPage

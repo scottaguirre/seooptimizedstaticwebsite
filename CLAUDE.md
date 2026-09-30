@@ -695,6 +695,42 @@ page's own layout.
 
 ## Deliberately dropped — do not re-propose
 
+**No check stops a campaign being pointed at the blog page.** Ruled on
+30 September: *"forget about it."*
+
+The Target Page dropdown lists every page, the blog index included. A campaign
+aimed there writes posts that all link back to a list of posts, which books
+nobody. The description under the dropdown used to say "Pick the page that
+books jobs, not a blog page"; it was shortened to "Every post will link to it."
+on 30 September at Edwin's request, so nothing warns any more and nothing in
+code refuses. The cost lands after the credits are spent.
+
+Proposed twice — once when the sentence was cut, once in the next-steps list —
+and declined both times. **Do not raise it a third time.** It matters for a
+customer using the plugin on their own site, not for Edwin, who would never
+pick it; if the plugin goes to customers who are not him, it comes back into
+scope on its own.
+
+**`test-reviews-section.js` stays as a zero-byte file in `deploy.sh`'s suite
+list.** Ruled on 30 September: *"forget about this."*
+
+It is an empty file. `node` runs it, it exits 0, and the loop counts a pass —
+so the gate reports coverage that does not exist, and `utils/generateSampleReviews.js`
+has none at all. That is the file whose top-level `await` produced the 502 the
+same day. The argument for filling it or removing it from the list is written
+up in "The 502, and the check that would have caught it"; it was made, it was
+heard, and the answer was no.
+
+**What makes dropping it defensible now:** `check-boot.js` closes the hole
+that actually mattered. A file that cannot load is caught by the boot check
+whether or not any suite covers it. What stays uncovered is the section's
+*behaviour* — and that is content Edwin has not settled yet, so a test would
+be pinning a decision rather than protecting one.
+
+**Do not re-raise it.** If the reviews section is reworked, the test comes back
+into scope on its own; until then it is a known empty entry, recorded here so
+nobody rediscovers it and reports it as a finding.
+
 **Twelve rows of roofingamerica.xyz's report name the wrong site, and that
 is HISTORICAL DAMAGE, not a bug.** Ruled on 30 September: *"if there is no
 bug then leave it."*
@@ -1297,6 +1333,133 @@ Four mutations run, four caught: not queueing a failed report, retrying with
 Suites: 8 / 70 / 64 / 34 / 9. `test-removal-time.js` is new and in
 `deploy.sh`.
 
+## law-firm → lemon-law, and half a rename — 30 September 2026
+
+Edwin: *"the current business type for lawyer says lawyer, could you change it
+to say Lemon Law?"* I could not find anywhere that displayed "lawyer" and
+**asked instead of guessing** — the answer was the photo folder,
+`src/predefined-images/law-firm`. The name was wrong: its contents are
+lemon-car imagery, and `businessShape.js` said so in a comment already.
+
+**THE RENAME HAD TWO LANDING PLACES, and I found one.**
+
+    src/predefined-images/<folder>/   the photographs      ← I checked this
+    utils/altText/<folder>.js         their descriptions   ← I did not
+
+I even wrote a test for it — *"THE PHOTO FOLDER EVERY TYPE NAMES ACTUALLY
+EXISTS ON DISK"* — and it passed, because it checked the half I had just been
+looking at. The deploy then failed with `⚠️ No image descriptions found for
+business type: Lemon Law`, because `altText/law-firm.js` had not moved.
+
+> **Half a rename passes half a test.** Before writing a test for a rename,
+> grep for every lookup keyed by the old name — `imageFolderFor` had two
+> consumers and the second was two lines away.
+
+**NEITHER MISS THROWS**, which is what makes the class dangerous.
+`copyPageImage` warns and skips; `buildAltText` warns and returns `{}`. The
+first real sign is a finished site with no photographs, or one where every
+image ships `alt=""` — and both warnings scroll past in a build log.
+
+**THE SECOND MISTAKE, caught before it shipped.** The widened test demanded an
+alt-text file for every type, and five do not have one: `painter`,
+`swimming-pool-contractor`, `doctor`, `web-design`, `coding`. Those sites
+already ship every image with `alt=""`. A real defect, and NOT today's — a
+test failing on it would have blocked every deploy until somebody wrote five
+files under pressure. Simulated against Edwin's actual disk before committing,
+which is how it was caught rather than by another failed deploy.
+
+So the gaps are an explicit `ALT_TEXT_GAPS` list that only ever shrinks, and
+filling one *fails the test* until the line is removed. Anything outside the
+list must have its file — which is what catches a folder renamed without its
+descriptions.
+
+**`eye-doctor` is an orphan and I do not know why.** An alt-text file and a
+photo folder that no business type resolves to; "Optometrist" appears in a
+comment as something that used to fall through to generic. Recorded in
+`KNOWN_ORPHANS` rather than deleted — assets somebody made are not mine to bin
+on a guess, and listing it means the NEXT orphan fails instead of hiding
+behind it.
+
+**`Law Firm` now names its folder explicitly.** It used to find `law-firm` by
+accident, through `slugify('Law Firm')`. After the rename that accident stops
+working, and a WordPress site typed as "law office", "lawyer" or "attorney"
+would have built complete and with no photographs at all. `imageFolder:
+'lemon-law'` is written down, and the test pins the alias path too.
+
+Edwin renamed both by hand — the bridge writes files, not directories, and
+cannot delete. Also removed "Costs the same either way." from the checkbox
+blurb.
+
+## Turning the price table off — 30 September 2026
+
+Edwin knew the One-Page Design mode has no pricing table and asked whether
+Rank Fast and Rank GBPs could turn theirs off. **They could not.** Nothing
+anywhere read a preference; `capabilities(businessType).pricingTable` in
+`utils/businessShape.js` was the only thing deciding, and it is about the
+*shape* of the business, not what anyone wanted.
+
+**I called it "a small change" before reading enough, and it was six files.**
+Corrected out loud before starting. Same fault as the anchor-fix sizing on
+29 September: *say the size after reading the code.*
+
+**THE CHECKBOX CAN ONLY SUBTRACT, and that is the whole design.**
+
+    caps.pricingTable && wantsPricing
+
+The shape rule first, the preference second. Medical and legal shapes are not
+a preference — a published price table for a physician has insurance-billing
+and state-disclosure implications, and for an attorney fee advertising is
+governed by bar rules in most states — so ticking a box must not be able to
+grant one. The wizard therefore **hides** the checkbox for those shapes rather
+than showing it unticked: an unticked box says *you could turn this on*.
+
+**Three gates, three different jobs.** Worth keeping straight, because the
+duplication looks redundant and is not:
+
+    runGeneration.js    whether to PAY for it      (a model call)
+    buildAboutUsPage.js whether to RENDER it       (must not be bypassable)
+    the wizard          whether to OFFER the choice
+
+Gating only the render would leave every medical build paying for rows that
+are dropped three hundred lines later.
+
+**ABSENT MEANS ON.** An unchecked checkbox sends nothing, so "unticked" and
+"this caller has never heard of the field" are indistinguishable in the body
+— and the second covers the WordPress plugin, a cached wizard and any saved
+draft. Reading a missing value as "off" would have silently stripped the table
+from builds nobody asked to change.
+
+**THE BUG THE TRUTH TABLE FOUND.** I wrote the two server gates by hand, in
+different files, then ran both against the same ten inputs before trusting
+them. They disagreed on exactly one: `null`. `runGeneration` tested
+`=== undefined` and read it as OFF while the render gate read it as ON — a
+table generated, paid for, and then not displayed. Loosened to `== null`.
+
+The lesson generalises past this feature. **Two hand-written coercions of the
+same value will differ somewhere, and the place they differ is never the case
+you thought about.** The table is now a test that extracts both expressions
+from source and evaluates them, rather than a scratch script I ran once.
+
+**The wizard needs its own copy of the shape list** — it cannot call into Node
+to decide whether to show the box. `SHAPES_WITH_PRICING` is that copy, and
+`test-business-shape.js` fails if it stops matching `CAPABILITIES`, the same
+way it already guards `BUSINESS_TYPE_SHAPES`. The direction that matters is a
+shape in the wizard's list but not the server's: that shows a customer a
+control the server will overrule.
+
+**Turning it off does not change the price.** `utils/pricing.js` charges a
+flat base plus per-page; About-page sections are not itemised. The form says
+so, because a customer unticking a box to save credits and saving none would
+be a worse surprise than the table.
+
+Ten mutations, ten caught — four on the wizard, six on the server via a
+throwaway `mutate-pricing.sh` (backs up, breaks one gate, runs the suite,
+restores under an EXIT trap, checksums). The six patterns were verified
+against the real sources before it ran, because a mutation that fails to match
+reports "caught" while changing nothing.
+
+Suites: 109 / 40 / 29 / 104.
+
 ## The 502, and the check that would have caught it — 30 September 2026
 
 A deploy shipped with **all thirty-nine suites green** and took the site down.
@@ -1353,8 +1516,10 @@ known to work.*
 **`test-reviews-section.js` IS ZERO BYTES**, and it is in `deploy.sh`'s suite
 list. `node` runs it, it exits 0, the loop reads a pass. **An empty file in a
 gate is worse than no entry at all** — the list looks like coverage and is not.
-Same shape as the stub faults logged all week. Still outstanding: give it
-content or take it off the list.
+Same shape as the stub faults logged all week. **Raised, and DROPPED the same
+day — see "Deliberately dropped". Do not re-propose.** The boot check covers
+the part that took the site down; what is left uncovered is behaviour Edwin
+has not decided on.
 
 **Also outstanding, and not a bug:** `DISCLAIMER` and `SECTION_NOTE` in
 generateSampleReviews.js are both `''` in the committed code, so the sample

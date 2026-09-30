@@ -601,9 +601,10 @@ test('alt text and photographs come from the same folder', () => {
 });
 
 test('Law Firm is unlisted until it has photographs of its own', () => {
-  // src/predefined-images/law-firm/ and utils/altText/law-firm.js are both
-  // lemon-car imagery, from when "Law Firm" meant lemon law. Offering the
-  // split-out general practice in the dropdown would hand it those photos.
+  // src/predefined-images/lemon-law/ is lemon-car imagery, from when "Law
+  // Firm" meant lemon law — which is why the folder now carries that name.
+  // Offering the split-out general practice in the dropdown would hand it
+  // those photos.
   const entry = BUSINESS_TYPES.find(t => t.label === 'Law Firm');
   assert.strictEqual(entry.listed, false, 'Law Firm is selectable but has lemon law photographs');
   assert.strictEqual(businessShape('law office'), 'professional', 'it must still resolve');
@@ -1297,10 +1298,48 @@ const wizard = vm.runInContext(`({
   labels: ${extractVar('BUSINESS_TYPE_LABELS')},
   shapes: ${extractVar('BUSINESS_TYPE_SHAPES')},
   claims: ${extractVar('TRUST_CLAIMS_BY_SHAPE')},
+  pricingShapes: ${extractVar('SHAPES_WITH_PRICING')},
 })`, sandbox);
 
 test('the dropdown offers exactly the listed types, in order', () => {
   assert.deepStrictEqual([...wizard.labels], DROPDOWN_TYPES.map(t => t.label));
+});
+
+test('THE WIZARD AND THE SERVER AGREE ON WHO MAY HAVE A PRICE TABLE', () => {
+  /* The wizard has its own copy of this list, because it decides whether to
+   * SHOW the "Include price range table" checkbox and it cannot call into
+   * Node to ask. A second copy of a rule drifts — so it is checked here, the
+   * same way BUSINESS_TYPE_SHAPES already is.
+   *
+   * THE DIRECTION THAT MATTERS is a shape appearing in the wizard's list but
+   * not the server's: that shows a customer a checkbox whose ticked state the
+   * server will overrule, so the form promises a section that never arrives.
+   * The other direction is milder — a table that renders with no way to turn
+   * it off — but both are drift and both fail here. */
+  const serverShapes = Object.keys(shapeModule.CAPABILITIES)
+    .filter(shape => shapeModule.CAPABILITIES[shape].pricingTable)
+    .sort();
+
+  assert.deepStrictEqual([...wizard.pricingShapes].sort(), serverShapes,
+    'SHAPES_WITH_PRICING in the wizard no longer matches CAPABILITIES on the server');
+});
+
+test('no medical or legal shape can reach a price table, whatever the form sends', () => {
+  /* THE CHECKBOX MUST ONLY EVER SUBTRACT. A published price table for a
+   * physician has insurance-billing and state-disclosure implications, and
+   * for an attorney fee advertising is governed by bar rules in most states.
+   * Those are not preferences, so the form must not be able to turn them on.
+   *
+   * Asserted against capabilities() directly rather than through the wizard,
+   * because this is the gate that has to hold when the wizard is bypassed
+   * entirely — the WordPress plugin posts to the same route. */
+  for (const label of ['Dentist', 'Doctor', 'Chiropractor', 'Physical Therapy', 'Lemon Law']) {
+    assert.strictEqual(capabilities(label).pricingTable, false,
+      `${label} would be allowed a price table`);
+    assert.strictEqual(wantsPricingTable(label), false, `${label} via wantsPricingTable`);
+    assert.ok(!wizard.pricingShapes.includes(businessShape(label)),
+      `the wizard would show the price-table checkbox for ${label}`);
+  }
 });
 
 test('the unlisted types are resolvable but not selectable', () => {
@@ -1322,8 +1361,111 @@ test('every selectable type maps to a photo folder', () => {
     const folder = imageFolderFor(entry.label);
     assert.ok(folder && /^[a-z0-9-]+$/.test(folder), `${entry.label} -> "${folder}"`);
   }
-  // Lemon Law reuses the law firm photographs rather than duplicating them.
-  assert.strictEqual(imageFolderFor('Lemon Law'), 'law-firm');
+  /* The folder is `lemon-law` — renamed from `law-firm` on 30 September,
+   * because its contents are lemon-car photographs and the name should say so.
+   *
+   * BOTH ENTRIES ARE PINNED, and the second is the one that matters. Law Firm
+   * used to find the folder by accident, through slugify('Law Firm'); once the
+   * name changed, only an explicit `imageFolder` keeps it pointing anywhere at
+   * all. Drop that line and copyPageImage warns and skips — so a WordPress
+   * site typed as "law office" builds complete and entirely without
+   * photographs, with nothing on screen to say why. */
+  assert.strictEqual(imageFolderFor('Lemon Law'), 'lemon-law');
+  assert.strictEqual(imageFolderFor('Law Firm'), 'lemon-law',
+    'Law Firm no longer names a photo folder — free-text legal sites build with no images');
+  assert.strictEqual(imageFolderFor('law office'), 'lemon-law',
+    'the alias path lost its photographs');
+});
+
+test('EVERYTHING KEYED BY THE IMAGE FOLDER NAME EXISTS ON DISK', () => {
+  /* A RENAME HAS AS MANY LANDING PLACES AS THERE ARE LOOKUPS KEYED BY THE
+   * NAME, and this one had two:
+   *
+   *   src/predefined-images/<folder>/   the photographs
+   *   utils/altText/<folder>.js         their descriptions
+   *
+   * The first version of this test checked only the photographs. The folder
+   * was renamed law-firm -> lemon-law, this test passed, and the build warned
+   * "No image descriptions found for business type: Lemon Law" — because
+   * altText/law-firm.js had not moved with it. HALF A RENAME PASSES HALF A
+   * TEST, and the half I wrote was the half I had just been looking at.
+   *
+   * NEITHER MISS THROWS. copyPageImage warns and skips; buildAltText warns and
+   * returns {}. So the first real sign is a finished site with no pictures, or
+   * one where every image ships alt="" — and both warnings scroll past in a
+   * build log nobody reads.
+   *
+   * Every SELECTABLE type, plus the unlisted legal entries that resolve from
+   * free text typed into WordPress. */
+  const images = path.join(__dirname, 'src', 'predefined-images');
+  const alts = path.join(__dirname, 'utils', 'altText');
+  const named = [
+    ...DROPDOWN_TYPES.map(t => t.label),
+    'Law Firm', 'law office', 'lawyer', 'attorney',
+  ];
+
+  /* ALT TEXT HAS PRE-EXISTING GAPS, and this test refuses to pretend
+   * otherwise. Five selectable types have no descriptions file today, so
+   * every image on those sites already ships with alt="". That is a real
+   * defect — bad for screen readers and for search — but it is NOT today's
+   * work, and a test that failed on it would fail every deploy until somebody
+   * wrote five files under time pressure.
+   *
+   * So the gaps are LISTED. A type outside this list must have its file, which
+   * is what catches the case that started this: a folder renamed without its
+   * descriptions moving. Writing one of these files deletes a line here; the
+   * list only ever shrinks. */
+  const ALT_TEXT_GAPS = new Set([
+    'painter', 'swimming-pool-contractor', 'doctor', 'web-design', 'coding',
+  ]);
+
+  for (const label of named) {
+    const folder = imageFolderFor(label);
+
+    assert.ok(fs.existsSync(path.join(images, folder)),
+      `${label} names src/predefined-images/${folder}, which is not there`);
+
+    if (ALT_TEXT_GAPS.has(folder)) {
+      assert.ok(!fs.existsSync(path.join(alts, `${folder}.js`)),
+        `${folder}.js now exists — take it off ALT_TEXT_GAPS so the gap cannot come back`);
+      continue;
+    }
+
+    assert.ok(fs.existsSync(path.join(alts, `${folder}.js`)),
+      `${label} names utils/altText/${folder}.js, which is not there — every image would ship alt=""`);
+  }
+});
+
+test('no alt-text file is left behind under a name nothing uses', () => {
+  /* The other half of a rename. A stale utils/altText/law-firm.js sitting
+   * beside a live lemon-law.js is not an error — index.js loads every file in
+   * the folder and nothing asks for the dead key — which is exactly why it
+   * would sit there for months, and why the next person to open that folder
+   * could not tell which of the two was real.
+   *
+   * `eye-doctor` WAS ONE, for a few hours on 30 September, and listing it
+   * here is what got it looked at. The photographs and the descriptions both
+   * existed; 'optometrist' and 'ophthalmologist' were aliases on the unlisted
+   * Health Practice catch-all, whose folder is health-practice and does not
+   * exist — so an eye doctor resolved to the right shape and built with no
+   * pictures. Eye Doctor is now its own dropdown type and the list is empty
+   * again.
+   *
+   * KEPT AS AN EMPTY SET, not deleted. An orphan is a question — assets
+   * somebody made that nothing names — and the next one should surface the
+   * same way rather than be silently tolerated. */
+  const KNOWN_ORPHANS = new Set([]);
+
+  const alts = path.join(__dirname, 'utils', 'altText');
+  const used = new Set(BUSINESS_TYPES.map(t => imageFolderFor(t.label)));
+
+  const orphans = fs.readdirSync(alts)
+    .filter(f => f.endsWith('.js') && f !== 'index.js' && !f.startsWith('_'))
+    .map(f => path.basename(f, '.js'))
+    .filter(slug => !used.has(slug) && !KNOWN_ORPHANS.has(slug));
+
+  assert.deepStrictEqual(orphans, [],
+    `utils/altText holds files no business type names: ${orphans.join(', ')}`);
 });
 
 test('the image folder is read from the registry, not recomputed', () => {
@@ -1400,6 +1542,102 @@ test('the sentinel for "none of them" matches on both sides', () => {
 test('runGeneration actually reads the field', () => {
   const src = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
   assert.ok(/trustClaims:/.test(src), 'trustClaims never reaches globalValues');
+});
+
+test('THE TWO PRICING GATES AGREE ON EVERY SHAPE OF INPUT', () => {
+  /* There are two, in different files, and they must answer identically:
+   *
+   *   utils/runGeneration.js    decides whether to PAY for the table
+   *   utils/buildAboutUsPage.js decides whether to RENDER it
+   *
+   * Disagreement is not a crash, which is what makes it worth a test. If the
+   * first says yes and the second no, the build pays for rows nobody sees. If
+   * the first says no and the second yes, an empty table renders.
+   *
+   * They did disagree, on exactly one value: `null`. runGeneration tested
+   * `=== undefined` and read null as OFF, while the render gate accepted it
+   * as ON. A body parser can produce either for "nobody said", so the test
+   * below runs both against the same table rather than trusting that two
+   * hand-written coercions match.
+   *
+   * SOURCE-READ AND EVALUATED, because neither file can be required in a test
+   * — runGeneration pulls in the whole generator. The expressions are lifted
+   * out by marker and run in a sandbox, so a change to either one is either
+   * reflected here or fails to extract. */
+  const runSrc = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
+  const aboutSrc = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
+
+  const runGate = runSrc.match(/const showPricingTable = ([\s\S]*?);\n/);
+  const renderGate = aboutSrc.match(/const wantsPricing = ([\s\S]*?);\n/);
+
+  assert.ok(runGate, 'the showPricingTable gate in runGeneration.js has moved or been renamed');
+  assert.ok(renderGate, 'the wantsPricing gate in buildAboutUsPage.js has moved or been renamed');
+
+  const box = {};
+  vm.createContext(box);
+  const run = vm.runInContext(`(global => ${runGate[1]})`, box);
+  const render = vm.runInContext(`(globalValues => ${renderGate[1]})`, box);
+
+  /* Absent and null are "nobody expressed a preference", and the table stays.
+   * Opt-out, not opt-in: every site built before this field existed has one,
+   * and the WordPress plugin still sends nothing. */
+  const TABLE = [
+    [{}, true, 'the field absent'],
+    [{ showPricingTable: null }, true, 'an explicit null'],
+    [{ showPricingTable: true }, true, 'ticked, boolean'],
+    [{ showPricingTable: 'true' }, true, 'ticked, as the wizard mirrors it'],
+    [{ showPricingTable: 'on' }, true, 'ticked, as a raw checkbox posts it'],
+    [{ showPricingTable: '1' }, true, 'ticked, as "1"'],
+    [{ showPricingTable: '' }, false, 'unticked, as the wizard mirrors it'],
+    [{ showPricingTable: false }, false, 'unticked, boolean'],
+    [{ showPricingTable: 'false' }, false, 'the string "false"'],
+    [{ showPricingTable: 0 }, false, 'zero'],
+  ];
+
+  for (const [body, want, what] of TABLE) {
+    assert.strictEqual(!!run(body), want, `runGeneration disagrees about ${what}`);
+    assert.strictEqual(!!render(body), want, `buildAboutUsPage disagrees about ${what}`);
+  }
+});
+
+test('the render gate puts the shape rule first, so the form cannot grant a table', () => {
+  /* ORDER IS THE SAFEGUARD. `caps.pricingTable && wantsPricing` can only ever
+   * subtract; `wantsPricing && caps.pricingTable` reads the same to a human
+   * and is also correct — but `wantsPricing ? pricing : []` on its own is not,
+   * and that is the edit this catches. The shape gate must appear in the
+   * expression that produces the rows. */
+  const src = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
+  const rows = src.match(/const pricingRows = ([^;]*);/);
+
+  assert.ok(rows, 'pricingRows has been renamed');
+  assert.ok(/caps\.pricingTable/.test(rows[1]),
+    'the shape rule is gone from the render gate — the form could now give a dentist a price table');
+  assert.ok(/wantsPricing/.test(rows[1]),
+    'the checkbox no longer reaches the render gate');
+});
+
+test('a table that will not be rendered is never paid for', () => {
+  /* generatePricing() is a model call. Gating only the render would leave the
+   * call in place for every medical build and every unticked box — money spent
+   * on rows that are dropped three hundred lines later. */
+  const src = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
+  const call = src.match(/const pricing = ([\s\S]*?)generatePricing\(/);
+
+  assert.ok(call, 'the generatePricing call has moved');
+  assert.ok(/wantPricing/.test(call[1]),
+    'generatePricing runs unconditionally again — builds pay for tables they discard');
+
+  /* The three reasons to skip, each named. Asserted through `pricingAllowed`
+   * rather than by looking for `capabilities(` on the same line, because the
+   * lookup sits on its own line above — and a test that insists on one
+   * formatting of a correct expression fails for its own reasons. */
+  const want = src.match(/const wantPricing = ([^;]*);/);
+  assert.ok(want, 'wantPricing has been renamed');
+  assert.ok(/isSample/.test(want[1]), 'the design sample no longer skips pricing');
+  assert.ok(/showPricingTable/.test(want[1]), 'the checkbox no longer reaches the spend gate');
+  assert.ok(/pricingAllowed/.test(want[1]), 'the spend gate no longer consults the shape rules');
+  assert.ok(/const pricingAllowed = capabilities\(/.test(src),
+    'pricingAllowed is no longer derived from the shape rules');
 });
 
 Promise.all(pending).then(() => {

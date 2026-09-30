@@ -44,6 +44,9 @@ const { generateFaqAnswers } = require('./generateFaqAnswers');
 const { addUsedQuestions } = require('./generateLocationFaq');
 const { generateServiceCards } = require('./buildServiceCards');
 const { generatePricing } = require('./buildPricingTable');
+// The shape rules — what each kind of business is allowed to render. Used
+// here so a table that will never be shown is never paid for either.
+const { capabilities } = require('./businessShape');
 const { generateCaseStudy } = require('./generateCaseStudy');
 const { generateSampleReviews } = require('./generateSampleReviews');
 const { buildSitemap } = require('./buildSitemap');
@@ -131,6 +134,33 @@ async function runGeneration(ctx) {
   const pages = ctx.body.pages;
   const global = ctx.body.global;
   const showAboutForm = (v => v === true || v === 'true' || v === 'on' || v === '1')(global?.showAboutForm);
+
+  /* The price range table, opt-OUT rather than opt-in.
+   *
+   * ABSENT MEANS ON, and that `undefined` test is the whole point. An
+   * unchecked checkbox sends nothing, so "unticked" and "this caller has
+   * never heard of the field" look identical in the body — and the second
+   * covers the WordPress plugin, a cached copy of the wizard, and any draft
+   * saved before today. Reading a missing field as "off" would quietly strip
+   * the table from builds nobody asked to change.
+   *
+   * The wizard sends the field on every submit — "true" ticked, "" unticked
+   * (see injectHiddenSnapshot) — so only a value that is PRESENT and falsy
+   * turns it off.
+   *
+   * It can only ever SUBTRACT. capabilities(businessType).pricingTable still
+   * decides whether a table is permitted at all, and a medical or legal shape
+   * gets none whatever arrives here. */
+  /* `== null` CATCHES BOTH undefined AND null, and the loose equality is
+   * deliberate here rather than an oversight. A body parser can hand back an
+   * explicit null where the wizard sends nothing at all, and the two mean the
+   * same thing: nobody expressed a preference. Written as `=== undefined`
+   * first, which made null read as "off" while the render gate in
+   * buildAboutUsPage read it as "on" — two gates disagreeing about one value
+   * is a section that generates and then does not appear. */
+  const showPricingTable = global?.showPricingTable == null
+    ? true
+    : (v => v === true || v === 'true' || v === 'on' || v === '1')(global.showPricingTable);
 
   const userId = ctx.user._id.toString();
   const { distDir, assetsDir, cssDir, jsDir, entryDir } = getUserDirs(baseDistDir, userId);
@@ -313,6 +343,7 @@ async function runGeneration(ctx) {
     const globalValues = {
 
       showAboutForm,
+      showPricingTable,
       // Owner name is opt-in; when opted in, the name itself is optional and
       // the model invents one if left blank.
       //
@@ -841,13 +872,39 @@ async function runGeneration(ctx) {
     });
 
 
-    // Typical price ranges. Framed as estimates for the area, not as the
-    // business's own price list — the figures are generated, not supplied.
-    console.log(isSample ? '💲 Skipping pricing (design sample)' : '💲 Generating pricing table...');
-    const pricing = isSample ? [] : await generatePricing({
+    /* Typical price ranges. Framed as estimates for the area, not as the
+     * business's own price list — the figures are generated, not supplied.
+     *
+     * THREE REASONS TO SKIP, and they are not the same reason:
+     *
+     *   isSample            the one-page design sample has no About page to
+     *                       put a table on.
+     *   !showPricingTable   the customer unticked the box on the form.
+     *   !caps.pricingTable  the shape is not allowed one — medical and legal.
+     *                       Checked HERE as well as at render time, because
+     *                       this is the call that costs money and a table
+     *                       that will never be rendered should never be
+     *                       generated. buildAboutUsPage checks it again; the
+     *                       duplication is deliberate, since the render gate
+     *                       is the one that must not be bypassable.
+     *
+     * Skipping does not change the price of the build. utils/pricing.js
+     * charges a flat base plus per-page; the About page sections are not
+     * itemised, so turning this off saves an API call and nothing else. */
+    const pricingAllowed = capabilities(globalValues.businessType).pricingTable;
+    const wantPricing = !isSample && showPricingTable && pricingAllowed;
+
+    console.log(
+      wantPricing ? '💲 Generating pricing table...'
+        : isSample ? '💲 Skipping pricing (design sample)'
+        : !pricingAllowed ? `💲 Skipping pricing (${globalValues.businessType} cannot have a price table)`
+        : '💲 Skipping pricing (turned off on the form)'
+    );
+
+    const pricing = wantPricing ? await generatePricing({
       businessType: globalValues.businessType,
       location: globalValues.location,
-    });
+    }) : [];
 
 
     // A short case study for the home page, above the FAQ.

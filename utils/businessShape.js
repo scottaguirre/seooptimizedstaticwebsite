@@ -212,6 +212,27 @@ const BUSINESS_TYPES = [
     aliases: ['physiotherapy', 'physiotherapist', 'physical therapist',
               'physio', 'rehab', 'sports therapy'],
   },
+  {
+    /* LISTED, 30 September — and the photographs were already here.
+     *
+     * src/predefined-images/eye-doctor/ and utils/altText/eye-doctor.js both
+     * existed, and nothing named either: 'optometrist', 'optometry' and
+     * 'ophthalmologist' were aliases on the unlisted Health Practice
+     * catch-all, whose folder is slugify('Health Practice') = health-practice,
+     * which does not exist. So an eye doctor resolved to the right SHAPE and
+     * then built with no photographs at all — copyPageImage warns and skips.
+     *
+     * THE THREE ALIASES MOVED HERE rather than being copied. Whichever entry
+     * registers a key first wins the exact match, so leaving them on Health
+     * Practice as well would make which one answers depend on array order.
+     */
+    servicesLabel: 'Eye Care',
+    label: 'Eye Doctor', shape: 'medical',
+    category: 'eye care', title: 'Optometrist', entity: 'eye care practice',
+    aliases: ['optometrist', 'optometry', 'ophthalmologist', 'ophthalmology',
+              'eye care', 'eye clinic', 'eye exam', 'vision center',
+              'vision centre', 'eye doctor'],
+  },
 
   {
     // UNLISTED. Not a dropdown option — a catch-all so the health and wellness
@@ -230,7 +251,11 @@ const BUSINESS_TYPES = [
     aliases: [
       'med spa', 'medical spa', 'wellness', 'wellness center', 'wellness centre',
       'acupuncture', 'acupuncturist', 'veterinarian', 'veterinary', 'vet clinic',
-      'optometrist', 'optometry', 'ophthalmologist', 'podiatrist', 'podiatry',
+      // 'optometrist', 'optometry' and 'ophthalmologist' MOVED to the Eye
+      // Doctor entry above on 30 September, where the photographs are. They
+      // are not duplicated here: whichever entry registers a key first wins
+      // the exact match, and two owners make the answer depend on array order.
+      'podiatrist', 'podiatry',
       'nutritionist', 'dietitian', 'massage therapy', 'massage therapist',
       'counseling', 'counselling', 'counselor', 'counsellor', 'therapist',
       'psychologist', 'psychiatrist', 'home health care', 'home health',
@@ -252,8 +277,7 @@ const BUSINESS_TYPES = [
     // UNLISTED until general law firm photographs exist.
     //
     // Before the split below, "Law Firm" MEANT lemon law — the category was
-    // hardwired to it — so src/predefined-images/law-firm/ and
-    // utils/altText/law-firm.js are both full of lemon-car imagery: "a man
+    // hardwired to it — so the photo set is full of lemon-car imagery: "a man
     // using his phone to take a picture under the hood of his lemon car".
     // Now that Law Firm means a general practice, offering it in the dropdown
     // would hand a family-law or immigration firm those photographs. It still
@@ -262,6 +286,23 @@ const BUSINESS_TYPES = [
     listed: false,
     servicesLabel: 'Legal',
     label: 'Law Firm', shape: 'professional',
+
+    // POINTS AT THE LEMON LAW PHOTOS ON PURPOSE, and is written down rather
+    // than derived.
+    //
+    // The folder was called `law-firm` and slugify('Law Firm') found it by
+    // accident. Renamed to `lemon-law` on 30 September, because its contents
+    // are lemon-car photographs and the name should say so.
+    //
+    // Once the name stopped matching, this entry had to name a folder or get
+    // none — and NO FOLDER IS THE WORSE OUTCOME. copyPageImage warns and
+    // skips rather than throwing, so a site typed as "law office" in
+    // WordPress would build complete and entirely without photographs, with
+    // nothing on screen to explain it. Wrong pictures beat no pictures, and
+    // this is exactly the mismatch the note above is about: when general law
+    // firm photographs exist, this line points at them and the comment goes.
+    imageFolder: 'lemon-law',
+
     category: 'law firm', title: 'Attorney', entity: 'law firm',
     // 'legal services' is deliberately NOT here: it is the category of the
     // Legal Services catch-all below, and whichever entry registers a key
@@ -269,7 +310,10 @@ const BUSINESS_TYPES = [
     aliases: ['lawyer', 'attorney', 'law office', 'solicitor'],
   },
   {
-    label: 'Lemon Law', shape: 'professional', imageFolder: 'law-firm',
+    // `lemon-law`, not the slug of the label — they happen to match, and the
+    // line stays explicit so the folder can be renamed again without this
+    // entry silently following the label.
+    label: 'Lemon Law', shape: 'professional', imageFolder: 'lemon-law',
     category: 'lemon law firm', title: 'Lemon Law Attorney', entity: 'lemon law firm',
     aliases: ['lemon law firm', 'lemon law attorney', 'lemon law lawyer'],
   },

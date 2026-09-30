@@ -654,6 +654,7 @@
     "Doctor",
     "Chiropractor",
     "Physical Therapy",
+    "Eye Doctor",
     "Lemon Law",
     "Web Design",
     "Coding"
@@ -680,6 +681,7 @@
     "Doctor": "medical",
     "Chiropractor": "medical",
     "Physical Therapy": "medical",
+    "Eye Doctor": "medical",
     "Lemon Law": "professional",
     "Web Design": "project",
     "Coding": "project"
@@ -737,6 +739,27 @@
 
   function shapeForType(label) {
     return BUSINESS_TYPE_SHAPES[label] || 'generic';
+  }
+
+  /**
+   * The shapes that are ALLOWED a price range table.
+   *
+   * Mirrors CAPABILITIES in utils/businessShape.js, where the rule actually
+   * lives. The server is the authority — this copy only decides whether to
+   * SHOW the checkbox, and test-business-shape.js fails if the two lists
+   * disagree, the same way it already guards BUSINESS_TYPE_SHAPES.
+   *
+   * medical and professional are absent on purpose and are not a preference:
+   * a published price table for a physician has insurance-billing and
+   * state-disclosure implications, and for an attorney fee advertising is
+   * governed by bar rules in most states. The checkbox is hidden for them
+   * rather than shown unticked, because an unticked box says "you could turn
+   * this on" and they cannot.
+   */
+  var SHAPES_WITH_PRICING = ['home', 'project'];
+
+  function canHavePricingTable(label) {
+    return SHAPES_WITH_PRICING.indexOf(shapeForType(label)) !== -1;
   }
 
   /**
@@ -1380,6 +1403,30 @@
             Include contact form on About page
           </label>
         </div>
+
+        <!-- The price range table.
+             HIDDEN ENTIRELY for shapes that cannot have one — a dentist or an
+             attorney is not shown an unticked box, because an unticked box
+             says "you could turn this on" and they cannot. See
+             SHAPES_WITH_PRICING above and CAPABILITIES in businessShape.js,
+             which is the authority: the server refuses those shapes whatever
+             arrives from here. -->
+        ${canHavePricingTable(state.businessType) ? `
+        <!-- The rule is INSIDE the conditional, with the field it belongs to.
+             Outside it, a dentist's form would show two <hr> lines with
+             nothing between them. -->
+        <hr>
+
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" id="showPricingTable" name="global[showPricingTable]" checked>
+          <label class="form-check-label" for="showPricingTable">
+            Include price range table on About page
+          </label>
+          <div class="form-text">
+            Typical ranges for the area, shown as estimates.
+          </div>
+        </div>
+        ` : ''}
 
         <hr>
 
@@ -2949,6 +2996,26 @@
     return name || 'We\'ll create one';
   }
 
+  /**
+   * What the review step says about the price range table.
+   *
+   * ABSENT READS AS INCLUDED, matching the server. The box ships ticked, and
+   * a snapshot taken before this field existed — a draft restored from
+   * sessionStorage, say — has no entry for it. runGeneration treats a missing
+   * value as "on", so this screen has to agree, or the review would promise
+   * one thing and the build deliver another.
+   */
+  function pricingSummary() {
+    const snap = state.mainFormSnapshot || {};
+    const raw = snap['global[showPricingTable]'];
+
+    if (raw === undefined || raw === null) return 'Included';
+
+    return (raw === true || raw === 'true' || raw === 'on' || raw === '1')
+      ? 'Included'
+      : 'Not included';
+  }
+
   function hoursSummary() {
     const is24 = String(snapshotValue('is24Hours')).toLowerCase();
     if (is24 === 'true' || is24 === 'on' || is24 === '1') {
@@ -3039,6 +3106,14 @@
         reviewRow('Location', snapshotValue('location')),
         reviewRow('Address', snapshotValue('address')),
         ...(state.siteMode === 'sample' ? [] : [reviewRow('Owner name', ownerSummary())]),
+        /* A SECTION THAT WILL NOT BE BUILT HAS TO BE ON THE REVIEW STEP.
+         * This is the only screen that claims to say what is about to be
+         * generated; a choice absent from it is one the customer discovers by
+         * looking at the finished site. Shown only where a table is possible
+         * at all — for a dentist there is no decision to report. */
+        ...(state.siteMode === 'sample' || !canHavePricingTable(state.businessType)
+          ? []
+          : [reviewRow('Price range table', pricingSummary())]),
       ].join(''), STEP.MAIN),
 
       reviewCard('Contact', [

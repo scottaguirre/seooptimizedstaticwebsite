@@ -158,6 +158,17 @@ const TRADE_VOCAB = {
     symptoms: 'stiffness after injury, weakness on one side, pain on movement, difficulty with stairs, loss of balance',
     work: 'initial assessment, goal setting, manual therapy, supervised exercise, progress review, discharge planning',
   },
+  /* Added with the Eye Doctor dropdown type, 30 September. A registry entry
+   * without a vocabulary entry is not a crash — createPagesPrompt falls back
+   * to DEFAULT_VOCAB and the pages get written out of "materials, components,
+   * fittings", which is the abstract register this table exists to avoid.
+   * `no dropdown type falls through to the generic vocabulary` is what makes
+   * that a failed deploy instead of a dull website. */
+  'eye care': {
+    parts: 'the retina, cornea, lenses, frames, prescriptions, visual field tests, retinal imaging, contact lens fittings',
+    symptoms: 'blurred vision at distance or close up, eye strain by the end of the day, headaches after screen work, dry or watering eyes, floaters or flashes, trouble driving at night',
+    work: 'a full eye examination, refraction, pressure and retinal checks, dispensing and fitting, follow-up appointments, referral where something needs a specialist',
+  },
 
   'health care': {
     parts: 'assessments, referrals, treatment plans, follow-up appointments, records, aftercare instructions',
