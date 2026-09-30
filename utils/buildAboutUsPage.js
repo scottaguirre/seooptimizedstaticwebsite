@@ -18,6 +18,7 @@ const { buildFaqSection, buildFaqSchemaTag } = require('./buildFaqSection');
 const { buildServiceCards } = require('./buildServiceCards');
 const { buildPricingTable } = require('./buildPricingTable');
 const { copyBadgeImages, buildBadgesHtml } = require('./copyBadgeImages');
+const { keptOn } = require('./sectionToggle');
 const { copyPageImage, buildContactFormHtml } = require('./pageParts');
 const { getPreset, assetPath, imageAlt } = require('./seoPresets');
 const { canonicalTag } = require('./canonicalUrl');
@@ -112,15 +113,12 @@ const  buildAboutUsPage =  async function (
         // dentist a price list, because the shape gate is not reachable from
         // the form.
         //
-        // ABSENT MEANS ON, matching runGeneration: an unchecked checkbox sends
-        // nothing, and so does every caller that predates this field — the
-        // WordPress plugin, a cached wizard, a saved draft. Reading a missing
-        // value as "off" would strip the table from builds nobody had asked to
-        // change.
+        // ABSENT MEANS ON, and keptOn() is the SAME FUNCTION runGeneration
+        // calls. It was two hand-written coercions until they were found to
+        // disagree about `null` — one paying for a section the other would not
+        // render. See utils/sectionToggle.js.
         const caps = capabilities(globalValues.businessType);
-        const wantsPricing = globalValues.showPricingTable === undefined
-          || globalValues.showPricingTable === null
-          || [true, 'true', 'on', '1'].includes(globalValues.showPricingTable);
+        const wantsPricing = keptOn(globalValues.showPricingTable);
         const pricingRows = (caps.pricingTable && wantsPricing) ? pricing : [];
 
         // Everything that differs between Rank Fast and Rank GBPs on this
@@ -244,7 +242,14 @@ const  buildAboutUsPage =  async function (
             // Hero trust badges. About Us only — the other page types don't
             // use them. Returns empty strings if the files are missing, and
             // buildBadgesHtml() then renders nothing at all.
-            const badges = caps.badges ? copyBadgeImages(distDir, globalValues) : {};
+            // SAME TWO GATES AS THE PRICE TABLE, in the same order. caps.badges
+            // is the rule — home services only, because the two images assert
+            // "award winning" and "licensed and insured" and an unverified
+            // credential claim on a dental or legal site is a licensing-board
+            // matter. showBadges is the preference, and can only subtract.
+            const badges = (caps.badges && keptOn(globalValues.showBadges))
+              ? copyBadgeImages(distDir, globalValues)
+              : {};
 
 
             // ✅ Build & inject Services / Locations menus (and remove wrappers if empty)

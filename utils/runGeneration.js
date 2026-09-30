@@ -47,6 +47,7 @@ const { generatePricing } = require('./buildPricingTable');
 // The shape rules — what each kind of business is allowed to render. Used
 // here so a table that will never be shown is never paid for either.
 const { capabilities } = require('./businessShape');
+const { keptOn } = require('./sectionToggle');
 const { generateCaseStudy } = require('./generateCaseStudy');
 const { generateSampleReviews } = require('./generateSampleReviews');
 const { buildSitemap } = require('./buildSitemap');
@@ -135,32 +136,16 @@ async function runGeneration(ctx) {
   const global = ctx.body.global;
   const showAboutForm = (v => v === true || v === 'true' || v === 'on' || v === '1')(global?.showAboutForm);
 
-  /* The price range table, opt-OUT rather than opt-in.
+  /* The price range table and the hero trust badges: opt-OUT checkboxes.
    *
-   * ABSENT MEANS ON, and that `undefined` test is the whole point. An
-   * unchecked checkbox sends nothing, so "unticked" and "this caller has
-   * never heard of the field" look identical in the body — and the second
-   * covers the WordPress plugin, a cached copy of the wizard, and any draft
-   * saved before today. Reading a missing field as "off" would quietly strip
-   * the table from builds nobody asked to change.
-   *
-   * The wizard sends the field on every submit — "true" ticked, "" unticked
-   * (see injectHiddenSnapshot) — so only a value that is PRESENT and falsy
-   * turns it off.
-   *
-   * It can only ever SUBTRACT. capabilities(businessType).pricingTable still
-   * decides whether a table is permitted at all, and a medical or legal shape
-   * gets none whatever arrives here. */
-  /* `== null` CATCHES BOTH undefined AND null, and the loose equality is
-   * deliberate here rather than an oversight. A body parser can hand back an
-   * explicit null where the wizard sends nothing at all, and the two mean the
-   * same thing: nobody expressed a preference. Written as `=== undefined`
-   * first, which made null read as "off" while the render gate in
-   * buildAboutUsPage read it as "on" — two gates disagreeing about one value
-   * is a section that generates and then does not appear. */
-  const showPricingTable = global?.showPricingTable == null
-    ? true
-    : (v => v === true || v === 'true' || v === 'on' || v === '1')(global.showPricingTable);
+   * The rules they follow — absent means on, only present-and-falsy turns a
+   * section off, and a preference can only ever SUBTRACT from what
+   * capabilities(businessType) permits — live in utils/sectionToggle.js,
+   * beside keptOn() itself, because buildAboutUsPage has to follow exactly
+   * the same ones and two copies of them drifted once already. */
+  const showPricingTable = keptOn(global?.showPricingTable);
+
+  const showBadges = keptOn(global?.showBadges);
 
   const userId = ctx.user._id.toString();
   const { distDir, assetsDir, cssDir, jsDir, entryDir } = getUserDirs(baseDistDir, userId);
@@ -344,6 +329,7 @@ async function runGeneration(ctx) {
 
       showAboutForm,
       showPricingTable,
+      showBadges,
       // Owner name is opt-in; when opted in, the name itself is optional and
       // the model invents one if left blank.
       //

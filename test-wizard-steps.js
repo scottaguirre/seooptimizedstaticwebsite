@@ -508,16 +508,6 @@ test('THE CHECKBOX IS HIDDEN, NOT UNTICKED, WHERE A TABLE IS NOT ALLOWED', () =>
     'the checkbox is no longer gated on the business shape');
   assert.ok(/name="global\[showPricingTable\]"/.test(body),
     'the checkbox lost its field name, so nothing reaches the server');
-
-  /* The separator belongs INSIDE the conditional. Moved outside it, a
-   * dentist's form shows two rules with nothing between them — the tidy-up
-   * that "obviously" belongs with the other <hr> tags above. */
-  const block = body.slice(body.indexOf('canHavePricingTable(state.businessType) ?'));
-  const end = block.indexOf('` : \'\'}');
-
-  assert.ok(end > 0, 'the conditional around the pricing checkbox has changed shape');
-  assert.ok(/<hr>/.test(block.slice(0, end)),
-    'the rule above the pricing checkbox is outside the conditional, or gone');
 });
 
 test('it ships ticked, so the default build is unchanged', () => {
@@ -534,8 +524,13 @@ test('ABSENT READS AS INCLUDED ON THE REVIEW STEP', () => {
   /* The server treats a missing value as "on", because an unchecked box sends
    * nothing and so does every caller that predates the field. The review
    * screen has to agree with it, or step 8 promises one thing and the build
-   * delivers another. */
-  const body = bodyOf('pricingSummary');
+   * delivers another.
+   *
+   * READS includedSummary NOW, not pricingSummary. The two review rows were
+   * given one shared helper when the badge checkbox arrived, and this checked
+   * the body of what is now a one-line delegate — so it failed for its own
+   * reason rather than for a real one. */
+  const body = bodyOf('includedSummary');
 
   assert.ok(/undefined[\s\S]*?return 'Included'/.test(body),
     'a missing value no longer reads as Included');
@@ -560,6 +555,68 @@ test('the wizard keeps its own copy of the shape rule, and says so', () => {
   assert.ok(/businessShape\.js/.test(RAW.slice(RAW.indexOf('SHAPES_WITH_PRICING') - 1200,
                                                RAW.indexOf('SHAPES_WITH_PRICING'))),
     'the copy no longer points at the file that owns the rule');
+});
+
+/* -------------------------------------------------------------------------
+ * The trust badges checkbox
+ * ---------------------------------------------------------------------- */
+
+test('THE BADGE CHECKBOX IS HIDDEN OUTSIDE HOME SERVICES', () => {
+  /* Narrower than the price table on purpose: badges are allowed to `home`
+   * only. The two images assert "award winning" and "licensed and insured"
+   * about the business, and on a dental or legal site an unverified
+   * credential claim is a licensing-board matter. An unticked box would
+   * suggest a dentist could turn them on. */
+  const body = bodyOf('renderMainForm');
+
+  assert.ok(/canHaveBadges\(state\.businessType\)\s*\?/.test(body),
+    'the badge checkbox is no longer gated on the business shape');
+  assert.ok(/name="global\[showBadges\]"/.test(body),
+    'the checkbox lost its field name, so nothing reaches the server');
+
+  assert.ok(/var SHAPES_WITH_BADGES = \['home'\]/.test(JS),
+    'SHAPES_WITH_BADGES is gone or no longer home-only');
+});
+
+test('it ships ticked, and its own rule sits inside the conditional', () => {
+  const body = bodyOf('renderMainForm');
+  const tag = body.match(/<input[^>]*id="showBadges"[^>]*>/);
+
+  assert.ok(tag, 'the checkbox is gone');
+  assert.ok(/\bchecked\b/.test(tag[0]), 'the checkbox no longer ships ticked');
+
+  const block = body.slice(body.indexOf('canHaveBadges(state.businessType) ?'));
+  const end = block.indexOf('` : \'\'}');
+
+  assert.ok(end > 0, 'the conditional around the badge checkbox has changed shape');
+  assert.ok(/<hr>/.test(block.slice(0, end)),
+    'the rule above the badge checkbox is outside the conditional, or gone');
+});
+
+test('the description names what the two images actually say', () => {
+  /* "Include trust badges" alone does not tell anyone what is being claimed
+   * on their behalf. The words on the images are the useful part. */
+  const body = bodyOf('renderMainForm');
+  const block = body.slice(body.indexOf('id="showBadges"'));
+
+  assert.ok(/Award winning/.test(block.slice(0, 600)), 'the award claim is not named');
+  assert.ok(/Licensed and insured/.test(block.slice(0, 600)), 'the licensed claim is not named');
+});
+
+test('ONE SUMMARY HELPER, READ BY BOTH REVIEW ROWS', () => {
+  /* Both rows answer the same question — was an opt-out checkbox left ticked.
+   * Two copies would drift the moment one learned about a new truthy value,
+   * which is the same fault the server side had with its two coercions. */
+  assert.ok(/function includedSummary\(field\)/.test(JS), 'the shared helper is gone');
+  assert.ok(/return includedSummary\('showPricingTable'\)/.test(JS),
+    'pricingSummary no longer reads through the shared helper');
+  assert.ok(/return includedSummary\('showBadges'\)/.test(JS),
+    'badgesSummary no longer reads through the shared helper');
+
+  const body = bodyOf('renderReviewStep');
+  assert.ok(/badgesSummary\(\)/.test(body), 'the review step does not report the badge choice');
+  assert.ok(/canHaveBadges\(state\.businessType\)/.test(body),
+    'the row shows where no badges are possible, reporting a choice nobody made');
 });
 
 console.log('');

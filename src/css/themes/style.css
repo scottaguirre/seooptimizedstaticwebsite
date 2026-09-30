@@ -78,7 +78,7 @@ a.nav-link.active:hover, .current-menu-item a:hover {
 }
 
 .style-4-image-wrap {
-    position: relative;
+   /* position: relative; */
 }
 
 .text-hero-for-style-and-style3 {
@@ -96,9 +96,9 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     color:white !important;
     font-weight: bold;
     width: 55%;
-    font-size: 26px;;
+    font-size: 26px;
     margin:0;
-    padding:15% 0 10px 30px;
+    padding:4% 0 5px 30px;
     line-height: 1.2;
 }
 
@@ -114,7 +114,8 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     position:relative;
     left: 30px;
     width: 130px;
-    margin-bottom: 10px;
+    margin-bottom: 4px;
+    margin-top: 4px;
     border-bottom: #53d353 2px solid;
     background-color: #53d353;
 }
@@ -123,6 +124,8 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     position: absolute;
     left: 8%;
     bottom: 5%;
+    z-index: 3;
+
 }
 
 .award, .licensed {
@@ -460,11 +463,23 @@ footer a {
     
 }
 
+  /* 500px */
+  @media (min-width: 500px) {
+
+    .text-hero-for-style-and-style3 h1 {
+    
+        padding-top:12%;
+        
+    }
+
+
+   }
+
   /* 550px */
 @media (min-width: 550px) {
 
     .text-hero-for-style-and-style3 h1 {
-        padding-top: 15%;
+        padding-top: 7%;
         font-size: 2rem;
         width: 60%;
     }
@@ -500,7 +515,7 @@ footer a {
     .badges {
         position: absolute;
         left: 8%;
-        bottom: 5%;
+        bottom: 12%;
     }
     
     .award, .licensed {
@@ -550,11 +565,6 @@ footer a {
     .img-1-div {
         margin-bottom: auto;
     }
-
-    .badges { 
-        bottom: 12%;
-
-    } 
 
 }
 
@@ -619,9 +629,43 @@ footer a {
         white-space: normal;
     }   
 
-    .badges {
-        bottom: 25%;
+    .text-hero-for-style-and-style3 h1 {
+
+        padding-top: 6%;
+        width: 60%;
+        font-size: 3.5rem;
     }
+
+    .text-hero-for-style-and-style3 h2 {
+
+        font-size: 3rem;
+    }
+
+    .badges {
+        bottom: 12%;
+    }
+    
+}
+
+
+/* 1015 */
+@media (min-width: 1015px) {   
+
+    .text-hero-for-style-and-style3 h1 {
+
+        padding-top: 9%;
+
+    }
+
+    .text-hero-for-style-and-style3 .line-divider { 
+        margin-top: 10px;
+        margin-bottom: 10px;
+    }
+
+    .badges {
+        bottom: 12%;
+    }
+
     
 }
   
@@ -639,14 +683,14 @@ footer a {
     }
 
     .text-hero-for-style-and-style3 h1 {
-        width: 65%;
-        padding-top: 12%;
-        font-size: 3.5rem;
+        width: 60%;
+        padding-top: 8%;
+        font-size: 4rem;
     }
 
     .text-hero-for-style-and-style3 h2 {
         width: 65%;
-        font-size: 3rem;
+        font-size: 3.5rem;
     }
 
     .text-hero-for-style-and-style3 .line-divider {
@@ -654,7 +698,7 @@ footer a {
     }
 
     .badges { 
-        bottom: 18%;
+        bottom: 15%;
     } 
 
 }

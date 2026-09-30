@@ -22,6 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { slugify } = require('./slugify');
 const { wantsBadges } = require('./businessShape');
+const { keptOn } = require('./sectionToggle');
 
 const BADGE_SRC_DIR = path.join(__dirname, '../src/predefined-images/badges');
 
@@ -57,6 +58,16 @@ function copyBadgeImages(distDir, globalValues = {}) {
 
   if (!wantsBadges(businessType)) {
     console.log(`   Hero badges skipped: not offered for this business type`);
+    return result;
+  }
+
+  /* REPEATED HERE, for the reason the header already gives about the shape
+   * guard above: buildAboutUsPage checks this before calling, and a second
+   * caller that forgot would put back badges the customer had unticked. A
+   * guard worth writing at the call site is worth writing at the chokepoint
+   * too. keptOn() is the shared reading — see utils/sectionToggle.js. */
+  if (!keptOn(globalValues.showBadges)) {
+    console.log(`   Hero badges skipped: turned off on the form`);
     return result;
   }
 

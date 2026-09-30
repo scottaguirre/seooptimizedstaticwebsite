@@ -1333,6 +1333,73 @@ Four mutations run, four caught: not queueing a failed report, retrying with
 Suites: 8 / 70 / 64 / 34 / 9. `test-removal-time.js` is new and in
 `deploy.sh`.
 
+## Eye Doctor, and the badge toggle — 30 September 2026
+
+**Eye Doctor is a dropdown type now, and the assets were already here.**
+`src/predefined-images/eye-doctor/` and `utils/altText/eye-doctor.js` both
+existed and nothing named either: `optometrist`, `optometry` and
+`ophthalmologist` were aliases on the unlisted **Health Practice** catch-all,
+whose folder is `slugify('Health Practice')` = `health-practice`, which does
+not exist. So an eye doctor resolved to the right SHAPE and then built with no
+photographs at all.
+
+**The orphan test found it on its first day.** `eye-doctor` had been listed in
+`KNOWN_ORPHANS` an hour earlier with the note *"I do not know why"* — and
+writing that down is what got it looked at. **An unexplained orphan is a
+question, not a tolerance.** The set is kept, empty, so the next one surfaces
+the same way.
+
+The three aliases MOVED rather than being copied: whichever entry registers a
+key first wins the exact match, so two owners make the answer depend on array
+order.
+
+**The deploy then failed, correctly**, on `no dropdown type falls through to
+the generic vocabulary`. `TRADE_VOCAB` is keyed by CATEGORY, and `'eye care'`
+had no entry. Nothing crashes without one — `createPagesPrompt` falls back to
+`DEFAULT_VOCAB` and every page gets written out of "materials, components,
+fittings". The test turns a dull website into a blocked deploy.
+
+---
+
+**The badge toggle: "same functionality as the price table".**
+
+One checkbox, ticked by default, home services only. I raised that the two
+images make claims — *award winning*, *licensed and insured* — about a
+business nobody has verified, and that this codebase already treats
+claim-bearing content as opt-IN (`TRUST_CLAIMS_BY_SHAPE`: "anything NOT ticked
+here is never offered to the model"). **Edwin: *"We will work only with
+businesses that meet this criteria."*** Raised once, answered, dropped — and
+the form copy that hinted at doubt came out with it. Do not re-litigate.
+
+**THE PART WORTH KEEPING: I nearly wrote the coercion a third time.**
+
+This morning's entry records `runGeneration` and `buildAboutUsPage` disagreeing
+about `null` for the price table. Adding badges meant a third copy, and a
+fourth in `copyBadgeImages`. Instead:
+
+    utils/sectionToggle.js  keptOn(value)   ← one definition, four callers
+
+And the test got BETTER, not just shorter. It used to lift two expressions out
+of source with a regex and evaluate them in a `vm` sandbox — fragile, and it
+broke once when the code was reformatted. Now it requires the real function and
+runs the table against it, plus a second test asserting every caller still
+imports it. **A shared definition is testable in a way two copies never were.**
+
+Same on the wizard: one `includedSummary(field)` feeding both review rows.
+
+**Three tests failed for their own reasons and were fixed, not worked around:**
+`ABSENT READS AS INCLUDED` pinned the body of `pricingSummary`, which is now a
+one-line delegate; the first badge-existence test demanded an alt-text file for
+five types that have none; and `mutate-badges.sh` died on `declare -A`, a bash
+4 feature — **macOS ships bash 3.2 from 2007**, frozen when bash went GPLv3.
+
+Eleven mutations, eleven caught: four on the wizard, seven on the server. The
+last two break `keptOn()` itself, which moves all four callers at once — the
+point of one definition, and also its risk.
+
+Suites: 114 / 44 / 29. `utils/sectionToggle.js` is new; `check-boot.js` reads
+199 files.
+
 ## law-firm → lemon-law, and half a rename — 30 September 2026
 
 Edwin: *"the current business type for lawyer says lawyer, could you change it

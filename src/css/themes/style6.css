@@ -1489,3 +1489,85 @@ footer a {
         padding: 18px;
     }
 }
+
+/* ==========================================================================
+   Trust points (About Us, Section 1)
+   --------------------------------------------------------------------------
+   The same component style.css, style2.css and style4.css carry. Markup is
+   buildTrustList() in utils/buildAboutUsPage.js:
+
+     <ul class="trust-points"><li>Licensed, insured and bonded</li>…</ul>
+
+   Up to eight points, two columns from 576px up, one below that.
+
+   THE CIRCLE TAKES THIS THEME'S ORANGE rather than the default green. The
+   base component fixes green on the reasoning that a verified tick reads as
+   green everywhere; style4.css already overrides to its own red, so matching
+   the theme is the established exception rather than a new idea.
+
+   CONTRAST, because it is the one thing that is worse here than on the other
+   themes: white on #ee5519 is 3.53:1, against 5.07:1 for the green and
+   6.33:1 for style4's red. The tick is a 2px glyph and not text, so no WCAG
+   rule is broken — but it is thinner than elsewhere. #d6440c is the same
+   orange a shade deeper and reaches 4.48:1, if the tick ever looks washed
+   out against a photograph.
+   ========================================================================== */
+
+.trust-points {
+    --trust-bg: #ee5519;      /* circle — this theme's accent */
+    --trust-tick: #ffffff;    /* the check inside it */
+
+    list-style: none;
+    padding: 0;
+    margin: 20px 0 24px;
+
+    /* Two columns on wider screens; one on mobile. Six points then read as
+       3 + 3 rather than a long vertical run. */
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px 28px;
+}
+
+@media (min-width: 576px) {
+    .trust-points {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.trust-points li {
+    position: relative;
+    padding-left: 40px;
+    line-height: 1.5;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+/* The circle. Drawn in CSS rather than as an icon: no extra request, and it
+   scales with the text. */
+.trust-points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    margin-top: -13px;
+    border-radius: 50%;
+    background: var(--trust-bg);
+}
+
+/* The tick itself: two borders rotated into a check, sitting on the circle. */
+.trust-points li::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    width: 10px;
+    height: 5px;
+    margin-top: -4px;
+    border-left: 2px solid var(--trust-tick);
+    border-bottom: 2px solid var(--trust-tick);
+    transform: rotate(-45deg);
+}

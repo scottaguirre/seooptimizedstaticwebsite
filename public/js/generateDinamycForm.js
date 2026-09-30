@@ -763,6 +763,26 @@
   }
 
   /**
+   * The shapes that are ALLOWED the hero trust badges.
+   *
+   * Mirrors CAPABILITIES.badges in utils/businessShape.js, and checked against
+   * it by test-business-shape.js — same arrangement as SHAPES_WITH_PRICING
+   * above, for the same reason: the wizard cannot call into Node to ask.
+   *
+   * HOME SERVICES ONLY, and this one is narrower than pricing. The two images
+   * assert "award winning" and "licensed and insured" about a business nobody
+   * on this platform has verified. On a plumber's site that is ordinary
+   * marketing; on a dental practice or a law firm an unverified credential
+   * claim is a licensing-board matter, and the board writes to the business
+   * owner rather than to us.
+   */
+  var SHAPES_WITH_BADGES = ['home'];
+
+  function canHaveBadges(label) {
+    return SHAPES_WITH_BADGES.indexOf(shapeForType(label)) !== -1;
+  }
+
+  /**
    * Draw the trust claim checkboxes for the chosen business type and keep the
    * hidden global[trustClaims] field in step with them.
    *
@@ -1424,6 +1444,24 @@
           </label>
           <div class="form-text">
             Typical ranges for the area, shown as estimates.
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- The hero trust badges. HIDDEN for every shape but home — see
+             SHAPES_WITH_BADGES above for why that list is narrower than the
+             pricing one. The description names the two images so the choice
+             is not made blind. -->
+        ${canHaveBadges(state.businessType) ? `
+        <hr>
+
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" id="showBadges" name="global[showBadges]" checked>
+          <label class="form-check-label" for="showBadges">
+            Include trust badges on About page
+          </label>
+          <div class="form-text">
+            Two images beside the heading: &ldquo;Award winning&rdquo; and &ldquo;Licensed and insured&rdquo;.
           </div>
         </div>
         ` : ''}
@@ -3005,15 +3043,26 @@
    * value as "on", so this screen has to agree, or the review would promise
    * one thing and the build deliver another.
    */
-  function pricingSummary() {
+  /* ONE HELPER, TWO CALLERS. The price table and the badges answer the same
+   * question — was an opt-out checkbox left ticked — and two copies of this
+   * would drift the moment one of them learned about a new truthy value. */
+  function includedSummary(field) {
     const snap = state.mainFormSnapshot || {};
-    const raw = snap['global[showPricingTable]'];
+    const raw = snap[`global[${field}]`];
 
     if (raw === undefined || raw === null) return 'Included';
 
     return (raw === true || raw === 'true' || raw === 'on' || raw === '1')
       ? 'Included'
       : 'Not included';
+  }
+
+  function pricingSummary() {
+    return includedSummary('showPricingTable');
+  }
+
+  function badgesSummary() {
+    return includedSummary('showBadges');
   }
 
   function hoursSummary() {
@@ -3114,6 +3163,9 @@
         ...(state.siteMode === 'sample' || !canHavePricingTable(state.businessType)
           ? []
           : [reviewRow('Price range table', pricingSummary())]),
+        ...(state.siteMode === 'sample' || !canHaveBadges(state.businessType)
+          ? []
+          : [reviewRow('Trust badges', badgesSummary())]),
       ].join(''), STEP.MAIN),
 
       reviewCard('Contact', [

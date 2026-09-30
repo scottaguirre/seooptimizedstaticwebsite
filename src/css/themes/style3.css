@@ -1564,3 +1564,79 @@ footer a {
         padding: 18px;
     }
 }
+
+/* ==========================================================================
+   Trust points (About Us, Section 1)
+   --------------------------------------------------------------------------
+   The same component style.css, style2.css, style4.css and style6.css carry.
+   Markup is buildTrustList() in utils/buildAboutUsPage.js:
+
+     <ul class="trust-points"><li>Licensed, insured and bonded</li>…</ul>
+
+   Up to eight points, two columns from 576px up, one below that.
+
+   THE DEEPER PURPLE, not the brighter #cf3def this theme uses for links.
+   Both are the theme's own; #9f11d7 is the hero .line-divider, and the
+   pricing section above already chose it for the same reason — a solid fill
+   carrying white needs the darker of the pair. White on #9f11d7 is 5.94:1,
+   against 3.77:1 on #cf3def, which would leave the tick looking washed.
+   ========================================================================== */
+
+.trust-points {
+    --trust-bg: #9f11d7;
+    --trust-tick: #ffffff;    /* the check inside it */
+
+    list-style: none;
+    padding: 0;
+    margin: 20px 0 24px;
+
+    /* Two columns on wider screens; one on mobile. Six points then read as
+       3 + 3 rather than a long vertical run. */
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px 28px;
+}
+
+@media (min-width: 576px) {
+    .trust-points {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.trust-points li {
+    position: relative;
+    padding-left: 40px;
+    line-height: 1.5;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+/* The circle. Drawn in CSS rather than as an icon: no extra request, and it
+   scales with the text. */
+.trust-points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    margin-top: -13px;
+    border-radius: 50%;
+    background: var(--trust-bg);
+}
+
+/* The tick itself: two borders rotated into a check, sitting on the circle. */
+.trust-points li::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    width: 10px;
+    height: 5px;
+    margin-top: -4px;
+    border-left: 2px solid var(--trust-tick);
+    border-bottom: 2px solid var(--trust-tick);
+    transform: rotate(-45deg);
+}

@@ -49,6 +49,7 @@ const { createLocationPagesPrompt, anglesFor } = require('./utils/createLocation
 const { getFixedFaqQuestions, getFixedFaqFallbacks } = require('./utils/fixedFaqQuestions');
 const { themesFor } = require('./utils/generateLocationFaq');
 const { copyBadgeImages } = require('./utils/copyBadgeImages');
+const { keptOn } = require('./utils/sectionToggle');
 const { generatePricing, buildPrompt } = require('./utils/buildPricingTable');
 const { injectIndexInterlinks, appendSentence } = require('./utils/injectIndexInterlinks');
 const { injectPagesInterlinks } = require('./utils/injectPagesInterlinks');
@@ -1299,6 +1300,7 @@ const wizard = vm.runInContext(`({
   shapes: ${extractVar('BUSINESS_TYPE_SHAPES')},
   claims: ${extractVar('TRUST_CLAIMS_BY_SHAPE')},
   pricingShapes: ${extractVar('SHAPES_WITH_PRICING')},
+  badgeShapes: ${extractVar('SHAPES_WITH_BADGES')},
 })`, sandbox);
 
 test('the dropdown offers exactly the listed types, in order', () => {
@@ -1544,60 +1546,105 @@ test('runGeneration actually reads the field', () => {
   assert.ok(/trustClaims:/.test(src), 'trustClaims never reaches globalValues');
 });
 
-test('THE TWO PRICING GATES AGREE ON EVERY SHAPE OF INPUT', () => {
-  /* There are two, in different files, and they must answer identically:
+test('ONE READING OF AN OPT-OUT CHECKBOX, FOR EVERY SECTION', () => {
+  /* There used to be two, hand-written, in different files:
    *
-   *   utils/runGeneration.js    decides whether to PAY for the table
+   *   utils/runGeneration.js    decides whether to PAY for a section
    *   utils/buildAboutUsPage.js decides whether to RENDER it
    *
-   * Disagreement is not a crash, which is what makes it worth a test. If the
-   * first says yes and the second no, the build pays for rows nobody sees. If
-   * the first says no and the second yes, an empty table renders.
+   * They disagreed on exactly one value — `null` — which is a section that is
+   * generated, charged for, and then not displayed. Nothing throws. That is
+   * now one function, utils/sectionToggle.js keptOn(), and this test requires
+   * it directly rather than lifting two expressions out of source: a shared
+   * definition is testable in a way that two copies never were.
    *
-   * They did disagree, on exactly one value: `null`. runGeneration tested
-   * `=== undefined` and read null as OFF, while the render gate accepted it
-   * as ON. A body parser can produce either for "nobody said", so the test
-   * below runs both against the same table rather than trusting that two
-   * hand-written coercions match.
-   *
-   * SOURCE-READ AND EVALUATED, because neither file can be required in a test
-   * — runGeneration pulls in the whole generator. The expressions are lifted
-   * out by marker and run in a sandbox, so a change to either one is either
-   * reflected here or fails to extract. */
-  const runSrc = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
-  const aboutSrc = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
-
-  const runGate = runSrc.match(/const showPricingTable = ([\s\S]*?);\n/);
-  const renderGate = aboutSrc.match(/const wantsPricing = ([\s\S]*?);\n/);
-
-  assert.ok(runGate, 'the showPricingTable gate in runGeneration.js has moved or been renamed');
-  assert.ok(renderGate, 'the wantsPricing gate in buildAboutUsPage.js has moved or been renamed');
-
-  const box = {};
-  vm.createContext(box);
-  const run = vm.runInContext(`(global => ${runGate[1]})`, box);
-  const render = vm.runInContext(`(globalValues => ${renderGate[1]})`, box);
-
-  /* Absent and null are "nobody expressed a preference", and the table stays.
-   * Opt-out, not opt-in: every site built before this field existed has one,
-   * and the WordPress plugin still sends nothing. */
+   * ABSENT AND NULL MEAN ON. Opt-out, not opt-in — every site built before
+   * these fields existed has both sections, and the WordPress plugin still
+   * sends neither field. */
   const TABLE = [
-    [{}, true, 'the field absent'],
-    [{ showPricingTable: null }, true, 'an explicit null'],
-    [{ showPricingTable: true }, true, 'ticked, boolean'],
-    [{ showPricingTable: 'true' }, true, 'ticked, as the wizard mirrors it'],
-    [{ showPricingTable: 'on' }, true, 'ticked, as a raw checkbox posts it'],
-    [{ showPricingTable: '1' }, true, 'ticked, as "1"'],
-    [{ showPricingTable: '' }, false, 'unticked, as the wizard mirrors it'],
-    [{ showPricingTable: false }, false, 'unticked, boolean'],
-    [{ showPricingTable: 'false' }, false, 'the string "false"'],
-    [{ showPricingTable: 0 }, false, 'zero'],
+    [undefined, true, 'the field absent'],
+    [null, true, 'an explicit null'],
+    [true, true, 'ticked, boolean'],
+    ['true', true, 'ticked, as the wizard mirrors it'],
+    ['on', true, 'ticked, as a raw checkbox posts it'],
+    ['1', true, 'ticked, as "1"'],
+    ['', false, 'unticked, as the wizard mirrors it'],
+    [false, false, 'unticked, boolean'],
+    ['false', false, 'the string "false"'],
+    [0, false, 'zero'],
   ];
 
-  for (const [body, want, what] of TABLE) {
-    assert.strictEqual(!!run(body), want, `runGeneration disagrees about ${what}`);
-    assert.strictEqual(!!render(body), want, `buildAboutUsPage disagrees about ${what}`);
+  for (const [value, want, what] of TABLE) {
+    assert.strictEqual(keptOn(value), want, `keptOn disagrees about ${what}`);
   }
+});
+
+test('both files read the checkbox through that one function', () => {
+  /* The test above proves keptOn is right. This proves the two callers use
+   * it — a file that quietly went back to its own coercion would pass every
+   * assertion above while drifting exactly as before. */
+  const runSrc = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
+  const aboutSrc = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
+  const badgeSrc = fs.readFileSync(path.join(__dirname, 'utils', 'copyBadgeImages.js'), 'utf8');
+
+  for (const [name, src] of [['runGeneration', runSrc], ['buildAboutUsPage', aboutSrc], ['copyBadgeImages', badgeSrc]]) {
+    assert.ok(/require\('\.\/sectionToggle'\)/.test(src), `${name} no longer imports keptOn`);
+    assert.ok(/keptOn\(/.test(src), `${name} no longer calls keptOn`);
+  }
+
+  assert.ok(/const showPricingTable = keptOn\(/.test(runSrc), 'the pricing spend gate stopped using keptOn');
+  assert.ok(/const showBadges = keptOn\(/.test(runSrc), 'the badge spend gate stopped using keptOn');
+  assert.ok(/const wantsPricing = keptOn\(/.test(aboutSrc), 'the pricing render gate stopped using keptOn');
+  assert.ok(/caps\.badges && keptOn\(globalValues\.showBadges\)/.test(aboutSrc),
+    'the badge render gate lost its shape rule or its preference');
+});
+
+test('THE BADGE GATES PUT THE SHAPE RULE FIRST TOO', () => {
+  /* Same safeguard as the price table, and it matters more here. The two
+   * images assert "award winning" and "licensed and insured" about the
+   * business. capabilities().badges is home services only, because on a
+   * dental practice or a law firm an unverified credential claim is a
+   * licensing-board matter — and a board writes to the business owner, not to
+   * us. Ticking a box must not be able to reach that. */
+  for (const label of ['Dentist', 'Doctor', 'Chiropractor', 'Physical Therapy', 'Eye Doctor', 'Lemon Law', 'Web Design']) {
+    assert.strictEqual(wantsBadges(label), false, `${label} would be given trust badges`);
+  }
+
+  assert.strictEqual(wantsBadges('Plumbing'), true, 'a plumber lost their badges entirely');
+
+  /* And the chokepoint refuses regardless of what the form said. Asserted
+   * through the real function rather than the source, because this is the one
+   * a second caller could bypass. */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'badge-gate-'));
+  const forDentist = copyBadgeImages(dir, {
+    businessName: 'X', businessType: 'Dentist', location: 'Austin, TX', showBadges: true,
+  });
+
+  assert.strictEqual(forDentist.awardBadge, '', 'a ticked box gave a dentist an award badge');
+  assert.strictEqual(forDentist.licensedBadge, '', 'a ticked box gave a dentist a licensed badge');
+
+  const unticked = copyBadgeImages(dir, {
+    businessName: 'X', businessType: 'Plumbing', location: 'Austin, TX', showBadges: '',
+  });
+
+  assert.strictEqual(unticked.awardBadge, '', 'unticking did not remove the award badge');
+  assert.strictEqual(unticked.licensedBadge, '', 'unticking did not remove the licensed badge');
+});
+
+test('THE WIZARD AND THE SERVER AGREE ON WHO MAY HAVE BADGES', () => {
+  /* Same arrangement as SHAPES_WITH_PRICING: the wizard keeps its own copy so
+   * it can decide whether to SHOW the checkbox, and this is what stops the two
+   * drifting. A shape in the wizard's list but not the server's shows a
+   * customer a control the server will overrule. */
+  const serverShapes = Object.keys(shapeModule.CAPABILITIES)
+    .filter(shape => shapeModule.CAPABILITIES[shape].badges)
+    .sort();
+
+  assert.deepStrictEqual([...wizard.badgeShapes].sort(), serverShapes,
+    'SHAPES_WITH_BADGES in the wizard no longer matches CAPABILITIES on the server');
+
+  assert.deepStrictEqual(serverShapes, ['home'],
+    'a shape other than home now gets badges — that is a credential claim, check it was meant');
 });
 
 test('the render gate puts the shape rule first, so the form cannot grant a table', () => {
