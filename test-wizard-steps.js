@@ -441,6 +441,57 @@ test('the one badge class is the light one', () => {
     'BADGE_CLASS is not light-background, dark-text');
 });
 
+/* -------------------------------------------------------------------------
+ * The buttons at the bottom of every step
+ * ---------------------------------------------------------------------- */
+
+const FORM_HTML = fs.readFileSync(
+  path.join(__dirname, 'src/views/form.html'), 'utf8');
+
+test('NO PAGE RULE FLATTENS THE SPACE ABOVE THE BUTTONS', () => {
+  /* form.html carried `.card .mt-4 { margin-top: 0 !important }`. Every
+   * element inside that card wearing `mt-4` was a Back/Next row, so the rule
+   * had exactly one effect: Back and Generate sat flush against the card
+   * above them on every step, and `!important` meant the markup could not
+   * ask for the gap back.
+   *
+   * THE RULE IS CHECKED, not the pixel value. A later designer moving 2rem
+   * to 1.5rem is a decision; a blanket override that silently wins against
+   * every element asking for spacing is the bug. */
+  const stripped = FORM_HTML.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  assert.ok(!/\.card\s+\.mt-4/.test(stripped),
+    'the blanket mt-4 override is back — the buttons will sit flush again');
+
+  assert.ok(/\.wizard-nav\s*\{[^}]*margin-top\s*:/.test(stripped),
+    'the wizard nav has no top margin rule at all');
+});
+
+test('every step\'s button row asks for that spacing by name', () => {
+  /* Four rows: the shared renderNav, plus the three steps that build their
+   * own footer. One of them left on `mt-4` would look different from the
+   * other three and nothing would say so. */
+  const rows = JS.match(/class: 'd-flex gap-2 [^']*'/g) || [];
+
+  assert.strictEqual(rows.length, 4,
+    `expected 4 button rows, found ${rows.length} — one was added or removed`);
+
+  for (const row of rows) {
+    assert.ok(/wizard-nav/.test(row), `a button row still uses the old class: ${row}`);
+  }
+});
+
+test('THE STEP NUMBERS ON SCREEN COME FROM THE ORDER, NOT FROM TYPING', () => {
+  /* Design reads "4." and Review reads "8." because they are index 3 and 7
+   * of an eight-step wizard. Hardcoding either is how "1. Global Information"
+   * stayed wrong after a step was inserted in front of it. */
+  assert.ok(/function stepNumber\(step\)\s*\{\s*return step \+ 1;/.test(JS),
+    'stepNumber no longer derives the visible number from the index');
+
+  // And no heading types its own number.
+  assert.ok(!/<h[34][^>]*>\s*\d+\.\s/.test(JS), 'a step heading hardcodes its number');
+});
+
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);
 console.log('');

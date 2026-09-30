@@ -1297,6 +1297,172 @@ Four mutations run, four caught: not queueing a failed report, retrying with
 Suites: 8 / 70 / 64 / 34 / 9. `test-removal-time.js` is new and in
 `deploy.sh`.
 
+## The 502, and the check that would have caught it — 30 September 2026
+
+A deploy shipped with **all thirty-nine suites green** and took the site down.
+nginx answered 502 to everything; pm2 had restarted `webgen` **122 times**.
+
+The cause was in `utils/generateSampleReviews.js`, at module top level:
+
+    const response = await withRetry(() => getOpenAI().responses.create(...));
+    const EXAMPLE_NAMES = JSON.parse(response.output_text);
+
+A top-level `await` makes Node treat the file as an ES module. `require()` of
+an ESM graph with top-level await is illegal, so `utils/buildAboutUsPage.js`
+threw `ERR_REQUIRE_ASYNC_MODULE` and the app died before it finished loading.
+
+It was uncommitted work of Edwin's that happened to ride along on the rsync.
+It would also have called OpenAI on **every one of those 122 boots**.
+
+**THE TESTS CHECK THE PARTS. NOTHING CHECKED THAT THE ENGINE TURNS OVER.**
+
+That is the lesson, and it is not about this bug. Thirty-nine suites, every one
+green, while the app could not start — because each suite loads the two or
+three files it is about and **not one of them loads the app**. A file that
+breaks on load is invisible to the entire suite. No amount of adding tests in
+that style would ever have caught it.
+
+`node --check` was tried first and is NOT enough: it reported the broken file
+as fine. It parses one file in isolation, and the failure only exists when one
+module requires another.
+
+**`check-boot.js` (new).** Loads every `.js` under `utils/`, `routes/`,
+`models/` and `middleware/`, one at a time, and reports the ones that throw.
+In `deploy.sh` after the suites — so a real test failure is still reported
+first — and before the rsync, so a build that cannot load never reaches the
+server.
+
+**It does NOT `require('./server.js')`, deliberately.** server.js does its work
+at module top level: `mongoose.connect()` at line 87, `app.listen()` at 414,
+`jobRunner.start()` at 420. Requiring it from a laptop would connect to the
+live Atlas database and start the job runner polling for real work — it could
+begin generating a customer's site from a machine that was only meant to be
+running a check. **A deploy check that can do real work is not a check.**
+server.js gets `node --check` for syntax; everything it requires is loaded
+properly, so a broken dependency is still caught.
+
+Loading the modules also catches strictly MORE than booting would, because it
+reaches files only certain routes require.
+
+**Proved by running it against the broken build** rather than assumed: it named
+**nine** files, not one — the whole chain hanging off the bad file, from
+`generateSampleReviews` up through `buildAboutUsPage`, `runGeneration` and
+`generateRoute`. Clean run: 198 files. *A check nobody has watched fail is not
+known to work.*
+
+**`test-reviews-section.js` IS ZERO BYTES**, and it is in `deploy.sh`'s suite
+list. `node` runs it, it exits 0, the loop reads a pass. **An empty file in a
+gate is worse than no entry at all** — the list looks like coverage and is not.
+Same shape as the stub faults logged all week. Still outstanding: give it
+content or take it off the list.
+
+**Also outstanding, and not a bug:** `DISCLAIMER` and `SECTION_NOTE` in
+generateSampleReviews.js are both `''` in the committed code, so the sample
+reviews section renders "What Customers Are Saying" with four five-star reviews
+and nothing marking them as examples — only the names `Example Customer A–D`
+do that. The stashed work replaces exactly those names with realistic ones
+("Use realistic U.S. customer names"). That combination is fabricated
+testimonials presented as genuine, which I will not wire up, and the file's own
+header says why: the FTC's Consumer Reviews and Testimonials Rule puts the
+liability on the BUSINESS displaying them — Edwin's customers, not Edwin.
+Raised, and he chose to fix the crash and decide the content question later.
+
+## I overwrote two files with stale copies — 30 September 2026
+
+**The worst thing done to this codebase all week, and it was mine.**
+
+Working on the button spacing, I edited `public/js/generateDinamycForm.js` and
+`src/views/form.html` from copies that had been staged into the container
+EARLIER IN THE SESSION, not re-read at the moment of editing. Those copies
+predated the business-type picker. Committing them deleted the picker's wiring
+from both files. `test-wizard-steps.js` went the same way: my copy had 28
+tests, Edwin's had 32, and my three additions arrived on top of a file missing
+four of his.
+
+Nothing in my own process caught it. **`test-business-type-picker.js` caught
+it, on Edwin's machine, at deploy time.** `deploy.sh` runs the suites and
+refuses to ship when one fails, so the damage never reached the server.
+
+**THE REASONING FAULT, stated plainly.** Every commit this session ended with:
+re-stage the file, compare md5, confirm they match. That felt like
+verification and it was not.
+
+> **A checksum after a write proves delivery. It says nothing about whether
+> what you sent was built on the current file.** Both halves have to be
+> checked, and I was only ever checking the second one.
+
+The container's `/mnt/user-data/uploads/` copy is a SNAPSHOT, not a mount. It
+does not track the disk. A file staged at the start of a session and edited an
+hour later is edited as it was an hour ago, and every later verification step
+compares my output against my own output.
+
+**THE RULE, now standing:**
+
+1. **Re-stage every file immediately before editing it.** Not once per
+   session, not once per task — once per edit.
+2. A staged copy older than the current turn is to be treated as unknown.
+3. Read the file back after staging and confirm something recent is present
+   before starting work, when there is any reason to think the file has moved
+   on.
+
+**What made recovery cheap, and what nearly didn't.** The repo is on git and
+Edwin had committed as `6efbb15` shortly before. `git status --porcelain`
+showed only five modified files, which bounded the damage in one command, and
+`git checkout --` restored all three. Had he not committed, the picker wiring
+would have existed nowhere but the server's previous build.
+
+**`git diff --stat` is what found the second victim.** After restoring the two
+obvious files I nearly stopped. Asking for the stat on the other two showed
+`CLAUDE.md` at +40/−0 — safely additive — and `test-wizard-steps.js` at
++51/−35. **Thirty-five deleted lines in a file I had only added to is the
+signature of a stale base**, and it is worth checking for by reflex after any
+mistake of this kind: the first file you notice is rarely the only one.
+
+**What was NOT damaged, and how that was established:** `blogReportRoute.js`,
+`test-blog-report.js` and every `wp-plugin/` file were absent from
+`git status`, meaning they matched the commit. The CSV rename and the 0.14.1
+labels were built on fresh copies and are intact.
+
+## One CSS rule flattening every step's buttons — 30 September 2026
+
+Edwin sent two screenshots — the Design step and the Review step — with Back
+and Generate sitting flush against the card above them, and said *"I think this
+is in dynamicform file."*
+
+**It was not.** One line in `src/views/form.html`:
+
+    .card .mt-4 { margin-top: 0px !important; }
+
+`renderNav()` gives its button row `mt-4`, and the whole wizard lives inside
+`.card`. So the gap was being deleted, and `!important` meant the markup could
+not ask for it back.
+
+**The fact that settled it:** every element inside that card wearing `mt-4` was
+one of the four Back/Next rows. Nothing else on the page used the class. So a
+rule that reads like general housekeeping had, in practice, exactly one effect
+— and it was the bug. Grepping for the class before touching the rule is what
+made removing it safe rather than a guess; had anything else worn `mt-4`, the
+fix would have had to be additive instead.
+
+**Why not just raise the number.** `mt-4` means "this element wants spacing".
+A page-level `!important` answering "no" for every element that asks cannot be
+argued with from the element, so the next person adds an inline style, and the
+one after that adds `!important` to that. The nav now asks by name
+(`.wizard-nav`, 2rem) and the blanket override is gone.
+
+**The step numbers were already right** — Design renders "4." and Review "8."
+because `stepNumber()` returns `index + 1` over an eight-entry array. Checked
+before changing anything, since Edwin's message mentioned step 8 and it would
+have been easy to "fix" a number that was already correct. Pinned with a test
+anyway, including one that fails if any heading types its own number: that is
+how "1. Global Information" stayed wrong after a step went in front of it.
+
+Four mutations, four caught: the override restored, the new margin rule
+deleted, one footer left on `mt-4`, and the steps array reordered.
+
+`test-wizard-steps.js` 32 → 35, and it now reads `form.html` as well as the
+wizard source. Server-side files only — `./deploy.sh`, no plugin upload.
+
 ## The campaign form's two labels — 0.14.1, 30 September 2026
 
 Same day, same fault, other end of the app. Having just renamed two CSV

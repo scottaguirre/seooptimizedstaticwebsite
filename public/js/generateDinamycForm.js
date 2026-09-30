@@ -557,7 +557,14 @@
   // Shared nav renderer
   // -----------------------------
   function renderNav(container, { showBack = false, nextText = 'Next', backText = 'Back', onBack, onNext } = {}) {
-    const nav = el('div', { class: 'd-flex gap-2 mt-4 justify-content-between flex-wrap' });
+    /* `wizard-nav` RATHER THAN `mt-4`, and the reason is in form.html.
+     *
+     * That page carried `.card .mt-4 { margin-top: 0 !important }`, which
+     * stripped the gap above these buttons on every step and could not be
+     * overridden from here. The class is now the wizard's own, so the
+     * spacing belongs to the nav instead of to a utility class anything
+     * might reach for. */
+    const nav = el('div', { class: 'd-flex gap-2 wizard-nav justify-content-between flex-wrap' });
     const back = el('button', {
       type: 'button',
       id: 'backBtn',
@@ -1481,7 +1488,7 @@
     container.appendChild(block);
 
     // Footer: Back/Next (Next validates)
-    const footer = el('div', { class: 'd-flex gap-2 mt-4' });
+    const footer = el('div', { class: 'd-flex gap-2 wizard-nav' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
     const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px' }, 'Start Over');
 
@@ -1769,7 +1776,7 @@
     });
     container.appendChild(svcWrap);
 
-    const footer = el('div', { class: 'd-flex gap-2 mt-4' });
+    const footer = el('div', { class: 'd-flex gap-2 wizard-nav' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
     const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px;' }, 'Start Over');
     const nextBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Next →');
@@ -1943,7 +1950,7 @@
 
     mountLocationSuggestPanel(locSuggestWrap, locList, locToggle);
 
-    const footer = el('div', { class: 'd-flex gap-2 mt-4' });
+    const footer = el('div', { class: 'd-flex gap-2 wizard-nav' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
     const resetBtn = el('button', { type: 'button', class: 'btn btn-warning', style: 'min-width:150px;font-size:18px;margin-left:20px;' }, 'Start Over');
     const nextBtn = el('button', { type: 'button', class: 'btn btn-success ms-auto btn-submit', style: 'min-width:180px;font-size:18px;' }, 'Review →');

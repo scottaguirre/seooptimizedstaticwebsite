@@ -156,6 +156,29 @@ fi
 echo "Tests passed."
 echo
 
+# CAN THE APP ACTUALLY BE LOADED?
+#
+# Every suite above passed on 30 September and the deploy shipped a build that
+# could not start: a top-level `await` in utils/generateSampleReviews.js made
+# Node treat it as an ES module, so `require()` of it threw, and the server
+# died before it finished loading. pm2 restarted it 122 times and nginx
+# answered 502 to everything.
+#
+# NO TEST IN THE LIST ABOVE COULD HAVE SEEN IT. Each suite loads the two or
+# three files it is about; not one of them loads the app. They check the
+# parts. This checks the engine turns over — and when it was first run against
+# that build it named nine files, the whole chain hanging off the broken one.
+#
+# AFTER the suites, so a real test failure is still the first thing reported.
+# BEFORE the rsync, so a build that cannot load never reaches the server.
+echo "Checking the app loads..."
+if ! node check-boot.js; then
+  echo
+  echo "Nothing was deployed. The server is still running the previous build."
+  exit 1
+fi
+echo
+
 echo "Syncing to ${REMOTE_HOST}:${REMOTE_PATH}"
 rsync -avz --delete $DRY \
   --exclude-from="${HERE}/.rsync-exclude" \

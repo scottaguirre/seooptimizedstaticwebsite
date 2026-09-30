@@ -42,8 +42,26 @@
       margin-bottom:20px !important;
     }
 
-    .card .mt-4 {
-      margin-top: 0px !important;
+    /* THE RULE THAT USED TO BE HERE:
+
+         .card .mt-4 { margin-top: 0px !important; }
+
+       Every element inside the wizard card carrying `mt-4` was one of the
+       four Back/Next rows — nothing else on the page used the class. So a
+       rule written to flatten spacing somewhere had, in practice, exactly
+       one effect: it deleted the gap above the buttons on EVERY step, and
+       `!important` meant the markup could not ask for it back.
+
+       The result was Back and Generate sitting flush against the card above
+       them, which on the Design and Review steps reads as though the buttons
+       belong to the last card rather than to the step.
+
+       A blanket override on a utility class is the wrong tool: `mt-4` means
+       "this element wants spacing", and a page-level rule that answers "no"
+       for all of them cannot be argued with from the element. The nav now
+       asks by name. */
+    .wizard-nav {
+      margin-top: 2rem;
     }
 
     .outer-card {
