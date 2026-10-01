@@ -136,7 +136,8 @@ if command -v php > /dev/null 2>&1; then
     wp-plugin/test-deleted-posts.php \
     wp-plugin/test-topic-merge.php \
     wp-plugin/test-admin-tabs.php \
-    wp-plugin/test-orphan-links.php
+    wp-plugin/test-orphan-links.php \
+    wp-plugin/test-server-url.php
   do
     if ! php "$suite" > /dev/null; then
       echo

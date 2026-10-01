@@ -127,6 +127,25 @@ const BUSINESS_TYPES = [
     aliases: ['hauling', 'rubbish removal'],
   },
   {
+    /* Added 1 October, with its photographs and alt text already in place:
+     * src/predefined-images/moving-company/ and utils/altText/moving-company.js.
+     *
+     * `home` shape, so it gets the price table and the trust badges — a mover
+     * is a trade that comes to the property, and the trades location FAQ
+     * (arrival windows, site access, parking, permits) is written for exactly
+     * this kind of job.
+     *
+     * 'movers' and 'moving' are here because they are what people type; the
+     * label stays 'Moving Company' because `entityFor` builds "a local moving
+     * company" from it and "a local movers" is not a phrase. */
+    label: 'Moving Company', shape: 'home',
+    category: 'moving services', title: 'Mover', entity: 'moving company',
+    servicesLabel: 'Moving',
+    aliases: ['movers', 'moving', 'moving and storage', 'removals',
+              'relocation', 'relocation services', 'local movers',
+              'long distance movers', 'packing services'],
+  },
+  {
     label: 'Appliance Repair', shape: 'home',
     category: 'appliance repair', title: 'Appliance Repair Technician',
     aliases: ['appliance service'],

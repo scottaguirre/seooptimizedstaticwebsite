@@ -3,7 +3,7 @@
  * Plugin Name:       Three Comets Blog Generator
  * Plugin URI:        https://threecomets.com
  * Description:       Plans a quarter of blog posts, writes them all at once, schedules them across the weeks, and wires every one into the service page you want to rank.
- * Version:           0.14.1
+ * Version:           0.15.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Three Comets
@@ -441,7 +441,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'IE_VERSION', '0.14.1' );
+define( 'IE_VERSION', '0.15.0' );
 define( 'IE_FILE', __FILE__ );
 define( 'IE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IE_URL', plugin_dir_url( __FILE__ ) );
@@ -485,6 +485,36 @@ IE_Publisher::init();
  * nothing. That is exactly why the schedule lives on the server.
  */
 add_action( 'ie_catch_up', array( 'IE_Publisher', 'run_catch_up' ) );
+
+/**
+ * Migrations that have to run after an UPGRADE, not only an activation.
+ *
+ * NOT register_activation_hook(), and that is the whole point of this block.
+ * Updating a plugin by uploading a new ZIP does not reliably fire the
+ * activation hook — the site is already active and stays active. A migration
+ * parked there runs for new installs and silently skips every existing one,
+ * which is the population it was written for.
+ *
+ * So: compare the stored version with the running one on every request, do the
+ * work when they differ, and write the new version down. The early return is
+ * one option read on a cached autoloaded option; it costs nothing.
+ *
+ * `plugins_loaded` rather than `admin_init` because a site nobody visits in
+ * wp-admin still needs this — the whole failure being fixed here is a site
+ * that publishes nothing while its owner is not looking.
+ */
+add_action( 'plugins_loaded', function () {
+	if ( get_option( 'ie_version', '' ) === IE_VERSION ) {
+		return;
+	}
+
+	// The 0.15.0 migration: fastwebsitegenerator.com no longer resolves.
+	if ( IE_Settings::migrate_server_url() ) {
+		IE_Publisher::log( 'server_url migrated to ' . IE_Settings::server_url() );
+	}
+
+	update_option( 'ie_version', IE_VERSION );
+}, 1 );
 
 register_activation_hook( __FILE__, function () {
 	if ( ! wp_next_scheduled( 'ie_catch_up' ) ) {

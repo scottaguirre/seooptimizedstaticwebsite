@@ -211,6 +211,56 @@ for.
 `utils/renderAuthPage.js` caches the view files at first read, so edits to
 `login.html` need a server restart before they show.
 
+## Adding a business type — the four places
+
+Done twice in two days (Eye Doctor, 30 September; Moving Company, 1 October)
+and it was the same four edits both times. The tests catch three of them; the
+fourth is the one that matters.
+
+**Before touching code**, the two assets must exist, named by the IMAGE FOLDER
+slug, not the label:
+
+    src/predefined-images/<slug>/     aboutUs + page1..page10,
+                                      each with hero/ section2/ section4/
+    utils/altText/<slug>.js           an array of exactly 11 sets
+                                      (1 About + 10 rotation)
+
+Then:
+
+| # | File | Edit |
+|---|---|---|
+| 1 | `utils/businessShape.js` | the registry entry — label, shape, category, title, entity, aliases |
+| 2 | `public/js/generateDinamycForm.js` | `BUSINESS_TYPE_LABELS` — same position as the registry |
+| 3 | `public/js/generateDinamycForm.js` | `BUSINESS_TYPE_SHAPES` — same shape as the registry |
+| 4 | `utils/createPagesPrompt.js` | `TRADE_VOCAB[<category>]` — parts, symptoms, work |
+
+**NUMBER 4 IS THE ONE THAT BITES.** It is keyed on the CATEGORY, not the
+label, and nothing crashes without it: `createPagesPrompt` falls back to
+`DEFAULT_VOCAB` and writes every page out of "materials, components,
+fittings". The symptom is a live site that reads like a template.
+`no dropdown type falls through to the generic vocabulary` turns that into a
+blocked deploy, which is the only reason it gets noticed.
+
+**Things that are decided, not typed:**
+
+- **shape** sets everything downstream. `home` gets the price table, the trust
+  badges and the trades location FAQ (arrival windows, access, parking,
+  permits). `medical` and `professional` get none of those, for the
+  licensing-board reasons in CAPABILITIES.
+- **label** feeds `entityFor`, so it has to survive "a local ___". "Moving
+  Company" works; "Movers" gives "a local movers". Put the plural in aliases.
+- **aliases MOVE, they are not copied.** Whichever entry registers a key first
+  wins the exact match, so a key owned by two entries makes the answer depend
+  on array order. Eye Doctor took `optometrist` and `ophthalmologist` off the
+  Health Practice catch-all rather than duplicating them.
+- **a type with no photo folder builds a complete site with no pictures.**
+  `copyPageImage` warns and skips; `buildAltText` warns and returns `{}`.
+  Neither throws.
+
+**Then run `node test-business-shape.js`** — it checks the wizard's two lists
+match the registry in order, that every type finds both its photo folder and
+its alt file on disk, and the vocabulary gate. All four edits are covered.
+
 ## Verified working on 10 September 2026
 
 A live build confirmed all of these against real model output, so treat them as
@@ -245,6 +295,133 @@ these to a live site for the first time:
   "Duplicate without user-selected canonical" report.
 
 Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
+
+## PLANNED — blogs published to Cloudflare Pages
+
+Agreed 1 October, **not started**. Edwin: *"I want to do it but let's start
+tomorrow."*
+
+**The goal:** 20 blogs of his own, free hosting, generated and scheduled by
+this app and pushed as static HTML. WordPress stays for everything it does
+today; this is a second target, not a replacement.
+
+### The facts that make it work
+
+| | |
+|---|---|
+| Projects per Cloudflare account | **100** (soft cap, raisable by support) — 20 blogs = 20 projects |
+| Files per deployment | **20,000**, counting images. ~4,000 posts at 4 images each |
+| Max file size | 25 MiB |
+| Builds/month | 500 — **Git-connected only.** Direct Upload is exempt |
+| Bandwidth | unlimited |
+
+**Direct Upload not counting against the build quota is the whole design.**
+Cloudflare staff: *"currently they don't count towards any quota… in the
+future, there will likely be a separate 'deployments' quota."* So deploy
+**once per blog per scheduler run**, batching whatever came due — same result,
+a twentieth of the deploys, and immune if that quota appears.
+
+**Storage cost is nil, and this was checked rather than assumed.** A post is
+1,000–1,300 words ≈ 12 KB stored. 20 blogs × 100 posts ≈ 24 MB raw, ~8 MB
+after Mongo's compression, against a 512 MB free tier. WordPress hosting for
+20 sites renews at $150–350/year. **Images never go in Mongo** — they are
+files, and they go to Cloudflare where storage and bandwidth are free.
+
+### Why it lives in THIS app, not a separate one
+
+Edwin asked whether to build it as a separate app so a mistake could not
+damage what works. Right instinct, wrong tool, and the reasoning is worth
+keeping:
+
+- A separate app needs the same database, so `BlogCampaign` and `BlogSite`
+  would be **duplicated schemas writing to one database**. Mongoose will not
+  stop the second app writing documents the first cannot read. That is the
+  same fault as the two hand-written `keptOn` coercions from 30 September,
+  scaled to an entire data model.
+- The change list is **eight new files**; the edits to existing ones are
+  additive — one enum value, one job kind, one route. Nothing in the WordPress
+  path changes behaviour.
+- The protection already exists: `deploy.sh` runs the suites plus
+  `check-boot.js` and refuses to ship. It stopped a broken build twice on
+  30 September.
+- **The isolation that is actually wanted is at the JOB level** — a `publish`
+  job that throws is one failed job, and site generation, blog writing and the
+  scheduler carry on.
+
+Extract later if the blog product gets its own customers or infrastructure.
+*Extract once the seams are known.*
+
+### Files
+
+**New**
+
+    utils/blog/cloudflare/deploy.js     Direct Upload: hash, ask what is
+                                        missing, send only that. The ONLY
+                                        file that talks to Cloudflare.
+    utils/blog/cloudflare/token.js      Encrypt/decrypt the API token.
+    utils/blog/render/renderBlog.js     blog + posts -> { path: contents }.
+                                        A MAP, not files on disk, so every
+                                        page is testable in memory.
+    utils/blog/render/postPage.js       one article -> HTML
+    utils/blog/render/indexPage.js      home page and pagination
+    utils/blog/render/feeds.js          sitemap.xml, rss.xml, robots.txt
+    utils/blog/render/interlinks.js     which posts link to which, baked at
+                                        render time — replaces repair_links()
+    utils/blog/staticTarget.js          what a static target can and cannot
+                                        do. Sibling of siteUrlGuard.js.
+
+    test-blog-render.js
+    test-cloudflare-deploy.js
+    test-static-target.js
+
+**Changed**
+
+    models/BlogSite.js          target: 'wordpress'|'cloudflare', project,
+                                domain, encrypted token
+    models/BlogCampaign.js      slots gain a BODY field — today the schema
+                                stores only the plan (topic, slug, anchor,
+                                dates, wpPostId, publishedUrl) and the article
+                                text lives in WordPress. This is the change
+                                that puts articles in our database.
+    utils/blogScheduler.js      enqueue one publish job PER BLOG, not per post
+    server.js                   jobRunner.registerGenerator('publish', …)
+    routes/blogSitesRoute.js    add/edit a Cloudflare blog
+    routes/blogReportRoute.js   columns that cannot apply to a static target
+    utils/blog/reportFilters.js same
+    deploy.sh                   the three new suites
+    .env                        CF_ACCOUNT_ID, CF_API_TOKEN,
+                                TOKEN_ENCRYPTION_KEY
+
+### Build order — and `staticTarget.js` comes FIRST
+
+1. **`staticTarget.js` and the report semantics.** Decide on paper before any
+   rendering.
+2. One hardcoded blog: renderer + deploy, end to end.
+3. The `target` discriminator through the report.
+4. The other 19.
+
+**WHY THE ORDER.** Everything the blog report says today assumes WordPress:
+posts trashed on the site, campaigns deleted from a site that then stops
+reporting, the removal-timestamp queue, "published, but the campaign was
+removed". **On a static target none of it can happen** — every deploy is a
+fresh render from Mongo, so the database is the only truth and there is
+nothing to repair and nothing to reconcile.
+
+Ship the second target without deciding this and the report grows a column
+reading "Deleted" on a site where deletion is impossible. That is precisely
+what 30 September was spent removing. **A value that cannot be true is worse
+than no value.**
+
+### Open
+
+- Token storage is a **different posture from licence keys.** Licence keys are
+  never stored — SHA-256 and last 4 only. An API token must be *usable*, so it
+  is stored reversibly, encrypted at rest with a key in `.env`. A database
+  dump becomes a credential leak in a way it is not today.
+- Whether a customer-facing version later uses their Cloudflare account rather
+  than Edwin's. For his own 20 blogs: his account.
+- A brand-new Cloudflare account has a lower project cap for the first 48
+  hours.
 
 ## Outstanding
 

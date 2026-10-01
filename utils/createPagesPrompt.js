@@ -90,6 +90,16 @@ const TRADE_VOCAB = {
     symptoms: 'full garages, post-renovation debris, estate clearances, broken appliances, yard waste',
     work: 'sorting for recycling, safe lifting, disposal at licensed facilities, donating usable items',
   },
+  /* Added with the Moving Company type, 1 October. Keyed on the CATEGORY
+   * ('moving services'), not the label — a registry entry with no vocabulary
+   * does not crash, it falls through to DEFAULT_VOCAB and writes every page
+   * out of "materials, components, fittings". `no dropdown type falls through
+   * to the generic vocabulary` turns that into a blocked deploy. */
+  'moving services': {
+    parts: 'moving blankets, shrink wrap, dollies and hand trucks, ramps, wardrobe boxes, tie-down straps, furniture sliders',
+    symptoms: 'a closing date that moved, a third-floor walk-up with no lift, a piano or a gun safe, a one-bedroom that turned out to be three truckloads, stairs at both ends',
+    work: 'a walkthrough and estimate, packing and labelling, disassembly and reassembly, loading and securing the truck, transport, unloading room by room, debris taken away',
+  },
   'tree removal': {
     parts: 'cranes, chippers, rigging lines, stump grinders, climbing gear, chainsaws',
     symptoms: 'dead limbs, leaning trunks, root damage, storm breakage, fungus at the base, cracked bark',

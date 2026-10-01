@@ -66,8 +66,75 @@ class IE_Settings {
 	 * path is a different string from the one the signature covers. That
 	 * failure looks like a rejected signature, not like a typo in a URL.
 	 */
+	const SERVER = 'https://threecomets.com';
+
+	/**
+	 * Hosts that no longer answer, and where they went.
+	 *
+	 * fastwebsitegenerator.com was the service's first name. It was switched
+	 * OFF on 24 September — nginx site deleted, A and CNAME records removed,
+	 * certificate revoked. It resolves nowhere.
+	 *
+	 * The default below was never updated with the rename, so every install
+	 * that had not set the field by hand was pointing at a domain that had
+	 * stopped existing. Nothing says so on screen: requests fail, the plugin
+	 * logs it, and the owner sees a site that simply never publishes.
+	 *
+	 * A MAP RATHER THAN ONE COMPARISON, because this will happen again. The
+	 * next rename adds a line here and both halves below keep working.
+	 */
+	private static function moved_hosts() {
+		return array(
+			'fastwebsitegenerator.com'     => self::SERVER,
+			'www.fastwebsitegenerator.com' => self::SERVER,
+		);
+	}
+
+	/** The live address for a URL, which is the URL itself unless it moved. */
+	private static function current_server( $url ) {
+		$host = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+		$moved = self::moved_hosts();
+
+		return isset( $moved[ $host ] ) ? $moved[ $host ] : $url;
+	}
+
 	public static function server_url() {
-		return untrailingslashit( self::get( 'server_url', 'https://fastwebsitegenerator.com' ) );
+		$url = untrailingslashit( self::get( 'server_url', self::SERVER ) );
+
+		/* TRANSLATED ON READ as well as migrated on upgrade, and the belt and
+		 * braces are deliberate. The migration needs an admin request to have
+		 * fired; this covers the window before that, and covers a site whose
+		 * migration failed for any reason. The failure it guards against is
+		 * total and silent, which is worth two lines. */
+		return self::current_server( $url );
+	}
+
+	/**
+	 * Rewrite a stored server_url that points at a host which has moved.
+	 *
+	 * SEPARATE FROM server_url() BECAUSE IT PERSISTS. Reading can translate
+	 * for the current request; only this makes the Connection screen stop
+	 * showing the dead address, which is the thing the owner would otherwise
+	 * copy into a support email.
+	 *
+	 * Returns true when something was written, so a caller can log it.
+	 */
+	public static function migrate_server_url() {
+		$stored = untrailingslashit( (string) self::get( 'server_url', '' ) );
+
+		// Nothing stored means the default applies, and the default is right.
+		if ( '' === $stored ) {
+			return false;
+		}
+
+		$fixed = self::current_server( $stored );
+
+		if ( $fixed === $stored ) {
+			return false;
+		}
+
+		self::set( array( 'server_url' => $fixed ) );
+		return true;
 	}
 
 	/**
