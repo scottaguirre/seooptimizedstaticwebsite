@@ -114,6 +114,109 @@ VOICE
 Plain sentences. Two to four per paragraph. Write the way you would explain it
 standing in someone's kitchen — direct, unhurried, no selling.`;
 
+/**
+ * The same brief, for a blog with no business behind it.
+ *
+ * A SECOND PROMPT, NOT AN EDIT TO THE FIRST. The trade prompt is tuned, it is
+ * shipping, and every post on every customer's site comes out of it. Softening
+ * it to cover both cases would make it worse at the job it already does well —
+ * "you are a tradesperson, unless you are not" is not an instruction.
+ *
+ * WHAT IS KEPT, because it is why the trade prompt produces publishable work:
+ * answer first, concrete detail, the forbidden openings and phrases, no recap
+ * ending, and the refusal to claim anything unsupported.
+ *
+ * WHAT CHANGES, and each line below is here because the trade version does
+ * active harm on a content blog:
+ *
+ *   THE IDENTITY. "You are a working tradesperson writing for your own
+ *   customers" makes the model invent a business it does not have — "in
+ *   fifteen years on the job", "every client who walks through the door".
+ *   None of it is true, and a pillar campaign has no business block to
+ *   contradict it, so there is nothing to anchor the invention.
+ *
+ *   THE READER. "Someone with a problem, right now ... Not a student" is an
+ *   emergency. Someone reading a hub article at nine in the evening is
+ *   browsing and learning, and urgency in that article reads as panic.
+ *
+ *   THE LOCALITY RULE. "A paragraph that would still be true for a different
+ *   trade in a different town should not exist" is correct for a Leander
+ *   plumber and backwards here: a good article about training a dog SHOULD be
+ *   true in every town. Left in, it tells the model to delete its best
+ *   paragraphs or to fake a region.
+ *
+ * The forbidden-claims list is LONGER than the trade one, not shorter.
+ * Removing the business removed the thing that was keeping the model honest.
+ */
+const SYSTEM_BLOG = `You are writing one article for a blog about a single subject.
+
+WHO IS READING
+Someone who typed a question and wants it answered properly. They have time.
+They are learning, not fixing an emergency, and they may well still be doing
+this in six months. Write for that person, not for someone standing over a
+problem with a phone in their hand.
+
+WHAT MAKES A POST WORTH PUBLISHING
+Concrete detail. A timescale, a count, a measurement, a cost, a thing they can
+try this evening and see the result of. A paragraph that could open an article
+on any subject at all is a paragraph that should not exist.
+
+ANSWER FIRST
+Say the useful thing in the opening paragraph. Do not build up to it, do not
+define the topic, do not explain why the topic matters. They already know why
+it matters — that is why they are reading.
+
+FORBIDDEN OPENINGS
+Never begin with "In today's world", "When it comes to", "Whether you",
+"As a dog owner" or any equivalent, "First and foremost", or any definition of
+the subject.
+
+FORBIDDEN PHRASES anywhere in the post
+- it is important to note / it is worth noting / needless to say
+- that being said / at the end of the day / in conclusion / to sum up
+- rest assured / peace of mind / we have got you covered
+- cutting-edge / state-of-the-art / latest advancements / modern techniques
+- innovative solutions / top-notch / seamless / unparalleled / game-changer
+- experts agree / studies show / industry-leading
+- contact us today / give us a call today / do not hesitate to
+
+NEVER CLAIM
+- EXPERIENCE OF YOUR OWN. You have no clients, no customers, no years in the
+  field, no anecdotes and no practice. Never write "in my experience", "we
+  see this all the time", "I have found" or "in fifteen years". There is no
+  "we" and there is no "I".
+- A PLACE. Do not put the reader anywhere. No town, no region, no country, no
+  climate, no "around here". The article is read everywhere.
+- Laws, regulations, licensing, permits or official requirements. You do not
+  know the reader's country, let alone their county.
+- Statistics, studies, surveys, percentages or research findings you were not
+  given. If you did not receive a number, you do not have one.
+- A business, product, brand, tool or person as recommended, endorsed or
+  tested. Nothing here has been tried. A price range may be given as a range
+  and nothing more.
+
+NO SUMMARY SECTION
+Do not end with a recap, a conclusion, or a paragraph beginning "Ultimately".
+Stop when you have said the last useful thing.
+
+VOICE
+Plain sentences. Two to four per paragraph. Write the way you would explain it
+to someone who asked you properly — direct, unhurried, nothing to sell.`;
+
+/**
+ * Which brief this post is written to.
+ *
+ * READ FROM ctx.isPillar, which buildLinkPlan sets from campaign.isPillar in
+ * the same breath as ctx.targetPage — three lines apart, from one value, so
+ * they cannot drift. It is deliberately NOT inferred from targetPage being
+ * null: "there is no money page" and "this is not a business" are different
+ * claims that happen to coincide today, and the day they stop coinciding the
+ * inference becomes a silent wrong voice on every post.
+ */
+function systemFor(ctx) {
+  return (ctx && ctx.isPillar) ? SYSTEM_BLOG : SYSTEM;
+}
+
 function buildPrompt(slot, ctx) {
   const { business, targetPage } = ctx;
   const links = [];
@@ -129,18 +232,79 @@ function buildPrompt(slot, ctx) {
    * Spread across the post it reads as a writer referring to things as they
    * come up, which is what it is meant to be. qualityCheck.js verifies this
    * rather than trusting it, because an instruction with no check behind it is
-   * a hope. */
-  links.push(
-    `- Use this phrase EXACTLY ONCE, verbatim, wrapped like this: {{money}}${slot.money.anchor}{{/money}}\n` +
-    `  It becomes a link to the ${targetPage.title} page. Build a sentence where that phrase belongs.\n` +
-    `  PUT IT IN THE OPENING SECTION — the one before any subheading.`
-  );
+   * a hope.
+   *
+   * BEHIND AN `if`, LIKE THE TWO BELOW IT, AND IT WAS NOT.
+   *
+   * This push was unconditional while prev and next were both guarded, which
+   * went unnoticed for as long as every campaign had a money page. A pillar
+   * campaign has none, and an unguarded `slot.money.anchor` is not a worse
+   * post — it is `TypeError: Cannot read properties of undefined`, thrown
+   * before the model is called, for every slot.
+   *
+   * The checker was already guarded (`if (slot.money && …)`, qualityCheck.js)
+   * and the WRITER was not, which is the reverse of what the comments suggest:
+   * linkPlan.js says the checker verifies the anchor "verbatim", so the strict
+   * file looked like the fragile one. A COMMENT DESCRIBING A STRICTNESS IS NOT
+   * THE SAME AS THE CODE BEING STRICT, and the file that said nothing on the
+   * subject was the one that would have crashed.
+   *
+   * PLACEMENT IS A POSITION, NOT A TOKEN NAME — and it was a token name.
+   *
+   * The three instructions below were written when every post carried three
+   * links: money opened, prev sat in the middle, next closed. Take the money
+   * link away, as a pillar campaign does, and the two that remain still ask for
+   * "a middle section" and "the final section". BOTH LAND IN THE BACK HALF.
+   * On a four-section post that is sections 3 and 4 — the opening has nothing
+   * at all, and a reader who stops two thirds of the way through has been
+   * offered nowhere to go.
+   *
+   * Nothing caught it. The crowding checks ask whether two links SHARE a
+   * paragraph or a section; these were in different sections, politely, at the
+   * bottom. The only placement assertion was `spread.placed.money.section !==
+   * 0`, and a pillar post has no money link for it to look at. A RULE WRITTEN
+   * PER LINK CANNOT SEE WHAT THE SET OF LINKS LOOKS LIKE.
+   *
+   * So for a pillar post the placement is assigned by ORDER: whichever link
+   * the post has first opens it, the second sits around the third paragraph.
+   * The ordinary three-link path is left byte-for-byte as it was — it is
+   * correct, it is shipping, and it is the one every customer's posts use. */
+  const isPillar = !!(ctx && ctx.isPillar);
+
+  let positioned = 0;
+
+  /**
+   * The placement line for the next link pushed.
+   *
+   * @param {string} ordinary what a three-link post says, unchanged
+   */
+  function placement(ordinary) {
+    if (!isPillar) return ordinary;
+
+    positioned += 1;
+
+    /* Counted in push order, which is the order the `if`s below run: money
+     * (never, here), then prev, then next. A pillar post has at most two, so
+     * there is no third case — and if one is ever added it takes the middle
+     * instruction, which is the safe end to land on. */
+    return positioned === 1
+      ? '  PUT IT IN THE OPENING SECTION — inside the first or second paragraph, before any subheading.'
+      : '  PUT IT AROUND THE THIRD PARAGRAPH, in a middle section. NOT the final section.';
+  }
+
+  if (slot.money) {
+    links.push(
+      `- Use this phrase EXACTLY ONCE, verbatim, wrapped like this: {{money}}${slot.money.anchor}{{/money}}\n` +
+      `  It becomes a link to the ${targetPage.title} page. Build a sentence where that phrase belongs.\n` +
+      placement('  PUT IT IN THE OPENING SECTION — the one before any subheading.')
+    );
+  }
 
   if (slot.prevAnchor) {
     links.push(
       `- Use this phrase EXACTLY ONCE, verbatim, wrapped like this: {{prev}}${slot.prevAnchor}{{/prev}}\n` +
       `  It refers back to an earlier post about "${slot.prevTitle}".\n` +
-      `  PUT IT IN A MIDDLE SECTION — not the opening, not the last one.`
+      placement('  PUT IT IN A MIDDLE SECTION — not the opening, not the last one.')
     );
   }
 
@@ -149,20 +313,31 @@ function buildPrompt(slot, ctx) {
       `- Use this phrase EXACTLY ONCE, verbatim, wrapped like this: {{next}}${slot.nextAnchor}{{/next}}\n` +
       `  It refers to "${slot.nextTopic}". Mention it as a passing aside. Do NOT tell the reader to go\n` +
       `  and read it, and do not call it an article or a post — that piece may not exist yet.\n` +
-      `  PUT IT IN THE FINAL SECTION.`
+      placement('  PUT IT IN THE FINAL SECTION.')
     );
   }
 
-  return `${SYSTEM}
+  /* OMITTED RATHER THAN RENDERED EMPTY.
+   *
+   * A pillar campaign has no business behind it, and every field here would
+   * print as a blank. Four labels with nothing after them is worse than no
+   * block at all: the model reads it as a business whose name and town it is
+   * supposed to know and cannot see, and invents one. AN EMPTY VALUE IS A
+   * CLAIM THAT THE VALUE EXISTS. */
+  const hasBusiness = !!(business && (business.name || business.trade || business.town));
 
-Write one blog post.
-
+  const businessBlock = hasBusiness ? `
 BUSINESS
   Name:     ${business.name}
   Trade:    ${business.trade}
   Town:     ${business.town}
-  Services: ${business.services.join(', ')}
+  Services: ${(business.services || []).join(', ')}
+` : '';
 
+  return `${systemFor(ctx)}
+
+Write one blog post.
+${businessBlock}
 TOPIC
   ${slot.topic}
 ${slot.targetQuery ? `
@@ -251,21 +426,46 @@ async function writePost(slot, ctx, opts = {}) {
  * Deliberately dull — this proves the PLUMBING, not the writing.
  */
 function stubPost(slot, ctx) {
+  const business = (ctx && ctx.business) || {};
+
+  /* A pillar campaign has no town, so the sentence that names one has to have
+   * a version that does not. Interpolating an empty string reads as a bug in
+   * the stub rather than as an absent value, and the whole point of this file
+   * is that a failure in it should be unmistakably about the plumbing. */
+  const opening = business.town
+    ? `Most homeowners in ${business.town} only think about this once something has already gone wrong, which is usually the most expensive moment to start thinking about it.`
+    : 'Most people only think about this once something has already gone wrong, which is usually the most expensive moment to start thinking about it.';
+
   const sections = [
     {
       heading: null,
       paragraphs: [
         `${slot.topic}. This opening stands in for real writing so the link machinery can be tested without spending a model call.`,
-        `Most homeowners in ${ctx.business.town} only think about this once something has already gone wrong, which is usually the most expensive moment to start thinking about it.`,
+        opening,
       ],
     },
-    {
+  ];
+
+  /* The money section, when there is a money page. Same guard as buildPrompt
+   * and for the same reason: the stub is what the offline harness and the
+   * tests run, so an unguarded read here fails the suites rather than
+   * production — which is a better place to fail, but still a failure that
+   * says nothing about the feature under test. */
+  if (slot.money) {
+    sections.push({
       heading: 'What usually goes wrong',
       paragraphs: [
         `Sediment, pressure and age account for most of it. Past a certain point a {{money}}${slot.money.anchor}{{/money}} is the practical next step.`,
       ],
-    },
-  ];
+    });
+  } else {
+    sections.push({
+      heading: 'What usually goes wrong',
+      paragraphs: [
+        'Sediment, pressure and age account for most of it, and the order you check them in is what saves the afternoon.',
+      ],
+    });
+  }
 
   if (slot.prevAnchor) {
     sections.push({
@@ -285,11 +485,19 @@ function stubPost(slot, ctx) {
     });
   }
 
+  const credit = (business.name && business.town)
+    ? ` — practical guidance from ${business.name} in ${business.town}.`
+    : ' — practical guidance, start to finish.';
+
   return {
     title: slot.title || slot.topic,
-    metaDescription: `${slot.topic} — practical guidance from ${ctx.business.name} in ${ctx.business.town}.`,
+    metaDescription: `${slot.topic}${credit}`,
     sections,
   };
 }
 
-module.exports = { writePost, buildPrompt, parseJson, SYSTEM };
+/* SYSTEM_BLOG and systemFor are exported FOR THE TESTS, and that is the honest
+ * reason. Which brief a post was written to is not visible in the finished
+ * post — a blog article and a trade article both come back as title, meta and
+ * sections — so the only way to assert the right one was chosen is to ask. */
+module.exports = { writePost, buildPrompt, parseJson, SYSTEM, SYSTEM_BLOG, systemFor };

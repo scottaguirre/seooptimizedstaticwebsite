@@ -14,6 +14,17 @@
 // because its target already exists. Only the forward link waits, and it waits
 // as marked plain text rather than as a broken URL.
 //
+// A PILLAR CAMPAIGN IS THE SAME SHAPE WITH THE TOP ROW REMOVED:
+//
+//     post 1 <-> post 2 <-> post 3 <-> post 4
+//        ^                               |
+//        +-------------------------------+       last closes the ring
+//
+// It writes the hub articles a later campaign will point AT, so there is no
+// money page to point at yet. The ring is untouched — it was never built from
+// targetPage — and because pillars never link down to their children, every
+// link in both diagrams is written once and never revisited.
+//
 // This file is pure: same input, same plan, no I/O, no model calls. It is the
 // piece that moves to production unchanged.
 
@@ -26,16 +37,75 @@ const { allocateAnchorTypes, pickAnchors, DEFAULT_MIX } = require('./anchors');
  * "Leander's Hard Water" becomes "leander-s-hard-water" — the stray "s"
  * reads as a typo in the URL, and it is the kind of detail that makes a site
  * look automated. Same for the curly apostrophe a model actually emits.
+ *
+ * AND THE LENGTH CUT STOPS AT A WORD BOUNDARY — fixed 4 October, found by
+ * reading a live pillar post rather than by any test. `.slice(0, 70)` alone
+ * cut the 70th character wherever it fell, and on a real post it fell inside
+ * a word:
+ *
+ *   /what-information-do-you-need-for-a-loan-application-a-complete-prepara/
+ *
+ * "preparation" became "prepara". Exactly 70 characters, so it was that line
+ * and nothing else. The same reasoning as the apostrophe rule three lines
+ * above: a URL ending mid-word reads as machine output, and the URL is one of
+ * the few parts of a page a person reads before clicking it.
  */
+const SLUG_MAX = 70;
+
 function slugify(text) {
-  return String(text || '')
+  const clean = String(text || '')
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .replace(/['’ʼ]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 70);
+    .replace(/^-+|-+$/g, '');
+
+  /* UNDER THE LIMIT IS RETURNED UNTOUCHED, and that branch is the whole
+   * reason this is not a one-line regex. Trimming to the last dash
+   * unconditionally would delete the final word of every short slug. */
+  if (clean.length <= SLUG_MAX) {
+    return clean;
+  }
+
+  const cut = clean.slice(0, SLUG_MAX);
+
+  /* THE CUT MAY ALREADY BE ON A BOUNDARY, AND BACKING UP THEN THROWS AWAY A
+   * WHOLE WORD FOR NOTHING. Found on 4 October by reading a slug this very
+   * function had just produced on the live site:
+   *
+   *   title  Benefits of Paying Off a Loan Early—and When It May Not Make
+   *          Financial Sense
+   *   clean  …-may-not-make-financial-sense            (76)
+   *   cut    …-may-not-make-financial                  (70, and clean[70] is '-')
+   *   got    …-may-not-make                            (60)
+   *
+   * "financial" fitted exactly. The character after the cut was the
+   * separator, so nothing was broken — and the trim ran anyway and deleted
+   * it, because the first version of this could not tell "the cut landed
+   * mid-word" from "the cut landed on the join".
+   *
+   * One character of lookahead settles it. THE TEST THAT MISSED THIS asserted
+   * the slug was a maximal prefix, and it was: no word could be ADDED. It
+   * never asked whether a word had been removed that did not need removing. */
+  if ('-' === clean.charAt(SLUG_MAX)) {
+    return cut;
+  }
+
+  const lastDash = cut.lastIndexOf('-');
+
+  /* A SINGLE WORD LONGER THAN THE LIMIT KEEPS THE HARD CUT — lastIndexOf
+   * answers -1 and a truncated word beats no slug at all, because WordPress
+   * handed '' invents one from the post id.
+   *
+   * `> 0` RATHER THAN `>= 0` GUARDS NOTHING REACHABLE, and saying so is the
+   * point. Position 0 cannot hold a dash: leading separators are stripped
+   * four lines up. Mutating this to `>= 0` changes no behaviour and survives
+   * the suite, correctly. It stays as `> 0` because it costs nothing and the
+   * day somebody removes the leading-dash strip, returning '' would be the
+   * silent failure. Written down because an unexplained guard invites the
+   * next reader to write a test for a case that cannot happen. */
+  return lastDash > 0 ? cut.slice(0, lastDash) : cut;
 }
 
 /** Make slugs unique within the campaign without silently colliding. */
@@ -59,6 +129,7 @@ function uniqueSlugs(topics) {
  * @param {object}  [input.mix]          override the anchor shares
  * @param {Date}    [input.startDate]
  * @param {number}  [input.everyDays]    cadence; 7 = weekly
+ * @param {boolean} [input.isPillar]     no money page: the ring, and nothing else
  */
 function planCampaign(input) {
   const {
@@ -73,12 +144,45 @@ function planCampaign(input) {
   } = input;
 
   if (!topics.length) throw new Error('planCampaign: no topics given');
-  if (!targetPage || !targetPage.url) throw new Error('planCampaign: targetPage.url is required');
+
+  /* NO TARGET PAGE IS A SHAPE, NOT AN OMISSION — but only when the caller
+   * says so, which is why this is a flag and not `if (!targetPage)`.
+   *
+   * A pillar campaign writes the hub articles a later campaign points at.
+   * There is no money page yet, so its posts carry only the ring. Inferring
+   * that from a missing argument would make every caller's typo into a valid
+   * campaign with a third of its links quietly absent. */
+  const isPillar = !!input.isPillar;
+
+  if (!isPillar && (!targetPage || !targetPage.url)) {
+    throw new Error('planCampaign: targetPage.url is required unless isPillar');
+  }
+
+  /* TWO POSTS IS THE FLOOR FOR A PILLAR CAMPAIGN, and nothing downstream
+   * would have caught one post.
+   *
+   * ringNeighbours() returns { prev: null, next: null } for n < 2, the money
+   * link is absent by design, and every link assertion in qualityCheck.js is
+   * conditional on the link having been asked for. So a single pillar post
+   * has no outbound links at all AND PASSES EVERY CHECK CLEAN: there is
+   * nothing left to assert. An ordinary single-post campaign is fine, because
+   * it still carries its money link.
+   *
+   * EVERY ASSERTION BEING CONDITIONAL IS RIGHT PER LINK AND WRONG IN
+   * AGGREGATE. Nothing anywhere asked whether the post had any links. */
+  if (isPillar && topics.length < 2) {
+    throw new Error('planCampaign: a pillar campaign needs at least two posts — one would have no links at all');
+  }
 
   const n = topics.length;
   const slugs = uniqueSlugs(topics);
-  const types = allocateAnchorTypes(n, mix);
-  const anchors = pickAnchors(types, anchorPool, usedAnchors);
+
+  // Skipped entirely for a pillar campaign. These allocate and balance MONEY
+  // anchors; with no money page there is nothing to allocate, and
+  // buildAnchorPool() upstream throws without a keyword rather than returning
+  // an empty pool.
+  const types = isPillar ? [] : allocateAnchorTypes(n, mix);
+  const anchors = isPillar ? [] : pickAnchors(types, anchorPool, usedAnchors);
 
   const slots = topics.map((t, i) => {
     const id = `topic-${i + 1}`;
@@ -103,10 +207,13 @@ function planCampaign(input) {
       url: null,                       // the REAL url, known only once published
       publishAt,
 
-      // --- the three links this post carries ---
+      // --- the links this post carries ---
 
-      // Always live: the target already exists.
-      money: {
+      // Live when it exists: the target predates the campaign. NULL on a
+      // pillar campaign, which has no money page — and null rather than an
+      // empty object, so every downstream `if (slot.money)` is a real test
+      // rather than one that passes on a shape with no anchor in it.
+      money: isPillar ? null : {
         url: targetPage.url,
         anchor: anchors[i].phrase,
         anchorType: anchors[i].type,
@@ -127,16 +234,26 @@ function planCampaign(input) {
 
   return {
     business,
-    targetPage,
+    targetPage: isPillar ? null : targetPage,
+    isPillar,
     cadenceDays: everyDays,
     slots,
     anchorSummary: summariseAnchors(slots),
   };
 }
 
+/**
+ * How the campaign's money anchors break down by type.
+ *
+ * EMPTY, NOT ZEROED, for a pillar campaign. There are no money anchors, so
+ * there is no mix — and `{ exact: 0, semantic: 0, … }` would be a mix that
+ * happens to be empty, which is a different claim and the one the UI would
+ * draw a chart of.
+ */
 function summariseAnchors(slots) {
   const out = {};
   for (const s of slots) {
+    if (!s.money) continue;
     out[s.money.anchorType] = (out[s.money.anchorType] || 0) + 1;
   }
   return out;

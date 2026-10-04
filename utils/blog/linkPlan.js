@@ -91,13 +91,27 @@ function ringNeighbours(slots, index) {
   
     const self = slots[position];
     const { prev, next } = ringNeighbours(slots, position);
-  
+
+    /* NO MONEY PAGE, AND NOT A MISSING ONE.
+     *
+     * A pillar campaign writes the hub articles a later campaign will point
+     * at, so it has nothing to point at itself. Its posts carry the ring and
+     * nothing else.
+     *
+     * READ FROM THE FLAG, NOT FROM WHETHER targetPage HAPPENS TO BE EMPTY.
+     * An ordinary campaign whose targetPage went missing is a bug, and
+     * inferring "pillar" from the absence would silently turn it into a
+     * campaign with a third of its links gone — the failure would show up
+     * months later as posts that never fed anything. */
+    const isPillar = !!campaign.isPillar;
+    const target = campaign.targetPage || {};
+
     // Anchors carried on the slot, chosen once at planning time by anchors.js so
     // the campaign's whole anchor mix is balanced. Regenerating one here would
     // break that balance and, worse, could hand the writer a different phrase
     // than the checker later verifies.
-    const moneyAnchor = self.moneyAnchor || campaign.targetPage.keyword;
-  
+    const moneyAnchor = self.moneyAnchor || target.keyword;
+
     const prevAnchor = referTo(prev);
     const nextAnchor = referTo(next);
   
@@ -116,14 +130,22 @@ function ringNeighbours(slots, index) {
       title: self.publishedTitle || null,
       targetQuery: self.targetQuery || null,
       linkPhrase: self.linkPhrase || null,
-  
-      // Always live: the money page exists before the campaign does.
-      money: {
-        anchor: moneyAnchor,
-        url: campaign.targetPage.url,
-        anchorType: self.anchorType || 'semantic',
-      },
     };
+
+    /* ASSIGNED, NOT SET TO NULL, so `'money' in slot` and `slot.money` agree.
+     *
+     * writePost() and qualityCheck() both ask `if (slot.money)`, and the
+     * writer's question is the one that used to go unasked — its push was
+     * unconditional while prev and next below it were guarded. An absent key
+     * is what makes that guard mean something. */
+    if (!isPillar) {
+      // Always live: the money page exists before the campaign does.
+      slot.money = {
+        anchor: moneyAnchor,
+        url: target.url,
+        anchorType: self.anchorType || 'semantic',
+      };
+    }
   
     // Backwards. Normally published already, but a slot generated out of order
     // can have an unpublished predecessor — in which case it becomes a
@@ -150,10 +172,15 @@ function ringNeighbours(slots, index) {
   
     // What links.js applyLinks() needs: a real URL, or a pendingId that becomes
     // a <span data-il-link="..."> for the plugin to swap later.
-    const targets = {
-      money: { url: campaign.targetPage.url },
-    };
-  
+    const targets = {};
+
+    // Same condition as slot.money above, and it has to be: applyLinks() pairs
+    // the two, so a target with no anchor is a URL nothing points at and an
+    // anchor with no target is a token left in the published text.
+    if (!isPillar) {
+      targets.money = { url: target.url };
+    }
+
     if (slot.prevAnchor) {
       targets.prev = prevUrl ? { url: prevUrl } : { pendingId: `slot-${prev.index}` };
     }
@@ -163,20 +190,44 @@ function ringNeighbours(slots, index) {
     }
   
     const ctx = {
+      /* WHICH BRIEF THE WRITER USES, and it is a separate question from
+       * whether there is a money page.
+       *
+       * writePost picks between two system prompts on this: the trade one
+       * ("you are a working tradesperson writing for your own customers") and
+       * a blog one. Inferring it from targetPage below being null would work
+       * today and is the wrong hook — "there is no page to sell" and "there is
+       * no business behind this" are different claims that happen to coincide,
+       * and the day they stop, every post gets the wrong voice with nothing to
+       * say so.
+       *
+       * Both fields are derived HERE, from one `isPillar`, within a few lines
+       * of each other, so there is no second coercion to drift. */
+      isPillar,
+
       business: {
         name: campaign.site?.business?.name || '',
         trade: campaign.site?.business?.type || '',
         town: String(campaign.site?.business?.location || '').replace(/,\s*[A-Z]{2}$/, ''),
         // writePost joins this, so it must be an array even when empty.
-        services: [campaign.targetPage.keyword].filter(Boolean),
+        services: [target.keyword].filter(Boolean),
       },
-      targetPage: {
-        url: campaign.targetPage.url,
-        keyword: campaign.targetPage.keyword,
+
+      /* NULL ON A PILLAR CAMPAIGN, rather than an object of empty strings.
+       *
+       * buildPrompt() reads targetPage.title into the sentence "It becomes a
+       * link to the X page" — but only inside the money block, which a pillar
+       * campaign does not reach. Handing it `{ url: '', keyword: '', title: ''
+       * }` would make that read succeed and produce "the page", and would
+       * make every `if (ctx.targetPage)` downstream a test that always
+       * passes. AN EMPTY VALUE IS A CLAIM THAT THE VALUE EXISTS. */
+      targetPage: isPillar ? null : {
+        url: target.url,
+        keyword: target.keyword,
         // writePost's prompt says "It becomes a link to the ${targetPage.title}
         // page", so an absent title would read as "the undefined page".
-        title: campaign.targetPage.title || campaign.targetPage.keyword,
-        intent: campaign.targetPage.intent || '',
+        title: target.title || target.keyword,
+        intent: target.intent || '',
       },
     };
   

@@ -34,18 +34,31 @@ function planForCampaign(input) {
     priorCampaigns = [],
     anchorOverrides = {},
     linkMode = 'standalone',
+    isPillar = false,
   } = input;
 
   if (!topics.length) throw new Error('planForCampaign: no topics given');
-  if (!targetPage || !targetPage.url) throw new Error('planForCampaign: targetPage.url is required');
-  if (!targetPage.keyword) throw new Error('planForCampaign: targetPage.keyword is required');
 
-  const { pool, shortfalls } = buildAnchorPool({
-    targetPage,
-    business,
-    count: topics.length,
-    overrides: anchorOverrides,
-  });
+  if (!isPillar) {
+    if (!targetPage || !targetPage.url) throw new Error('planForCampaign: targetPage.url is required');
+    if (!targetPage.keyword) throw new Error('planForCampaign: targetPage.keyword is required');
+  }
+
+  /* THE ANCHOR POOL IS SKIPPED, NOT CALLED WITH NOTHING.
+   *
+   * buildAnchorPool() THROWS without a keyword (anchorPool.js:144) rather than
+   * returning an empty pool, and it is right to: every phrase it builds is a
+   * way of saying the money keyword, so a pool with no keyword is not an empty
+   * pool, it is an unanswerable question. A pillar campaign has no money
+   * anchors to balance at all. */
+  const { pool, shortfalls } = isPillar
+    ? { pool: null, shortfalls: [] }
+    : buildAnchorPool({
+        targetPage,
+        business,
+        count: topics.length,
+        overrides: anchorOverrides,
+      });
 
   // Anchors that already point at this URL from earlier runs. A second
   // campaign reusing the first campaign's phrases adds volume without adding
@@ -55,6 +68,7 @@ function planForCampaign(input) {
   const plan = planCampaign({
     topics,
     targetPage,
+    isPillar,
     business: {
       name: business.name || '',
       trade: business.type || '',
@@ -98,9 +112,15 @@ function planForCampaign(input) {
     targetQuery: s.targetQuery || '',
     linkPhrase: s.linkPhrase || '',
     slug: s.slug,
-    moneyAnchor: s.money.anchor,
-    anchorType: s.money.anchorType,
-    anchorReused: !!s.money.reusedAnchor,
+
+    /* EMPTY STRING, NOT A PLACEHOLDER PHRASE. The schema defaults these to ''
+     * and buildLinkPlan() reads moneyAnchor back at generation time — so
+     * anything written here that is not a real anchor is a string that would
+     * be handed to the writer as one. */
+    moneyAnchor: s.money ? s.money.anchor : '',
+    anchorType: s.money ? s.money.anchorType : 'semantic',
+    anchorReused: s.money ? !!s.money.reusedAnchor : false,
+
     publishAt: dates[i],
     status: 'pending',
   }));
@@ -111,6 +131,7 @@ function planForCampaign(input) {
     slots,
     conflicts,
     linkMode,
+    isPillar,
 
     schedule: {
       everyDays: schedule.everyDays || 7,
@@ -119,7 +140,12 @@ function planForCampaign(input) {
       startAt: dates[0] || null,
     },
 
-    suggestedName: `${targetPage.keyword} — ${slots.length} posts`,
+    /* Named after the money page, which a pillar campaign does not have. The
+     * first topic is the next most useful thing: a campaign called "Pillars —
+     * 4 posts" is indistinguishable from the next one in a list of fifty. */
+    suggestedName: isPillar
+      ? `Pillars: ${topics[0].topic || topics[0].title || 'hub posts'} — ${slots.length} posts`
+      : `${targetPage.keyword} — ${slots.length} posts`,
 
     // Surfaced rather than swallowed. Reused anchors mean several posts
     // linking with identical text, which is worth a line in the UI even

@@ -39,10 +39,11 @@ const fs = require('fs');
 const path = require('path');
 
 const { checkPost, linkSpread } = require('./utils/blog/qualityCheck');
+const { worthRewriting, REWRITE_WORTHY } = require('./utils/blog/qualityCheck');
 
 let passed = 0;
 let failed = 0;
-const DECLARED = 14;
+const DECLARED = 19;
 
 function test(name, fn) {
   try {
@@ -277,6 +278,38 @@ test('THE PROMPT SAYS WHERE EACH LINK GOES', () => {
 
 const generator = read('utils/blogGenerator.js');
 
+/* Comments stripped, because this project has four times written a check that
+ * read prose as code — a test for a fix that passed on the comment explaining
+ * the fix. Everything below that searches source searches THIS. */
+const generatorCode = generator
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+test('THE WRITE LOOP ACTUALLY CONSULTS THE RULE', () => {
+  /* THE MUTATION THAT SURVIVED EVERY OTHER TEST IN THIS FILE. Replacing
+   * `!worthRewriting(quality)` with `false` in the loop's break condition
+   * turns the retry off completely — the loop always breaks after one attempt
+   * — and all eighteen other tests here still pass, because every one of them
+   * asks what the rule ANSWERS and none asks whether anybody calls it.
+   *
+   * This file's own note on the exports says it: a condition can be written
+   * correctly and reached never.
+   *
+   * Asserted against comment-stripped source, and the position matters as
+   * much as the presence — moved above the `for`, the rule would be consulted
+   * once on a verdict that does not exist yet. */
+  const loop = generatorCode.indexOf('for (let attempt = 1');
+  const call = generatorCode.indexOf('worthRewriting(');
+
+  assert.ok(loop > -1, 'the retry loop is gone');
+  assert.ok(call > -1, 'nothing calls worthRewriting — the retry rule is dead code');
+  assert.ok(call > loop, 'worthRewriting is consulted outside the retry loop');
+
+  // And it gates a break rather than being called and thrown away.
+  const after = generatorCode.slice(call, call + 300);
+  assert.match(after, /break;/, 'the rule is consulted but does not decide anything');
+});
+
 test('THE VERDICT IS COMPUTED BEFORE THE CHARGE', () => {
   /* The whole reason a rewrite is affordable. If checkPost ever moves back
    * below markSlotReady/chargeCredits, a retry means charging twice and the
@@ -290,27 +323,106 @@ test('THE VERDICT IS COMPUTED BEFORE THE CHARGE', () => {
   assert.ok(check < charge, 'the customer is charged before the post is checked');
 });
 
+/* THESE FOUR USED TO BE ONE TEST THAT READ blogGenerator.js AS A STRING.
+ *
+ * It asserted that 'links-crowded' appeared somewhere in the file and that
+ * 'guide-title' did not — a check that cannot tell a member of the set from a
+ * word in a comment. Fourth time this project has written one of those. It
+ * went green on the real gap this release fixes, because 'no-meta' was absent
+ * from the file in exactly the way the test wanted every excluded code to be,
+ * and nothing distinguished "deliberately excluded" from "never considered".
+ *
+ * And it was one edit away from going red for no reason: the comment above
+ * REWRITE_WORTHY now names 'guide-title' as an example of an exclusion, which
+ * the old negative assertion would have read as the code being in the set.
+ *
+ * worthRewriting() is exported now, so these call it. */
+
 test('only faults a rewrite can fix are retried', () => {
+  for (const code of ['links-crowded', 'short', 'money-link', 'next-link', 'prev-link']) {
+    assert.ok(worthRewriting({ codes: [code] }), `${code} is not retried`);
+  }
+});
+
+test('a fault the model would just repeat is NOT retried', () => {
   /* Asking the same model the same question again mostly buys another
    * identical answer. Retrying a "guide" title or filler phrasing spends a
    * second API call to be told the same thing. */
-  assert.match(generator, /REWRITE_WORTHY/);
-
-  for (const code of ['links-crowded', 'short', 'money-link']) {
-    assert.ok(generator.includes(`'${code}'`), `${code} is not retried`);
-  }
-
   for (const code of ['guide-title', 'howto-title', 'filler', 'vague']) {
-    assert.ok(!generator.includes(`'${code}'`), `${code} should not trigger a rewrite`);
+    assert.ok(!worthRewriting({ codes: [code] }), `${code} should not trigger a rewrite`);
+  }
+});
+
+test('A MISSING TITLE OR DESCRIPTION IS RETRIED', () => {
+  /* The gap found on 4 October. Both fields are named in the JSON shape the
+   * prompt demands, so a post arriving without one is the model dropping a
+   * key — a different roll of the dice away from being right — and not the
+   * model disagreeing about the answer.
+   *
+   * Left out, a post shipped with no <meta name="description"> on the live
+   * site, which from 0.19.0 onwards is indistinguishable from the bug 0.19.0
+   * exists to fix. */
+  assert.ok(worthRewriting({ codes: ['no-meta'] }), 'no description is not retried');
+  assert.ok(worthRewriting({ codes: ['no-title'] }), 'no title is not retried');
+});
+
+test('a clean post is not retried, and neither is a shapeless verdict', () => {
+  assert.ok(!worthRewriting({ codes: [] }));
+  assert.ok(!worthRewriting({}));
+  assert.ok(!worthRewriting(null));
+  assert.ok(!worthRewriting(undefined));
+});
+
+test('EVERY RETRIED CODE IS ONE checkPost CAN ACTUALLY EMIT', () => {
+  /* THE TYPO THAT TURNS THE RETRY OFF IN SILENCE. 'no_meta' for 'no-meta', or
+   * a code renamed in qualityCheck.js and not here, leaves a set member that
+   * can never match. Nothing fails: the post simply ships unretried, which is
+   * the state this release just finished fixing.
+   *
+   * Reads the VOCABULARY out of qualityCheck.js rather than asserting
+   * behaviour from its text — every code it can raise is a fail('<code>' or a
+   * warn-side literal, and the question here is only whether the two files
+   * use the same spellings. */
+  const quality = read('utils/blog/qualityCheck.js');
+  const emitted = new Set(
+    [...quality.matchAll(/fail\(\s*'([a-z0-9-]+)'/g)].map(m => m[1])
+  );
+
+  assert.ok(emitted.size >= 8, `only found ${emitted.size} codes — the pattern stopped matching`);
+
+  for (const code of REWRITE_WORTHY) {
+    assert.ok(emitted.has(code), `'${code}' is retried but checkPost never raises it`);
   }
 });
 
 test('the retry decides by CODE, not by message text', () => {
   /* Matching on the wording of a failure ties the rule to a sentence somebody
-   * will reasonably reword one day, silently turning the retry off. */
-  assert.match(generator, /quality\?\.codes \|\| \[\]/);
-  assert.ok(!/failures.*includes\(['"]links/.test(generator),
-    'the retry matches on failure text rather than a code');
+   * will reasonably reword one day, silently turning the retry off.
+   *
+   * ASKED BY CALLING IT, NOT BY SEARCHING FOR THE EXPRESSION. This assertion
+   * used to be `assert.match(generator, /quality\?\.codes \|\| \[\]/)` — it
+   * pinned the rule to one spelling of one line, and it went red the moment
+   * that line moved to another file without its behaviour changing at all.
+   *
+   * A verdict whose MESSAGES describe retried faults, carrying codes that are
+   * not retried, must not be retried. Nothing about the wording can reach the
+   * decision. */
+  const wordyButNotWorthIt = {
+    codes: ['guide-title', 'filler'],
+    failures: [
+      'three links crowded into one paragraph',
+      'only 300 words — short',
+      'the money-link was dropped',
+      'no meta description',
+      'no title',
+    ],
+  };
+  assert.ok(!worthRewriting(wordyButNotWorthIt),
+    'the retry read the failure text rather than the codes');
+
+  /* And the converse: a retried code with no message text at all still
+   * retries. A rule that needed the prose would answer false here. */
+  assert.ok(worthRewriting({ codes: ['no-meta'], failures: [] }));
 });
 
 console.log(`\n  ${passed} passed, ${failed} failed\n`);

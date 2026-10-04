@@ -109,6 +109,64 @@ const FILLER = [
   }
   
   /**
+   * Faults worth spending another API call on.
+   *
+   * MOVED HERE FROM blogGenerator.js ON 4 OCTOBER, and the move is the fix
+   * rather than a tidy-up. The set lived next to the retry loop, two files
+   * away from the fail() calls that raise these codes, so a code renamed in
+   * one file and not the other leaves a set member that can never match — and
+   * nothing fails when that happens. The post simply ships unretried.
+   *
+   * It also could not be tested. blogGenerator.js requires models/User.js,
+   * which requires Mongoose, so a unit test could not load it; the only check
+   * on this rule READ THE FILE AS A STRING and asserted that some code names
+   * appeared in it and others did not. That cannot tell a member of the set
+   * from a word in a comment, and it passed over the very gap this change
+   * fixes. This file requires nothing at all.
+   *
+   * BY CODE, NOT BY MESSAGE. Matching on the text of a failure ties the rule
+   * to the wording of a sentence somebody will reasonably reword one day, and
+   * the retry would switch itself off with nothing to show for it.
+   *
+   * WHAT IS HERE is what a different roll of the dice plausibly fixes: links
+   * crowded into one paragraph, a post well short of the length asked for, a
+   * required link dropped or altered, a field of the demanded JSON shape
+   * simply missing.
+   *
+   * WHAT IS NOT HERE is deliberate: a "guide" title, a how-to title, filler
+   * phrasing and vagueness are prompt problems. The model answered the
+   * question badly and will answer it the same way again, at twice the cost.
+   */
+  const REWRITE_WORTHY = new Set([
+    'links-crowded',
+    'short',
+    'money-link',
+    'next-link',
+    'prev-link',
+
+    /* A MISSING FIELD IS NOT A PROMPT PROBLEM — added 4 October.
+     *
+     * These two were absent, and nothing had decided they should be: the set
+     * was written around the link and length faults and these were never
+     * weighed. `title` and `metaDescription` are both named in the JSON shape
+     * the prompt demands, so a post arriving without one is the model
+     * DROPPING A KEY, not disagreeing about the answer.
+     *
+     * WHAT IT COST TO LEAVE THEM OUT. A post with no description shipped with
+     * no <meta name="description"> on the site. Invisible while nothing put
+     * descriptions on the page at all, and from plugin 0.19.0 onwards
+     * indistinguishable from the bug 0.19.0 exists to fix. Found by reading
+     * this set while answering a question of Edwin's about an empty site, and
+     * by no test. */
+    'no-meta',
+    'no-title',
+  ]);
+
+  function worthRewriting(quality) {
+    return (quality?.codes || []).some(code => REWRITE_WORTHY.has(code));
+  }
+
+  /**
    * Check one post.
    *
    * @param {object} post   { title, metaDescription, sections }
@@ -171,7 +229,27 @@ const FILLER = [
     if (slot.prevAnchor && !text.includes(`{{prev}}${slot.prevAnchor}{{/prev}}`)) {
       fail('prev-link', 'backward anchor missing or altered');
     }
-  
+
+    /* EVERY CHECK ABOVE IS CONDITIONAL, WHICH IS RIGHT PER LINK AND WRONG IN
+     * AGGREGATE. Each asks "was the link I was promised delivered?" and not
+     * one asks whether anything was promised — so a slot carrying no links
+     * passes clean, having been asked nothing.
+     *
+     * Unreachable while every campaign had a money page. A pillar campaign
+     * has none, so a one-post pillar campaign would publish an article with
+     * no outbound links and a green check beside it.
+     *
+     * A WARNING, NOT A FAILURE, DELIBERATELY. blogGenerator.js retries on a
+     * failure, and no rewrite can add a link the slot never asked for: a
+     * failure code a retry cannot fix turns one wasted model call into three.
+     * The refusal belongs at planning time, where it is free and the plan can
+     * still be changed — planCampaign() now throws on a pillar campaign of
+     * fewer than two posts. This is the backstop for a slot that reaches the
+     * writer degenerate anyway. */
+    if (!slot.money && !slot.prevAnchor && !slot.nextAnchor) {
+      warnings.push('nothing links out of this post — it was asked for no links at all');
+    }
+
     // --- voice --------------------------------------------------------------
   
     const filler = findFiller(text);
@@ -201,6 +279,36 @@ const FILLER = [
 
     if (spread.placed.money && spread.placed.money.section !== 0 && spread.sections > 1) {
       warnings.push('the money-page link is not in the opening section');
+    }
+
+    /* NOTHING IN THE OPENING AT ALL, which the line above cannot see.
+     *
+     * It asks where the MONEY link went, and a pillar post has none — so the
+     * only placement assertion in this file was blind to exactly the post that
+     * needed it. The crowding checks were blind too: they ask whether two
+     * links SHARE a paragraph or a section, and two links sitting politely in
+     * sections 3 and 4 of a 4-section post share nothing.
+     *
+     * The result was a post whose every link was below the fold. A reader who
+     * stops two thirds of the way through has been offered nowhere to go, and
+     * the ring exists precisely so they are.
+     *
+     * ASKED OF THE SET, NOT OF EACH LINK. "Is the money link in section 0?" is
+     * a question about one link; "does anything open this post?" is a question
+     * about all of them, and it is the one that was missing. It holds for an
+     * ordinary post too — if the money link drifted and nothing else took its
+     * place, that is worth the same line.
+     *
+     * A WARNING, NOT A FAILURE. Placement is a matter of degree, a retry may
+     * land it somewhere else just as reasonable, and failing costs a second
+     * model call to maybe move a phrase up two paragraphs. Crowding stays a
+     * failure because it is unambiguous and it is what a reader notices. */
+    const sectionsWithLinks = Object.keys(spread.placed)
+      .map(name => spread.placed[name].section);
+
+    if (spread.sections > 1 && sectionsWithLinks.length
+        && !sectionsWithLinks.includes(0)) {
+      warnings.push('nothing links out of the opening section — every link is below the fold');
     }
 
     return { ok: failures.length === 0, failures, codes, warnings, stats, spread };
@@ -339,6 +447,7 @@ const FILLER = [
     checkPost, crossCheck, formatReport, linkSpread,
     findFiller, findRisky, specificity, textOf,
     FILLER, RISKY,
+    worthRewriting, REWRITE_WORTHY,
   };
   
   /* -------------------------------------------------------------------------
@@ -374,6 +483,13 @@ const FILLER = [
    */
   function checkTopicSet(topics = [], targetPage = {}, business = {}) {
     const warnings = [];
+
+    /* A DEFAULT ARGUMENT DOES NOT CATCH null, only undefined — and a pillar
+     * campaign's targetPage is now explicitly null, which is the honest value
+     * for "there is no money page" and the one that would walk straight past
+     * the `= {}` above into `targetPage.keyword`. */
+    targetPage = targetPage || {};
+    business = business || {};
   
     // --- the same query comparison the plan gets, run here where it is free ---
     //

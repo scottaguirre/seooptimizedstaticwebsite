@@ -70,6 +70,7 @@ fi
 # it in the scrollback.
 echo "Running tests..."
 for suite in \
+  test-generators-parse.js \
   test-business-shape.js \
   test-business-type-picker.js \
   test-page-meta.js \
@@ -91,6 +92,7 @@ for suite in \
   test-keyword-pairs.js \
   test-keyword-budget.js \
   test-blog-plan.js \
+  test-pillar-campaign.js \
   test-blog-report.js \
   test-removal-time.js \
   test-business-refresh.js \
@@ -137,6 +139,7 @@ if command -v php > /dev/null 2>&1; then
     wp-plugin/test-topic-merge.php \
     wp-plugin/test-admin-tabs.php \
     wp-plugin/test-orphan-links.php \
+    wp-plugin/test-pillar-plugin.php \
     wp-plugin/test-server-url.php
   do
     if ! php "$suite" > /dev/null; then

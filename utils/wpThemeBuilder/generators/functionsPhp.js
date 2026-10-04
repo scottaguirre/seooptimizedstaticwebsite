@@ -577,6 +577,33 @@ function ${funcPrefix}_noindex_thin_archives() {
 add_action( 'wp_head', '${funcPrefix}_noindex_thin_archives', 1 );
 
 /**
+ * Keep the author archive out of wp-sitemap.xml too.
+ *
+ * THE THEME HAS NOINDEXED THE AUTHOR ARCHIVE SINCE SEPTEMBER AND WENT ON
+ * ADVERTISING IT. WordPress 5.5 and later publishes /wp-sitemap.xml with four
+ * sections — posts, pages, taxonomies and users — and nothing here ever
+ * touched it. So every generated site told Google "crawl this URL" in the
+ * sitemap and "do not index this URL" on the page. Contradictory, and the
+ * sitemap is the louder of the two for discovery.
+ *
+ * AND NOINDEX NEVER FIXED THE REAL PROBLEM ANYWAY. The reason the author
+ * archive is unwanted is that its slug is the login name of an account that
+ * can edit the site. noindex keeps the page out of search results; it does
+ * nothing about wp-sitemap.xml, which is a public file anyone can open and
+ * read straight off.
+ *
+ * TAXONOMIES ARE LEFT IN, on purpose and for the reason given above: category
+ * and tag archives are not noindexed by this theme, so listing them is
+ * consistent. The rule is that the sitemap must not advertise a page this
+ * theme tells Google to ignore, and users is the only section where those
+ * two overlap.
+ */
+function ${funcPrefix}_trim_sitemap( $provider, $name ) {
+    return ( 'users' === $name ) ? false : $provider;
+}
+add_filter( 'wp_sitemaps_add_provider', '${funcPrefix}_trim_sitemap', 10, 2 );
+
+/**
  * Send attachment pages to the post that uses the image.
  *
  * Every uploaded image gets a URL of its own with a title, the image, and

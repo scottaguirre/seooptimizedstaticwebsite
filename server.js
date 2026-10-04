@@ -249,8 +249,73 @@ app.use('/dist', requireOwnDist, express.static(distDir));
 // someone forgets to cast — defence in depth rather than the only defence.
 app.use(mongoSanitize({
   replaceWith: '_',
-  onSanitize: ({ key }) => {
-    console.warn(`⚠️ Stripped a Mongo operator from request field: ${key}`);
+
+  /* WHAT `key` ACTUALLY IS, because the old message got this wrong.
+   *
+   * It read "request field: ${key}" and printed `query`, which looks like a
+   * field NAMED query — and that is how it was read, for an hour, by me. It
+   * is not. The package's middleware() loops over the four CONTAINERS it
+   * sanitises:
+   *
+   *     ['body', 'params', 'headers', 'query'].forEach(...)
+   *
+   * and passes the container's name. So `query` meant "something in the query
+   * string", and the offending field name is never passed to this callback at
+   * all. A LOG LINE THAT NAMES THE WRONG THING IS WORSE THAN ONE THAT NAMES
+   * NOTHING: it sends you looking where the fault is not.
+   *
+   * WHAT IS RECOVERABLE. By the time this runs the keys have been rewritten —
+   * with replaceWith: '_', a probe's `$ne` is now `_ne` — so listing the
+   * container's keys shows the shape of what arrived without needing the
+   * original. `_ne` in a query string is unmistakably a scanner; a dotted key
+   * from our own front end would be equally unmistakable. That distinction is
+   * the only question this warning exists to answer.
+   *
+   * KEY NAMES ONLY, AND req.path RATHER THAN req.originalUrl. originalUrl
+   * carries the query string's VALUES, and this line lands in a pm2 log that
+   * gets pasted into chats while debugging. The names answer the question;
+   * the values only add something to leak.
+   *
+   * WHAT IT CATCHES. The test is /^\$|\./ — a key starting with $ OR
+   * containing a dot anywhere. The second will fire innocently one day, which
+   * is precisely why the route has to be in here. */
+  onSanitize: ({ req, key }) => {
+    /* KEY PATHS, NOT TOP-LEVEL KEYS, and the difference is the whole point.
+     *
+     * The first version of this listed Object.keys(req[key]) and printed
+     * `query` for the probe `?query[$ne]=…` — because the operator sits one
+     * level DOWN, inside req.query.query. It named the container, then named
+     * the container's only child, and said nothing about the fault. The same
+     * mistake as the message it replaced, one level deeper.
+     *
+     * Bounded on purpose: depth 3 and 12 paths. An attacker controls the
+     * shape of this object, and an unbounded walk over it is a log line they
+     * get to decide the length of. */
+    const paths = (() => {
+      const out = [];
+      (function walk(node, prefix, depth) {
+        if (out.length >= 12 || depth > 3 || !node || typeof node !== 'object') return;
+        for (const k of Object.keys(node)) {
+          if (out.length >= 12) { out.push('…'); return; }
+          const here = prefix ? `${prefix}.${k}` : k;
+          const child = node[k];
+          if (child && typeof child === 'object') walk(child, here, depth + 1);
+          else out.push(here);
+        }
+      })(req && req[key], '', 1);
+      return out.length ? out.join(', ') : '(none)';
+    })();
+
+    /* Defensive about `req` even though the installed version passes it. If a
+     * later version stops, this must degrade to a vaguer line rather than
+     * throw inside middleware — which would turn a blocked probe into a 500,
+     * making the guard itself the outage. */
+    const where = (req && req.method) ? `${req.method} ${req.path}` : 'unknown route';
+    const who = (req && req.ip) ? req.ip : 'unknown ip';
+
+    console.warn(
+      `⚠️ Stripped a Mongo operator from the ${key} of ${where} (ip ${who}) — keys after sanitising: ${paths}`
+    );
   },
 }));
 

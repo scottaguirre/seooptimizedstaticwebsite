@@ -139,6 +139,49 @@ class IE_Campaigns {
 			'created'            => current_time( 'mysql' ),
 			'status'             => 'active',
 			'label'              => isset( $settings['label'] ) ? $settings['label'] : '',
+
+			/**
+			 * A PILLAR CAMPAIGN: hub articles ringed to one another, with no
+			 * money page. A later campaign points at one of them.
+			 *
+			 * READ FROM THE PLAN, NOT FROM $settings. wp-admin posted the
+			 * checkbox, so it already "knows" — and that is the trap. Two
+			 * copies of one fact, written by two sides, disagree the first
+			 * time a form is resubmitted or the server declines the flag for
+			 * a reason this side did not model. The campaign the server
+			 * actually created is the only authority on what it is, and
+			 * /api/blog/plan echoes the flag back for exactly this read.
+			 *
+			 * IE_Publisher reads this to stamp IE_Settings::PILLAR_META onto
+			 * each post, which is what later puts the pillar in the Target
+			 * Page dropdown.
+			 */
+			'is_pillar'          => ! empty( $plan['isPillar'] ),
+
+			/**
+			 * The campaign's FIRST post becomes this site's home page.
+			 *
+			 * "its first post is the home page", not "every post in it is a
+			 * page". IE_Publisher tests the flag AND a slot index of 0; the
+			 * flag alone would turn all twenty into Pages.
+			 *
+			 * STORED HERE RATHER THAN SENT TO THE SERVER. Which post type
+			 * WordPress uses and which page sits at the root are facts about
+			 * this site, not about the campaign the server planned — the
+			 * server writes identical content either way. The same reasoning
+			 * keeps video_url on this side.
+			 */
+			'home_page'          => ! empty( $settings['home_page'] ),
+
+			/**
+			 * EMPTY FOR A PILLAR CAMPAIGN, and every reader has to cope.
+			 *
+			 * The `: array()` fallback has been here all along, but nothing
+			 * ever produced an absent target page before — so the campaign
+			 * screens index straight into ['url'] and ['title']. A default
+			 * that was never exercised is not a default; it is a line of code
+			 * that has never run.
+			 */
 			'target_page'        => isset( $settings['target_page'] ) ? $settings['target_page'] : array(),
 			'every_days'         => isset( $settings['every_days'] ) ? (int) $settings['every_days'] : 7,
 			/**

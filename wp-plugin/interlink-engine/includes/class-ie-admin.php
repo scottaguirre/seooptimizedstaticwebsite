@@ -80,11 +80,13 @@ class IE_Admin {
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_post_ie_connect', array( __CLASS__, 'handle_connect' ) );
+		add_action( 'admin_post_ie_hygiene', array( __CLASS__, 'handle_hygiene' ) );
 		add_action( 'admin_post_ie_suggest', array( __CLASS__, 'handle_suggest' ) );
 		add_action( 'admin_post_ie_review_topics', array( __CLASS__, 'handle_review_topics' ) );
 		add_action( 'admin_post_ie_create_campaign', array( __CLASS__, 'handle_create_campaign' ) );
 		add_action( 'admin_post_ie_run_now', array( __CLASS__, 'handle_run_now' ) );
 		add_action( 'admin_post_ie_publish_now', array( __CLASS__, 'handle_publish_now' ) );
+		add_action( 'admin_post_ie_publish_all', array( __CLASS__, 'handle_publish_all' ) );
 		add_action( 'admin_post_ie_pause_campaign', array( __CLASS__, 'handle_pause_campaign' ) );
 		add_action( 'admin_post_ie_resume_campaign', array( __CLASS__, 'handle_resume_campaign' ) );
 		add_action( 'admin_post_ie_delete_campaign', array( __CLASS__, 'handle_delete_campaign' ) );
@@ -366,10 +368,116 @@ class IE_Admin {
 				?>
 			</form>
 
+			<?php self::render_hygiene(); ?>
+
 			<h2><?php esc_html_e( 'Recent activity', 'interlink-engine' ); ?></h2>
 			<?php self::render_log(); ?>
 		</div>
 		<?php
+	}
+
+	/**
+	 * The archive tidy-up control.
+	 *
+	 * A SELECT RATHER THAN A CHECKBOX, and that is the only interesting thing
+	 * about this screen. The underlying value has three states — decide for
+	 * me, always on, always off — and a checkbox can only carry two. Unticked
+	 * and never-visited look identical to a checkbox, so the automatic rule
+	 * could never tell "the owner turned this off" from "the owner has not
+	 * been here yet", and one of those must not be overruled while the other
+	 * must.
+	 *
+	 * THE CURRENT ANSWER IS SHOWN, not just the setting. On automatic, the
+	 * line underneath says what the plugin has decided and why — otherwise the
+	 * screen reports a preference and the owner has no way to find out what
+	 * that preference produced on their site.
+	 *
+	 * ITS OWN FORM, deliberately. The connection form above has two different
+	 * actions behind one button and a documented history of an edit there
+	 * disconnecting a working site. This has nothing to do with the licence
+	 * and should not share its submit.
+	 */
+	private static function render_hygiene() {
+		$choice = (string) IE_Settings::get( IE_Hygiene::SETTING, '' );
+		$owns   = IE_Hygiene::owns_whole_site();
+
+		?>
+		<h2><?php esc_html_e( 'Author and category archives', 'interlink-engine' ); ?></h2>
+
+		<p class="description" style="max-width:40em">
+			<?php esc_html_e( 'WordPress publishes an author archive and a category archive for every site, and lists both in wp-sitemap.xml. On a site written entirely by this plugin they are thin pages that compete with the articles, and the author archive publishes the login name of an account that can edit the site.', 'interlink-engine' ); ?>
+		</p>
+
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+			<input type="hidden" name="action" value="ie_hygiene">
+			<?php wp_nonce_field( 'ie_hygiene' ); ?>
+
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><label for="ie-hygiene"><?php esc_html_e( 'Tidy them up', 'interlink-engine' ); ?></label></th>
+					<td>
+						<select name="archive_hygiene" id="ie-hygiene">
+							<option value=""<?php selected( '', $choice ); ?>>
+								<?php esc_html_e( 'Automatic — only on sites this plugin built', 'interlink-engine' ); ?>
+							</option>
+							<option value="on"<?php selected( 'on', $choice ); ?>>
+								<?php esc_html_e( 'Always on', 'interlink-engine' ); ?>
+							</option>
+							<option value="off"<?php selected( 'off', $choice ); ?>>
+								<?php esc_html_e( 'Always off', 'interlink-engine' ); ?>
+							</option>
+						</select>
+
+						<p class="description">
+							<?php
+							if ( '' !== $choice ) {
+								echo esc_html(
+									'on' === $choice
+										? __( 'Tidying is on, whatever else is published here.', 'interlink-engine' )
+										: __( 'Nothing is changed on this site.', 'interlink-engine' )
+								);
+							} elseif ( $owns ) {
+								esc_html_e( 'On. Everything published here was written by this plugin.', 'interlink-engine' );
+							} else {
+								esc_html_e( 'Off. There are pages or posts here that this plugin did not write, so nothing is changed. A new WordPress still has its "Hello world!" post and sample page, which count.', 'interlink-engine' );
+							}
+							?>
+						</p>
+
+						<p class="description">
+							<?php esc_html_e( 'When on: the author and category sections are removed from wp-sitemap.xml, those archives are marked noindex, and the author archive redirects to the home page. Your posts, pages and the blog archive are untouched.', 'interlink-engine' ); ?>
+						</p>
+					</td>
+				</tr>
+			</table>
+
+			<?php submit_button( __( 'Save', 'interlink-engine' ), 'secondary' ); ?>
+		</form>
+		<?php
+	}
+
+	/**
+	 * Save the archive tidy-up choice.
+	 *
+	 * ANYTHING THAT IS NOT 'on' OR 'off' BECOMES '', which is automatic. A
+	 * typo in a hand-made request, or a value from a future version of this
+	 * form, must land on the behaviour that changes nothing by itself rather
+	 * than on whichever branch an unrecognised string happens to fall through
+	 * to.
+	 */
+	public static function handle_hygiene() {
+		check_admin_referer( 'ie_hygiene' );
+		self::require_caps();
+
+		$choice = isset( $_POST['archive_hygiene'] ) ? sanitize_key( wp_unslash( $_POST['archive_hygiene'] ) ) : '';
+
+		if ( ! in_array( $choice, array( 'on', 'off' ), true ) ) {
+			$choice = '';
+		}
+
+		IE_Settings::set( array( IE_Hygiene::SETTING => $choice ) );
+
+		self::redirect( 'interlink-connection', 'hygiene_saved', '' );
 	}
 
 	/**
@@ -853,9 +961,18 @@ class IE_Admin {
 		foreach ( $campaigns as $campaign ) {
 			$url = isset( $campaign['target_page']['url'] ) ? (string) $campaign['target_page']['url'] : '';
 
-			$title = isset( $campaign['target_page']['title'] ) && $campaign['target_page']['title']
-				? (string) $campaign['target_page']['title']
-				: ( $url ? $url : __( 'No page', 'interlink-engine' ) );
+			/* "No page" READS AS A FAULT, and for a pillar campaign it is the
+			 * design. The fallback predates pillar campaigns and meant a
+			 * campaign whose stored page had been lost — worth looking at.
+			 * Grouping pillars under the same words would send the owner
+			 * hunting for a problem that is not there. */
+			if ( ! empty( $campaign['is_pillar'] ) ) {
+				$title = __( 'Pillars — no target page', 'interlink-engine' );
+			} elseif ( isset( $campaign['target_page']['title'] ) && $campaign['target_page']['title'] ) {
+				$title = (string) $campaign['target_page']['title'];
+			} else {
+				$title = $url ? $url : __( 'No page', 'interlink-engine' );
+			}
 
 			if ( ! isset( $groups[ $url ] ) ) {
 				$groups[ $url ] = array( 'title' => $title, 'url' => $url, 'campaigns' => array() );
@@ -1310,10 +1427,32 @@ class IE_Admin {
 			<?php endif; ?>
 
 			<p style="margin-top:0">
-				<?php esc_html_e( 'Feeding:', 'interlink-engine' ); ?>
-				<a href="<?php echo esc_url( $campaign['target_page']['url'] ); ?>" target="_blank" rel="noreferrer">
-					<?php echo esc_html( $campaign['target_page']['title'] ); ?>
-				</a>
+				<?php
+				/* THE ONE UNGUARDED READ OF target_page, and the one that
+				 * would have been seen. Not a crash — PHP 8 warns and renders
+				 * `<a href="">` with no text, so the card shows "Feeding:"
+				 * followed by nothing at all, which looks exactly like a
+				 * campaign whose target page was deleted.
+				 *
+				 * A pillar campaign is not feeding anything yet. Saying so is
+				 * the honest line, and it is also the one that tells the owner
+				 * what to do next: these are hubs, point a campaign at one. */
+				$ie_tp = isset( $campaign['target_page'] ) && is_array( $campaign['target_page'] )
+					? $campaign['target_page']
+					: array();
+				$ie_tp_url   = isset( $ie_tp['url'] ) ? (string) $ie_tp['url'] : '';
+				$ie_tp_title = isset( $ie_tp['title'] ) ? (string) $ie_tp['title'] : '';
+				?>
+				<?php if ( ! empty( $campaign['is_pillar'] ) ) : ?>
+					<?php esc_html_e( 'Pillar posts — they link to each other. Point a later campaign at one of them.', 'interlink-engine' ); ?>
+				<?php elseif ( '' !== $ie_tp_url ) : ?>
+					<?php esc_html_e( 'Feeding:', 'interlink-engine' ); ?>
+					<a href="<?php echo esc_url( $ie_tp_url ); ?>" target="_blank" rel="noreferrer">
+						<?php echo esc_html( '' !== $ie_tp_title ? $ie_tp_title : $ie_tp_url ); ?>
+					</a>
+				<?php else : ?>
+					<?php esc_html_e( 'Feeding: the target page for this campaign is no longer recorded.', 'interlink-engine' ); ?>
+				<?php endif; ?>
 				&middot; <?php echo esc_html( sprintf( __( 'every %d days', 'interlink-engine' ), (int) $campaign['every_days'] ) ); ?>
 				<?php if ( ! empty( $campaign['quote']['total'] ) ) : ?>
 					&middot; <?php echo esc_html( sprintf( __( '%s credits for the batch', 'interlink-engine' ), number_format_i18n( $campaign['quote']['total'] ) ) ); ?>
@@ -1716,6 +1855,59 @@ class IE_Admin {
 				<?php endif; ?>
 
 				<?php
+				/**
+				 * PUBLISH ALL — pillar campaigns only.
+				 *
+				 * A pillar is useless until it is live: target_pages() lists
+				 * only `publish` posts, because a future-dated one answers 404
+				 * and a silo aimed at it would point at nothing. "Publish
+				 * early" is per row, so five pillars meant five presses.
+				 *
+				 * NOT OFFERED ON A SILO CAMPAIGN. There the schedule is what
+				 * the customer planned and paid for, and dating twelve posts
+				 * today cannot be undone — a post does not go back onto a
+				 * schedule. handle_publish_all() refuses it as well, because
+				 * this URL is reachable from a stale tab.
+				 *
+				 * COUNTED BEFORE IT IS OFFERED. A control that says "publish
+				 * all" on a campaign with nothing left to publish is a control
+				 * that does nothing and says so afterwards; the count is in the
+				 * label, so the answer is on screen before the click.
+				 */
+				$ie_waiting = 0;
+				if ( ! empty( $campaign['is_pillar'] ) ) {
+					foreach ( (array) $campaign['slots'] as $ie_s ) {
+						if ( isset( $ie_s['status'] ) && 'scheduled' === $ie_s['status'] && ! empty( $ie_s['post_id'] ) ) {
+							$ie_waiting++;
+						}
+					}
+				}
+				?>
+				<?php if ( $ie_waiting ) : ?>
+					<a class="button button-primary ie-publish-all"
+					   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_publish_all&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_publish_all' ) ); ?>"
+					   onclick="return confirm('<?php echo esc_js( sprintf(
+							/* translators: %d: how many posts would go live */
+							_n(
+								'Publish %d pillar now? It will be dated today instead of its planned day.',
+								'Publish all %d pillars now? They will be dated today instead of their planned days.',
+								$ie_waiting,
+								'interlink-engine'
+							),
+							$ie_waiting
+						) ); ?>')">
+						<?php echo esc_html( sprintf(
+							/* translators: %d: how many posts would go live */
+							_n( 'Publish the %d pillar now', 'Publish all %d pillars now', $ie_waiting, 'interlink-engine' ),
+							$ie_waiting
+						) ); ?>
+					</a>
+					<span class="description">
+						<?php esc_html_e( 'A later campaign can only point at a pillar once it is live.', 'interlink-engine' ); ?>
+					</span>
+				<?php endif; ?>
+
+				<?php
 				/* REMOVE MEANS REMOVE NOW, AND IT DID NOT USED TO.
 				 *
 				 * It deleted the plugin's record and left every post where it
@@ -1824,9 +2016,65 @@ class IE_Admin {
 
 			<table class="form-table" role="presentation">
 				<tr>
+					<th scope="row"><?php esc_html_e( 'Pillar campaign', 'interlink-engine' ); ?></th>
+					<td>
+						<label>
+							<input type="checkbox" name="is_pillar" id="ie_is_pillar" value="1"
+								<?php checked( ! empty( $value( 'is_pillar' ) ) ); ?>>
+							<?php esc_html_e( 'These posts are pillars — they link to each other, not to a page', 'interlink-engine' ); ?>
+						</label>
+						<p class="description">
+							<?php esc_html_e( 'Write the hub articles first. Later campaigns point at them, and each published pillar becomes a choice in Target Page.', 'interlink-engine' ); ?>
+						</p>
+
+						<?php
+						/**
+						 * NESTED UNDER THE PILLAR BOX, and only meaningful
+						 * with it. A silo campaign's first post is one of
+						 * twelve on a schedule; making it the home page is not
+						 * a thing anyone would want.
+						 *
+						 * Shown and hidden by the same script that governs
+						 * .ie-pillar-only, so there is one mechanism rather
+						 * than a second to forget about. read_form() reads
+						 * the box regardless, and ignores it when the campaign
+						 * is not a pillar campaign — a form posted with
+						 * JavaScript off can tick anything.
+						 */
+						?>
+						<p class="ie-pillar-only" style="display:none;margin-top:1rem">
+							<label>
+								<input type="checkbox" name="home_page" id="ie_home_page" value="1"
+									<?php checked( ! empty( $value( 'home_page' ) ) ); ?>>
+								<?php esc_html_e( 'Make the first post this site’s home page', 'interlink-engine' ); ?>
+							</label>
+						</p>
+						<p class="description ie-pillar-only" style="display:none">
+							<?php esc_html_e( 'For a brand-new site. The first article is created as a page and set as the front page when it publishes. It stays a pillar, and keeps its place in the ring. A site that already has a front page is left alone.', 'interlink-engine' ); ?>
+						</p>
+					</td>
+				</tr>
+				<tr class="ie-needs-target">
 					<th scope="row"><label for="ie_target"><?php esc_html_e( 'Target Page', 'interlink-engine' ); ?></label></th>
 					<td>
-						<select name="target_page_id" id="ie_target" required>
+						<?php
+						/**
+						 * `required` IS GONE, and the checkbox above is why.
+						 *
+						 * `required` on a control the browser cannot see is not
+						 * a validation rule, it is a dead end: Chrome refuses
+						 * to submit and reports "An invalid form control with
+						 * name='target_page_id' is not focusable" to the
+						 * console — where no site owner will ever read it. The
+						 * button stops working and the page says nothing.
+						 *
+						 * So the requirement moved server-side into
+						 * read_form(), which had to check it anyway: a form
+						 * posted with JavaScript off, or from a cached page,
+						 * arrives at the same handler.
+						 */
+						?>
+						<select name="target_page_id" id="ie_target">
 							<option value=""><?php esc_html_e( 'Choose a page…', 'interlink-engine' ); ?></option>
 							<?php $ie_town = IE_Settings::business(); $ie_town = isset( $ie_town['town'] ) ? $ie_town['town'] : ''; ?>
 							<?php foreach ( $pages as $id => $page ) : ?>
@@ -1834,7 +2082,22 @@ class IE_Admin {
 								<option value="<?php echo esc_attr( $id ); ?>"
 									data-keyword="<?php echo esc_attr( self::keyword_from_title( $page['title'], $ie_town ) ); ?>"
 									<?php selected( (int) $value( 'target_page_id' ), (int) $id ); ?>>
-									<?php echo esc_html( $page['title'] ); ?>
+									<?php
+									/* THE MARKER IS ADDED HERE, WHERE IT IS SEEN, and
+									 * never stored. target_pages() returns the pillar's
+									 * real title because read_form() keeps that title:
+									 * it becomes the campaign's label AND is sent as
+									 * targetPage.title, which writePost drops into "It
+									 * becomes a link to the X page". A decorated title
+									 * would have every post in the silo referring to
+									 * "the Leash Pulling (pillar) page". */
+									echo esc_html(
+										empty( $page['is_pillar'] )
+											? $page['title']
+											/* translators: %s: the pillar post's title */
+											: sprintf( __( '%s — pillar', 'interlink-engine' ), $page['title'] )
+									);
+									?>
 								</option>
 							<?php endforeach; ?>
 						</select>
@@ -1856,7 +2119,7 @@ class IE_Admin {
 						<p class="description"><?php esc_html_e( 'Every post will link to it.', 'interlink-engine' ); ?></p>
 					</td>
 				</tr>
-				<tr>
+				<tr class="ie-needs-target">
 					<?php
 					/**
 					 * NOT "Its search term". "Its" pointed at the dropdown
@@ -1908,7 +2171,7 @@ class IE_Admin {
 						</script>
 					</td>
 				</tr>
-				<tr>
+				<tr class="ie-needs-target">
 					<?php
 					/**
 					 * A dropdown, not a sentence to write.
@@ -1985,6 +2248,95 @@ class IE_Admin {
 				</tr>
 			</table>
 
+			<script>
+			/**
+			 * Hide what a pillar campaign has no answer for.
+			 *
+			 * Three rows go: the Target Page, its keyword, and what the visitor
+			 * should want after reading. All three describe a page being sold,
+			 * and a pillar campaign is not selling one — leaving them on screen
+			 * asks a question with no true answer, which is how a form teaches
+			 * someone to invent one.
+			 *
+			 * The Suggest button carries the same class and goes with them, for
+			 * the reason given where it is wrapped.
+			 *
+			 * PROGRESSIVE, NOT STRUCTURAL. The rows are rendered either way and
+			 * only hidden here, so with JavaScript off the form still posts and
+			 * read_form() still decides — the server has to make this judgement
+			 * regardless, because a cached page can post anything. Hiding is a
+			 * courtesy; the rule lives on the server.
+			 *
+			 * The hidden select keeps whatever it had, and that is fine:
+			 * read_form() ignores target_page_id entirely when the box is
+			 * ticked, rather than reading a value the owner cannot see.
+			 */
+			(function () {
+				var box = document.getElementById('ie_is_pillar');
+				if (!box) { return; }
+
+				/* WAIT FOR THE REST OF THE FORM, and the first version did not.
+				 *
+				 * This <script> sits between the first table and everything
+				 * below it — the topics box, the Suggest button, the hints.
+				 * An inline script runs AS THE PARSER REACHES IT, so
+				 * querySelectorAll ran against a document that stopped here:
+				 * it found the three rows above and nothing below.
+				 *
+				 * The symptom was precise and misleading. The rows hid, the
+				 * checkbox looked wired up, and the Suggest button sat there
+				 * as if its class had been forgotten. Nothing errored, so the
+				 * console said nothing either. ONLY THE HALF OF THE PAGE THAT
+				 * HAD BEEN PARSED EXISTED, and it was the half that made the
+				 * feature look like it worked.
+				 *
+				 * document.readyState is checked rather than assumed, because
+				 * DOMContentLoaded does not fire again for a listener added
+				 * after it has already gone off. */
+				function wire() {
+					var rows = document.querySelectorAll('#ie-campaign-form .ie-needs-target');
+					var only = document.querySelectorAll('#ie-campaign-form .ie-pillar-only');
+					var topics = document.getElementById('ie_topics');
+					var hint = topics ? topics.getAttribute('placeholder') : '';
+
+					function apply() {
+						var pillar = box.checked;
+
+						for (var j = 0; j < only.length; j++) {
+							only[j].style.display = pillar ? '' : 'none';
+						}
+
+						for (var i = 0; i < rows.length; i++) {
+							/* '' and not 'table-row' / 'inline'. The class is on
+							 * <tr> elements AND on a <span>, so a hardcoded
+							 * display value would be wrong for one of them.
+							 * Clearing the property lets each go back to
+							 * whatever the stylesheet says it is. */
+							rows[i].style.display = pillar ? 'none' : '';
+						}
+
+						/* The placeholder tells people to press a button that
+						 * is no longer on the page. A hint that names a
+						 * missing control is worse than no hint. */
+						if (topics) {
+							topics.setAttribute('placeholder', pillar
+								? <?php echo wp_json_encode( __( 'One per line. Four or five hub topics is usual — the Search query column is yours to fill in.', 'interlink-engine' ) ); ?>
+								: hint);
+						}
+					}
+
+					box.addEventListener('change', apply);
+					apply();
+				}
+
+				if (document.readyState === 'loading') {
+					document.addEventListener('DOMContentLoaded', wire);
+				} else {
+					wire();
+				}
+			}());
+			</script>
+
 			<?php if ( $topics ) : ?>
 				<h3><?php esc_html_e( 'Topics', 'interlink-engine' ); ?></h3>
 				<p class="description"><?php esc_html_e( 'Edit anything. Untick one to leave it out. Order is publish order.', 'interlink-engine' ); ?></p>
@@ -2042,7 +2394,24 @@ class IE_Admin {
 						<td>
 							<textarea name="topics" id="ie_topics" rows="8" class="large-text"
 								placeholder="<?php esc_attr_e( 'One per line. Or leave empty and press Suggest topics.', 'interlink-engine' ); ?>"></textarea>
-							<p class="description"><?php esc_html_e( 'Three to six months worth. Order is publish order.', 'interlink-engine' ); ?></p>
+							<?php
+							/* Two hints, one shown at a time, rather than one
+							 * sentence swapped by script like the placeholder
+							 * above it.
+							 *
+							 * The placeholder is an ATTRIBUTE — there is no
+							 * element to hide, so the script has to rewrite the
+							 * string, and the original has to be stashed to put
+							 * back. This is an element, so the existing
+							 * show/hide does it with no new mechanism and no
+							 * second copy of the text living in JavaScript.
+							 *
+							 * "Three to six months worth" is the silo hint: ten
+							 * or more articles on a cadence. A pillar campaign
+							 * is four or five hubs and is finished. */
+							?>
+							<p class="description ie-needs-target"><?php esc_html_e( 'Three to six months worth. Order is publish order.', 'interlink-engine' ); ?></p>
+							<p class="description ie-pillar-only" style="display:none"><?php esc_html_e( 'Four or five is usual. Order is publish order, and they ring together in that order.', 'interlink-engine' ); ?></p>
 						</td>
 					</tr>
 				</table>
@@ -2080,6 +2449,20 @@ class IE_Admin {
 			</table>
 
 			<p class="submit">
+				<?php
+				/* WRAPPED SO THE BUTTON AND ITS HINT GO TOGETHER.
+				 *
+				 * The server suggests topics FOR a target page. With no page
+				 * there is nothing to suggest from and handle_suggest() turns
+				 * the press away — so for a pillar campaign this button is a
+				 * control that is visible and refuses, which is worse than one
+				 * that is not there.
+				 *
+				 * The same class the hidden rows use, so one line of script
+				 * governs everything that assumes a target page. A second
+				 * mechanism for the same rule is a second thing to forget. */
+				?>
+				<span class="ie-needs-target">
 				<button type="submit" name="action" value="ie_suggest" class="button"
 					data-busy="<?php esc_attr_e( 'Asking for topics…', 'interlink-engine' ); ?>">
 					<?php
@@ -2107,6 +2490,7 @@ class IE_Admin {
 						?>
 					</span>
 				<?php endif; ?>
+				</span>
 
 				<?php
 				/**
@@ -2141,8 +2525,26 @@ class IE_Admin {
 				<?php endif; ?>
 			</p>
 
-			<p class="description">
+			<?php
+			/* Goes with the Suggest button, for the same reason the button's
+			 * own hint does: it reassures about a control that is not on the
+			 * page. The second half — nothing is charged until a post is
+			 * written — is true either way, and is repeated below so a pillar
+			 * campaign still says it. */
+			?>
+			<p class="description ie-needs-target">
 				<?php esc_html_e( 'Suggesting topics is free. Nothing is charged until a post is actually written.', 'interlink-engine' ); ?>
+			</p>
+
+			<?php
+			/* HIDDEN IN THE MARKUP, shown by the script. The pre-JavaScript
+			 * state of this form is "an ordinary campaign" — every
+			 * .ie-needs-target visible, every .ie-pillar-only hidden — which
+			 * is the right thing to degrade to: with the script blocked the
+			 * form still describes the campaign most people are making. */
+			?>
+			<p class="description ie-pillar-only" style="display:none">
+				<?php esc_html_e( 'Nothing is charged until a post is actually written.', 'interlink-engine' ); ?>
 			</p>
 
 			<?php
@@ -2282,6 +2684,47 @@ class IE_Admin {
 
 	/** The shared part of both submit buttons: what the form said about the page. */
 	private static function read_form() {
+		/* A PILLAR CAMPAIGN HAS NO TARGET PAGE, AND IS NOT MISSING ONE.
+		 *
+		 * This function returned null without a page and three handlers read
+		 * that as "the owner forgot to choose one". For a pillar campaign
+		 * there is nothing to choose: the posts link to each other.
+		 *
+		 * THE FLAG IS THE AUTHORITY, NOT THE ABSENCE. The hidden <select>
+		 * still posts whatever it held — the browser submits hidden controls —
+		 * so "no page selected" and "pillar campaign" are different states
+		 * that can both be true at once, or neither. Reading the checkbox
+		 * means a page left over from before the box was ticked is ignored
+		 * rather than quietly used, and a genuinely forgotten page is still
+		 * refused.
+		 */
+		$is_pillar = isset( $_POST['is_pillar'] ) && '1' === (string) wp_unslash( $_POST['is_pillar'] );
+
+		if ( $is_pillar ) {
+			/* Every page-shaped field is deliberately absent rather than ''.
+			 * An empty string would validate, travel to the server as
+			 * targetPage.url, and produce posts linking to nothing. The
+			 * callers below test is_pillar; a field that is not here cannot
+			 * be used by accident. */
+			return array(
+				'is_pillar'      => true,
+
+				/* ONLY READ INSIDE THIS BRANCH, which is the guard.
+				 *
+				 * The box is hidden unless the pillar box is ticked, and
+				 * hiding is a courtesy — a form posted with JavaScript off, or
+				 * from a cached page, can carry home_page on an ordinary
+				 * campaign. Reading it only here means a silo campaign cannot
+				 * claim the front page however it was submitted. */
+				'home_page'      => isset( $_POST['home_page'] ) && '1' === (string) wp_unslash( $_POST['home_page'] ),
+
+				'video_url'      => isset( $_POST['video_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['video_url'] ) ) ) : '',
+				'every_days'     => isset( $_POST['every_days'] ) ? max( 1, min( 90, (int) $_POST['every_days'] ) ) : 14,
+				'publish_time'   => isset( $_POST['publish_time'] ) ? sanitize_text_field( wp_unslash( $_POST['publish_time'] ) ) : '09:00',
+				'publish_mode'   => ( isset( $_POST['publish_mode'] ) && 'draft' === $_POST['publish_mode'] ) ? 'draft' : 'future',
+			);
+		}
+
 		$page_id = isset( $_POST['target_page_id'] ) ? (int) $_POST['target_page_id'] : 0;
 		$page    = $page_id ? get_post( $page_id ) : null;
 
@@ -2290,6 +2733,10 @@ class IE_Admin {
 		}
 
 		return array(
+			'is_pillar'      => false,
+			// Said, not omitted. Every reader of $form can then ask the same
+			// question of either shape without an isset() first.
+			'home_page'      => false,
 			'target_page_id' => $page_id,
 			// Empty means "use the page's own title", cleaned. Nobody should
 			// have to retype a phrase the plugin can already see.
@@ -2395,6 +2842,27 @@ class IE_Admin {
 			self::redirect( 'interlink-engine', 'error', __( 'Choose a page for the campaign to feed.', 'interlink-engine' ), array( 'tab' => 'new' ) );
 		}
 
+		/* THERE IS NOTHING TO SUGGEST FROM.
+		 *
+		 * /api/blog/suggest takes a target page and proposes topics that would
+		 * feed it. A pillar campaign has no target page, so the request has no
+		 * subject — target_page_payload() below would read four keys that
+		 * read_form() deliberately did not set.
+		 *
+		 * The button is hidden for a pillar campaign, so reaching this means
+		 * JavaScript is off, or the page was cached, or the form was posted by
+		 * hand. REFUSED HERE RATHER THAN TRUSTED TO THE HIDING: a rule enforced
+		 * only in the browser is a rule, and the sentence says what to do
+		 * instead rather than just saying no. */
+		if ( ! empty( $form['is_pillar'] ) ) {
+			self::redirect(
+				'interlink-engine',
+				'error',
+				__( 'Pillar topics are yours to choose — type them in, one per line, then press Review these topics.', 'interlink-engine' ),
+				array( 'tab' => 'new' )
+			);
+		}
+
 		/* THE BUTTON ADDS. IT USED TO REPLACE.
 		 *
 		 * Pressing it twice threw away the first six topics and put six new
@@ -2465,11 +2933,30 @@ class IE_Admin {
 			self::redirect( 'interlink-engine', 'error', __( 'Choose a page for the campaign to feed.', 'interlink-engine' ), array( 'tab' => 'new' ) );
 		}
 
-		$target_page = self::target_page_payload( $form );
+		$is_pillar   = ! empty( $form['is_pillar'] );
+		$target_page = $is_pillar ? null : self::target_page_payload( $form );
 		$topics      = self::collect_topics();
 
 		if ( empty( $topics ) ) {
 			self::redirect( 'interlink-engine', 'error', __( 'Add some topics, or press Suggest topics.', 'interlink-engine' ), array( 'tab' => 'new' ) );
+		}
+
+		/* TWO POSTS IS THE FLOOR FOR A PILLAR CAMPAIGN.
+		 *
+		 * The server refuses one too — a single pillar has no sibling and no
+		 * money page, so it would publish with NO outbound links at all, and
+		 * pass every quality check, because each link assertion is conditional
+		 * on the link having been asked for.
+		 *
+		 * Said here as well, because here is where the owner finds out, in a
+		 * sentence that explains itself rather than as a bare 400. */
+		if ( $is_pillar && count( $topics ) < 2 ) {
+			self::redirect(
+				'interlink-engine',
+				'error',
+				__( 'A pillar campaign needs at least two posts — pillars link to each other, so a single one would have nothing to link to.', 'interlink-engine' ),
+				array( 'tab' => 'new' )
+			);
 		}
 
 		// A topic typed by hand has no target query, and planning refuses one
@@ -2478,6 +2965,30 @@ class IE_Admin {
 		$missing = array_filter( $topics, function ( $t ) {
 			return empty( $t['targetQuery'] );
 		} );
+
+		/* ENRICH CANNOT HELP A PILLAR CAMPAIGN, so it is not asked.
+		 *
+		 * /api/blog/enrich derives a search query for a topic BY REFERENCE TO
+		 * THE TARGET PAGE — it is answering "what would someone search that
+		 * this post could win, without competing with the page it feeds?".
+		 * There is no page here, so the question has no subject.
+		 *
+		 * The owner fills the Search query column instead, and is told so.
+		 * Without this the plan would be refused by the server with a
+		 * `missing` conflict per topic, which is correct and says nothing
+		 * about what to do about it. */
+		if ( $missing && $is_pillar ) {
+			self::redirect(
+				'interlink-engine',
+				'error',
+				sprintf(
+					/* translators: %s: the topics with no search query, comma-separated */
+					__( 'Fill in the Search query column for: %s. A pillar campaign has no target page to work it out from.', 'interlink-engine' ),
+					implode( ', ', wp_list_pluck( $missing, 'topic' ) )
+				),
+				array( 'tab' => 'new' )
+			);
+		}
 
 		if ( $missing ) {
 			$enriched = IE_Api::enrich(
@@ -2504,12 +3015,41 @@ class IE_Admin {
 			}
 		}
 
-		$plan = IE_Api::plan( array(
-			'name'       => $form['title'],
-			'targetPage' => $target_page,
-			'topics'     => array_values( $topics ),
-			'linkMode'   => 'standalone',
-			'schedule'   => array(
+		/* THE CAMPAIGN'S NAME, which normally comes from the target page.
+		 *
+		 * A pillar campaign has no page to be named after, so it takes the
+		 * first topic — the same rule campaignPlan.js uses for its own
+		 * suggestedName, so the two sides agree rather than one inventing
+		 * "Pillars" and the other something else.
+		 *
+		 * A new FIELD was the obvious alternative and is worse: one more thing
+		 * to fill in, on a form that already asks enough, to produce a string
+		 * that is derivable. */
+		/* reset() INTO A VARIABLE, not `reset( $topics )['topic']`. Indexing a
+		 * function's return value directly is fine from PHP 5.4, but reset()
+		 * takes its argument BY REFERENCE and PHP 7.4 emits "Only variables
+		 * should be passed by reference" for it — a notice on every plan, in
+		 * a log the owner may be watching. */
+		$first = $topics ? reset( $topics ) : array();
+
+		$label = $is_pillar
+			? sprintf(
+				/* translators: %s: the first pillar's topic */
+				__( 'Pillars: %s', 'interlink-engine' ),
+				isset( $first['topic'] ) ? $first['topic'] : __( 'hub posts', 'interlink-engine' )
+			)
+			: $form['title'];
+
+		$payload = array(
+			'name'     => $label,
+
+			/* THE FLAG. Always sent, both ways round, so the server is never
+			 * left inferring the shape of the campaign from what is missing. */
+			'isPillar' => $is_pillar,
+
+			'topics'   => array_values( $topics ),
+			'linkMode' => 'standalone',
+			'schedule' => array(
 				'everyDays'   => $form['every_days'],
 				'publishTime' => $form['publish_time'],
 				// The server turns cadence plus wall-clock time into real
@@ -2517,14 +3057,35 @@ class IE_Admin {
 				// nine in the morning where the business is.
 				'timezone'    => wp_timezone_string(),
 			),
-		) );
+		);
+
+		/* NO targetPage KEY AT ALL for a pillar campaign, rather than null.
+		 *
+		 * BUILT WITH AN `if` AND NOT ARRAY UNPACKING, which is the actual
+		 * lesson here. The first version of this used
+		 * `...( $is_pillar ? array() : array( 'targetPage' => … ) )` — neat,
+		 * and a FATAL PARSE ERROR on PHP 7.4 and 8.0, because unpacking an
+		 * array with STRING keys only arrived in 8.1. This plugin's header
+		 * says "Requires PHP: 7.4", it runs on customers' hosting, and a parse
+		 * error takes down the whole file rather than this one function: every
+		 * site on an older PHP would have gone white on upgrade.
+		 *
+		 * It passed `php -l` on the machine it was written on, which is the
+		 * part worth remembering. A SYNTAX CHECK PROVES THE SYNTAX IS VALID
+		 * FOR THE INTERPRETER RUNNING IT, and nothing about the one the
+		 * customer has. */
+		if ( ! $is_pillar ) {
+			$payload['targetPage'] = $target_page;
+		}
+
+		$plan = IE_Api::plan( $payload );
 
 		if ( is_wp_error( $plan ) ) {
 			self::redirect( 'interlink-engine', 'error', $plan->get_error_message(), array( 'tab' => 'new' ) );
 		}
 
-		$campaign = IE_Campaigns::create_from_plan( $plan, array(
-			'label'        => $form['title'],
+		$settings = array(
+			'label'        => $label,
 			'every_days'   => $form['every_days'],
 			'publish_mode' => $form['publish_mode'],
 			// Neither of these is sent to the server. A video has nothing to do
@@ -2535,14 +3096,39 @@ class IE_Admin {
 			// article.
 			'video_url'    => $form['video_url'],
 			'slot_videos'  => self::collect_topic_videos(),
-			'target_page'  => array(
+
+			/* Also never sent to the server, for the same reason as the video:
+			 * which post type WordPress uses and which page sits at the root
+			 * are facts about THIS SITE, not about the campaign the server
+			 * planned. The server writes identical content either way.
+			 *
+			 * read_form() only sets this true inside its pillar branch, so a
+			 * silo campaign cannot arrive here carrying it. */
+			'home_page'    => ! empty( $form['home_page'] ),
+		);
+
+		/* target_page OMITTED for a pillar campaign.
+		 *
+		 * create_from_plan() falls back to array(), which every campaign
+		 * screen then has to survive — and the screens were written when an
+		 * absent target page was impossible, so they index straight into
+		 * ['url'] and ['title']. Those reads are now guarded; this is the
+		 * only thing that produces the case they guard against.
+		 *
+		 * Note is_pillar is NOT passed here. create_from_plan reads it from
+		 * the plan response, so the flag has one source — the campaign the
+		 * server actually created — rather than two that can disagree. */
+		if ( ! $is_pillar ) {
+			$settings['target_page'] = array(
 				'id'      => $form['target_page_id'],
 				'title'   => $form['title'],
 				'url'     => $form['url'],
 				'keyword' => $form['keyword'],
 				'intent'  => $form['intent'],
-			),
-		) );
+			);
+		}
+
+		$campaign = IE_Campaigns::create_from_plan( $plan, $settings );
 
 		if ( is_wp_error( $campaign ) ) {
 			self::redirect( 'interlink-engine', 'error', $campaign->get_error_message(), array( 'tab' => 'new' ) );
@@ -2550,10 +3136,20 @@ class IE_Admin {
 
 		delete_transient( self::DRAFT_TRANSIENT . get_current_user_id() );
 
-		IE_Publisher::log( sprintf(
-			'campaign %s planned: %d posts feeding "%s"',
-			$campaign['id'], count( $campaign['slots'] ), $form['title']
-		) );
+		/* "feeding X" is false for a pillar campaign — it feeds nothing yet;
+		 * that is what makes it a pillar campaign. A log line that says
+		 * `feeding ""` is the kind of thing that gets read six months later as
+		 * a bug in the target page rather than as a campaign with no target. */
+		IE_Publisher::log( $is_pillar
+			? sprintf(
+				'pillar campaign %s planned: %d posts, ringed to each other',
+				$campaign['id'], count( $campaign['slots'] )
+			)
+			: sprintf(
+				'campaign %s planned: %d posts feeding "%s"',
+				$campaign['id'], count( $campaign['slots'] ), $form['title']
+			)
+		);
 
 		$note = '';
 		if ( ! empty( $plan['warnings'] ) ) {
@@ -2822,6 +3418,134 @@ class IE_Admin {
 		}
 
 		self::redirect( 'interlink-engine', 'published', '' );
+	}
+
+	/**
+	 * Publish every scheduled post in a pillar campaign, now.
+	 *
+	 * WHY IT EXISTS. A pillar is a hub a later campaign points at, and
+	 * IE_Settings::target_pages() lists only posts with status `publish` — on
+	 * purpose, because a `future` post's permalink answers 404 to the public
+	 * and aiming ten articles at it would be aiming them at nothing. So a
+	 * pillar is useless until it is live, and "Publish early" is per slot:
+	 * five pillars meant five presses, each with its own confirmation.
+	 *
+	 * PILLAR CAMPAIGNS ONLY, which is the whole design decision here.
+	 *
+	 * On a silo campaign the schedule IS the product — twelve posts spread over
+	 * three months is what the customer planned and paid for, and one click
+	 * that dates them all today cannot be undone. A post cannot be
+	 * un-published back onto a schedule. A pillar campaign has no such plan to
+	 * destroy: every one of its posts is meant to be live immediately, which is
+	 * exactly why the control is wanted here and nowhere else.
+	 *
+	 * The guard is repeated here rather than left to the link being hidden.
+	 * This URL is reachable by hand and from a stale browser tab, and what it
+	 * does is irreversible.
+	 */
+	public static function handle_publish_all() {
+		check_admin_referer( 'ie_publish_all' );
+		self::require_caps();
+
+		$campaign_id = isset( $_GET['campaign'] ) ? sanitize_text_field( wp_unslash( $_GET['campaign'] ) ) : '';
+		$campaign    = IE_Campaigns::get( $campaign_id );
+
+		if ( ! $campaign ) {
+			self::redirect( 'interlink-engine', 'error', __( 'That campaign could not be found.', 'interlink-engine' ) );
+		}
+
+		if ( empty( $campaign['is_pillar'] ) ) {
+			self::redirect(
+				'interlink-engine',
+				'error',
+				__( 'Publishing everything at once is only offered for pillar campaigns. On a scheduled campaign the dates are the point, and publishing them all today cannot be undone — use Publish early on the rows you want.', 'interlink-engine' )
+			);
+		}
+
+		$published = 0;
+		$skipped   = 0;
+		$failed    = array();
+
+		foreach ( (array) $campaign['slots'] as $slot ) {
+			/* Only `scheduled`. One already published needs nothing, and one
+			 * still `pending` has no post to publish — publish_now() against an
+			 * id of 0 is the no-op that would report success. */
+			if ( ! isset( $slot['status'] ) || 'scheduled' !== $slot['status'] ) {
+				continue;
+			}
+
+			if ( empty( $slot['post_id'] ) ) {
+				continue;
+			}
+
+			/* THE SLOT HAVING AN ID IS NOT THE SAME AS THE POST EXISTING, and
+			 * this loop is where it matters most. A deleted post leaves its id
+			 * behind; wp_update_post() answers 0 for a missing id rather than a
+			 * WP_Error, so without this the owner is told five posts went live
+			 * when two of them do not exist. Counted as skipped and said out
+			 * loud — a number that quietly includes ghosts is worse than a
+			 * smaller number that is true. */
+			if ( IE_Campaigns::post_missing( $slot ) ) {
+				$skipped++;
+				continue;
+			}
+
+			$result = IE_Publisher::publish_now( (int) $slot['post_id'] );
+
+			if ( is_wp_error( $result ) ) {
+				/* ONE FAILURE DOES NOT STOP THE REST. Stopping would leave the
+				 * campaign half published with no way to tell which half
+				 * without reading the table, and the owner would press the
+				 * button again — re-publishing what already went live. */
+				$failed[] = $result->get_error_message();
+				continue;
+			}
+
+			$published++;
+		}
+
+		if ( ! $published && ! $skipped && ! $failed ) {
+			self::redirect(
+				'interlink-engine',
+				'error',
+				__( 'Nothing was waiting to publish — every post in this campaign is already live.', 'interlink-engine' )
+			);
+		}
+
+		$message = sprintf(
+			/* translators: %d: how many posts were published */
+			_n( '%d post published.', '%d posts published.', $published, 'interlink-engine' ),
+			$published
+		);
+
+		if ( $skipped ) {
+			$message .= ' ' . sprintf(
+				/* translators: %d: how many posts no longer exist */
+				_n(
+					'%d was skipped — that post no longer exists on this site.',
+					'%d were skipped — those posts no longer exist on this site.',
+					$skipped,
+					'interlink-engine'
+				),
+				$skipped
+			);
+		}
+
+		if ( $failed ) {
+			$message .= ' ' . sprintf(
+				/* translators: 1: how many failed, 2: the first error message */
+				__( '%1$d could not be published: %2$s', 'interlink-engine' ),
+				count( $failed ),
+				$failed[0]
+			);
+		}
+
+		IE_Publisher::log( sprintf(
+			'publish all on pillar campaign %s: %d published, %d skipped, %d failed',
+			$campaign_id, $published, $skipped, count( $failed )
+		) );
+
+		self::redirect( 'interlink-engine', $failed ? 'error' : 'published', $message );
 	}
 
 	/**
@@ -3174,6 +3898,7 @@ class IE_Admin {
 		$map = array(
 			'connected'    => array( 'success', __( 'Connected.', 'interlink-engine' ) ),
 			'server_saved' => array( 'success', __( 'Server address saved. Your connection was left alone.', 'interlink-engine' ) ),
+			'hygiene_saved' => array( 'success', __( 'Saved. The line under the dropdown says what it does on this site.', 'interlink-engine' ) ),
 			'unchanged'    => array( 'info', __( 'Nothing to change — that is already the address.', 'interlink-engine' ) ),
 			'suggested' => array( 'success', __( 'Here are some topics. Edit anything, untick what you do not want, then plan the campaign.', 'interlink-engine' ) ),
 			'reviewing' => array( 'success', __( 'Your topics, ready to edit. Set the search each should win, how other posts refer to it, and a video if you want one — then plan the campaign.', 'interlink-engine' ) ),

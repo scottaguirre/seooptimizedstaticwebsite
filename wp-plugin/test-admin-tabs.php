@@ -91,7 +91,52 @@ function selected( $a, $b = true, $echo = true ) { $r = ( (string) $a === (strin
 function checked( $a, $b = true, $echo = true ) { $r = ( $a == $b ) ? ' checked' : ''; if ( $echo ) { echo $r; } return $r; }
 function add_action() {}
 function add_filter() {}
-function wp_safe_redirect( $u ) { $GLOBALS['ie_redirect'] = $u; }
+/**
+ * THROWS, BECAUSE THE REAL FLOW NEVER COMES BACK EITHER.
+ *
+ * IE_Admin::redirect() calls wp_safe_redirect() and then `exit`, which is why
+ * no suite in this project had ever invoked a handler: doing so would end the
+ * test run at the first redirect, reporting whatever had passed so far as the
+ * whole result.
+ *
+ * A stub that merely records the URL is NARROWER than what it stands for —
+ * control continues, the handler runs on past its own exit, and the test
+ * exercises code that production can never reach. Throwing is the faithful
+ * shape: the caller does not get control back, and the test gets the URL.
+ */
+class IE_Redirected extends Exception {
+	public $url;
+	public function __construct( $url ) {
+		$this->url = (string) $url;
+		parent::__construct( 'redirected' );
+	}
+}
+
+function wp_safe_redirect( $u ) {
+	$GLOBALS['ie_redirect'] = $u;
+	throw new IE_Redirected( $u );
+}
+
+/* The nonce check and the capability gate. Both are real in production and
+ * neither is what these tests are about — but they are CALLED, so a missing
+ * stub is a fatal rather than a skipped check. */
+function check_admin_referer( $action, $arg = '_wpnonce' ) { return true; }
+function wp_die( $m = '' ) { throw new Exception( 'wp_die: ' . $m ); }
+
+/** What a handler redirected to, as parsed query arguments. */
+function ie_run_handler( $callable ) {
+	try {
+		call_user_func( $callable );
+	} catch ( IE_Redirected $r ) {
+		$q = array();
+		$parts = parse_url( $r->url );
+		if ( isset( $parts['query'] ) ) { parse_str( $parts['query'], $q ); }
+		if ( isset( $q['ie_message'] ) ) { $q['ie_message'] = rawurldecode( $q['ie_message'] ); }
+		return $q;
+	}
+
+	throw new Exception( 'the handler returned without redirecting — it reported nothing to the owner' );
+}
 /* A REAL OPTION STORE, because IE_Campaigns is no longer stubbed.
  *
  * `ie_campaigns` is served from the fixture global so that every existing
@@ -1308,6 +1353,380 @@ test( 'the keyword box still fills itself from the chosen page', function () {
 		'the cleaned search term no longer travels with the option' );
 	has( $html, 'id="ie_keyword"', 'the keyword box is gone' );
 	has( $html, 'id="ie_target"', 'the page dropdown is gone' );
+} );
+
+/* ---------------------------------------------------------------------
+ * The pillar checkbox, and the ordering bug nothing else could see
+ * ------------------------------------------------------------------ */
+
+test( 'the pillar checkbox is on the form', function () {
+	$GLOBALS['ie_campaigns'] = array();
+	$html = render( 'new' );
+
+	has( $html, 'id="ie_is_pillar"', 'the pillar checkbox is gone' );
+	has( $html, 'name="is_pillar"', 'the checkbox would post nothing' );
+	has( $html, 'they link to each other', 'the one-line explanation is gone' );
+} );
+
+test( 'EVERYTHING THAT ASSUMES A TARGET PAGE CARRIES THE CLASS', function () {
+	/* Three rows and the Suggest button. The class is the only thing tying
+	 * them together, and a row that loses it stays on screen asking a question
+	 * a pillar campaign cannot answer. */
+	$GLOBALS['ie_campaigns'] = array();
+	$html = render( 'new' );
+
+	has( $html, 'value="ie_suggest"', 'the Suggest button is gone entirely' );
+
+	/* NAMED, NOT COUNTED. The first version asserted `substr_count >= 5`, and
+	 * stripping the class off the Suggest button left exactly 5 — because the
+	 * script's own selector is one of the matches. A threshold over a count
+	 * that includes the code doing the looking is not a test, it is a
+	 * coincidence with a number on it.
+	 *
+	 * So each thing is checked where it is: the button must sit inside an open
+	 * wrapper with no </span> between. */
+	$btn = strpos( $html, 'value="ie_suggest"' );
+	$open = strrpos( substr( $html, 0, $btn ), '<span class="ie-needs-target">' );
+
+	if ( false === $open ) {
+		throw new Exception( 'the Suggest button is not inside an ie-needs-target wrapper' );
+	}
+
+	if ( false !== strpos( substr( $html, $open, $btn - $open ), '</span>' ) ) {
+		throw new Exception( 'the wrapper closes before the Suggest button — it is not inside it' );
+	}
+
+	foreach ( array( 'ie_target', 'ie_keyword', 'ie_intent_choice' ) as $field ) {
+		$at  = strpos( $html, 'id="' . $field . '"' );
+		$row = strrpos( substr( $html, 0, $at ), '<tr' );
+
+		if ( false === strpos( substr( $html, $row, 60 ), 'ie-needs-target' ) ) {
+			throw new Exception( "the row holding $field lost the class — it will stay on screen" );
+		}
+	}
+} );
+
+test( 'THE SCRIPT DOES NOT QUERY MARKUP THAT HAS NOT BEEN PARSED YET', function () {
+	/* THE BUG THIS TEST EXISTS FOR, found by Edwin on the real screen and by
+	 * nothing here.
+	 *
+	 * The toggle script sits between the first table and everything below it.
+	 * An inline script runs AS THE PARSER REACHES IT, so its querySelectorAll
+	 * ran against a half-built document: it found the three <tr> rows above
+	 * and missed the Suggest button below. The rows hid, the checkbox looked
+	 * wired up, the button sat there as though its class had been forgotten,
+	 * and nothing errored — so the console said nothing either.
+	 *
+	 * ONLY THE HALF OF THE PAGE THAT HAD BEEN PARSED EXISTED, and it was the
+	 * half that made the feature look like it worked.
+	 *
+	 * The invariant: either the script runs after the whole document, or every
+	 * element it queries is above it. The first is what the fix does; the
+	 * second is what someone might do instead by moving the script. Either is
+	 * correct, and this accepts both rather than pinning the implementation.
+	 */
+	$GLOBALS['ie_campaigns'] = array();
+	$html = render( 'new' );
+
+	/* COMMENTS STRIPPED FIRST, AND THAT IS THE WHOLE POINT.
+	 *
+	 * The first version of this asked whether the page contained the words
+	 * 'DOMContentLoaded' and 'readyState'. Deleting the fix left both — in the
+	 * COMMENT explaining the fix — so the test passed against the bug it was
+	 * written for. Mutation testing found it; nothing else would have.
+	 *
+	 * Third time in this project that a check has read prose as code. A TEST
+	 * THAT SEARCHES THE SOURCE MUST SEARCH THE CODE, and the code is what is
+	 * left once the explanations are gone. */
+	$code = preg_replace( '#/\*.*?\*/#s', '', $html );
+	$code = preg_replace( '#^\s*//.*$#m', '', $code );
+
+	$script = strpos( $code, "querySelectorAll('#ie-campaign-form .ie-needs-target')" );
+
+	if ( false === $script ) {
+		throw new Exception( 'the toggle script is gone — the checkbox now does nothing' );
+	}
+
+	/* The last element CARRYING the class, not the last mention of it: the
+	 * script's own selector is a mention, and comparing against it would make
+	 * the script forever "after itself". */
+	$last = strrpos( $code, 'class="description ie-needs-target"' );
+	$last = max( (int) $last, (int) strrpos( $code, '<span class="ie-needs-target">' ) );
+
+	/* The CALL, not the word. A listener that is registered is the only thing
+	 * that makes the ordering safe. */
+	$defers = false !== strpos( $code, "addEventListener('DOMContentLoaded'" );
+
+	if ( ! $defers && $last > $script ) {
+		throw new Exception(
+			'the script queries .ie-needs-target before the last one is parsed, '
+			. 'and nothing registers a DOMContentLoaded listener — '
+			. 'elements below the script will not be found'
+		);
+	}
+} );
+
+test( 'the pillar-only line is hidden in the markup, not shown by default', function () {
+	/* With the script blocked the form must still describe the campaign most
+	 * people are making. So the pre-JavaScript state is "ordinary campaign":
+	 * every .ie-needs-target visible, every .ie-pillar-only hidden. */
+	$GLOBALS['ie_campaigns'] = array();
+	$html = render( 'new' );
+
+	/* THE ELEMENT, NOT THE SELECTOR. The first `ie-pillar-only` in this page
+	 * is inside the toggle script, where it is a querySelectorAll argument —
+	 * so the obvious strpos() found the script and reported the markup
+	 * visible. A test that matches the code looking for a thing, rather than
+	 * the thing, fails for its own reasons. */
+	has( $html, 'class="description ie-pillar-only"', 'the pillar-only hint is gone' );
+
+	$at = strpos( $html, 'class="description ie-pillar-only"' );
+	$fragment = substr( $html, $at, 120 );
+
+	if ( false === strpos( $fragment, 'display:none' ) ) {
+		throw new Exception( 'the pillar-only hint renders visible for an ordinary campaign' );
+	}
+} );
+
+test( 'the target page dropdown is no longer `required`', function () {
+	/* `required` on a control the browser cannot see is not validation, it is
+	 * a dead end: Chrome refuses to submit and reports "An invalid form
+	 * control ... is not focusable" to the console, where no site owner will
+	 * read it. The rule moved to read_form(), which has to check it anyway. */
+	$GLOBALS['ie_campaigns'] = array();
+	$html = render( 'new' );
+
+	$at = strpos( $html, 'id="ie_target"' );
+	$tag = substr( $html, strrpos( substr( $html, 0, $at ), '<select' ), 200 );
+
+	if ( false !== strpos( $tag, 'required' ) ) {
+		throw new Exception( 'the select is still required — ticking the box would break the form silently' );
+	}
+} );
+
+/* ---------------------------------------------------------------------
+ * Publish all — pillar campaigns only
+ * ------------------------------------------------------------------ */
+
+/**
+ * Set which posts still exist, and FORGET WHAT WAS ASKED BEFORE.
+ *
+ * IE_Campaigns::post_missing() caches the live ids in a static. That is right
+ * in WordPress — one request, one page load, and a cache that stays warm
+ * through a loop publishing posts is exactly what you want — and wrong across
+ * tests, which share a process. The first of these tests reported one post
+ * skipped against a fixture where every post existed, because an earlier test
+ * in this file had already filled the cache with a smaller set.
+ *
+ * forget_post_cache() was written for this and the tests simply were not
+ * calling it. A SHARED PROCESS IS NOT A SHARED REQUEST, and anything the
+ * product caches per request has to be cleared per test.
+ */
+function ie_posts_exist( $ids ) {
+	$GLOBALS['ie_existing_posts'] = $ids;
+	IE_Campaigns::forget_post_cache();
+}
+
+/** A pillar campaign: same shape, no target page, the flag set. */
+function pillar_campaign( $id, $slots ) {
+	$c = campaign( $id, 'Pillars: Puppy Training', $slots, true );
+	$c['is_pillar']   = true;
+	$c['target_page'] = array();
+	return $c;
+}
+
+test( 'THE BUTTON IS OFFERED ON A PILLAR CAMPAIGN', function () {
+	/* A pillar is useless until it is live: target_pages() lists only
+	 * `publish` posts, because a future-dated one answers 404 and a silo
+	 * aimed at it would point at nothing. */
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array(
+		pillar_campaign( 'p1', array( slot( 0, 'scheduled' ), slot( 1, 'scheduled' ), slot( 2, 'scheduled' ) ) ),
+	);
+
+	$html = render();
+
+	has( $html, 'action=ie_publish_all', 'the Publish all link is missing' );
+	has( $html, 'Publish all 3 pillars now', 'the count is not in the label' );
+} );
+
+test( 'AND NOT ON A SILO CAMPAIGN — the schedule is the product there', function () {
+	/* Twelve posts over three months is what the customer planned and paid
+	 * for, and dating them all today cannot be undone. A post does not go
+	 * back onto a schedule. */
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Water heater repair', array( slot( 0, 'scheduled' ), slot( 1, 'scheduled' ) ), true ),
+	);
+
+	$html = render();
+
+	hasnt( $html, 'action=ie_publish_all', 'a silo campaign was offered Publish all' );
+	has( $html, 'action=ie_publish_now', 'the per-row Publish early link went missing' );
+} );
+
+test( 'not offered when there is nothing waiting', function () {
+	/* A control that says "publish all" and then reports that there was
+	 * nothing to publish is a control that should not have been drawn. The
+	 * count is computed before it is offered, so the answer is on screen
+	 * before the click. */
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array(
+		pillar_campaign( 'p1', array( slot( 0, 'published' ), slot( 1, 'published' ) ) ),
+	);
+
+	hasnt( render(), 'action=ie_publish_all', 'offered on a campaign with everything already live' );
+} );
+
+test( 'the label is singular for one pillar', function () {
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array(
+		pillar_campaign( 'p1', array( slot( 0, 'published' ), slot( 1, 'scheduled' ) ) ),
+	);
+
+	$html = render();
+	has( $html, 'Publish the 1 pillar now', 'the singular label is wrong' );
+	hasnt( $html, 'Publish all 1 pillars now', 'it said "all 1 pillars"' );
+} );
+
+test( 'PUBLISH ALL PUBLISHES EVERY SCHEDULED SLOT', function () {
+	/* The first handler this project has ever invoked from a test. It was
+	 * impossible until now because IE_Admin::redirect() ends in `exit`, which
+	 * would have ended the whole run at the first redirect and reported
+	 * everything before it as the result. */
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array(
+		pillar_campaign( 'p1', array(
+			slot( 0, 'scheduled' ), slot( 1, 'scheduled' ), slot( 2, 'scheduled' ), slot( 3, 'published' ),
+		) ),
+	);
+
+	$_GET = array( 'campaign' => 'p1' );
+	$out = ie_run_handler( array( 'IE_Admin', 'handle_publish_all' ) );
+
+	same( 'published', $out['ie_status'], 'the outcome was not a success' );
+	has( $out['ie_message'], '3 posts published',
+		'the count is wrong — got: ' . $out['ie_message'] );
+} );
+
+test( 'A SILO CAMPAIGN IS REFUSED BY THE HANDLER, not only by the hidden link', function () {
+	/* This URL is reachable by hand and from a stale browser tab, and what it
+	 * does cannot be undone. A rule enforced only in the markup is not a rule. */
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Water heater repair', array( slot( 0, 'scheduled' ), slot( 1, 'scheduled' ) ), true ),
+	);
+
+	$_GET = array( 'campaign' => 'c1' );
+	$out = ie_run_handler( array( 'IE_Admin', 'handle_publish_all' ) );
+
+	same( 'error', $out['ie_status'], 'a silo campaign was published wholesale' );
+	has( $out['ie_message'], 'only offered for pillar campaigns', 'the refusal does not say why' );
+} );
+
+test( 'A DELETED POST IS SKIPPED AND SAID OUT LOUD, not counted as published', function () {
+	/* The slot keeps its post_id after the post is gone, and wp_update_post()
+	 * answers 0 for a missing id rather than a WP_Error — so without the
+	 * post_missing() check the owner is told three posts went live when one
+	 * of them does not exist. A number that quietly includes ghosts is worse
+	 * than a smaller number that is true. */
+	$GLOBALS['ie_campaigns'] = array(
+		pillar_campaign( 'p1', array( slot( 0, 'scheduled' ), slot( 1, 'scheduled' ), slot( 2, 'scheduled' ) ) ),
+	);
+
+	// Slot 1's post (id 101) has been deleted; the others survive.
+	ie_posts_exist( array( 100, 102 ) );
+
+	$_GET = array( 'campaign' => 'p1' );
+	$out = ie_run_handler( array( 'IE_Admin', 'handle_publish_all' ) );
+
+	has( $out['ie_message'], '2 posts published', 'got: ' . $out['ie_message'] );
+	has( $out['ie_message'], 'skipped', 'the skip was not reported' );
+
+	ie_posts_exist( null );
+} );
+
+test( 'nothing waiting is an error, not a silent success', function () {
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array(
+		pillar_campaign( 'p1', array( slot( 0, 'published' ), slot( 1, 'published' ) ) ),
+	);
+
+	$_GET = array( 'campaign' => 'p1' );
+	$out = ie_run_handler( array( 'IE_Admin', 'handle_publish_all' ) );
+
+	same( 'error', $out['ie_status'] );
+	has( $out['ie_message'], 'already live', 'the message does not explain why nothing happened' );
+} );
+
+test( 'an unknown campaign is refused rather than treated as empty', function () {
+	ie_posts_exist( null );
+	$GLOBALS['ie_campaigns'] = array();
+
+	$_GET = array( 'campaign' => 'nope' );
+	$out = ie_run_handler( array( 'IE_Admin', 'handle_publish_all' ) );
+
+	same( 'error', $out['ie_status'] );
+	has( $out['ie_message'], 'could not be found', 'a missing campaign gave the wrong message' );
+} );
+
+test( 'THE HEADLINE COUNTS A DELETED POST AS DELETED, NOT AS LIVE', function () {
+	/* FOUND BY ACCIDENT, in code that predates today.
+	 *
+	 * A mutation meant for handle_publish_all landed here instead — the anchor
+	 * matched an earlier occurrence and str.replace takes the first — and the
+	 * whole suite still passed with campaign_headline()'s post_missing() check
+	 * short-circuited. So a campaign with three deleted posts would have read
+	 * "3 of 3 scheduled, 3 live, publishing on schedule", and nothing said
+	 * otherwise.
+	 *
+	 * That is the failure this project already decided it cares most about:
+	 * the headline is the line people read first, and a report the customer
+	 * cannot trust is the document they would quote back when disputing a
+	 * bill. The deleted-post tests above check the ROW and the per-row link;
+	 * none of them checked the summary.
+	 *
+	 * An accidental mutation is still a result. */
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Water heater repair', array(
+			slot( 0, 'published' ), slot( 1, 'published' ), slot( 2, 'scheduled' ),
+		), true ),
+	);
+
+	// Slot 1's post (id 101) is gone.
+	ie_posts_exist( array( 100, 102 ) );
+
+	$html = render();
+
+	has( $html, '1 post deleted', 'the headline does not mention the deleted post' );
+	hasnt( $html, '2 live', 'the deleted post is still being counted as live' );
+
+	ie_posts_exist( null );
+} );
+
+test( 'THE HOME-PAGE CHECKBOX IS ON THE FORM, HIDDEN UNTIL PILLAR IS TICKED', function () {
+	/* Nested under the pillar box and meaningless without it: a silo
+	 * campaign's first post is one of twelve on a schedule, and making it the
+	 * home page is not something anyone would want.
+	 *
+	 * It carries .ie-pillar-only so the same script governs it — a second
+	 * show/hide mechanism is a second thing to forget. */
+	$GLOBALS['ie_campaigns'] = array();
+	$html = render( 'new' );
+
+	has( $html, 'name="home_page"', 'the checkbox would post nothing' );
+	has( $html, 'id="ie_home_page"', 'the home-page checkbox is gone' );
+
+	$at = strpos( $html, 'id="ie_home_page"' );
+	$row = strrpos( substr( $html, 0, $at ), '<p ' );
+
+	if ( false === strpos( substr( $html, $row, 80 ), 'ie-pillar-only' ) ) {
+		throw new Exception( 'the checkbox is not marked pillar-only — it shows on silo campaigns' );
+	}
+
+	if ( false === strpos( substr( $html, $row, 80 ), 'display:none' ) ) {
+		throw new Exception( 'the checkbox renders visible before the pillar box is ticked' );
+	}
 } );
 
 echo "\n$passed passed, $failed failed\n";

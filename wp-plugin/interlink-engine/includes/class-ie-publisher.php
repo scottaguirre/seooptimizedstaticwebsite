@@ -527,11 +527,25 @@ class IE_Publisher {
 		$publish_at = isset( $written['publishAt'] ) ? $written['publishAt'] : $slot['publish_at'];
 		$timestamp  = $publish_at ? strtotime( $publish_at ) : 0;
 
+		/* THE FIRST PILLAR CAN BE THIS SITE'S HOME PAGE, and a home page has to
+		 * be a PAGE: Settings → Reading lists only Pages, and nothing in
+		 * WordPress will accept a Post as page_on_front.
+		 *
+		 * BOTH CONDITIONS, and the slot index is the one that matters.
+		 * `home_page` on a campaign means "its FIRST post is the home page",
+		 * not "every post in it is a page". Testing the flag alone would turn
+		 * all twenty into Pages, which is a different feature nobody asked for.
+		 *
+		 * NOTHING ELSE ABOUT THE SLOT CHANGES. It keeps its place in the ring,
+		 * both its neighbours and its pillar flag. ringNeighbours() works on
+		 * slot indexes and has never known what post type a slot became. */
+		$as_home = ! empty( $campaign['home_page'] ) && 0 === $index;
+
 		$post = array(
 			'post_title'   => isset( $written['title'] ) ? $written['title'] : $slot['topic'],
 			'post_name'    => isset( $written['slug'] ) ? $written['slug'] : '',
 			'post_content' => self::insert_video( $rendered['content'], self::video_for( $campaign, $slot ) ),
-			'post_type'    => 'post',
+			'post_type'    => $as_home ? 'page' : 'post',
 			'post_author'  => self::author_id(),
 		);
 
@@ -597,6 +611,28 @@ class IE_Publisher {
 		if ( '' !== $seo_title ) {
 			update_post_meta( $post_id, '_ie_meta_title', $seo_title );
 			update_post_meta( $post_id, IE_Settings::active_theme_prefix() . '_page_title', $seo_title );
+
+			/* THE YOAST AND RANK MATH KEYS ARE NO LONGER WRITTEN — 0.21.0.
+			 *
+			 * 0.19.0 wrote them so the hand-written title was not discarded on
+			 * a site running one of those plugins. That reasoning was sound
+			 * while IE_SEO stood down and rendered nothing there.
+			 *
+			 * It stopped being sound the moment ours took precedence. IE_SEO
+			 * now returns our value through `wpseo_title` and
+			 * `rank_math/frontend/title`, so OUR text is what renders — and a
+			 * copy sitting in their box would be a second field the owner can
+			 * edit to no effect whatsoever. A box that looks like it works and
+			 * does not is worse than no box.
+			 *
+			 * One field, one effect: IE_Metabox edits `_ie_meta_title`, and
+			 * that is the only value any of this reads.
+			 *
+			 * POSTS PUBLISHED BY 0.19.0 OR 0.20.0 STILL CARRY THOSE ROWS.
+			 * They are not deleted on upgrade — removing somebody's stored
+			 * data to tidy up is a worse trade than leaving a row nothing
+			 * reads. On such a post Yoast's box shows a value that no longer
+			 * renders. */
 		}
 
 		if ( ! empty( $written['metaDescription'] ) ) {
@@ -609,6 +645,9 @@ class IE_Publisher {
 			// those two situations.
 			update_post_meta( $post_id, '_ie_meta_description', $description );
 			update_post_meta( $post_id, IE_Settings::active_theme_prefix() . '_page_description', $description );
+
+			// Their description keys are not written either, for the reason
+			// given on the title above.
 		}
 
 		// The join between a WordPress post and a campaign slot. on_transition()
@@ -616,6 +655,25 @@ class IE_Publisher {
 		// activate_for_slot() refuses to edit any post that lacks them.
 		update_post_meta( $post_id, '_ie_campaign', $campaign['id'] );
 		update_post_meta( $post_id, '_ie_slot', $index );
+
+		/* THIS POST IS A PILLAR — a hub a later campaign can aim at.
+		 *
+		 * Stamped here, at insert, because this is the only moment both facts
+		 * are in one place: the campaign says what kind of campaign it is, and
+		 * $post_id says which post came out of it.
+		 *
+		 * WRITTEN ONLY WHEN TRUE, never as '0'. target_pages() queries on
+		 * meta_value '1', and a post carrying '0' would be a row meaning
+		 * "deliberately not a pillar" — a fact nothing asks and nothing
+		 * maintains. Absence already says it.
+		 *
+		 * The string lives on IE_Settings so it exists once. The publisher
+		 * writing one spelling and the query reading another fails silently:
+		 * the post is stamped, and the dropdown is simply missing a row.
+		 */
+		if ( ! empty( $campaign['is_pillar'] ) ) {
+			update_post_meta( $post_id, IE_Settings::PILLAR_META, '1' );
+		}
 
 		// The slug WordPress settled on, which may not be the one we asked for:
 		// it appends -2 when a slug is taken, and every link built from the
@@ -678,6 +736,44 @@ class IE_Publisher {
 	 * @param string  $old
 	 * @param WP_Post $post
 	 */
+	/**
+	 * Make this page the site's front page.
+	 *
+	 * REFUSES TO TAKE A FRONT PAGE SOMEBODY ALREADY CHOSE. Edwin's blogs are
+	 * empty, and this is a product: a customer installing the plugin on an
+	 * established site must not find their home page swapped out because a
+	 * campaign was planned with a box ticked. The absence of a choice is the
+	 * only thing that makes claiming the root safe.
+	 *
+	 * `show_on_front` is 'posts' on a fresh WordPress, so the common case
+	 * passes. A site that has already set a static front page does not.
+	 *
+	 * NO page_for_posts. Edwin's decision for these blogs: the post index has
+	 * no URL at all. Every post is reachable through the ring and nothing
+	 * needs an archive.
+	 *
+	 * @return bool whether the front page was claimed
+	 */
+	private static function claim_front_page( $post_id ) {
+		$existing = (int) get_option( 'page_on_front' );
+		$mode     = get_option( 'show_on_front' );
+
+		if ( 'page' === $mode && $existing && $existing !== (int) $post_id ) {
+			self::log( sprintf(
+				'post %d was not made the front page: page %d is already set',
+				$post_id, $existing
+			) );
+			return false;
+		}
+
+		update_option( 'show_on_front', 'page' );
+		update_option( 'page_on_front', (int) $post_id );
+
+		self::log( sprintf( 'post %d is now the front page', $post_id ) );
+
+		return true;
+	}
+
 	public static function on_transition( $new, $old, $post ) {
 		if ( 'publish' !== $new || 'publish' === $old ) {
 			return;
@@ -689,9 +785,32 @@ class IE_Publisher {
 		}
 
 		$slot_index = (int) get_post_meta( $post->ID, '_ie_slot', true );
-		$url        = get_permalink( $post->ID );
 
+		/* THE CAMPAIGN IS READ BEFORE THE PERMALINK, and the two lines swapped
+		 * places for one reason: setting the front page CHANGES the permalink,
+		 * and the read below has to happen after.
+		 *
+		 * WHY THE FRONT PAGE IS SET HERE AND NOT AT INSERT. A pillar campaign
+		 * creates its posts future-dated, weeks ahead. Pointing page_on_front
+		 * at a post that has not published yet makes the SITE ROOT ANSWER 404
+		 * to the public until its date arrives — for a scheduled campaign,
+		 * that is the home page gone for a month. Publication is the first
+		 * moment the page can actually serve, so it is the moment to claim the
+		 * root.
+		 *
+		 * And it lands exactly where the existing re-read already is. The
+		 * comment on `url` below says a post renamed between scheduling and
+		 * publication has a different permalink now, and every link about to be
+		 * written points at it. Becoming the front page is the same fact
+		 * arriving a different way: the permalink stops being /first-topic/ and
+		 * becomes the site root. */
 		$campaign = IE_Campaigns::get( $campaign_id );
+
+		if ( $campaign && ! empty( $campaign['home_page'] ) && 0 === $slot_index ) {
+			self::claim_front_page( $post->ID );
+		}
+
+		$url = get_permalink( $post->ID );
 
 		/* A MISSING CAMPAIGN RECORD IS NOT A REASON TO STOP, and treating it
 		 * as one was a silent, expensive bug.
@@ -796,7 +915,18 @@ class IE_Publisher {
 		 * date, which is the single thing that makes a deletion look like an
 		 * edit. 'inherit' and 'auto-draft' are revisions and noise. */
 		$found = get_posts( array(
-			'post_type'        => 'post',
+			/* BOTH TYPES, UNCONDITIONALLY — the first pillar of a campaign may
+			 * be a PAGE, because it is the site's home page.
+			 *
+			 * SAFE WITHOUT A BRANCH because this query is already bounded by
+			 * meta_key '_ie_campaign': it can only ever reach content this
+			 * plugin created. Widening it cannot touch the owner's own pages.
+			 *
+			 * A conditional here would be worse, not safer. It would need the
+			 * campaign flag in a function that does not have it, and the
+			 * failure mode of getting it wrong is silent — the page is simply
+			 * never found, and nothing says so. */
+			'post_type'        => array( 'post', 'page' ),
 			'post_status'      => array( 'publish', 'future', 'draft', 'pending', 'private' ),
 			'numberposts'      => self::MAX_ORPHAN_SIBLINGS,
 			'fields'           => 'ids',
@@ -946,7 +1076,18 @@ class IE_Publisher {
 		 * they threw away and bump its modified date — the one thing that
 		 * makes a deletion look like an edit. */
 		$posts = get_posts( array(
-			'post_type'        => 'post',
+			/* BOTH TYPES, UNCONDITIONALLY — the first pillar of a campaign may
+			 * be a PAGE, because it is the site's home page.
+			 *
+			 * SAFE WITHOUT A BRANCH because this query is already bounded by
+			 * meta_key '_ie_campaign': it can only ever reach content this
+			 * plugin created. Widening it cannot touch the owner's own pages.
+			 *
+			 * A conditional here would be worse, not safer. It would need the
+			 * campaign flag in a function that does not have it, and the
+			 * failure mode of getting it wrong is silent — the page is simply
+			 * never found, and nothing says so. */
+			'post_type'        => array( 'post', 'page' ),
 			'post_status'      => array( 'publish', 'future', 'draft', 'pending', 'private' ),
 			'numberposts'      => self::MAX_REPAIR_POSTS,
 			'fields'           => 'ids',
@@ -1851,7 +1992,9 @@ class IE_Publisher {
 	 */
 	public static function publish_missed() {
 		$missed = get_posts( array(
-			'post_type'      => 'post',
+			// Both types: see the note on the sibling query above. Bounded by
+			// _ie_campaign, so it cannot reach the owner's own pages.
+			'post_type'      => array( 'post', 'page' ),
 			'post_status'    => 'future',
 			'posts_per_page' => 5,
 			'date_query'     => array( array( 'before' => current_time( 'mysql' ) ) ),

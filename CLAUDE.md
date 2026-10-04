@@ -423,6 +423,1055 @@ than no value.**
 - A brand-new Cloudflare account has a lower project cap for the first 48
   hours.
 
+## PLANNED — pillar campaigns (a campaign with no target page)
+
+**NOT STARTED.** Designed with Edwin on 2 October, after I proposed the wrong
+shape twice and he corrected it. Every file and line number below was read, not
+recalled.
+
+### The design, and why it is his and not mine
+
+For his own 20 content blogs there is no money page to point at — there is no
+business, no service, nothing to sell. The articles have to point at each
+other.
+
+**My first proposal: the pillar is slot 0 of the campaign, and it links DOWN to
+its ten children.** He rejected it, correctly. A pillar that lists its children
+has to be **rewritten** every time a later campaign adds more, because the link
+list lives inside `post_content` as frozen HTML. That is surgery on text, every
+campaign, forever.
+
+**His design, which has none of that problem:**
+
+- **Campaign 1 — the pillars.** Four or five posts, **no target page**. They
+  ring-link to one another: 1 → 2 → 3 → 4 → back to 1. That is the existing
+  ring, unchanged.
+- **Campaigns 2, 3, 4… — the silos.** Ordinary campaigns exactly as today, each
+  pointing at one of those pillars as its target page.
+- A checkbox at creation: *these posts are pillars (no target page)*.
+
+**PILLARS LINK SIDEWAYS; CHILDREN LINK UP. NOTHING EVER LINKS DOWN.** That one
+sentence is the whole reason his version is cheaper: every link is written once,
+at the moment its post is written, and is correct forever. There is no growing
+list, so there is nothing to maintain, so there is no rewrite step to get wrong.
+
+### What a pillar campaign actually is, mechanically
+
+Each post today gets three links: `prev`, `next`, and `money`. **A pillar
+campaign is a campaign that omits `money` and keeps the other two.** That is
+the entire feature. The ring in `linkPlan.js` is built from neighbouring slots
+and never consults `targetPage` — the money link is a separate, parallel thing
+hanging off the same slot.
+
+`linkPhrase` is already the anchor text for ring links (`referTo()`,
+`linkPlan.js:72-75`, prefers it over the topic), already chosen at planning
+time, already stored per slot. **Pillar-to-pillar anchors need no new code** —
+only `linkPhrase` values written for topic relationships ("fixing leash
+problems") rather than service ones ("emergency drain cleaning in Austin"), and
+that is prompt wording.
+
+### Every place that assumes a target page exists
+
+**`models/BlogCampaign.js:207-208`** — `targetPage.url` and `targetPage.keyword`
+are `required: true`. Conditional on the new flag. Add
+`isPillar: { type: Boolean, default: false }`.
+
+**`routes/blogApiRoute.js:229`** — `/api/blog/plan` returns 400 without a URL
+and keyword. **`:247`** — the `priorCampaigns` lookup keys on
+`'targetPage.url'`; meaningless for a pillar campaign, skip it. **`:295-300`** —
+`BlogCampaign.create()` writes the `targetPage` sub-document unconditionally.
+
+**`utils/blog/campaignPlan.js:40-41`** — throws without url and keyword.
+**`:43`** — calls `buildAnchorPool()`, which itself **throws** at
+`anchorPool.js:144` when `targetPage.keyword` is missing. A pillar campaign must
+not call it at all: there are no money anchors to balance. **`:101-103`** —
+`moneyAnchor: s.money.anchor` reads a sub-object the planner will no longer
+produce. **`:122`** — `suggestedName` is built from the keyword.
+
+**`utils/blog/planCampaign.js:76`** — throws without `targetPage.url`.
+**`:110`** — builds `money: { url: targetPage.url }` into every slot.
+
+**`utils/blog/linkPlan.js`** — lines 99, 123, 154, 171, 174-179 all read
+`campaign.targetPage.*`. Omit `slot.money` and `targets.money`; `ctx.targetPage`
+needs a shape that does not pretend.
+
+**`utils/blog/writePost.js:134` — THE ONE THAT ACTUALLY CRASHES.** The money
+instruction is pushed **unconditionally**, unlike `prev` and `next` directly
+below it which are both behind `if`. With no `slot.money` this is
+`TypeError: Cannot read properties of undefined (reading 'anchor')` — not a bad
+post, a dead generation. **`:265`** — `stubPost()` has the same unguarded read,
+and also interpolates `ctx.business.town`, which is empty on a blog.
+
+**`wp-plugin/.../class-ie-settings.php::target_pages()`** — queries
+`post_type => 'page'` only, so a pillar published as a Post never appears in the
+Target Page dropdown and campaign 2 could not select it. Widen it to include
+posts carrying the pillar flag. The publisher must write that flag as post meta
+at publish time.
+
+### What does NOT need changing, and the correction that matters
+
+**`utils/blog/qualityCheck.js` is already right.** I told Edwin the checker
+would reject every pillar post because it verifies `{{money}}<anchor>{{/money}}`
+verbatim. **It does not.** Both sites are already guarded — `if (slot.money &&
+…)` at `:165` and `if (slot.money && slot.money.anchor)` at `:224`. The
+placement warning at `:203` is behind `spread.placed.money &&`. Nothing to do.
+
+**The writer is unguarded and the checker is guarded, which is backwards from
+what I assumed.** I assumed the checker was the fragile half because its comment
+says "verbatim", and the comment in `linkPlan.js:22` repeats the claim. **A
+comment describing a strictness is not the same as the code being strict** —
+and the file that said nothing about the subject was the one that would have
+crashed. This is the second time this session that reading the comment instead
+of the condition pointed me at the wrong file.
+
+### The gap nothing would catch
+
+**A one-post pillar campaign would publish an article with zero outbound
+links, and pass every check clean.** `ringNeighbours()` returns
+`{ prev: null, next: null }` for `n < 2` (`linkPlan.js:40-41`), the money link
+is now absent by design, and all three link assertions in `qualityCheck.js` are
+conditional — so there is nothing left to assert and the post passes.
+
+So pillar campaigns need a **floor of two posts**, refused at `/api/blog/plan`
+beside the existing 52-post ceiling. **Every link assertion being conditional is
+correct per link and wrong in aggregate: nothing anywhere asks whether the post
+has any links at all.** Worth considering a `no-links` failure in
+`qualityCheck` independent of which links were expected.
+
+### Order
+
+1. The flag and the model, with the conditional requirement.
+2. `writePost.js` — guard both unconditional reads. This is the crash.
+3. `campaignPlan.js` / `planCampaign.js` — skip the anchor pool, omit `money`.
+4. `linkPlan.js` — omit `slot.money` and `targets.money`.
+5. The two-post floor, and the `no-links` check.
+6. The plugin: the pillar flag as post meta, and `target_pages()` widened.
+
+**Pillars as Posts, not Pages.** Edwin's call, and it is right: `post_type =>
+'post'` is hardcoded in four places in `class-ie-publisher.php` (534, 799, 949,
+1854), and a pillar is content rather than a template. Pages would have bought
+tidiness — excluded from the feed, no byline, a cleaner permalink — and cost
+four hardcoded lines plus the publisher's test surface. The tidiness is a
+permalink setting and a little CSS on each blog instead.
+
+### Open
+
+- Whether the pillar ring should be a ring at all, with four pillars on four
+  different subjects. A ring is standard silo practice for top-level hubs and
+  costs nothing, since it is the machinery already there. Worth looking at once
+  four real pillars exist.
+- ~~The pillar prompt itself~~ — **done, 3 October, deployed.** See below.
+
+### The blog voice — 3 October, deployed
+
+`SYSTEM_BLOG` in `writePost.js`, chosen by `systemFor(ctx)` on `ctx.isPillar`,
+which `buildLinkPlan` sets from `campaign.isPillar` three lines from where it
+sets `ctx.targetPage`. **Not inferred from `targetPage === null`**: "there is
+no money page" and "there is no business behind this" coincide today and are
+different claims, and the day they stop, every post gets the wrong voice with
+nothing to say so. `test-pillar-campaign.js` 31 → 38; a mutation that switched
+the hook to the null check is caught.
+
+**A SECOND PROMPT, NOT AN EDIT TO THE FIRST.** The trade prompt is tuned and
+every customer's posts come out of it. "You are a tradesperson, unless you are
+not" is not an instruction, and softening the one that works to cover a second
+case makes it worse at the job it already does.
+
+**What the trade lines did to a blog article**, which is why this was not
+cosmetic:
+
+| In the output | The line that caused it |
+|---|---|
+| "in fifteen years on the job", "every client who walks through the door" | *You are a working tradesperson writing for your own customers* |
+| "right now", "in the next five minutes" | *Someone with a problem, right now, at home ... Not a student* |
+| "in our area", "around here the parks are busy" | *A paragraph that would still be true for a different trade in a different town should not exist* |
+
+The locality rule is the interesting one: it is correct for a Leander plumber
+and **backwards** for a content blog, where a good paragraph SHOULD be true in
+every town. Left in, it tells the model to delete its best work or fake a
+region.
+
+**The forbidden-claims list is LONGER than the trade one, not shorter.**
+Removing the business removed what was keeping the model honest. `SYSTEM_BLOG`
+explicitly bans experience of its own ("no clients, no customers, no years in
+the field ... there is no 'we' and there is no 'I'"), inventing a place, laws,
+statistics, and endorsing a product.
+
+**Checked rather than assumed: `qualityCheck` needed nothing.** The specificity
+scorer counts `weeks|days|hours|minutes|feet|inches|years` plus any bare
+number, so "two weeks of ten-minute sessions" and "six feet of lead" clear the
+bar unaided. The `RISKY` list warns on "permit" and "regulation" — a
+**warning**, not a failure, so dog licensing costs no retries.
+
+**Two of my own tests were wrong and the prompt was right.** One matched a
+sentence that wraps across a line in the template literal. The other banned the
+word "customers" — which is in the prompt *to forbid* customers. **A check that
+cannot tell an assertion from its negation would have forced the rule out of
+the prompt to keep itself green.**
+
+**A mutation that reports SURVIVED because it never applied is not a result.**
+One of the six died on a shell quoting error, printed SURVIVED, and was
+re-run properly with an `assert` on the anchor. 6 of 6 caught.
+
+### BUILT AND WORKING — 2 October (plugin 0.16.0)
+
+Both halves shipped and a pillar campaign plans end to end. Server: `isPillar`
+on the campaign, conditional `targetPage`, the money link omitted through
+`planCampaign` / `campaignPlan` / `linkPlan` / `writePost` /
+`blogGenerator.renderPayload`, a two-post floor. Plugin: the checkbox,
+`target_pages()` widened to published pillar POSTS, `_ie_is_pillar` stamped at
+insert. Tests: `test-pillar-campaign.js` 36, `wp-plugin/test-pillar-plugin.php`
+12, `test-admin-tabs.php` 66 → 71. Both in `deploy.sh`.
+
+**Three unguarded reads of the money page, not one.** `writePost.buildPrompt`,
+`writePost.stubPost` and `blogGenerator.renderPayload` all pushed or spread
+`slot.money` while the `prev` and `next` beside them sat behind an `if`. The
+third is the worst placed: it throws AFTER the post is written and the credits
+are taken. **`qualityCheck` was already guarded** — I predicted out loud that
+it would reject every pillar post, and it would not have. `linkPlan.js`'s
+comment says the checker verifies the anchor "verbatim", which made the strict
+file look like the fragile one. **A comment describing a strictness is not the
+same as the code being strict**, and the files that said nothing on the subject
+were the ones that would have crashed.
+
+**A syntax check proves the syntax is valid for the interpreter running it.**
+The plan payload first used `...( $is_pillar ? array() : array( 'targetPage' =>
+… ) )`. String-keyed array unpacking is **PHP 8.1**; the plugin header says
+`Requires PHP: 7.4` and it runs on customers' hosting, where it is a PARSE
+error — the whole file, not one function. Every site on an older PHP would
+have gone white on upgrade. `php -l` passed it, because this machine runs 8.4.
+`test-pillar-plugin.php` now scans every plugin file for 8.x constructs and is
+tied to the declared floor, so raising the header fails that test.
+
+**Only the half of the page that had been parsed existed.** The toggle script
+sat between the first table and everything below it, and an inline script runs
+as the parser reaches it — so `querySelectorAll` found the three `<tr>` rows
+above and never saw the Suggest button below. The rows hid, the checkbox looked
+wired up, the button sat there as if its class had been forgotten, and nothing
+errored. Edwin found it on the real screen; no test here could, because none
+rendered the form. Now deferred to `DOMContentLoaded`, and
+`test-admin-tabs.php` asserts the ordering invariant.
+
+**The ordering test passed against the bug it was written for.** It searched
+for the words `DOMContentLoaded` and `readyState` anywhere on the page, and
+deleting the fix left both — in the COMMENT explaining the fix. **Third time a
+check in this project has read prose as code.** It now strips comments before
+searching and looks for the CALL, not the word. The sibling assertion counted
+`ie-needs-target` occurrences with a `>= 5` threshold, and the script's own
+selector was one of the matches, so stripping the class off the button left
+exactly 5. Both found by mutation testing and by nothing else.
+
+### The first pillar as the site's home page — 3 October, plugin 0.18.0, SHIPPED
+
+**BUILT AND INSTALLED.** Everything below was the design agreed with Edwin
+before building, kept because the build did not contradict it — with one
+exception, recorded at the end of the section. **It is not pending work.** A
+session reading the old "NEXT / Not started" heading would have rebuilt it.
+
+**What it does.** A pillar campaign of N topics. Slot 0 is created as a PAGE and
+set as the site's front page; slots 1..N-1 stay Posts. Publish all makes the
+lot live together. All N are pillars — later silo campaigns can point at any of
+them, including the home page.
+
+**Why.** On a brand-new blog with nothing on it, the front page would otherwise
+be the post archive. Edwin wants a stable page at the root that he controls and
+links out from, without building anything by hand.
+
+**THE RING DOES NOT CHANGE.** `ringNeighbours()` works on slot indexes and has
+never known what post type a slot became. Slot 0 keeps both neighbours: slot 1
+links back to it, slot N-1 closes the ring forward to it. **Two inbound links,
+exactly as today** — I said "nineteen" twice in conversation, which was wrong
+and made the risk sound far bigger than it is.
+
+**The work, after reading the code rather than guessing:**
+
+1. `class-ie-publisher.php:534` — `'post_type'` conditional at creation.
+2. **Three queries widened to `array( 'post', 'page' )`** — lines 818, 968 and
+   1873. **Unconditionally, with no branching**, because every one of them is
+   already bounded by `meta_key => '_ie_campaign'` and so can only ever reach
+   content this plugin created. No half-a-rename risk.
+
+   My first estimate called these "deleted-post detection, reconciliation and
+   pause/resume". **Wrong.** They are: finding siblings to activate placeholder
+   links in (818), `repair_links()` (968), and publishing posts WP-Cron missed
+   (1873). The first is the one that matters — without it the home page's
+   forward ring link stays a dead `<span>` for ever.
+3. After slot 0 publishes: `show_on_front` → `'page'`, `page_on_front` → its
+   id, **and only then read the permalink.**
+4. A checkbox on the pillar campaign form. Not a convention — claiming the
+   front page is not something to infer.
+5. NO `page_for_posts`. Edwin's decision: the post index stays unreachable.
+
+**THE ONE SUBTLE FAILURE, and the test that earns its keep.** A page that is
+`page_on_front` has `get_permalink()` of the SITE ROOT, and WordPress 301s its
+own slug to `/`. The plugin records `publishedUrl` at creation — before the
+option is set — so in the wrong order it stores `/first-topic/`, and the two
+ring links into the home page hit a redirect. Not broken; wrong, and silently.
+The blog report would also list a URL the page does not have, which is the kind
+of small wrongness this project has already decided it cares about.
+
+Assert the recorded URL is the site root, and mutate the ordering to prove the
+assertion catches it.
+
+**Estimate: half a day.** Note this estimate moved from "a day" to "half a day"
+once the three queries were actually read — the first number was guesswork
+dressed as analysis. Half a day was about right.
+
+**THE ONE THING THE DESIGN GOT WRONG, found mid-build.** Point 3 above says to
+set `show_on_front` after slot 0 publishes, and the first implementation set it
+**at insert** instead. On a scheduled pillar campaign slot 0 is a `future`
+post for weeks, so the site root would have pointed at a page that returns 404
+to the public for as long as the schedule ran. Moved into `on_transition`,
+where it fires the moment the page actually goes live. `claim_front_page()`
+also **refuses** when `show_on_front` is already `'page'` with a different
+`page_on_front` — a customer's existing home page is not ours to take.
+
+**`home_page` survived a mutation because every fixture set it by hand.**
+Deleting the default from `read_form()`'s ordinary branch changed nothing: all
+the tests of the behaviour supplied the field themselves. **A FIELD IS NOT
+COVERED BY TESTS OF THE BEHAVIOUR IT DRIVES IF THOSE TESTS SUPPLY THE FIELD.**
+Now there is a test that reads the form with the box unticked and asserts the
+key is `false` rather than absent.
+
+### PROMPT AND QUALITY-RULE WORK — Edwin's own day, 4 October
+
+**DO NOT BUILD ANY OF THIS WITHOUT HIM.** His words: *"do not build the
+rules-prompt yet. I will have a whole day to go over prompts again. Add it to
+the list."* Everything below was found by reading the production log and two
+live pages on 4 October. It is evidence for that day, not a work queue.
+
+**1. `howto-title` and `guide-title` are trade-site rules applied to blogs.**
+Their stated reasons are *"teaches the reader not to call"* and *"competes
+with the service page"*. **A pillar blog has no service page and nobody to
+call.** `howto-title` failed posts on 3 and 4 October. For a hub article whose
+whole job is answering a question, a how-to title may be the right title.
+Likely fix: skip both when `isPillar`.
+
+**2. `guide-title`'s regex has a hole.** `/\b(ultimate|complete|definitive)
+guide\b/i` needs the two words adjacent. The live title **"What Information Do
+You Need for a Loan Application? A Complete Preparation Guide"** has one word
+between them and sails through — and it is exactly the shape the rule exists
+to catch. Separate from #1: the hole is real on the trade sites where the rule
+does apply.
+
+**3. NOTHING CHECKS HOW LONG A TITLE IS.** That live title is **81
+characters**; Google shows about 55–60, so it displays cut mid-word. The
+description has a 155-character warning and the title has no rule at all —
+**and this is the precise harm 0.19.0 was built to prevent.** The note for
+that release says the domain "eats characters off the end of a headline
+written to fit". Nothing ever made sure the headline fits.
+
+**4. "whether you" is the model obeying its instructions.** Six occurrences in
+the log, the most common failure there is. `SYSTEM_BLOG` forbids it as an
+OPENING; `qualityCheck` matches it ANYWHERE. The model does not open with it,
+uses it mid-paragraph, and is failed for following the rule it was given.
+**The instruction and the check disagree about scope.** One has to move.
+
+**5. AND THAT IS A SYMPTOM.** The prompt's forbidden-phrase list and
+`qualityCheck`'s `FILLER` array are **two hand-maintained lists in two files
+that must agree, and do not.** The prompt is missing at least: *in the world
+of · in this fast-paced · look no further · all in all · latest advances ·
+take it to the next level · elevate your · research has shown · call us
+today*. Every one is a phrase a post is failed for and the writer was never
+told to avoid. The fix that ends the class is to build the prompt's list from
+`FILLER` — one source of truth.
+
+**What is NOT a problem, measured rather than assumed:**
+
+- **Vagueness is solved.** Densities were 0.37–0.95 and failing through late
+  September; since `SYSTEM_BLOG` shipped on 3 October they read 1.81, 6.84,
+  9.81. Leave it alone.
+- **The rewrite machinery has never once fired.** No `blog.post.rewriting`
+  line exists in the whole log. `links-crowded`, `short`, `money-link`,
+  `next-link` and `prev-link` have never failed in production. Link placement
+  and post length are solid.
+
+### Watched a campaign reach `active` — 4 October, CLOSED
+
+**The oldest open item in this file, and it had been working the whole time.**
+`log.info` goes to pino, and in production pino writes to `logs/app.log` —
+**not to stdout**, so none of it appears in `pm2 logs`. I sent Edwin to watch
+pm2, where the only blog lines are the `console.log` usage dumps. **The events
+this app carefully logs are invisible in the place an operator naturally
+looks**, and a batch that had died would have looked exactly the same: nothing.
+
+    grep blog.batch /home/ubuntu/app/logs/app.log | tail -5
+
+Five batches, **42 posts, 0 failed**, 75 credits each, back to 2 October —
+including one of 23. `stoppedForCredits: false` every time. The status write
+sits immediately above that log line, so the line appearing means `active` was
+set.
+
+**Also confirmed live on hilltophomeloans.net, a Kadence site:**
+
+- `wp-sitemap.xml` **4 entries → 2**. `IE_Hygiene` ran, and `owns_whole_site()`
+  answered correctly with the setting untouched on Automatic
+- **`/author/<username>/` redirects to the home page**
+- Home page `<title>` is the pillar's own headline, no domain; description
+  present. Same on a post. **0.19.0 confirmed on both a page and a post, on a
+  theme that knows nothing about the plugin**
+
+Edwin had already deleted "Hello world!" and "Sample Page" by hand some time
+ago, so the ownership check was never tested against them on this site.
+
+**The ring links are real anchors.** Edwin clicked every one of them and each
+went where it should. Placeholder activation works end to end: a `{{next}}`
+token written weeks before its target existed becomes an `<a>` the moment that
+post publishes.
+
+**So every one of the six checks passed, on a Kadence site.** Sitemap trimmed,
+author archive redirected, title and description on both a page and a post,
+ring links live, and slugs cut at a word boundary. **Nothing in this stack is
+unobserved any more.**
+
+### The slug fix dropped a word it did not need to — 4 October, same day it shipped
+
+**Found by reading a slug this morning's fix had just produced on the live
+site.** Not by a test, and the test written this morning passes on it.
+
+    title   Benefits of Paying Off a Loan Early—and When It May Not Make Financial Sense
+    clean   …-may-not-make-financial-sense     (76)
+    cut@70  …-may-not-make-financial           (70, and clean[70] is '-')
+    got     …-may-not-make                     (60)
+
+"financial" **fitted exactly**. The character after the cut was the separator,
+so nothing was broken — and the trim ran anyway and deleted it. The code could
+not tell *"the cut landed mid-word"* from *"the cut landed on the join"*. One
+character of lookahead settles it.
+
+**WHY THE MORNING'S TEST MISSED IT, and this is the keeper.** That test asserts
+the slug is a MAXIMAL prefix: put the next word back and it must overflow.
+This slug satisfied that and was still wrong. **"Could a word be added?" and
+"was a word removed that did not need removing?" are not the same question**,
+and a maximality test only asks the first.
+
+Two mutations caught: removing the check, and `charAt(SLUG_MAX - 1)`.
+`test-blog-plan.js` 30 → **31**.
+
+### A backtick killed every theme, and the fix did not land — 4 October
+
+Two faults an hour apart, both mine, and the second is the more useful one.
+
+#### ONE BACKTICK, AND THE WHOLE GENERATOR WAS DEAD
+
+Every file in `utils/wpThemeBuilder/generators/` is **one enormous JavaScript
+template literal**. A comment added to `functionsPhp.js` wrote `` `noindex` ``
+and `` `users` `` in backticks, the way one writes Markdown. Each backtick
+**closed the string**, and the PHP after it became JavaScript:
+
+    SyntaxError: Unexpected identifier 'noindex'
+
+Not the feature — **the file**, and with it every theme the app can export.
+Caught by `deploy.sh`, which refused to push. The gate did its job.
+
+**HOW IT GOT PAST A GREEN SUITE, which is the part worth keeping.**
+`test-pillar-plugin.php` asserted the new filter existed by reading
+`functionsPhp.js` with `file_get_contents` and searching for a string. **A
+STRING SEARCH FINDS TEXT IN A FILE THAT CANNOT BE PARSED.** It passes on
+gibberish containing the right words. Fifth time this project has had a check
+that reads source as text and believes it has verified behaviour.
+
+`test-wp-canonical.js` *does* `require()` the module and *did* catch it — on
+the machine running `deploy.sh` and nowhere else. It pulls in `./buildSitemap`
+and a chain of others, so anywhere one of them is missing it dies first and
+reports a module-not-found that reads like a setup problem rather than a
+defect. **The coverage existed and could not be run where the edit was made.**
+
+New `test-generators-parse.js`: `require()`s every file in `generators/` and
+`wpHelpers/` and **nothing else**, so it runs anywhere node does, in about a
+second. First in `deploy.sh`'s list. Deliberately excludes `buildFromModel.js`
+and the other orchestrators — their dependency chains are the exact fault it
+exists to remove. Proved by mutation twice: the original backtick, and a fresh
+one dropped into `pageTemplatesPhp.js`.
+
+**A FILE VERIFIED BY READING IT AS TEXT HAS NOT BEEN VERIFIED.**
+`node --check` takes a second and answers the only question that matters first.
+
+#### THE SECOND CHECK I WROTE WAS WRONG, AND IT FAILED ON CORRECT CODE
+
+It flagged any backtick on a line starting with `*`. True of a docblock
+**inside** the literal, false of one **outside** it — and these files all have
+ordinary JavaScript docblocks above the literal where a backtick is fine. It
+failed immediately on `pageTemplatesPhp.js:164`, which quotes
+`post-thumbnails` in a comment and parses perfectly.
+
+**A TEST THAT FAILS ON CORRECT CODE IS WORSE THAN NO TEST.** The next person
+makes it pass, and the only way to pass that one was to delete a backtick from
+a comment that was never wrong. Deleted, with a note in the file saying why
+and not to re-add it.
+
+And it was the same mistake as the bug: **I wrote the rule against the six
+generator files in my working copy and it passed. The real machine has
+sixteen, and one of them is the counter-example. ASSERTING OVER FILES YOU
+CANNOT SEE IS GUESSING.**
+
+#### A COMMIT THAT REPORTS SUCCESS IS NOT PROOF THE BYTES LANDED
+
+The fix was written, tested, committed — and the tool reported it written
+while **the old file was still on the Mac**. Edwin ran `deploy.sh` twice more
+against code that had already been fixed here, and asked "what's going on?"
+while I was explaining a fix he did not have.
+
+Reading it back settled it in one call: 5,258 bytes on disk against 5,618
+staged. Re-committed, re-read, identical, green.
+
+**The galling part: the batch of six files after the power cut WAS verified
+this way — every one pulled back and compared byte-for-byte. The single-file
+follow-up was not, because it was small.** The verification was treated as
+ceremony for a big delivery rather than as the thing that answers the
+question.
+
+**So: after committing anything that is about to be run, stage it back and
+`cmp` it.** It costs one call. The alternative is debugging a file that does
+not exist on the machine reporting the error.
+
+### Editing the title and description, and taking precedence — 4 October, plugin 0.21.0
+
+**NOT YET INSTALLED.** Plugin only; no server change.
+
+#### THE GAP: THEY COULD NOT BE EDITED AT ALL
+
+The plugin has written a title and description onto every post since 0.12.0
+and 0.19.0 finally put them on the page. Three ways to change them existed and
+**none of them covered the sites Edwin is actually building:**
+
+- generated theme — its own metabox. Not Kadence.
+- Yoast or Rank Math — their box, which the publisher pre-filled. Not a site
+  without an SEO plugin.
+- Custom Fields — **no.** `_ie_meta_title` begins with an underscore, so
+  WordPress treats it as protected meta and hides it from that panel.
+
+So on every blog he is building, the text went on the page and stayed there.
+It mattered within the hour: a live title came in at **81 characters**, Google
+shows about 60, and there was no way to shorten it.
+
+#### FEED THE OTHER PLUGIN, DO NOT RACE IT
+
+Edwin's requirement: ours wins on the posts this plugin wrote, and nothing
+else changes. The naive version prints our tags alongside Yoast's, which gives
+the page **two `<title>` tags and two descriptions**, with the winner decided
+by plugin activation order — a bug that surfaces months later when somebody
+reorders their plugins.
+
+`IE_SEO` now returns our value through the plugins' **own output filters**, so
+the page still has exactly one of each tag, rendered by whatever is installed,
+containing our text. No priority war, nothing to suppress.
+
+    wpseo_title · wpseo_metadesc                              (Yoast)
+    rank_math/frontend/title · rank_math/frontend/description  (Rank Math)
+
+**ALL FOUR READ FROM THE VENDORS' DOCUMENTATION, NOT FROM MEMORY**, and a test
+asserts the spellings. **A misspelled filter name does not error — it never
+fires**, the feature ships doing nothing, and every direct-call test still
+passes because none of them goes through WordPress.
+
+**SEOPress and AIOSEO are deliberately not fed.** They stay in
+`another_seo_plugin()` so the class stands down, and on those two a post falls
+back to that plugin's default. Their filter names are unverified, and an
+unverified hook name is a feature that silently does nothing.
+
+#### AND SO THE PUBLISHER STOPPED WRITING THEIR KEYS — A REVERSAL FROM THIS MORNING
+
+0.19.0 wrote our title into Yoast's and Rank Math's fields precisely because
+`IE_SEO` stood down and rendered nothing there. **That reasoning died the
+moment ours took precedence.** A copy in their box is now a second field the
+owner can edit to no effect at all, and **a box that looks like it works and
+does not is worse than no box.**
+
+The test that asserted those four keys were written now asserts they are not.
+It strips comments first, which matters more than usual here: the comment
+replacing those lines names the keys while explaining why they are gone.
+
+**Posts published by 0.19.0 and 0.20.0 keep those rows.** Not deleted on
+upgrade — removing somebody's stored data to tidy up is the worse trade. On
+such a post Yoast's box shows a value that no longer renders.
+
+#### THE BOX
+
+`IE_Metabox`, on posts and pages carrying `_ie_campaign` and nowhere else.
+Title and description, each with a live character count against 60 and 155 —
+**the cheapest possible version of the check that was missing when an
+81-character title went live, placed in front of the person who can fix it.**
+Over the guide colours red; it is a warning, not a limit.
+
+- Writes `_ie_meta_*` **and** the theme-prefixed pair, because a generated
+  theme renders from the prefixed one — writing only ours would mean editing
+  the box on a generated site changed nothing on the page.
+- **An emptied field is DELETED, not stored as `''`.** `IE_SEO` reads `''` as
+  "leave the theme's default alone"; stored as an empty string the post would
+  render a blank `<title>`. *An empty value is a claim that the value exists.*
+- Four refusals before any write: autosave, nonce, capability, ownership. The
+  ownership check is **not** redundant with `register()` — a form can be
+  submitted against any post id, and the box not being drawn is not the same
+  as the write being refused.
+- The counter script waits for `DOMContentLoaded`. The elements above it
+  happen to be parsed already; relying on that is how 3 October's bug gets
+  written a second time.
+
+#### 13 MUTATIONS, 12 CAUGHT FIRST TIME — AND THE SURVIVOR WAS A MASKED CHECK
+
+Deleting the autosave guard changed nothing, because the test supplied
+`$_POST = array()` — so the **nonce** check refused the write and the test
+went green without the guard it was named after.
+
+**A CHECK MASKED BY THE CHECK ABOVE IT IS NOT BEING TESTED AT ALL.** The test
+now supplies a valid nonce and empty fields, which is the only shape where
+only the autosave guard stands between an autosave and both values being
+erased while the owner types the body. Re-mutated: caught.
+
+`test-pillar-plugin.php` 47 → **60**.
+
+### The archives WordPress invents — 4 October, plugin 0.20.0 + the theme
+
+**NOT YET INSTALLED OR DEPLOYED.** Written and tested; the plugin ZIP needs
+rebuilding and `functionsPhp.js` needs a server deploy.
+
+**WHO CAUSED THIS: nobody here.** Since WordPress 5.5 every installation
+publishes `/wp-sitemap.xml` with four sections — posts, pages, taxonomies,
+users — on every theme and with no plugins at all. The `users` section
+publishes `/author/<slug>/`, and on a fresh install that slug is the **login
+name of an account that can edit the site**.
+
+Found when Edwin opened his own sitemap on 4 October.
+
+**AND THE GENERATED THEME HAD HALF-FIXED IT FOR MONTHS WITHOUT ANYONE
+NOTICING.** `functionsPhp.js` has noindexed author, date and attachment
+archives since September — its own comment says *"it publishes the login name
+of an account that can edit the site"*, the same conclusion reached again from
+scratch today — and it never touched the sitemap. So every generated site has
+been telling Google **crawl this URL** in `wp-sitemap.xml` and **do not index
+this URL** on the page. Contradictory, and **`noindex` never addressed the
+real problem anyway: the sitemap is a public file anyone can open and read.**
+
+#### THE RULE, AND THE TWO THAT WERE WRONG BEFORE IT
+
+Edwin's requirement: touch the sites this system built, never somebody's own.
+Two rules were proposed and both were wrong.
+
+- **"the first pillar claimed the home page"** — my suggestion. **TOO NARROW.**
+  A pillar campaign that leaves the post archive as the front page is just as
+  much a blog built from nothing, and it would have been skipped. Edwin found
+  this by describing the case.
+- **"a pillar campaign exists"** — Edwin's. **TOO BROAD.** Nothing stops a
+  customer running a pillar campaign on a business site they already have, and
+  it would then noindex category pages they rank for. Edwin found this one too,
+  by asking what would happen to that customer's sitemap — after I had already
+  agreed to build it.
+
+**BOTH WERE PROXIES FOR A QUESTION THAT CAN BE ASKED DIRECTLY:**
+
+> Is there anything published on this site that this plugin did not write?
+
+Every post and page the publisher creates carries `_ie_campaign`, so one query
+with `NOT EXISTS` and a limit of one answers it. No flag to keep in sync with
+reality, no guessing, and it is right in all four cases — empty blog with a
+home-page pillar, empty blog with the archive as front page, a customer's site
+running a pillar campaign, and a customer's site running an ordinary silo.
+
+**A fresh WordPress's "Hello world!" and "Sample Page" count as somebody
+else's, deliberately.** Special-casing them means matching titles or ids that
+differ by WordPress version and by language, and getting that wrong means
+editing a stranger's sitemap. The plugin stays out until they are deleted —
+the first thing anyone does setting up a blog — and the setting covers the
+rest. **ERRING TOWARDS DOING NOTHING IS THE POINT:** a site that should have
+been tidied and was not has an author archive in its sitemap; a site that
+should not have been and was has lost pages it ranked for, and the owner has
+no idea why.
+
+#### What it does when it is on
+
+- `users` and `taxonomies` leave `wp-sitemap.xml`
+- author, category, tag, date and custom taxonomy archives get
+  `noindex, follow` — **follow**, because the links on them point at real
+  articles and that crawl path is worth keeping
+- `/author/<slug>/` 301s to the home page. **Noindex alone leaves the URL
+  answering, and the URL is the problem** — it confirms a username to anyone
+  who types it whether or not Google shows the page
+- categories are noindexed but **not** redirected: an owner may link one from a
+  menu, and noindex keeps it out of search while leaving it usable
+
+**THE BLOG ARCHIVE AND THE FRONT PAGE ARE NEVER TOUCHED.** On a pillar campaign
+that did not claim the home page, the post index IS the front page.
+
+#### A SETTING WITH THREE STATES, WHICH IS WHY IT IS A SELECT
+
+`'' | 'on' | 'off'`. **A checkbox cannot say "I have not decided"** — unticked
+and never-visited look identical — so the automatic rule could never tell "the
+owner turned this off" from "the owner has not been here yet". An empty value
+is the absence of a decision; `on` and `off` are decisions, and neither is
+overruled by what the site looks like. Anything unrecognised falls back to
+automatic, not to whichever branch a stray string happens to reach.
+
+The screen also prints **what the plugin has actually decided**, not just the
+preference — otherwise the owner can read the setting and still have no way to
+find out what it produced on their site.
+
+#### The theme change is separate and smaller
+
+`functionsPhp.js` drops **`users` only**. The rule it follows: *the sitemap
+must not advertise a page this theme tells Google to ignore.* The theme does
+not noindex categories, so listing taxonomies is consistent. Nothing about the
+theme change depends on the plugin being installed.
+
+#### Tests and mutations
+
+`test-pillar-plugin.php` 28 → **47**. The `get_posts` stub now honours
+`meta_query` with `NOT EXISTS` and `posts_per_page` — **eighth instance of a
+stub that could not express the failure it was meant to detect**: ignoring
+`meta_query` would have made every site look like somebody else's, every test
+would have passed, and the feature would never have run once.
+
+`wp_safe_redirect` now **throws** in this suite, as it already does in
+`test-admin-tabs.php`. Control does not come back in production either.
+
+**19 mutations run, 17 caught.** Including: the ownership check removed and
+inverted, drafts counted as published, pages dropped from the query, the wrong
+meta key, the sitemap filter emptying every section, `noindex, follow` becoming
+`nofollow`, the redirect firing on categories, `on` and `off` each losing to
+the automatic rule, a junk setting treated as `on`, the memo never cleared, and
+both theme mutations.
+
+#### The two survivors, and the one that earns its keep anyway
+
+`is_front_page() || is_home()` at the top of `noindex()` **guards nothing
+reachable**. WordPress serves the site root as either the posts index or a
+static page, so none of `is_author()`, `is_category()`, `is_tag()`,
+`is_date()` or `is_tax()` can be true there — the archive list alone already
+declines. Deleting the guard changes no behaviour and survives, correctly.
+
+**It stays, and this was measured rather than argued.** The tempting future
+edit is to add `is_home()` to the archive list — *"the blog archive is a thin
+archive too"* — and on a blog whose archive is the front page that one line is
+the worst bug this plugin could ship. Run that edit **with** the guard: 47
+pass. Run it **without**: `THE FRONT PAGE IS NEVER NOINDEXED` fails. The guard
+turns a fatal edit into a harmless one, and the test proves it.
+
+Second survivor, same shape: the comment above it now says it guards nothing
+reachable, rather than implying a defence it does not provide. **Second time
+today** — the slug fix had the identical pattern with `lastDash > 0`.
+
+### The title tag and the meta description on any theme — 4 October, plugin 0.19.0, SHIPPED
+
+**The 30 September note below already contained the gap, and nobody read it as
+one.** It says the title is written to `<prefix>_page_title` so the generated
+theme's filter can find it — which is true, and which also says in passing that
+on any other theme nothing finds it at all. It was a fact about the fix, not
+written down as a defect, so it sat there for four days. Edwin found it from
+live HTML on a Kadence site:
+
+    a post   <title>What Information Do You Need … — hilltophomeloans.net</title>
+    the home <title>hilltophomeloans.net</title>
+    neither  no <meta name="description"> at all
+
+**IE_Publisher had always WRITTEN the SEO meta. Nothing in the plugin ever PUT
+IT ON THE PAGE.** The generated themes do that themselves — they filter
+`pre_get_document_title` and print the description in their own `wp_head` — so
+on a generated site everything worked and the gap was invisible. Everywhere
+else the meta sat in the database, unread, while WordPress's default took over.
+
+New file: `includes/class-ie-seo.php`.
+
+- `pre_get_document_title` at priority 20, returning `_ie_meta_title`
+  **verbatim with no site-name suffix.** That is the point: the suffix is
+  already shown under the search result and here it eats characters off a
+  headline written to fit.
+- `wp_head` at priority 1 printing `<meta name="description">` from
+  `_ie_meta_description`.
+- **Every entry point checks `_ie_campaign` first.** A customer's own pages,
+  posts, archives and home page are left exactly as their theme renders them.
+- **`get_queried_object_id()`, not `get_the_ID()`.** On a static front page
+  `in_the_loop` has not started when `pre_get_document_title` runs, so
+  `get_the_ID()` answers false — and the front page was the worse of the two
+  bugs, since WordPress titles it with the SITE NAME and the article's own
+  headline appeared nowhere.
+- **Empty means leave it alone.** Returning `''` would give a blank `<title>`
+  rather than WordPress's imperfect-but-present default. **An empty value is a
+  claim that the value exists.**
+- **It cannot fight a generated theme.** That theme's filter reads the same
+  meta key and returns the same string, so whichever runs last the answer is
+  identical. No detection, no priority war.
+- **It stands down for Yoast, Rank Math, SEOPress and AIOSEO** — checked by
+  CONSTANT (`WPSEO_VERSION` and friends), not by plugin file path. A renamed
+  folder, a premium build or a must-use install moves the path; the constant
+  does not. And `defined()` is only true once that plugin has loaded, which is
+  the question being asked.
+
+`IE_Publisher` also now writes `_yoast_wpseo_title` / `rank_math_title` and
+`_yoast_wpseo_metadesc` / `rank_math_description` beside the existing keys, so
+standing down does not mean discarding the hand-written title — it arrives
+through the other plugin, in the field the owner can edit. **Four unread rows
+when nobody has those plugins, which beats detecting at publish time, because
+the owner may install one next week and the posts are already written.**
+
+**RETROACTIVE, and that is worth knowing before anyone offers to re-publish
+anything.** The filters read the meta at page-render time, and those rows
+already exist on every post ever published. Upload the ZIP and the live pages
+change. No re-publishing, no credits.
+
+`test-pillar-plugin.php` 20 → 28, with `ie_render_title()` / `ie_render_head()`
+helpers and stubs for `is_singular()` / `get_queried_object_id()`. **8 of 8
+mutations caught**, including dropping the ownership check, firing on archives,
+reading `get_the_ID()` instead of the queried object, and the publisher no
+longer writing the Yoast key.
+
+### A slug cut mid-word, and a mutation harness that lied — 4 October, server
+
+**Found by reading a live pillar post, which is the thing this file has been
+saying should happen since 2 October.** Edwin pasted the body of the home page
+and the one link in it pointed at:
+
+    /what-information-do-you-need-for-a-loan-application-a-complete-prepara/
+
+"preparation" became "prepara". `slugify()` in `planCampaign.js` ended with
+`.slice(0, 70)` — a hard character cut, no word boundary. That slug is
+**exactly 70 characters**, so it was that line and nothing else.
+
+Now: under the limit, returned untouched; over it, cut at 70 and backed up to
+the last dash. **Future campaigns only** — a published URL is read back from
+WordPress, never rebuilt from the plan, so nothing existing moves and no
+redirects are needed.
+
+**`planCampaign.slugify` HAD NO TEST OF ANY KIND.** The two `slugify` hits in
+the suite belong to `utils/slugify.js`, a different function with a different
+body. `test-blog-plan.js` 25 → **30**, and four of the five new tests cover
+behaviour the docblock had been *describing* since September — the apostrophe
+rule included, which is the fault the comment was written to stop and which
+nothing had ever checked.
+
+#### A HARNESS THAT MISREPORTS IS WORSE THAN NO HARNESS
+
+The first mutation run printed **"all 8 caught"**, with the identical count
+`10 passed, 20 failed` for every one of them. A change of `70` to `71` cannot
+fail twenty tests. Re-run with the output captured properly: **three
+survived.**
+
+This is the third harness fault in this project's mutation testing — a shell
+quoting error, a `replace(…,1)` that landed 2,100 lines away, and now a
+reporting bug — but it is the first that produced a **FALSE ALL-CAUGHT**, and
+that is the dangerous direction. A false SURVIVED sends you looking for a gap
+that is not there and you find nothing. **A false ALL-CAUGHT closes the
+question.** The rule already in this file — assert the anchor matches exactly
+once — does not cover this: the anchors were fine and the mutations applied.
+What was wrong was the reading of the result.
+
+**So: an identical failure count across unrelated mutations is itself the
+signal.** Different changes to different lines do not break the same number of
+tests.
+
+#### THE REAL GAP THE HONEST RUN FOUND
+
+`lastIndexOf('-')` → `indexOf('-')` **survived.** It cuts at the FIRST dash, so
+the whole slug becomes `what`. And `what` is under 70 characters, ends in no
+separator, is not `prepara`, and is a whole word from the title — it satisfied
+every assertion in the test.
+
+**A RULE THAT ONLY FORBIDS CUTTING BADLY IS HAPPY WITH CUTTING ALMOST
+EVERYTHING.** The missing property was maximality, and it is now asserted
+directly: put the next word back and the result must exceed 70.
+
+#### Two mutants that survive on purpose
+
+- `return clean` → `return clean.slice(0, SLUG_MAX)` inside the
+  under-the-limit branch. Slicing a string shorter than 70 to 70 returns the
+  same string. A no-op, and my own mutation was badly chosen — it was meant to
+  restore the old behaviour and instead restated the new one. The real
+  pre-fix code *is* caught: replacing the whole body with
+  `return clean.slice(0, SLUG_MAX)` fails the word-boundary test.
+- `lastDash > 0` → `lastDash >= 0`. Position 0 cannot hold a dash, because
+  leading separators are stripped four lines above. **The guard protects
+  nothing reachable**, and the comment now says so rather than claiming a
+  defence it does not provide — otherwise the next reader writes a test for a
+  case that cannot happen. It stays because it costs nothing and would become
+  the silent failure if the leading-dash strip were ever removed.
+
+**6 of 8 caught, plus the true pre-fix mutation. 2 equivalent mutants, both
+written down.**
+
+### A missing description was never retried — 4 October, server
+
+**Found by reading `REWRITE_WORTHY` to answer a question of Edwin's about an
+empty site. Not by a test, and the test that existed went green over it.**
+
+`checkPost` raises `no-meta` when a post comes back with no meta description
+and `no-title` when it has no headline. **Neither was in `REWRITE_WORTHY`**, so
+neither triggered a re-write: the post broke out of the loop, shipped with the
+failure logged, and went live with no `<meta name="description">` at all.
+
+Nothing had decided that. The set was written around the link and length
+faults and these two were never weighed. They belong by the rule the set's own
+comment states — `title` and `metaDescription` are both named in the JSON shape
+the prompt demands, so a post missing one is **the model dropping a key**, which
+is exactly "a different roll of the dice away from being right". That is not
+the same as `guide-title` or `howto-title`, which stay out: those are the model
+answering the question badly and it will answer the same way again.
+
+**Invisible until 0.19.0, and then indistinguishable from the bug 0.19.0
+fixes.** Before that release nothing put descriptions on the page, so a post
+without one looked like every other post. Afterwards it looks exactly like the
+Kadence symptom Edwin photographed.
+
+#### THE RULE MOVED TO `qualityCheck.js`, AND THE MOVE IS THE FIX
+
+`REWRITE_WORTHY` and `worthRewriting()` lived in `blogGenerator.js`, two files
+from the `fail()` calls that raise the codes they name. **A code renamed in one
+file and not the other leaves a set member that can never match, and nothing
+fails when it happens** — the post just ships unretried, which is the state
+this change exists to end. They are now defined beside the codes.
+
+**And the rule could not be unit tested where it was.** `blogGenerator.js`
+requires `models/User.js`, which requires Mongoose, so a test cannot load it.
+`qualityCheck.js` requires nothing at all.
+
+#### FOURTH TIME A CHECK IN THIS PROJECT HAS READ PROSE AS CODE
+
+The only test on the retry rule was:
+
+    assert.ok(generator.includes(`'${code}'`))                 // retried
+    assert.ok(!generator.includes(`'${code}'`))                // not retried
+
+A whole-file text search that **cannot tell a member of the set from a word in
+a comment.** Two consequences, and both happened:
+
+- **It passed over this gap.** `'no-meta'` was absent from the file in exactly
+  the way the test wanted every excluded code to be absent. Nothing in the
+  check distinguished *deliberately excluded* from *never considered*.
+- **It was one edit from going red for no reason.** The comment now names
+  `'guide-title'` as an example of an exclusion — which the negative assertion
+  would have read as the code being in the set.
+
+`worthRewriting` is exported now and the tests call it. `test-post-quality.js`
+14 → **19**.
+
+#### THE MUTATION THAT SURVIVED EVERYTHING ELSE
+
+Replacing `!worthRewriting(quality)` with `false` in the loop's break
+condition **turns the retry off completely** — and eighteen of the nineteen
+tests still passed. Every one of them asked what the rule *answers*; not one
+asked whether anything *calls* it. **A CONDITION CAN BE WRITTEN CORRECTLY AND
+REACHED NEVER** — which this very file's note on the `blogGenerator` exports
+already said, about a different function.
+
+The nineteenth test asserts, against comment-stripped source, that
+`worthRewriting(` appears **after** `for (let attempt = 1` and that a `break`
+follows it. Three further mutations — deleting the call, calling it and
+discarding the result, and breaking the loop header — are all caught.
+
+**12 mutations run, 12 caught.** Including: dropping either code, misspelling
+`no-meta` as `no_meta`, deciding on failure text instead of codes, returning a
+constant, demoting the missing-description failure to a warning, and adding
+`guide-title` to the retried set.
+
+Deployed 4 October. **Server only — no plugin change.**
+
+#### Open — the two SEO plugins with no keys written
+
+**SEOPress and AIOSEO are a hole, found while answering a question of Edwin's
+on 4 October rather than by a test.** `IE_SEO` stands down for both, and the
+publisher writes **no keys** for either — so on a site running one of them the
+title and description sit in `_ie_meta_*`, nothing renders them, and that
+plugin falls back to "Post Title — Site Name" with no description. **That is
+the exact bug this release fixed for Kadence, surviving on those two plugins.**
+
+- SEOPress looks like two more post-meta keys beside the Yoast ones.
+- **AIOSEO needs checking before anything is written.** I believe version 4
+  moved its data out of post meta into its own database table, which would
+  make `update_post_meta` unable to reach it — but that is recalled, not read,
+  and nothing should be built on it until it is verified.
+
+Edwin's answer when this was raised: not yet — see the note below on target
+pages, which he asked to defer in the same breath.
+
+#### Open — a target page the dropdown cannot offer
+
+**Edwin asked for this on 4 October and explicitly deferred it:** *"Maybe if we
+provide a text area where the user can enter the url he wants to use as pillar
+that doesn't show in the dropdown because it's a hand written post. Just save it
+for now and we can do it afterwards."*
+
+**The limitation, confirmed by reading `IE_Settings::target_pages()`.** It runs
+two queries and offers their union: every published **page** (no theme
+condition at all — a hand-built page on any theme is already selectable), and
+every published **post carrying `_ie_is_pillar`**. Only this plugin stamps that
+meta. So a customer whose hub is a hand-written POST has nothing to select, and
+the campaign cannot be aimed at the one page on the site that matters.
+
+The shape Edwin wants: a free-text URL field on the campaign form, used when
+the dropdown has nothing right.
+
+**What it will have to deal with, since none of it is free:**
+
+- The dropdown supplies `title`, `keyword`, `url`, `type` and `is_pillar`. A
+  typed URL supplies one of those five. `keyword` is what `writePost` drops
+  into *"It becomes a link to the X page"*, so it cannot be left empty —
+  either ask for it alongside, or derive it and let the owner correct it, which
+  is what the dropdown already does with `strtolower( get_the_title() )`.
+- **A URL typed by hand can be wrong, and nothing downstream re-checks it** —
+  the links are written once. The same reasoning that made `target_pages()`
+  published-only applies here with more force: a typo means every post in the
+  silo links to a 404, discovered weeks later.
+- Whether an off-site URL is allowed. Probably not, and refusing needs a
+  home-URL comparison rather than silence.
+
+**Do not build this as a replacement for the dropdown.** It is the escape
+hatch for the case the dropdown cannot see, and the dropdown is right for
+everything else.
+
+### Publish all — 3 October, plugin 0.17.0, shipped
+
+`handle_publish_all` loops the campaign's `scheduled` slots calling
+`IE_Publisher::publish_now`. The guess in the note this replaces was right: it
+was a loop and a confirm, not a new mechanism.
+
+**PILLAR CAMPAIGNS ONLY — Edwin's call, and the reason is worth keeping.** On a
+silo campaign the schedule IS the product: twelve posts over three months is
+what the customer planned and paid for, and dating them all today cannot be
+undone, because **a post does not go back onto a schedule**. A pillar campaign
+has no plan to destroy — every post in it is meant to be live at once, which is
+the only reason the button is wanted.
+
+The refusal is in the HANDLER as well as in the hidden link. That URL is
+reachable by hand and from a stale browser tab, and what it does is
+irreversible. A mutation removing the handler-side check is caught.
+
+The count is computed before the control is drawn, so a campaign with nothing
+waiting never offers the button, and the label says "Publish all 4 pillars
+now". A deleted post is **skipped and said out loud** — the slot keeps its id,
+`wp_update_post()` answers 0 rather than a WP_Error, and without the check the
+owner is told five went live when two do not exist.
+
+**THE FIRST HANDLER THIS PROJECT HAS EVER INVOKED FROM A TEST.**
+`IE_Admin::redirect()` ends in `exit`, so calling one would have ended the run
+at the first redirect and reported everything before it as the result. The
+`wp_safe_redirect` stub now THROWS: control does not come back in production
+either, so throwing is the faithful shape, and a stub that merely recorded the
+URL would let the test exercise code past an `exit` that production can never
+reach. `ie_run_handler()` catches it and returns the parsed query arguments.
+
+**A shared process is not a shared request.** `IE_Campaigns::post_missing()`
+caches live post ids in a static — correct in WordPress, where one request is
+one page load, and wrong across tests, which share a process. A test reported
+one post skipped against a fixture where every post existed, because an earlier
+test had filled the cache. `forget_post_cache()` already existed for this and
+nothing was calling it; the tests now go through `ie_posts_exist()`.
+
+### A mutation that never applied is not a result — second instance
+
+`str.replace(old, new, 1)` takes the FIRST match. A mutation aimed at
+`handle_publish_all`'s `post_missing()` check landed on an identical line 2,100
+lines earlier and reported SURVIVED for a change that was never made to the
+code under test. Yesterday the same false SURVIVED came from a shell quoting
+error. **The mutation script now asserts the anchor matches exactly once**, and
+promptly refused a later anchor on those grounds.
+
+**The accident found a real gap, in code that predates all of this.** The line
+it hit by mistake was `campaign_headline()`'s deleted-post counter — and the
+whole suite passed with it short-circuited. A campaign with three deleted posts
+would have read *"3 of 3 scheduled, 3 live, publishing on schedule"*. The
+existing deleted-post tests check the ROW and the per-row link; none checked the
+summary, which is the line people read first and the one a customer would quote
+back when disputing a bill. Now covered, and the mutation is caught.
+`test-admin-tabs.php` 71 → 81.
+
 ## Outstanding
 
 **Cleared on 29 September** — the blog report headline, filtering the blog
@@ -1509,6 +2558,69 @@ Four mutations run, four caught: not queueing a failed report, retrying with
 
 Suites: 8 / 70 / 64 / 34 / 9. `test-removal-time.js` is new and in
 `deploy.sh`.
+
+## The plugin was pointing at a domain that no longer exists — 0.15.0, 1 October 2026
+
+Edwin, reading the Connection screen: *"Why is it still saying
+fastwebsitegenerator instead of threecomets.com?"*
+
+Because `IE_Settings::server_url()` still defaulted to
+`https://fastwebsitegenerator.com` — the service's first name — and **that
+domain was switched off for real on 24 September**: nginx site deleted, A and
+CNAME records removed from Hostinger, certificate deleted. It resolves
+nowhere.
+
+**So this was not a stale label. Any install still on the default was talking
+to a host that does not exist**, and nothing on screen says so: requests fail,
+the plugin logs it, and the owner sees a blog that simply never publishes. It
+was found by a human reading a settings page, not by an alert.
+
+**TWO HALVES, AND THE SECOND IS THE ONE THAT REACHES REAL SITES.**
+
+Changing the default fixes new installs only. `self::get()` returns the STORED
+value whenever there is one, and the Connection screen writes to that same
+key — so an install that had ever saved the old address would keep it forever.
+Same shape as `site.business` on 30 September: written once, never refreshed.
+
+**NOT `register_activation_hook()`, and that is the whole point.** Updating a
+plugin by uploading a ZIP over a live one does not reliably fire the
+activation hook — the site is already active and stays active. A migration
+parked there runs for new installs and **silently skips every existing one**,
+which is exactly the population it was written for.
+
+So: a version check on `plugins_loaded`, comparing `ie_version` against
+`IE_VERSION`, doing the work when they differ and writing the version down.
+`plugins_loaded` rather than `admin_init` because a site nobody opens in
+wp-admin still needs it — the failure being fixed is a site that publishes
+nothing while its owner is not looking.
+
+**Also translated on READ**, not just migrated on upgrade. Belt and braces,
+and justified: it covers the window before the migration fires and a migration
+that failed for any reason, and the failure it guards against is total and
+silent.
+
+**A MAP OF MOVED HOSTS, not one comparison.** `moved_hosts()` returns
+`old host => current`, so the next rename is a line rather than an edit to two
+functions. Covers `www.` and `http://` forms.
+
+**A staging URL is left alone** — `localhost:3000`, `staging.threecomets.com`.
+The field stays overridable because a staging server is the only way to
+exercise a plugin change without spending real credits, and a migration that
+rewrote every address would take that away silently during an upgrade.
+
+`wp-plugin/test-server-url.php` is new (7 tests, in `deploy.sh`). Four
+mutations, four caught. One of its own tests failed first: it compared
+`strpos()` of the migration call against `strpos()` of
+`register_activation_hook` — and tripped over that phrase appearing in the
+COMMENT explaining why the hook is not used. Fixed to slice the
+`plugins_loaded` block out and look inside it. *A test that reads prose as
+code fails for its own reasons.*
+
+Verified on a real site: after the upgrade the Server field reads
+`https://threecomets.com` without anyone typing it.
+
+Suites: 66 / 70 / 34 / 9 / 7. `pluginPackage.js` builds the downloadable ZIP
+from source, so `./deploy.sh` also makes 0.15.0 what customers get.
 
 ## Eye Doctor, and the badge toggle — 30 September 2026
 

@@ -227,12 +227,42 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
   try {
     const { targetPage, topics, schedule, linkMode, extendsCampaign, name } = req.body || {};
 
-    if (!targetPage || !targetPage.url || !targetPage.keyword) {
+    /* A PILLAR CAMPAIGN HAS NO TARGET PAGE, AND IS NOT MISSING ONE.
+     *
+     * It writes the hub articles a later campaign will point at, so its posts
+     * carry only the ring they already had. See the flag on BlogCampaign for
+     * why pillars never link down to their children.
+     *
+     * READ FROM THE BODY AS A FLAG, never inferred from an absent targetPage.
+     * A client that forgot to send one is a bug, and treating the absence as
+     * intent would turn it into a campaign quietly missing a third of its
+     * links — a failure that only surfaces months later, as posts that never
+     * fed anything. */
+    const isPillar = req.body.isPillar === true || req.body.isPillar === 'true';
+
+    if (!isPillar && (!targetPage || !targetPage.url || !targetPage.keyword)) {
       return res.status(400).json({ error: 'A target page with a URL and keyword is required.' });
     }
 
     if (!Array.isArray(topics) || !topics.length) {
       return res.status(400).json({ error: 'At least one topic is required.' });
+    }
+
+    /* TWO IS THE FLOOR FOR A PILLAR CAMPAIGN, and nothing downstream would
+     * have caught one.
+     *
+     * With no money page and no sibling, a single post has NO outbound links
+     * at all — and it passes every check, because every link assertion in
+     * qualityCheck.js is conditional on the link having been asked for. An
+     * ordinary single-post campaign is fine: it still carries its money link.
+     *
+     * Refused here as well as in planCampaign() because this is where the
+     * customer finds out, with a sentence they can act on, rather than a 500
+     * from a thrown Error. */
+    if (isPillar && topics.length < 2) {
+      return res.status(400).json({
+        error: 'A pillar campaign needs at least two posts — they link to each other, so a single post would have no links at all.',
+      });
     }
 
     if (topics.length > 52) {
@@ -241,11 +271,16 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
       return res.status(400).json({ error: 'A campaign can hold at most 52 posts.' });
     }
 
-    // Anchors already pointing at this page from earlier runs. Passed so the
-    // planner does not reuse them: a second campaign repeating the first
-    // campaign's phrases adds link volume without adding any variety, which
-    // is the thing the anchor mix exists to produce.
-    const priorCampaigns = await BlogCampaign.find({
+    /* Anchors already pointing at this page from earlier runs. Passed so the
+     * planner does not reuse them: a second campaign repeating the first
+     * campaign's phrases adds link volume without adding any variety, which
+     * is the thing the anchor mix exists to produce.
+     *
+     * SKIPPED FOR A PILLAR CAMPAIGN. The query keys on targetPage.url, so with
+     * no target page it would match every OTHER pillar campaign on the site —
+     * all of which store '' — and feed their empty anchors in as "already
+     * used". There are no money anchors to avoid reusing. */
+    const priorCampaigns = isPillar ? [] : await BlogCampaign.find({
       site: req.site._id,
       'targetPage.url': String(targetPage.url),
     }).select('slots.moneyAnchor').lean();
@@ -276,6 +311,7 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
     const plan = planForCampaign({
       targetPage,
       topics,
+      isPillar,
       business: req.site.business || {},
       schedule: schedule || {},
       priorCampaigns,
@@ -296,11 +332,21 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
       user: req.site.user,
       site: req.site._id,
       name: String(name || '').slice(0, 200) || plan.suggestedName,
-      targetPage: {
-        url: String(targetPage.url),
-        keyword: String(targetPage.keyword),
-        intent: String(targetPage.intent || ''),
-      },
+      isPillar,
+
+      /* OMITTED, NOT WRITTEN EMPTY. The schema's `required` is now conditional
+       * on isPillar, so a sub-document of three empty strings would validate —
+       * and then buildLinkPlan() would read a url of '' and hand the writer a
+       * money link pointing nowhere. The absence has to stay an absence all
+       * the way down. */
+      ...(isPillar ? {} : {
+        targetPage: {
+          url: String(targetPage.url),
+          keyword: String(targetPage.keyword),
+          intent: String(targetPage.intent || ''),
+        },
+      }),
+
       linkMode: plan.linkMode,
       extendsCampaign: plan.linkMode === 'extend' ? extendsCampaign || null : null,
       schedule: plan.schedule,
@@ -337,6 +383,20 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
         status: s.status,
       })),
       quote,
+
+      /* ECHOED SO THE PLUGIN READS THE SERVER'S RECORD, NOT ITS OWN FORM.
+       *
+       * wp-admin posted the checkbox, so it already "knows" — and that is
+       * exactly the trap. Two copies of one fact, written by two sides, will
+       * disagree the first time a request is retried, a form is resubmitted,
+       * or this route rejects the flag for a reason the plugin did not model.
+       * The campaign that EXISTS is the only authority on what it is.
+       *
+       * IE_Campaigns::create_from_plan() reads it from here, and
+       * wp-plugin/test-pillar-plugin.php proves it prefers this over the
+       * form's own copy. */
+      isPillar: campaign.isPillar,
+
       // Shown in wp-admin so the customer knows the whole cost before they
       // approve, rather than after the third post fails.
       creditsAvailable: available,

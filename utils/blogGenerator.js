@@ -55,7 +55,7 @@ const { log } = require('./logger');
 // checkPost(post, slot), not the object-shaped ones an earlier draft of this
 // file invented.
 const { writePost } = require('./blog/writePost');
-const { checkPost, crossCheck } = require('./blog/qualityCheck');
+const { checkPost, crossCheck, worthRewriting } = require('./blog/qualityCheck');
 // applyLinks is NOT used here — the plugin substitutes tokens, so it can
 // esc_html the prose first. See the note on `rendered` below.
 const { buildLinkPlan } = require('./blog/linkPlan');
@@ -76,31 +76,20 @@ const { buildLinkPlan } = require('./blog/linkPlan');
 // called by the gap-fill route, and capped by slot.attempts.
 const WRITE_ATTEMPTS = Number(process.env.BLOG_WRITE_ATTEMPTS) || 2;
 
-/**
- * Faults worth spending another API call on.
+/* THE RETRY RULE LIVES IN qualityCheck.js NOW — moved 4 October.
  *
- * BY CODE, NOT BY MESSAGE. Matching on the text of a failure ties this rule to
- * the wording of a sentence somebody will reasonably reword one day, and the
- * retry would switch itself off with nothing to show for it.
+ * REWRITE_WORTHY and worthRewriting() were defined here, two files away from
+ * the fail() calls that raise the codes they name. A code renamed in one file
+ * and not the other left a set member that could never match, and nothing
+ * failed when that happened: the post just shipped unretried.
  *
- * What is here is what a different roll of the dice plausibly fixes: links
- * crowded into one paragraph, a post well short of the length asked for, a
- * required link dropped or altered. What is NOT here is deliberate: a "guide"
- * title, a how-to title, filler phrasing and vagueness are prompt problems,
- * and asking the same model the same question again mostly buys another
- * identical answer at twice the cost.
+ * And the rule could not be unit tested from here, because this file requires
+ * models/User.js and so requires Mongoose. The only check on it read this
+ * file as a STRING. qualityCheck.js requires nothing, so the rule is now
+ * asserted by calling it.
+ *
+ * worthRewriting is imported at the top of this file with checkPost.
  */
-const REWRITE_WORTHY = new Set([
-  'links-crowded',
-  'short',
-  'money-link',
-  'next-link',
-  'prev-link',
-]);
-
-function worthRewriting(quality) {
-  return (quality?.codes || []).some(code => REWRITE_WORTHY.has(code));
-}
 
 /**
  * Turn a written post into the payload the plugin receives.
@@ -128,11 +117,19 @@ function renderPayload(post, slot, targets) {
       paragraphs: (section.paragraphs || []).slice(),
     })),
 
-    // Where each token should point, in the shape IE_Links::render() reads.
-    // snake_case because it is consumed by PHP; every other field here is
-    // camelCase because it is consumed by JavaScript first.
+    /* Where each token should point, in the shape IE_Links::render() reads.
+     * snake_case because it is consumed by PHP; every other field here is
+     * camelCase because it is consumed by JavaScript first.
+     *
+     * THE THIRD UNCONDITIONAL MONEY READ, and the same asymmetry as the other
+     * two: prev and next are spread behind a test and money was not, because
+     * for as long as every campaign had a money page the test looked like
+     * dead weight. A pillar campaign has none, and this one would have thrown
+     * AFTER the model was paid for — the slot written, the credits taken, and
+     * the payload that carries it to WordPress unbuildable. The two in
+     * writePost.js at least fail before spending anything. */
     targets: {
-      money: { url: targets.money.url },
+      ...(targets.money ? { money: { url: targets.money.url } } : {}),
       ...(targets.prev ? {
         prev: targets.prev.url
           ? { url: targets.prev.url }
@@ -655,4 +652,13 @@ async function writeCampaign(job, { onProgress }) {
   };
 }
 
-module.exports = { writeCampaign, repairAroundFailures };
+/* renderPayload is exported FOR THE TESTS, and that is the honest reason.
+ *
+ * It builds the object the plugin receives, and the money target inside it was
+ * the third unconditional read of a value a pillar campaign does not have —
+ * the one that would have thrown after the model was already paid for. The
+ * alternative was a test that greps this file for the `targets.money ?`, and
+ * source greps have now missed four real bugs in this project. A test that
+ * CALLS the function cannot be fooled by the condition being written
+ * correctly and reached never. */
+module.exports = { writeCampaign, repairAroundFailures, renderPayload };

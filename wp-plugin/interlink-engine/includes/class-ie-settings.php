@@ -29,6 +29,22 @@ class IE_Settings {
 
 	const OPTION = 'ie_settings';
 
+	/**
+	 * Post meta marking a post as a PILLAR — a hub article a later campaign
+	 * can point at.
+	 *
+	 * ONE CONSTANT, BECAUSE THREE FILES NEED THE SAME STRING. The publisher
+	 * writes it, target_pages() below queries it, and the admin screen reads
+	 * it to label a dropdown row. A key spelled out in three places is a key
+	 * that gets renamed in two of them — and the failure is silent: the post
+	 * is stamped, the query finds nothing, and the dropdown is simply missing
+	 * a row with no error anywhere to say why.
+	 *
+	 * Underscore-prefixed, so it stays out of WordPress's Custom Fields box.
+	 * The owner has no decision to make here; the campaign already made it.
+	 */
+	const PILLAR_META = '_ie_is_pillar';
+
 	private static function all() {
 		$s = get_option( self::OPTION, array() );
 		return is_array( $s ) ? $s : array();
@@ -175,7 +191,21 @@ class IE_Settings {
 	 * something. On any other WordPress it falls back to every published page
 	 * and the owner picks.
 	 *
-	 * Returns [ id => array( 'title', 'url', 'keyword', 'type' ) ].
+	 * PILLAR POSTS ARE IN HERE TOO, and that is the whole reason this function
+	 * was touched. A pillar campaign writes hub articles as ordinary POSTS —
+	 * a pillar is content, not a template, and 'post_type' => 'post' is
+	 * hardcoded in four places in the publisher. This query asked for
+	 * post_type 'page' only, so a pillar could be published, ringed and live
+	 * and still be unselectable: campaign 2 would have had nothing to point
+	 * at, which is the entire point of having written the pillar.
+	 *
+	 * PUBLISHED ONLY, for pillars more than for pages. A pillar campaign
+	 * schedules its posts weeks out, and a `future` post has a permalink that
+	 * returns 404 to the public. Offering one would let the owner aim ten
+	 * articles at a URL that does not answer yet, and nothing downstream
+	 * re-checks it — the links are written once.
+	 *
+	 * Returns [ id => array( 'title', 'url', 'keyword', 'type', 'is_pillar' ) ].
 	 */
 	public static function target_pages() {
 		$out = array();
@@ -201,12 +231,46 @@ class IE_Settings {
 			}
 
 			$out[ $page->ID ] = array(
-				'title'   => get_the_title( $page ),
-				'url'     => get_permalink( $page ),
+				'title'     => get_the_title( $page ),
+				'url'       => get_permalink( $page ),
 				// A first guess the owner can correct. On a generated service
 				// page the title IS the keyword nearly every time.
-				'keyword' => strtolower( get_the_title( $page ) ),
-				'type'    => $type,
+				'keyword'   => strtolower( get_the_title( $page ) ),
+				'type'      => $type,
+				'is_pillar' => false,
+			);
+		}
+
+		$pillars = get_posts( array(
+			'post_type'      => 'post',
+			'post_status'    => 'publish',
+			'posts_per_page' => 200,
+			'meta_key'       => self::PILLAR_META,   // phpcs:ignore WordPress.DB.SlowDBQuery
+			'meta_value'     => '1',                 // phpcs:ignore WordPress.DB.SlowDBQuery
+			'orderby'        => 'date',
+			'order'          => 'ASC',
+		) );
+
+		foreach ( $pillars as $pillar ) {
+			/* A FLAG, NOT A DECORATED TITLE.
+			 *
+			 * The obvious shortcut is 'title' => get_the_title() . ' (pillar)'
+			 * so the dropdown reads well — and that title does not stay in the
+			 * dropdown. read_form() stores it, it becomes the campaign's
+			 * label, and it is sent to the server as targetPage.title, which
+			 * writePost drops into the sentence "It becomes a link to the X
+			 * page". Every post in the silo would then refer to "the Leash
+			 * Pulling and Walking Problems (pillar) page".
+			 *
+			 * So the marker belongs where it is displayed, not where it is
+			 * stored. The admin screen adds it when drawing the option. */
+			$out[ $pillar->ID ] = array(
+				'title'     => get_the_title( $pillar ),
+				'url'       => get_permalink( $pillar ),
+				'keyword'   => strtolower( get_the_title( $pillar ) ),
+				// Not a theme page type — a pillar is a post and has none.
+				'type'      => '',
+				'is_pillar' => true,
 			);
 		}
 

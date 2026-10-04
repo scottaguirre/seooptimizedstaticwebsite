@@ -3,7 +3,7 @@
  * Plugin Name:       Three Comets Blog Generator
  * Plugin URI:        https://threecomets.com
  * Description:       Plans a quarter of blog posts, writes them all at once, schedules them across the weeks, and wires every one into the service page you want to rank.
- * Version:           0.15.0
+ * Version:           0.21.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Three Comets
@@ -441,7 +441,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'IE_VERSION', '0.15.0' );
+define( 'IE_VERSION', '0.21.0' );
 define( 'IE_FILE', __FILE__ );
 define( 'IE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IE_URL', plugin_dir_url( __FILE__ ) );
@@ -453,6 +453,34 @@ require_once IE_DIR . 'includes/class-ie-campaigns.php';
 require_once IE_DIR . 'includes/class-ie-links.php';
 require_once IE_DIR . 'includes/class-ie-publisher.php';
 require_once IE_DIR . 'includes/class-ie-rest.php';
+require_once IE_DIR . 'includes/class-ie-seo.php';
+require_once IE_DIR . 'includes/class-ie-hygiene.php';
+require_once IE_DIR . 'includes/class-ie-metabox.php';
+
+/* The <title> and the meta description, for every theme that does not read
+ * the plugin's meta itself — which is every theme but the generated ones.
+ *
+ * NOT behind is_admin(), and the hooks it registers only fire on the front
+ * end anyway. Registering it unconditionally keeps the class loaded for
+ * anything that wants to ask whether another SEO plugin is present. */
+IE_SEO::boot();
+
+/* The author archive and the category archives — out of wp-sitemap.xml, out
+ * of the index, and in the author's case out of existence.
+ *
+ * Decides for itself whether this is a site the plugin built, by asking
+ * whether anything published here lacks `_ie_campaign`. On somebody's own
+ * site every hook it registers returns without doing anything. */
+IE_Hygiene::boot();
+
+/* The box for editing the title tag and the meta description.
+ *
+ * Registered outside the is_admin() block below on purpose: save_post fires
+ * for the REST request the block editor makes, and whether that counts as
+ * admin has changed between WordPress versions. Its own hooks only do
+ * anything on the editor screen and on a save, so loading it always costs
+ * nothing and removes a class of version-dependent silence. */
+IE_Metabox::boot();
 
 if ( is_admin() ) {
 	require_once IE_DIR . 'includes/class-ie-admin.php';

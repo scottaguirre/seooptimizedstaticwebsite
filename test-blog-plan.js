@@ -23,6 +23,7 @@ const { publishDates } = require('./utils/blog/schedule');
 const { buildLinkPlan } = require('./utils/blog/linkPlan');
 const { applyLinks, activate, pendingIds } = require('./utils/blog/links');
 const { checkPost } = require('./utils/blog/qualityCheck');
+const { slugify, uniqueSlugs } = require('./utils/blog/planCampaign');
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -336,6 +337,133 @@ test('activating a topic the post does not reference changes nothing', () => {
   const result = activate(html, 'slot-99', 'https://example.com/other/');
   assert.strictEqual(result.count, 0, 'should not have touched anything');
   assert.strictEqual(result.html, html);
+});
+
+/* =====================================================================
+ * slugify() — the URL a person reads before clicking it
+ *
+ * UNTESTED UNTIL 4 OCTOBER. `planCampaign.slugify` had no test of any kind;
+ * the two `slugify` hits in the suite belong to `utils/slugify.js`, a
+ * different function. The mid-word truncation below was live on a real post
+ * and was found by reading the page, not by running anything.
+ * ===================================================================== */
+
+const REAL_TITLE =
+  'What Information Do You Need for a Loan Application: A Complete Preparation Guide';
+
+test('A LONG SLUG IS CUT AT A WORD BOUNDARY, NOT MID-WORD', () => {
+  /* THE BUG, FROM THE LIVE SITE:
+   *
+   *   /what-information-do-you-need-for-a-loan-application-a-complete-prepara/
+   *
+   * "preparation" became "prepara" because .slice(0, 70) cut the 70th
+   * character wherever it happened to fall. */
+  const slug = slugify(REAL_TITLE);
+
+  assert.ok(slug.length <= 70, `slug is ${slug.length} chars`);
+  assert.ok(!slug.endsWith('-'), 'slug ends in a separator');
+  assert.ok(!/prepara$/.test(slug), `still cutting mid-word: ${slug}`);
+
+  const words = REAL_TITLE.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ');
+
+  // Every segment must be a whole word from the title.
+  const inTitle = new Set(words);
+  for (const part of slug.split('-')) {
+    assert.ok(inTitle.has(part), `"${part}" is not a whole word from the title`);
+  }
+
+  /* AND IT MUST BE THE LONGEST SUCH SLUG THAT FITS — the assertion the first
+   * version of this test was missing, found by mutation.
+   *
+   * Replacing lastIndexOf('-') with indexOf('-') cuts at the FIRST dash, so
+   * the whole slug becomes "what". That is under 70 characters, ends in no
+   * separator, is not "prepara", and is a whole word from the title — it
+   * satisfied every check above. A rule that only forbids cutting badly is
+   * happy with cutting almost everything.
+   *
+   * The property is maximality: putting the next word back must overflow. */
+  const kept = slug.split('-').length;
+  assert.ok(kept > 1, `slug collapsed to a single word: ${slug}`);
+  assert.ok(kept < words.length, 'nothing was trimmed — this title is meant to be too long');
+
+  const withOneMore = `${slug}-${words[kept]}`;
+  assert.ok(withOneMore.length > 70,
+    `slug is shorter than it needed to be: "${slug}" (${slug.length}), and `
+    + `"${withOneMore}" (${withOneMore.length}) would still have fitted`);
+});
+
+test('A CUT THAT LANDS ON THE JOIN KEEPS THE WHOLE WORD', () => {
+  /* FOUND ON THE LIVE SITE, NOT HERE — and the test above is why it got out.
+   *
+   * That one asserts the slug is a MAXIMAL prefix: putting the next word back
+   * must overflow. This title satisfies it and was still wrong, because the
+   * question "could a word be added?" and the question "was a word removed
+   * that did not need removing?" are not the same question.
+   *
+   * The 70th character of this title's slug is the separator itself, so
+   * "financial" fitted exactly and nothing was broken. The trim ran anyway
+   * and deleted it:
+   *
+   *   wanted  …-may-not-make-financial   (70)
+   *   got     …-may-not-make             (60)
+   *
+   * Ten characters of a real title thrown away by an off-by-one. */
+  const title = 'Benefits of Paying Off a Loan Early—and When It May Not Make Financial Sense';
+  const slug = slugify(title);
+
+  assert.strictEqual(slug, 'benefits-of-paying-off-a-loan-early-and-when-it-may-not-make-financial');
+  assert.strictEqual(slug.length, 70, `dropped a word that fitted: ${slug}`);
+});
+
+test('a slug inside the limit keeps its last word', () => {
+  /* THE MUTATION THIS EXISTS FOR. Trimming to the last dash unconditionally
+   * passes the test above and silently deletes the final word of every short
+   * slug — far more damaging than the bug being fixed, and invisible without
+   * this case. */
+  assert.strictEqual(slugify('Loan Terms Explained'), 'loan-terms-explained');
+  assert.strictEqual(slugify('Hard Water'), 'hard-water');
+  assert.strictEqual(slugify('Fees'), 'fees');
+
+  // Exactly at the limit: 70 characters, nothing to trim.
+  const exact = 'a'.repeat(35) + ' ' + 'b'.repeat(34);   // 35 + 1 + 34 = 70
+  assert.strictEqual(slugify(exact).length, 70);
+  assert.strictEqual(slugify(exact), 'a'.repeat(35) + '-' + 'b'.repeat(34));
+});
+
+test('one word longer than the limit keeps the hard cut', () => {
+  /* No dash to back up to. A truncated slug beats an empty one — WordPress
+   * given '' invents a slug from the post id. */
+  const slug = slugify('x'.repeat(90));
+  assert.strictEqual(slug.length, 70);
+  assert.strictEqual(slug, 'x'.repeat(70));
+});
+
+test('the apostrophe rule still holds, and so does the rest', () => {
+  /* Guarding the behaviour the docblock describes, which had no test either.
+   * "leander-s-hard-water" is the fault it was written to stop. */
+  assert.strictEqual(slugify("Leander's Hard Water"), 'leanders-hard-water');
+  assert.strictEqual(slugify('Leander’s Hard Water'), 'leanders-hard-water');
+  assert.strictEqual(slugify('  Spaced  Out  '), 'spaced-out');
+  assert.strictEqual(slugify('APR, Fees & Interest'), 'apr-fees-interest');
+  assert.strictEqual(slugify(''), '');
+  assert.strictEqual(slugify(null), '');
+  assert.strictEqual(slugify(undefined), '');
+});
+
+test('shortening a slug cannot silently collide', () => {
+  /* TRIMMING TO A WORD BOUNDARY MAKES COLLISIONS MORE LIKELY, because two
+   * titles that differed only in their truncated tail now produce the same
+   * base. uniqueSlugs() already suffixes duplicates; this asserts the two
+   * changes work together rather than assuming it. */
+  const long = 'What Information Do You Need for a Loan Application A Complete';
+  const slugs = uniqueSlugs([
+    { title: long + ' Preparation Guide' },
+    { title: long + ' Preparation Checklist' },
+  ]);
+
+  assert.strictEqual(slugs.length, 2);
+  assert.notStrictEqual(slugs[0], slugs[1], 'two posts were given the same slug');
+  assert.match(slugs[1], /-2$/);
 });
 
 /* ===================================================================== */

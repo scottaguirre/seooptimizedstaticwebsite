@@ -202,10 +202,52 @@ const blogCampaignSchema = new mongoose.Schema({
 
   name: { type: String, default: '' },
 
-  // The money page every post in this campaign links to.
+  /**
+   * THIS CAMPAIGN HAS NO MONEY PAGE, AND IS NOT MISSING ONE.
+   *
+   * A pillar campaign writes the hub articles a later campaign will point at.
+   * There is nothing to sell yet — no business, no service page, no target —
+   * so its posts link only to each other, around the ring that every campaign
+   * already has.
+   *
+   * WHY THE RING IS ENOUGH. Each post normally carries three links: back,
+   * forward, and the money page. Dropping the third leaves a closed loop in
+   * which every post has an inbound link from a sibling, which is the only
+   * structural guarantee the ring was ever making. buildLinkPlan() builds
+   * prev/next from neighbouring slots and never consults targetPage, so the
+   * two halves were already independent; nothing had to be invented.
+   *
+   * WHY PILLARS NEVER LINK DOWN TO THEIR CHILDREN, which is the decision this
+   * whole flag exists to make possible. A hub that lists its children has to
+   * be REWRITTEN every time a later campaign adds more, because the list lives
+   * inside post_content as frozen HTML. Pillars link sideways and children
+   * link up; every link is written once, when its own post is written, and is
+   * correct for ever. There is no list to maintain and so no rewrite to get
+   * wrong.
+   *
+   * Pillars are ordinary WordPress POSTS, not Pages. A pillar is content, not
+   * a template, and 'post_type' => 'post' is hardcoded in four places in
+   * class-ie-publisher.php. Pages would have bought tidiness — out of the
+   * feed, no byline — at the price of four hardcoded lines; the tidiness is a
+   * permalink setting instead.
+   */
+  isPillar: { type: Boolean, default: false },
+
+  /**
+   * The money page every post in this campaign links to.
+   *
+   * REQUIRED ONLY WHEN THERE IS ONE TO REQUIRE. A pillar campaign has no
+   * target page, and `required: true` is what used to make that unsayable —
+   * the model refused the document before any route could decide whether the
+   * absence was a mistake.
+   *
+   * `this` is the campaign, not a sub-document: targetPage is a nested path on
+   * this schema rather than a Schema of its own, so the validator can see the
+   * flag above it.
+   */
   targetPage: {
-    url: { type: String, required: true },
-    keyword: { type: String, required: true },
+    url: { type: String, required: function () { return !this.isPillar; } },
+    keyword: { type: String, required: function () { return !this.isPillar; } },
     // One sentence on what someone searching this actually wants. Steers the
     // model away from posts that are technically on-topic and commercially
     // useless.
