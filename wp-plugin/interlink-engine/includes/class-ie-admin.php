@@ -2117,6 +2117,41 @@ class IE_Admin {
 						 */
 						?>
 						<p class="description"><?php esc_html_e( 'Every post will link to it.', 'interlink-engine' ); ?></p>
+
+						<?php
+						/**
+						 * THE ESCAPE HATCH, NOT A REPLACEMENT FOR THE LIST.
+						 *
+						 * The dropdown offers every published page plus every
+						 * post this plugin stamped as a pillar. An owner whose
+						 * hub is a post they wrote themselves has nothing to
+						 * pick, and the campaign cannot be aimed at the one
+						 * page on the site that matters.
+						 *
+						 * Underneath the list rather than beside it, because
+						 * for almost everybody the list is right and a second
+						 * equal-looking control would only invite a choice
+						 * nobody needs to make.
+						 */
+						?>
+						<p style="margin-top:12px">
+							<label for="ie_target_url" style="display:block;margin-bottom:4px;">
+								<?php esc_html_e( 'Or paste a URL from this site', 'interlink-engine' ); ?>
+							</label>
+							<?php
+							// The draft first, then whatever the failing redirect carried back.
+							$ie_typed_url = $value( 'target_url' );
+							if ( '' === $ie_typed_url && isset( $_GET['target_url'] ) ) {
+								$ie_typed_url = esc_url_raw( wp_unslash( $_GET['target_url'] ) );
+							}
+							?>
+							<input type="url" name="target_url" id="ie_target_url" class="regular-text"
+								placeholder="<?php echo esc_attr( home_url( '/some-article/' ) ); ?>"
+								value="<?php echo esc_attr( $ie_typed_url ); ?>">
+							<span class="description" style="display:block">
+								<?php esc_html_e( 'For a post that is not in the list above. Leave blank to use the list. Copy it from the address bar while viewing the page.', 'interlink-engine' ); ?>
+							</span>
+						</p>
 					</td>
 				</tr>
 				<tr class="ie-needs-target">
@@ -2682,6 +2717,113 @@ class IE_Admin {
 		);
 	}
 
+	/**
+	 * Why the last read_form() returned null, when "no page chosen" is wrong.
+	 *
+	 * read_form() answers null for every failure and three handlers turn that
+	 * into "Choose a page for the campaign to feed." That is the right
+	 * sentence when the dropdown was left alone and a useless one when the
+	 * owner pasted a URL that did not resolve — they DID choose, and the
+	 * message tells them to do the thing they just did.
+	 */
+	private static $form_error = '';
+
+	/** The message for the last failure, or '' to use the caller's default. */
+	public static function form_error() {
+		return self::$form_error;
+	}
+
+	/**
+	 * Redirect arguments that put the owner back where they were.
+	 *
+	 * Reads $_POST rather than taking a parameter, because all three callers
+	 * are handling the same submission and none of them has the value — it
+	 * was read and rejected inside read_form(). esc_url_raw on the way out as
+	 * well as on the way in: this lands in a URL the browser will follow, and
+	 * the value failed validation moments ago.
+	 */
+	private static function failed_url_args() {
+		$args = array( 'tab' => 'new' );
+
+		$typed = isset( $_POST['target_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['target_url'] ) ) ) : '';
+
+		if ( '' !== $typed ) {
+			$args['target_url'] = $typed;
+		}
+
+		return $args;
+	}
+
+	/**
+	 * A URL typed into the box, turned into a post id.
+	 *
+	 * WHY THIS BOX EXISTS. IE_Settings::target_pages() offers every published
+	 * PAGE plus every published post carrying `_ie_is_pillar`, and only this
+	 * plugin ever stamps that. So an owner whose hub is a post they wrote by
+	 * hand has nothing to select, and the campaign cannot be aimed at the one
+	 * page on the site that matters. Edwin asked for this on 4 October.
+	 *
+	 * RESOLVED TO A REAL POST, NOT ACCEPTED AS TEXT — and that decision is
+	 * the whole design. The first sketch stored the typed string as
+	 * targetPage.url and asked the owner for a keyword and a title alongside
+	 * it, which meant three new fields, a second shape for everything
+	 * downstream to understand, and no way at all to notice a typo. A typo
+	 * there is not cosmetic: nothing re-checks a link after it is written, so
+	 * every post in the silo would point at a 404 and the first anyone knew
+	 * would be weeks later.
+	 *
+	 * url_to_postid() answers the question properly. What comes back is an
+	 * ordinary post id, so the title and the keyword come from the post
+	 * itself and NOTHING DOWNSTREAM LEARNS THERE WAS A SECOND WAY IN.
+	 *
+	 * It also refuses, for free, everything that needed refusing: another
+	 * site's URL, a mistyped slug, an archive, a category. There is no
+	 * home-URL comparison here because there is nothing to compare — a URL
+	 * that is not on this site resolves to nothing.
+	 *
+	 * @param string $raw what was typed
+	 * @return int the post id, or 0 with self::$form_error set
+	 */
+	private static function resolve_target_url( $raw ) {
+		$url = esc_url_raw( trim( $raw ) );
+
+		if ( '' === $url ) {
+			return 0;
+		}
+
+		$id = (int) url_to_postid( $url );
+
+		/* THE FRONT PAGE RESOLVES TO NOTHING, and on a blog built by this
+		 * plugin the front page is a pillar — the likeliest thing anyone
+		 * pastes. url_to_postid() answers 0 for the site root because the
+		 * root is a setting rather than a permalink. */
+		if ( ! $id && untrailingslashit( $url ) === untrailingslashit( home_url( '/' ) ) ) {
+			$id = (int) get_option( 'page_on_front' );
+		}
+
+		if ( ! $id ) {
+			self::$form_error = __( 'That URL does not match a post or page on this site. Copy it from the address bar while viewing the page.', 'interlink-engine' );
+			return 0;
+		}
+
+		$post = get_post( $id );
+
+		if ( ! $post || ! in_array( $post->post_type, array( 'post', 'page' ), true ) ) {
+			self::$form_error = __( 'That URL is not a post or a page.', 'interlink-engine' );
+			return 0;
+		}
+
+		/* PUBLISHED ONLY, for the same reason target_pages() is.
+		 * A scheduled or draft post has a URL that returns 404 to the public,
+		 * and a silo aimed at one would spend a quarter linking to nothing. */
+		if ( 'publish' !== $post->post_status ) {
+			self::$form_error = __( 'That page is not published yet. Publish it first, then point the campaign at it.', 'interlink-engine' );
+			return 0;
+		}
+
+		return $id;
+	}
+
 	/** The shared part of both submit buttons: what the form said about the page. */
 	private static function read_form() {
 		/* A PILLAR CAMPAIGN HAS NO TARGET PAGE, AND IS NOT MISSING ONE.
@@ -2725,8 +2867,25 @@ class IE_Admin {
 			);
 		}
 
-		$page_id = isset( $_POST['target_page_id'] ) ? (int) $_POST['target_page_id'] : 0;
-		$page    = $page_id ? get_post( $page_id ) : null;
+		self::$form_error = '';
+
+		/* THE TYPED URL WINS WHEN THERE IS ONE, the same way the keyword and
+		 * intent text boxes already beat their dropdowns. One rule for all
+		 * three: a box someone has typed in is a decision, and a select left
+		 * alone is not. */
+		$page_id = self::resolve_target_url(
+			isset( $_POST['target_url'] ) ? (string) wp_unslash( $_POST['target_url'] ) : ''
+		);
+
+		if ( ! $page_id && '' !== self::$form_error ) {
+			return null;
+		}
+
+		if ( ! $page_id ) {
+			$page_id = isset( $_POST['target_page_id'] ) ? (int) $_POST['target_page_id'] : 0;
+		}
+
+		$page = $page_id ? get_post( $page_id ) : null;
 
 		if ( ! $page ) {
 			return null;
@@ -2738,6 +2897,17 @@ class IE_Admin {
 			// question of either shape without an isset() first.
 			'home_page'      => false,
 			'target_page_id' => $page_id,
+
+			/* KEPT SO THE DRAFT CAN PUT IT BACK, and without it the feature
+			 * breaks on its second step rather than its first.
+			 *
+			 * "Review topics" stores this array and re-renders the form. A
+			 * URL-chosen page is BY DEFINITION not in the dropdown, so
+			 * nothing would be selected and the box would be empty — and the
+			 * next submit would fall through to the dropdown, find nothing,
+			 * and refuse a campaign the owner had already set up correctly. */
+			'target_url'     => isset( $_POST['target_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['target_url'] ) ) ) : '',
+
 			// Empty means "use the page's own title", cleaned. Nobody should
 			// have to retype a phrase the plugin can already see.
 			'keyword'        => self::read_keyword( $page ),
@@ -2798,7 +2968,17 @@ class IE_Admin {
 
 		$form = self::read_form();
 		if ( ! $form ) {
-			self::redirect( 'interlink-engine', 'error', __( 'Choose a page for the campaign to feed.', 'interlink-engine' ), array( 'tab' => 'new' ) );
+			/* THE TYPED URL TRAVELS BACK WITH THE ERROR. Without it the box
+			 * is empty on the page that says the URL was wrong, so the owner
+			 * is told to fix something they can no longer see. The draft
+			 * transient cannot help here — it is only written once the form
+			 * has been accepted, which is exactly what did not happen. */
+			self::redirect(
+				'interlink-engine',
+				'error',
+				self::form_error() ? self::form_error() : __( 'Choose a page for the campaign to feed.', 'interlink-engine' ),
+				self::failed_url_args()
+			);
 		}
 
 		$topics = self::collect_topics();
@@ -2839,7 +3019,17 @@ class IE_Admin {
 
 		$form = self::read_form();
 		if ( ! $form ) {
-			self::redirect( 'interlink-engine', 'error', __( 'Choose a page for the campaign to feed.', 'interlink-engine' ), array( 'tab' => 'new' ) );
+			/* THE TYPED URL TRAVELS BACK WITH THE ERROR. Without it the box
+			 * is empty on the page that says the URL was wrong, so the owner
+			 * is told to fix something they can no longer see. The draft
+			 * transient cannot help here — it is only written once the form
+			 * has been accepted, which is exactly what did not happen. */
+			self::redirect(
+				'interlink-engine',
+				'error',
+				self::form_error() ? self::form_error() : __( 'Choose a page for the campaign to feed.', 'interlink-engine' ),
+				self::failed_url_args()
+			);
 		}
 
 		/* THERE IS NOTHING TO SUGGEST FROM.
@@ -2930,7 +3120,17 @@ class IE_Admin {
 
 		$form = self::read_form();
 		if ( ! $form ) {
-			self::redirect( 'interlink-engine', 'error', __( 'Choose a page for the campaign to feed.', 'interlink-engine' ), array( 'tab' => 'new' ) );
+			/* THE TYPED URL TRAVELS BACK WITH THE ERROR. Without it the box
+			 * is empty on the page that says the URL was wrong, so the owner
+			 * is told to fix something they can no longer see. The draft
+			 * transient cannot help here — it is only written once the form
+			 * has been accepted, which is exactly what did not happen. */
+			self::redirect(
+				'interlink-engine',
+				'error',
+				self::form_error() ? self::form_error() : __( 'Choose a page for the campaign to feed.', 'interlink-engine' ),
+				self::failed_url_args()
+			);
 		}
 
 		$is_pillar   = ! empty( $form['is_pillar'] );

@@ -733,6 +733,48 @@ COVERED BY TESTS OF THE BEHAVIOUR IT DRIVES IF THOSE TESTS SUPPLY THE FIELD.**
 Now there is a test that reads the form with the box unticked and asserts the
 key is `false` rather than absent.
 
+### NEXT — number the options in the target-page dropdown, 4 October
+
+**Agreed with Edwin, 4 October. Small, and specified.** He asked, then chose
+between the readings himself:
+
+> *"Number the options — '1. Home loans · 2. Refinancing' — so you can refer
+> to a page by number instead of a long title."*
+
+**Presentation only.** Not a count of campaigns per page, not a separate list
+screen — both were offered and neither is what he meant.
+
+#### THE RULE THIS MUST FOLLOW, AND IT IS ALREADY WRITTEN DOWN ONCE
+
+**THE NUMBER IS ADDED WHERE IT IS DISPLAYED AND NEVER STORED.** The " —
+pillar" marker in the same dropdown has a docblock explaining exactly this,
+and the reason applies unchanged:
+
+`read_form()` keeps the selected page's title, it becomes the campaign's
+label, and it travels to the server as `targetPage.title`, which `writePost`
+drops into the sentence *"It becomes a link to the X page"*. A decorated title
+means every post in the silo refers to **"the 3. Home Loans page"**.
+
+So the number goes in the `<option>` text in `class-ie-admin.php`, beside
+where the pillar marker is added, and nowhere else. `target_pages()` returns
+the real title and keeps returning it.
+
+#### RAISED AND ACCEPTED — do not bring it up again
+
+**The number is a position in the list, not an identity.** `target_pages()`
+orders pages by `menu_order title` and appends pillars by date. Publish a new
+page, rename one, or add a pillar, and the numbering shifts — what was 3
+yesterday is 4 today.
+
+That is fine for its stated purpose, reading a long list and saying "the third
+one" in the same sitting. It is not a stable reference, so it must not be
+written down anywhere as if it were, and it should not appear in the campaign
+record or in any message the owner might act on later.
+
+**Edwin was told this and accepted it:** *"fine with this: The number is a
+position in the list, not an identity."* It is settled — do not re-raise it as
+a concern, and do not build stability it was never meant to have.
+
 ### PROMPT AND QUALITY-RULE WORK — Edwin's own day, 4 October
 
 **DO NOT BUILD ANY OF THIS WITHOUT HIM.** His words: *"do not build the
@@ -927,7 +969,16 @@ not exist on the machine reporting the error.
 
 ### Editing the title and description, and taking precedence — 4 October, plugin 0.21.0
 
-**NOT YET INSTALLED.** Plugin only; no server change.
+**INSTALLED AND CONFIRMED LIVE, 4 October.** Edwin opened a published post,
+edited the title in the new box, saved, and the change appeared on the live
+page. Plugin only; no server change.
+
+**WHAT IS STILL ONLY COVERED BY TESTS: the precedence half.** Edwin runs no
+SEO plugin, so the four vendor filters have never fired on a real site. The
+hook names were read from the vendors' documentation and are asserted by a
+test, but nothing has yet proved that Yoast or Rank Math actually calls them
+in a live install. **The first customer with Yoast is the first real run of
+that path** — worth checking deliberately rather than discovering.
 
 #### THE GAP: THEY COULD NOT BE EDITED AT ALL
 
@@ -1381,40 +1432,88 @@ the exact bug this release fixed for Kadence, surviving on those two plugins.**
 Edwin's answer when this was raised: not yet — see the note below on target
 pages, which he asked to defer in the same breath.
 
-#### Open — a target page the dropdown cannot offer
+#### A target page chosen by pasting its URL — plugin 0.22.0, INSTALLED
 
-**Edwin asked for this on 4 October and explicitly deferred it:** *"Maybe if we
-provide a text area where the user can enter the url he wants to use as pillar
-that doesn't show in the dropdown because it's a hand written post. Just save it
-for now and we can do it afterwards."*
+Asked for and deferred earlier the same day; built that evening when Edwin
+came back to it, and uploaded the same night.
 
-**The limitation, confirmed by reading `IE_Settings::target_pages()`.** It runs
-two queries and offers their union: every published **page** (no theme
-condition at all — a hand-built page on any theme is already selectable), and
-every published **post carrying `_ie_is_pillar`**. Only this plugin stamps that
-meta. So a customer whose hub is a hand-written POST has nothing to select, and
-the campaign cannot be aimed at the one page on the site that matters.
+**INSTALLED BUT NOT YET EXERCISED.** The ZIP is up; nobody has pasted a URL
+into the box on a real site. Everything below is covered by tests and by
+nothing else. The cheapest confirmation is one campaign form: paste the URL of
+a published post that is NOT in the dropdown and check it is accepted, then
+paste a deliberate typo and check it is refused with a message rather than
+quietly planning against whatever the dropdown held.
 
-The shape Edwin wants: a free-text URL field on the campaign form, used when
-the dropdown has nothing right.
+**THE LIMITATION.** `IE_Settings::target_pages()` offers every published PAGE
+plus every published post carrying `_ie_is_pillar`, and only this plugin ever
+stamps that. An owner whose hub is a post they wrote by hand has nothing to
+select, and the campaign cannot be aimed at the one page on the site that
+matters.
 
-**What it will have to deal with, since none of it is free:**
+**RESOLVED TO A POST ID, NOT STORED AS TEXT — and that is the whole design.**
+The sketch in the deferred note had the typed string stored as
+`targetPage.url` with the owner asked for a keyword and a title beside it:
+three new fields, a second shape for everything downstream, and no way to
+notice a typo. `url_to_postid()` asks the question properly. What comes back
+is an ordinary post id, so the title and keyword come from the post itself and
+**nothing downstream learns there was a second way in.**
 
-- The dropdown supplies `title`, `keyword`, `url`, `type` and `is_pillar`. A
-  typed URL supplies one of those five. `keyword` is what `writePost` drops
-  into *"It becomes a link to the X page"*, so it cannot be left empty —
-  either ask for it alongside, or derive it and let the owner correct it, which
-  is what the dropdown already does with `strtolower( get_the_title() )`.
-- **A URL typed by hand can be wrong, and nothing downstream re-checks it** —
-  the links are written once. The same reasoning that made `target_pages()`
-  published-only applies here with more force: a typo means every post in the
-  silo links to a 404, discovered weeks later.
-- Whether an off-site URL is allowed. Probably not, and refusing needs a
-  home-URL comparison rather than silence.
+It also refuses, for free, everything the deferred note worried about:
 
-**Do not build this as a replacement for the dropdown.** It is the escape
-hatch for the case the dropdown cannot see, and the dropdown is right for
-everything else.
+- another site's URL — resolves to nothing, so there is no home-URL
+  comparison to write and none to get wrong
+- a mistyped slug — resolves to nothing
+- an archive, a category, a search page — not permalinks
+
+Plus two refusals of its own: **not a post or page** (url_to_postid resolves
+attachments and custom types too) and **not published** — the same rule
+`target_pages()` follows, because a draft's URL 404s to the public and a silo
+aimed at one spends a quarter linking to nothing.
+
+The front page is special-cased: `url_to_postid()` answers 0 for the site root
+because the root is a setting rather than a permalink, and on a blog built by
+this plugin the front page is a pillar — the likeliest thing anyone pastes.
+
+**Two things that only show up on the second step, both fixed before shipping:**
+
+- The rejected URL travels back with the error. Without it the box is empty on
+  the page telling the owner their URL was wrong — they are asked to fix
+  something they can no longer see. The draft transient cannot help: it is
+  written only once the form has been accepted, which is exactly what did not
+  happen.
+- The resolved URL is kept in the stored form. **A URL-chosen page is by
+  definition not in the dropdown**, so after "Review topics" nothing would be
+  selected and the box would be empty — and the next submit would fall through
+  to the dropdown, find nothing, and refuse a campaign already set up
+  correctly. The feature would have broken on its second step, not its first.
+
+##### THE MUTATION THAT FOUND A SILENT WRONG TARGET
+
+Removing the early return after a failed resolve **survived**. Every test had
+posted a bad URL with no dropdown value, so the fall-through still ended in
+null and they all passed.
+
+The gap only shows when both are present — **which is the ordinary case,
+because the dropdown always posts whatever it is showing.** A mistyped URL
+would then stop being an error: the code falls through, finds the dropdown's
+page, and plans a whole campaign aimed somewhere the owner did not choose. No
+message, no sign, and nothing re-checks a link after it is written.
+
+A second survivor, the post-type check, was untestable because the stub only
+modelled posts and pages. **8 mutations, 6 caught, both survivors turned into
+tests and now caught.**
+
+`test-admin-tabs.php` 82 → **93**.
+
+##### Two harness notes worth keeping
+
+- **`has()` takes its arguments the other way round in `test-admin-tabs.php`**
+  — `has( $haystack, $needle )` there, `has( $needle, $haystack )` in
+  `test-pillar-plugin.php`. Three tests were written the wrong way first.
+- The `url_to_postid` stub answers 0 for anything that is not a permalink on
+  the fixture site, deliberately. A stub that resolved anything with a number
+  in it would make the off-site refusal untestable and leave the suite green
+  on a feature that accepted other people's URLs.
 
 ### Publish all — 3 October, plugin 0.17.0, shipped
 

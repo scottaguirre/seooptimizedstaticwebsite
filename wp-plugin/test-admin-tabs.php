@@ -170,7 +170,61 @@ function wp_list_pluck( $rows, $field ) {
 		return isset( $r[ $field ] ) ? $r[ $field ] : null;
 	}, (array) $rows );
 }
-function get_permalink( $id ) { return 'http://site/post-' . (int) $id . '/'; }
+function get_permalink( $id ) { $id = is_object( $id ) ? $id->ID : $id; return 'http://site/post-' . (int) $id . '/'; }
+
+/* ---------------------------------------------------------------------
+ * Enough WordPress to resolve a typed URL to a post
+ * ------------------------------------------------------------------ */
+
+/* id => array( type, status, title ). */
+$GLOBALS['ie_url_posts'] = array();
+
+function ie_url_post( $id, $type = 'post', $status = 'publish', $title = 'A hand-written hub' ) {
+	$GLOBALS['ie_url_posts'][ (int) $id ] = array(
+		'type'   => $type,
+		'status' => $status,
+		'title'  => $title,
+	);
+}
+
+function home_url( $p = '' ) { return 'http://site' . $p; }
+function sanitize_textarea_field( $v ) { return trim( strip_tags( (string) $v ) ); }
+if ( ! defined( 'DAY_IN_SECONDS' ) ) { define( 'DAY_IN_SECONDS', 86400 ); }
+function untrailingslashit( $s ) { return rtrim( (string) $s, '/\\' ); }
+
+/**
+ * THE REAL FUNCTION'S ANSWER FOR THE REAL FUNCTION'S REASONS.
+ *
+ * url_to_postid() returns 0 for anything that is not a permalink on THIS
+ * site — another domain, a mistyped slug, an archive, the front page. Every
+ * one of those is a refusal IE_Admin relies on rather than implementing, so a
+ * stub that resolved anything with a number in it would make the guard
+ * untestable and the test green on a feature that accepted off-site URLs.
+ */
+function url_to_postid( $url ) {
+	if ( ! preg_match( '#^http://site/post-(\d+)/?$#', (string) $url, $m ) ) {
+		return 0;
+	}
+	$id = (int) $m[1];
+	return isset( $GLOBALS['ie_url_posts'][ $id ] ) ? $id : 0;
+}
+
+function get_post( $id ) {
+	$id = (int) $id;
+	if ( ! isset( $GLOBALS['ie_url_posts'][ $id ] ) ) { return null; }
+	$row = $GLOBALS['ie_url_posts'][ $id ];
+	return (object) array(
+		'ID'          => $id,
+		'post_type'   => $row['type'],
+		'post_status' => $row['status'],
+		'post_title'  => $row['title'],
+	);
+}
+
+function get_the_title( $p = 0 ) {
+	$id = is_object( $p ) ? $p->ID : (int) $p;
+	return isset( $GLOBALS['ie_url_posts'][ $id ] ) ? $GLOBALS['ie_url_posts'][ $id ]['title'] : '';
+}
 
 /* WHICH POSTS STILL EXIST.
  *
@@ -1727,6 +1781,187 @@ test( 'THE HOME-PAGE CHECKBOX IS ON THE FORM, HIDDEN UNTIL PILLAR IS TICKED', fu
 	if ( false === strpos( substr( $html, $row, 80 ), 'display:none' ) ) {
 		throw new Exception( 'the checkbox renders visible before the pillar box is ticked' );
 	}
+} );
+
+/* =====================================================================
+ * A target page chosen by pasting its URL
+ *
+ * target_pages() offers every published PAGE plus every post stamped
+ * `_ie_is_pillar`, and only this plugin stamps that. An owner whose hub is a
+ * post they wrote by hand has nothing to select. Edwin asked for a box, 4
+ * October.
+ *
+ * RESOLVED TO A POST ID, NOT STORED AS TEXT. What comes out is an ordinary
+ * post id, so the title and keyword come from the post and nothing
+ * downstream learns there was a second way in — and a typo is refused here
+ * rather than discovered weeks later as a silo pointing at a 404.
+ * ===================================================================== */
+
+function ie_submit_campaign( $post ) {
+	$_POST = array_merge( array(
+		'topics' => "Paying off a loan early\nWhat lenders check",
+	), $post );
+
+	$out = ie_run_handler( array( 'IE_Admin', 'handle_review_topics' ) );
+	$_POST = array();
+	return $out;
+}
+
+test( 'A PASTED URL IS ACCEPTED WHERE THE DROPDOWN HAS NOTHING', function () {
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 42, 'post', 'publish', 'How Lenders Decide' );
+
+	$out = ie_submit_campaign( array( 'target_url' => 'http://site/post-42/' ) );
+
+	same( 'reviewing', isset( $out['ie_status'] ) ? $out['ie_status'] : '',
+		'a valid URL was refused: ' . ( isset( $out['ie_message'] ) ? $out['ie_message'] : '' ) );
+} );
+
+test( "ANOTHER SITE'S URL IS REFUSED", function () {
+	/* The refusal that needs no code of its own. url_to_postid() answers 0
+	 * for anything that is not a permalink here, so there is no home-URL
+	 * comparison to write and none to get wrong. */
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 42 );
+
+	$out = ie_submit_campaign( array( 'target_url' => 'https://someone-else.com/post-42/' ) );
+
+	same( 'error', $out['ie_status'] );
+	has( $out['ie_message'], 'does not match a post or page on this site' );
+} );
+
+test( 'A MISTYPED SLUG IS REFUSED RATHER THAN WRITTEN INTO EVERY POST', function () {
+	/* THE FAILURE THIS FEATURE COULD HAVE SHIPPED. Nothing re-checks a link
+	 * once it is written, so a typo accepted here is a whole silo pointing at
+	 * a 404, found weeks later. */
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 42 );
+
+	$out = ie_submit_campaign( array( 'target_url' => 'http://site/post-999/' ) );
+
+	same( 'error', $out['ie_status'] );
+	has( $out['ie_message'], 'does not match a post or page' );
+} );
+
+test( 'an unpublished page is refused, with the reason', function () {
+	/* The same rule target_pages() follows: a draft or scheduled post has a
+	 * URL that 404s to the public. */
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 42, 'post', 'draft' );
+
+	$out = ie_submit_campaign( array( 'target_url' => 'http://site/post-42/' ) );
+
+	same( 'error', $out['ie_status'] );
+	has( $out['ie_message'], 'not published yet' );
+} );
+
+test( 'THE TYPED URL BEATS THE DROPDOWN', function () {
+	/* The same rule the keyword and intent boxes already follow: a box
+	 * someone typed in is a decision, a select left alone is not. */
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 42, 'post', 'publish', 'The one they typed' );
+	ie_url_post( 7, 'page', 'publish', 'The one in the list' );
+
+	$out = ie_submit_campaign( array(
+		'target_page_id' => '7',
+		'target_url'     => 'http://site/post-42/',
+	) );
+
+	same( 'reviewing', $out['ie_status'] );
+
+	$draft = get_transient( 'x' );
+	same( 42, (int) $draft['form']['target_page_id'], 'the dropdown won over the typed URL' );
+	same( 'The one they typed', $draft['form']['title'] );
+} );
+
+test( 'an empty box leaves the dropdown in charge', function () {
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 7, 'page', 'publish', 'The one in the list' );
+
+	$out = ie_submit_campaign( array( 'target_page_id' => '7', 'target_url' => '  ' ) );
+
+	same( 'reviewing', $out['ie_status'] );
+	$draft = get_transient( 'x' );
+	same( 7, (int) $draft['form']['target_page_id'] );
+} );
+
+test( 'A BAD URL FAILS — IT DOES NOT QUIETLY FALL BACK TO THE DROPDOWN', function () {
+	/* FOUND BY MUTATION, AND IT IS THE WORST FAILURE THIS FEATURE COULD HAVE.
+	 *
+	 * Drop the early return and a mistyped URL stops being an error: the code
+	 * falls through, finds whatever the dropdown happened to hold, and plans
+	 * a campaign aimed at a page the owner did not choose. No message, no
+	 * sign, and nothing re-checks a link after it is written.
+	 *
+	 * Every earlier test here posted a bad URL with NO dropdown value, so the
+	 * fall-through still ended in null and they all passed. The gap only
+	 * shows when both are present — which is the ordinary case, because the
+	 * dropdown always posts whatever it is showing. */
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 7, 'page', 'publish', 'Not what they asked for' );
+
+	$out = ie_submit_campaign( array(
+		'target_page_id' => '7',
+		'target_url'     => 'http://site/post-999/',
+	) );
+
+	same( 'error', $out['ie_status'], 'a mistyped URL silently planned against the dropdown page' );
+	has( $out['ie_message'], 'does not match a post or page' );
+} );
+
+test( 'a URL that is not a post or a page is refused', function () {
+	/* url_to_postid() resolves attachments and custom types too. Published,
+	 * so this is the post_type check and not the status check answering. */
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 55, 'product', 'publish', 'A WooCommerce product' );
+
+	$out = ie_submit_campaign( array( 'target_url' => 'http://site/post-55/' ) );
+
+	same( 'error', $out['ie_status'] );
+	has( $out['ie_message'], 'not a post or a page' );
+} );
+
+test( 'THE REJECTED URL COMES BACK SO IT CAN BE CORRECTED', function () {
+	/* Without this the box is empty on the page telling the owner their URL
+	 * was wrong — they are asked to fix something they can no longer see. The
+	 * draft transient cannot help: it is only written once the form has been
+	 * accepted, which is exactly what did not happen. */
+	$GLOBALS['ie_url_posts'] = array();
+
+	$out = ie_submit_campaign( array( 'target_url' => 'http://site/post-999/' ) );
+
+	same( 'http://site/post-999/', isset( $out['target_url'] ) ? $out['target_url'] : '',
+		'the typed URL was not carried back to the form' );
+} );
+
+test( 'THE RESOLVED URL IS KEPT SO THE SECOND STEP STILL HAS IT', function () {
+	/* A URL-chosen page is BY DEFINITION not in the dropdown. Review topics
+	 * stores the form and re-renders it; without this key nothing would be
+	 * selected and the box would be empty, and the next submit would fall
+	 * through to the dropdown and refuse a campaign already set up correctly.
+	 * The feature would have broken on its second step, not its first. */
+	$GLOBALS['ie_url_posts'] = array();
+	ie_url_post( 42 );
+
+	ie_submit_campaign( array( 'target_url' => 'http://site/post-42/' ) );
+
+	$draft = get_transient( 'x' );
+	same( 'http://site/post-42/', isset( $draft['form']['target_url'] ) ? $draft['form']['target_url'] : '',
+		'the typed URL was dropped from the stored form' );
+} );
+
+test( 'THE BOX IS ON THE FORM, AND ONLY FOR SILO CAMPAIGNS', function () {
+	$GLOBALS['ie_campaigns'] = array();
+	$html = render( 'new' );
+
+	has( $html, 'name="target_url"', 'the URL box is missing from the form' );
+
+	/* Inside the Target Page row, which carries ie-needs-target and is hidden
+	 * when the pillar box is ticked. A pillar campaign has nothing to aim at,
+	 * and a visible box inviting one is an invitation to break it. */
+	$row = substr( $html, strpos( $html, 'ie-needs-target' ) );
+	ok( strpos( $row, 'name="target_url"' ) !== false && strpos( $row, 'name="target_url"' ) < strpos( $row, '</table>' ),
+		'the URL box is outside the target-page row' );
 } );
 
 echo "\n$passed passed, $failed failed\n";
