@@ -212,8 +212,6 @@ class IE_Api {
 	public static function activate( $licence_key, $server_url = '', $moving = false ) {
 		$target = $server_url ? untrailingslashit( $server_url ) : IE_Settings::server_url();
 
-		$business = IE_Settings::business();
-
 		$payload = wp_json_encode( array(
 			'licenceKey'  => $licence_key,
 			'siteUrl'     => home_url(),
@@ -229,12 +227,13 @@ class IE_Api {
 			'moveSite'    => (bool) $moving,
 			'themePrefix' => IE_Settings::active_theme_prefix(),
 			'timezone'    => wp_timezone_string(),
-			'business'    => array(
-				'name'     => isset( $business['name'] ) ? $business['name'] : '',
-				'type'     => isset( $business['trade'] ) ? $business['trade'] : '',
-				'location' => isset( $business['town'] ) ? $business['town'] : '',
-				'phone'    => isset( $business['phone'] ) ? $business['phone'] : '',
-			),
+			/* THROUGH THE SHARED MAPPER, not translated here.
+			 *
+			 * This block used to be the only correct translation in the file,
+			 * and being correct here is what hid the other two being wrong:
+			 * activation set a plausible business on the server, so nothing
+			 * downstream ever looked empty. See IE_Settings::business_payload(). */
+			'business'    => IE_Settings::business_payload(),
 		) );
 
 		$result = self::send(
@@ -323,9 +322,19 @@ class IE_Api {
 		 *
 		 * Sent on the plan because that is the one moment the value is used:
 		 * anchors are chosen here and then frozen into the slots. Sending it
-		 * anywhere else would keep a copy current that nothing reads. */
+		 * anywhere else would keep a copy current that nothing reads.
+		 *
+		 * AND IT DID NOT WORK UNTIL 5 OCTOBER, because this line sent
+		 * business() — WordPress's own `trade`/`town` names — and the server
+		 * only stores `type`/`location`. Three of the four fields were thrown
+		 * away on arrival, silently, so the paragraph above described a fix
+		 * that had only ever applied to `name`.
+		 *
+		 * roofingamerica.xyz's "…in Leander" is quoted above as the symptom
+		 * this was written to cure. The same anchor turned up on
+		 * hilltophomeloans.net months later, for exactly this reason. */
 		if ( ! isset( $payload['business'] ) ) {
-			$payload['business'] = IE_Settings::business();
+			$payload['business'] = IE_Settings::business_payload();
 		}
 
 		return self::post( '/api/blog/plan', $payload, 60 );
@@ -352,17 +361,80 @@ class IE_Api {
 	 * Calling it twice never starts two batches — the campaign's status is the
 	 * lock — so it is safe to call on every run.
 	 *
+	 * A CANCEL RIDES ON THIS CALL, and that is the whole transport.
+	 *
+	 * Pausing used to be WordPress-only. IE_Publisher::pause() held scheduled
+	 * posts back as drafts and set the local status; the server heard about it
+	 * on the hourly reconciliation, long after a batch that takes minutes had
+	 * finished. Edwin approved eleven articles, pressed Pause seconds later,
+	 * and all eleven were written and 825 credits charged.
+	 *
+	 * NO NEW ENDPOINT. This route already exists, already carries the
+	 * campaign, and already has a timeout suited to it. The server ignores the
+	 * flag unless a batch is actually running, so sending it when nothing is
+	 * writing is harmless.
+	 *
+	 * AN EXPLICIT PARAMETER, NOT A LOOKUP INSIDE THIS METHOD. The first
+	 * version of this read the local record and set the flag whenever the
+	 * campaign was paused, so that every caller got it without remembering —
+	 * which sounded tidy and did not work: run_campaign() returns early for
+	 * any campaign that is not 'active', so the one state that needs to send a
+	 * cancel is the one state that never reaches here. A hidden condition that
+	 * can never be true is worse than no condition, because it reads as
+	 * covered.
+	 *
 	 * @param string $campaign_id  the SERVER's campaign id
 	 * @param array  $slot_indexes optional; fills specific gaps rather than all
+	 * @param bool   $cancel       stop the running batch after the current post
 	 */
-	public static function write( $campaign_id, $slot_indexes = array() ) {
+	public static function write( $campaign_id, $slot_indexes = array(), $cancel = false ) {
+		return self::post(
+			'/api/blog/write',
+			self::write_body( $campaign_id, $slot_indexes, $cancel ),
+			self::TIMEOUT_WRITE
+		);
+	}
+
+	/**
+	 * The body write() sends. Split out SO THAT IT CAN BE TESTED AT ALL.
+	 *
+	 * self::post() is a static call resolved against this class, so no stub
+	 * and no subclass can intercept it: anything calling write() either makes
+	 * a real HTTP request or replaces the whole class. test-ie-pause.js does
+	 * the latter, which is right for asking what the publisher DOES and
+	 * leaves everything between the caller and the wire unexamined.
+	 *
+	 * That gap was not theoretical. Deleting the cancel line from the old
+	 * inline version — so the flag was passed in, accepted, and silently
+	 * dropped before the request — was the one mutation out of nine that no
+	 * test noticed. Every caller still passed `true`, the server still read
+	 * `cancel`, and the two were correct about a value that never travelled
+	 * between them.
+	 *
+	 * Making the untestable thing testable, rather than writing a test that
+	 * greps this file for the line: source searches have missed seven real
+	 * bugs in this project and produced at least two failures on correct
+	 * code.
+	 *
+	 * @return array
+	 */
+	public static function write_body( $campaign_id, $slot_indexes = array(), $cancel = false ) {
 		$body = array( 'campaignId' => $campaign_id );
 
 		if ( ! empty( $slot_indexes ) ) {
 			$body['slotIndexes'] = array_values( array_map( 'intval', $slot_indexes ) );
 		}
 
-		return self::post( '/api/blog/write', $body, self::TIMEOUT_WRITE );
+		/* ABSENT RATHER THAN false WHEN NOT CANCELLING. The server reads it as
+		 * `true === cancel || 'true' === cancel`, so either shape works — but
+		 * a body that carries `cancel: false` on every ordinary poll invites
+		 * the next reader to add an `else` branch to the server for a case
+		 * that does not exist. */
+		if ( $cancel ) {
+			$body['cancel'] = true;
+		}
+
+		return $body;
 	}
 
 	/**
@@ -632,11 +704,17 @@ class IE_Api {
 		 * reconciliation is re-sent every run, so a rename reaches the server
 		 * within the hour rather than waiting for the next campaign to be
 		 * planned. The plan call above is what actually needs it; this keeps
-		 * the stored copy from being months old when it arrives. */
+		 * the stored copy from being months old when it arrives.
+		 *
+		 * "A rename reaches the server within the hour" was true of the name
+		 * and of nothing else: this sent business() raw until 5 October, so a
+		 * site that MOVED TOWN re-sent its new address every hour for as long
+		 * as it was connected and the server discarded it every time. See
+		 * IE_Settings::business_payload(). */
 		$result = self::post( '/api/blog/campaigns-present', array(
 			'campaignIds' => $ids,
 			'campaigns'   => $payload,
-			'business'    => IE_Settings::business(),
+			'business'    => IE_Settings::business_payload(),
 		) );
 
 		if ( is_wp_error( $result ) ) {

@@ -45,7 +45,9 @@ const BlogSite = require('../models/BlogSite');
 const BlogCampaign = require('../models/BlogCampaign');
 const requireAuth = require('../middleware/requireAuth');
 const { log } = require('../utils/logger');
-const { readFilters, keep, stateOf, campaignStatusOf } = require('../utils/blog/reportFilters');
+const {
+  readFilters, keep, stateOf, campaignStatusOf, dateFilterLabel,
+} = require('../utils/blog/reportFilters');
 const { withAppHeader } = require('../utils/appHeader');
 const { pageTitle } = require('../utils/pageTitle');
 
@@ -538,6 +540,11 @@ const PILLS = {
   published: ['pill-live', 'Published', ''],
   scheduled: ['pill-wait', 'Scheduled', ''],
   failed: ['pill-gone', 'Failed', ''],
+  /* PAID FOR, AND NOT ON THE SITE YET. The tooltip says the credits part
+   * because that is the whole reason this state exists separately: it used to
+   * read "Planned", which is what an unwritten post says. */
+  written: ['pill-wait', 'Written, waiting',
+    'The post is written and the credits for it were spent. WordPress has not collected it yet — a paused campaign holds its posts here until it is resumed.'],
   planned: ['pill-wait', 'Planned', ''],
 };
 
@@ -605,6 +612,10 @@ function filterBar(f, campaigns, siteNames) {
     // has already been shown.
     ['removed', 'Campaign removed'],
     ['failed', 'Failed'],
+    /* WORD FOR WORD WHAT THE PILL SAYS, like every other entry here. Two
+     * names for one state on the same screen is the mistake the two comments
+     * above this one both record. */
+    ['written', 'Written, waiting'],
     ['planned', 'Not written yet'],
   ];
 
@@ -686,6 +697,17 @@ function filterBar(f, campaigns, siteNames) {
         <button type="submit" class="btn btn-sm btn-primary">Filter</button>
       </div>
       ${active ? `<div class="col-auto"><a class="btn btn-sm btn-outline-light" href="/blog-report">Clear</a></div>` : ''}
+      ${/* SAYS WHICH DATE, because it is not the same one on both tabs.
+            Campaigns filter on when the campaign was created; posts filter
+            on when the post went out or is due. Both are reasonable defaults
+            for the thing being listed and neither is guessable from two
+            boxes marked From and To — which is exactly how a correct result
+            came to look like a broken filter.
+
+            The sentence comes from dateFilterLabel() rather than being
+            written here, so the rule and its description cannot drift. This
+            file has lost that argument before. */ ''}
+      <div class="col-12 small muted mt-1">${esc(dateFilterLabel(f.view || 'campaigns'))}</div>
     </form>`;
 }
 
@@ -759,6 +781,7 @@ router.get('/blog-report', requireAuth, async (req, res) => {
     const deleted = counted('deleted');
     const removed = counted('removed');
     const scheduled = counted('scheduled');
+    const written = counted('written');
     /* NO CREDIT TOTAL IN THE HEADLINE, for the same reason the per-row credits
      * column went: every post costs the same, so the figure is the post count
      * times 75 and carries no information the line does not already give. It
@@ -872,6 +895,13 @@ router.get('/blog-report', requireAuth, async (req, res) => {
         <strong class="text-white">${rows.length}</strong> post${rows.length === 1 ? '' : 's'}
         &middot; ${published} confirmed live
         ${scheduled ? `&middot; ${scheduled} scheduled` : ''}
+        ${/* SHOWN ONLY WHEN THERE ARE ANY, like scheduled and deleted beside
+              it. On a healthy account this is always zero — 'ready' is a
+              state posts pass through in seconds — so printing a nought
+              would add a number that never moves and means nothing.
+              It stops being zero exactly when something is holding posts
+              back, which is when the owner needs to see it. */ ''}
+        ${written ? `&middot; ${written} written, waiting` : ''}
         ${deleted ? `&middot; <span class="text-warning">${deleted} deleted</span>` : ''}
         ${removed ? `&middot; <span class="text-warning">${removed} under ${removedCampaigns} removed campaign${removedCampaigns === 1 ? '' : 's'}</span>` : ''}
       </p>
@@ -887,15 +917,24 @@ router.get('/blog-report', requireAuth, async (req, res) => {
               <th>Campaign</th>
               <th>Site</th>
               <th>Status</th>
-              ${/* THE TWO DATES SIT TOGETHER, approved then removed, so a
-                    campaign's whole life is read left to right in one place
-                    rather than at opposite ends of the row.
+              ${/* THE THREE DATES SIT TOGETHER — created, approved, removed —
+                    so a campaign's whole life is read left to right in one
+                    place rather than at opposite ends of the row.
 
-                    APPROVED, NOT CREATED. Creation is when the plan was
-                    drawn up and is a draft nobody has paid for; approval is
-                    when the writing started and the credits went. Those are
-                    weeks apart on a campaign somebody thought about, and the
-                    second one is what "when did this start" means. */ ''}
+                    CREATED WAS ADDED 6 OCTOBER, AND NOT FOR COMPLETENESS.
+                    The From/To boxes now filter THIS tab on the created
+                    date, and a filter whose column is not on screen cannot
+                    be checked by the person using it. Edwin filtered 1–5
+                    October, got back a campaign approved on 28 September,
+                    and had no way to tell a correct answer from a broken
+                    one — the only dates shown were two the filter does not
+                    look at.
+
+                    The note that stood here argued approval, not creation,
+                    is what "when did this start" means. Still true, and
+                    Approved is still the column that answers it. It was
+                    never the whole answer. */ ''}
+              <th>Created</th>
               <th>Approved</th>
               <th>Removed</th>
               <th class="num">Posts</th>
@@ -934,6 +973,11 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                       account share a name — "quality plumbing leander"
                       twice, "Unclogging Sewer Line Services" twice — and the
                       approval date is what tells them apart at a glance. */ ''}
+                ${/* ALWAYS A DATE, never a dash — which is the property that
+                      made it the one the filter uses. See dateFilteredOn()
+                      in reportFilters.js: filtering on Approved would have
+                      hidden every unapproved campaign without saying so. */ ''}
+                <td class="muted date">${esc(shownDay(c.createdAt)) || '&mdash;'}</td>
                 <td class="muted date">${esc(shownDay(c.approvedAt)) || '&mdash;'}</td>
                 <td class="date ${c.removedAt ? 'text-danger' : 'muted'}">${esc(shownDay(c.removedAt)) || '&mdash;'}</td>
                 <td class="num">${c.posts}</td>

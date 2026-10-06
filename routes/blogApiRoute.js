@@ -428,7 +428,7 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
 
 router.post('/api/blog/write', blogApiLimiter, requireSite, async (req, res) => {
   try {
-    const { campaignId, slotIndexes } = req.body || {};
+    const { campaignId, slotIndexes, cancel } = req.body || {};
 
     const campaign = await ownedCampaign(req, campaignId);
     if (!campaign) {
@@ -437,6 +437,46 @@ router.post('/api/blog/write', blogApiLimiter, requireSite, async (req, res) => 
 
     if (campaign.status === 'cancelled') {
       return res.status(409).json({ error: 'This campaign was cancelled.', status: 'cancelled' });
+    }
+
+    /* ---- stop the batch, carried on the poll that is already happening ---- */
+
+    /* NO NEW ENDPOINT, AND DELIBERATELY SO. The plugin polls this route every
+     * few seconds for as long as the spinner turns, so a paused campaign
+     * re-asserts the cancel on every poll: a request that fails costs a few
+     * seconds instead of being lost for ever.
+     *
+     * That matters more here than anywhere. Four facts have already been lost
+     * in this plugin to one-shot calls with no retry behind them — the note
+     * above campaigns_present() in class-ie-api.php lists them — and a cancel
+     * is the worst of all of them to deliver once and hope, because the
+     * failure mode is writing and charging for everything the owner just said
+     * to stop. Which is precisely what happened: eleven posts, 825 credits,
+     * after Pause was pressed.
+     *
+     * ONLY MEANINGFUL WHILE A BATCH IS RUNNING. Set at any other moment the
+     * flag would sit there and cancel the NEXT batch, so it is ignored unless
+     * the campaign is writing. runBatch() also clears it as it claims the
+     * campaign, which closes the race where a cancel lands in between. */
+    if (true === cancel || 'true' === cancel) {
+      if ('writing' === campaign.status) {
+        await BlogCampaign.updateOne(
+          { _id: campaign._id },
+          { $set: { 'batch.cancelRequested': true } }
+        );
+
+        log.info('blog.write.cancelRequested', {
+          requestId: req.id,
+          campaignId: String(campaign._id),
+        });
+      }
+
+      /* FALLS THROUGH to the status branches below rather than returning.
+       *
+       * The plugin asked what is happening as well as for it to stop, and a
+       * cancel that answered nothing would leave the spinner unable to say
+       * whether it had been heard — which is the thing that made the original
+       * bug so unpleasant to watch. */
     }
 
     /* ---- already running: report, do not start a second ---- */
@@ -473,6 +513,11 @@ router.post('/api/blog/write', blogApiLimiter, requireSite, async (req, res) => 
         total: job?.progress?.total ?? campaign.slots.length,
         current: job?.progress?.current || '',
         stage: job?.progress?.stage || 'queued',
+        /* SO THE SPINNER CAN SAY IT WAS HEARD. Without this the plugin shows
+         * an unchanged progress bar for as long as the post in flight takes
+         * to finish, which is exactly the minute in which somebody decides
+         * the Pause button does not work — and presses it again. */
+        cancelling: !!(campaign.batch && campaign.batch.cancelRequested),
       });
     }
 

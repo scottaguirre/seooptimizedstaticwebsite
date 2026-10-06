@@ -336,21 +336,116 @@ class IE_Publisher {
 	 * catch-up cron and the button in wp-admin.
 	 *
 	 * @param string $campaign_id local id (which is the server's id)
+	 * @param bool   $may_start   may this call START work that costs money?
+	 *                            FALSE BY DEFAULT, so a caller added later
+	 *                            has to say so to spend anything. Only the
+	 *                            owner pressing a button passes true.
 	 * @return array|WP_Error
 	 */
-	public static function run_campaign( $campaign_id ) {
+	public static function run_campaign( $campaign_id, $may_start = false ) {
 		$campaign = IE_Campaigns::get( $campaign_id );
 		if ( ! $campaign ) {
 			return new WP_Error( 'ie_no_campaign', 'No such campaign: ' . $campaign_id );
+		}
+
+		$server_id = isset( $campaign['server_campaign_id'] )
+			? $campaign['server_campaign_id']
+			: $campaign['id'];
+
+		/* A PAUSED CAMPAIGN STILL HAS ONE THING TO SAY, and until 6 October it
+		 * said nothing at all.
+		 *
+		 * The early return below is right for everything else: a paused
+		 * campaign must not collect, must not publish, must not be touched.
+		 * But if the server is still WRITING it, the one message that matters
+		 * is "stop" — and returning before sending it is how eleven articles
+		 * came to be written and charged after Pause was pressed.
+		 *
+		 * THIS IS THE RETRY, and it is why the cancel is not left to pause()
+		 * alone. pause() sends it once, immediately, which is what makes it
+		 * fast. This runs on every sweep for as long as the campaign stays
+		 * paused, which is what makes it reliable. Four facts have already
+		 * been lost in this plugin to one-shot calls with nothing behind them
+		 * — see the note above IE_Api::campaigns_present() — and a lost
+		 * cancel is the most expensive of them.
+		 *
+		 * Cheap: one request per paused campaign per sweep, and the server
+		 * ignores it unless a batch is genuinely running. */
+		if ( IE_Campaigns::is_paused( $campaign ) ) {
+			$stop = IE_Api::write( $server_id, array(), true );
+
+			if ( is_wp_error( $stop ) ) {
+				self::log( sprintf( '%s: cancel failed: %s', $campaign_id, $stop->get_error_message() ) );
+			}
+
+			return array( 'skipped' => true, 'reason' => 'campaign is paused', 'cancelSent' => true );
 		}
 
 		if ( 'active' !== $campaign['status'] ) {
 			return array( 'skipped' => true, 'reason' => 'campaign is ' . $campaign['status'] );
 		}
 
-		$server_id = isset( $campaign['server_campaign_id'] )
-			? $campaign['server_campaign_id']
-			: $campaign['id'];
+		/* --- 0. HAS ANYBODY AGREED TO PAY FOR THIS? --------------------------
+		 *
+		 * NOTHING ASKED, ANYWHERE, UNTIL NOW. A campaign's status is 'active'
+		 * from the moment it is created — the second planning finishes, before
+		 * approval — and every slot is 'pending' because nothing is written.
+		 * That is exactly the pair IE_Campaigns::campaigns_with_work() looks
+		 * for, so a freshly planned campaign is top of the hourly cron's list.
+		 * The cron handed it to this function, this function posted to
+		 * /api/blog/write, and that endpoint starts a job and charges per post.
+		 *
+		 * The server cannot refuse on our behalf: BlogCampaign has no
+		 * approvedAt field and /api/blog/write rejects only 'cancelled',
+		 * because from the server's side CALLING that endpoint IS the
+		 * approval. Approval exists in exactly one place in this system, and
+		 * it is here. Anything that reaches the server without checking has
+		 * already spent the money.
+		 *
+		 * Measured, not reasoned: a campaign seeded as it exists the instant
+		 * planning ends is picked up by campaigns_with_work() and produces one
+		 * plain write call. Ten unapproved posts is 750 credits, charged
+		 * within the hour, while the campaign's own card still shows the price
+		 * as a question on a button nobody pressed.
+		 *
+		 * AFTER THE PAUSED BRANCH ABOVE, DELIBERATELY, and the asymmetry is
+		 * the point. That branch sends a cancel, and a cancel must never be
+		 * blocked by a bookkeeping field: if this guard ever wrongly judged a
+		 * campaign unapproved, blocking its cancel would mean writing and
+		 * charging for a batch the owner had stopped — the 825-credit failure,
+		 * again. Blocking a START costs an hour's delay. One of those two
+		 * mistakes is recoverable.
+		 *
+		 * TWO WITNESSES, AND THE SECOND ONE IS WHY THIS IS NOT ONE LINE.
+		 *
+		 * approved_at is stamped below, by this function, BEFORE the request
+		 * goes out — because approval is something the OWNER did, and this
+		 * site should record its own owner's decision rather than infer it
+		 * from a reply. batch_started cannot do that job: it is stamped from
+		 * the server's answer, so a lost response on the approving call would
+		 * leave the server writing, this site unapproved, and the sweep
+		 * refusing to poll or collect for ever — a paid-for campaign whose
+		 * posts never arrive. That is the same confusion that made
+		 * batch_started unable to answer the spinner question and forced
+		 * writing_since into existence: one field standing for both "the
+		 * owner agreed" and "the server confirmed".
+		 *
+		 * batch_started IS STILL READ, and that is not belt-and-braces. Every
+		 * campaign already in flight across the fleet has batch_started and
+		 * no approved_at, because approved_at did not exist when they were
+		 * approved. Testing approved_at alone would strand all of them. */
+		$approved = ! empty( $campaign['approved_at'] ) || ! empty( $campaign['batch_started'] );
+
+		if ( ! $may_start && ! $approved ) {
+			return array( 'skipped' => true, 'reason' => 'campaign has not been approved' );
+		}
+
+		if ( $may_start && ! $approved ) {
+			IE_Campaigns::save( array_merge( $campaign, array(
+				'approved_at' => current_time( 'mysql' ),
+			) ) );
+			$campaign = IE_Campaigns::get( $campaign_id );
+		}
 
 		// --- 1 and 2. is it written yet? --------------------------------------
 
@@ -358,6 +453,31 @@ class IE_Publisher {
 
 		if ( is_wp_error( $state ) ) {
 			self::log( sprintf( '%s: write failed: %s', $campaign_id, $state->get_error_message() ) );
+
+			/* A REFUSAL FOR MONEY IS AN ANSWER, NOT A LOST MESSAGE, and the
+			 * difference decides what approved_at should say afterwards.
+			 *
+			 * Leaving it stamped would mean the sweep carries on trying — and
+			 * the moment the owner tops up their balance for something else, a
+			 * campaign they never got to start would write itself an hour
+			 * later. They pressed the button once, were told no, and are
+			 * entitled to press it again themselves.
+			 *
+			 * Only approved_at is cleared. A part-written campaign that hits
+			 * 402 on a gap fill keeps batch_started and stays approved, which
+			 * is correct: its money was committed long ago. */
+			$data = $state->get_error_data();
+
+			if ( is_array( $data )
+				&& ( 402 === (int) ( isset( $data['status'] ) ? $data['status'] : 0 )
+					|| ! empty( $data['data']['creditsError'] ) ) ) {
+				$campaign = IE_Campaigns::get( $campaign_id );
+
+				if ( $campaign && ! empty( $campaign['approved_at'] ) ) {
+					IE_Campaigns::save( array_merge( $campaign, array( 'approved_at' => '' ) ) );
+				}
+			}
+
 			return $state;
 		}
 
@@ -379,6 +499,44 @@ class IE_Publisher {
 		if ( ( 'writing' === $status || 'written' === $status ) && empty( $campaign['batch_started'] ) ) {
 			IE_Campaigns::save( array_merge( $campaign, array(
 				'batch_started' => current_time( 'mysql' ),
+			) ) );
+			$campaign = IE_Campaigns::get( $campaign_id );
+		}
+
+		/* A SECOND CLOCK, FOR THE THING batch_started CANNOT ANSWER.
+		 *
+		 * batch_started is the moment the campaign was APPROVED — set once,
+		 * deliberately, because it is also what tells the screen the money has
+		 * been committed. The spinner was keyed off it: watch for ten minutes
+		 * after approval.
+		 *
+		 * THAT WORKS FOR EXACTLY ONE BATCH. A campaign paused and resumed an
+		 * hour later starts writing again with batch_started still showing the
+		 * original approval, so `time() - started` is already past the window
+		 * and the spinner can never appear. Edwin resumed a campaign, three
+		 * posts were written and charged, and the page showed nothing at all.
+		 *
+		 * SO THE SPINNER STOPS GUESSING FROM A TIMER AND USES WHAT THE SERVER
+		 * JUST SAID. 'writing' is a fact that arrives on every poll and was
+		 * being thrown away; stored here, the screen can ask "is it writing?"
+		 * instead of "was it approved recently?".
+		 *
+		 * STAMPED ONLY ON THE TRANSITION, not on every poll, so the ten-minute
+		 * cap still means something: a job that dies silently stops the page
+		 * reloading itself overnight rather than spinning for ever. */
+		$was_writing = ! empty( $campaign['writing_since'] );
+
+		if ( 'writing' === $status && ! $was_writing ) {
+			IE_Campaigns::save( array_merge( $campaign, array(
+				'writing_since' => current_time( 'mysql' ),
+			) ) );
+			$campaign = IE_Campaigns::get( $campaign_id );
+		} elseif ( 'writing' !== $status && $was_writing ) {
+			/* CLEARED THE MOMENT IT STOPS, however it stopped — finished,
+			 * failed, or cancelled by a pause. A spinner that outlives the
+			 * batch is the bug this replaces, in a smaller window. */
+			$campaign = IE_Campaigns::save( array_merge( $campaign, array(
+				'writing_since' => '',
 			) ) );
 			$campaign = IE_Campaigns::get( $campaign_id );
 		}
@@ -673,6 +831,39 @@ class IE_Publisher {
 		 */
 		if ( ! empty( $campaign['is_pillar'] ) ) {
 			update_post_meta( $post_id, IE_Settings::PILLAR_META, '1' );
+
+			/* AND THE KEYWORD IT WAS BUILT TO WIN, which went in the bin here
+			 * for as long as pillars have existed.
+			 *
+			 * Stamping the flag without the keyword says "a later campaign may
+			 * aim at this post" while withholding the one fact that campaign
+			 * needs. read_keyword() then derived a keyword from the TITLE,
+			 * because a title was all it could see — and a pillar's title is a
+			 * headline. "Can You Apply for a Loan in the US Without Being a
+			 * Citizen?" came out as a thirteen-word keyword, question mark
+			 * included, and the anchors built from it read like a headline
+			 * glued into the middle of a sentence.
+			 *
+			 * THE OWNER ALREADY ANSWERED THIS. They typed it into "Search it
+			 * should win" when they planned the campaign, and the form refuses
+			 * to plan a pillar campaign without it. The value has been sitting
+			 * on the slot the whole time.
+			 *
+			 * SAME MOMENT, SAME CONDITION, SAME BLOCK as the flag above, and
+			 * deliberately so. These two facts are only ever true together, and
+			 * two separate ifs with the same test is how one of them later
+			 * acquires a guard the other does not.
+			 *
+			 * WRITTEN ONLY WHEN THERE IS SOMETHING TO WRITE, following
+			 * PILLAR_META's rule. An empty row would be worse than no row: the
+			 * reader could not tell "this pillar has no keyword" from "this
+			 * pillar predates the field", and it is the second of those that
+			 * has to keep the title fallback alive. */
+			$target_query = isset( $slot['target_query'] ) ? trim( (string) $slot['target_query'] ) : '';
+
+			if ( '' !== $target_query ) {
+				update_post_meta( $post_id, IE_Settings::KEYWORD_META, $target_query );
+			}
 		}
 
 		// The slug WordPress settled on, which may not be the one we asked for:
@@ -1834,7 +2025,54 @@ class IE_Publisher {
 			// 'Y-m-d H:i:s' in whatever timezone PHP is set to, so a stored
 			// GMT string comes back shifted on any site not running UTC.
 			'paused_at' => gmdate( 'c' ),
+
+			/* CLEARED HERE TOO, not only on the next poll.
+			 *
+			 * run_campaign() clears it when the server stops saying 'writing',
+			 * which is correct and can be an hour away — the sweep is hourly
+			 * and a paused campaign is not polled on any other schedule. The
+			 * spinner would sit there until then, which is the whole problem
+			 * this field exists to end.
+			 *
+			 * The server may still be finishing the post already in flight.
+			 * That is fine: the batch is stopping, and a spinner that says
+			 * "writing" for the last thirty seconds of a batch nobody can add
+			 * to is more misleading than one that stops a moment early. */
+			'writing_since' => '',
 		) );
+
+		/* TELL THE SERVER NOW, because the thing most worth stopping is the
+		 * thing that is happening this second.
+		 *
+		 * Everything else pause does is local and reversible. A batch is
+		 * neither: it writes at roughly one article a minute and charges 75
+		 * credits each, and until this line existed the server did not learn
+		 * about a pause until the next hourly reconciliation. Edwin pressed
+		 * Pause a few seconds after approving eleven articles; all eleven
+		 * were written and 825 credits were charged.
+		 *
+		 * NOT TRUSTED TO ARRIVE. A failure here is logged and ignored — the
+		 * pause itself has already happened locally and must not be rolled
+		 * back over a network error — and run_campaign() re-sends it on every
+		 * sweep while the campaign stays paused. One fast attempt plus a slow
+		 * reliable one; neither alone is good enough.
+		 *
+		 * SENT BEFORE the posts are held below, because that loop walks every
+		 * slot and can take a moment on a 52-post campaign, and every moment
+		 * here is potentially another article. */
+		$server_id = isset( $campaign['server_campaign_id'] )
+			? $campaign['server_campaign_id']
+			: $campaign_id;
+
+		$stop = IE_Api::write( $server_id, array(), true );
+
+		if ( is_wp_error( $stop ) ) {
+			self::log( sprintf(
+				'%s: could not tell the server to stop writing: %s',
+				$campaign_id,
+				$stop->get_error_message()
+			) );
+		}
 
 		$held = 0;
 
@@ -1978,6 +2216,64 @@ class IE_Publisher {
 
 		self::log( sprintf( '%s resumed after %d second(s), %d post(s) released',
 			$campaign_id, $shift, $released ) );
+
+		/* AND TELL THE SERVER, which is the half this did not do.
+		 *
+		 * THE MIRROR OF WHAT pause() ALREADY DOES. Pause stopped being
+		 * WordPress-only on 6 October: it sends its cancel immediately and
+		 * lets the sweep re-send it, because the thing most worth stopping is
+		 * the thing happening this second. Resume was left as the local half
+		 * of a pair whose other half had grown a second half — it moved the
+		 * post dates, set the status back to active, and redirected.
+		 *
+		 * So the posts the batch had not written yet waited for the next
+		 * server ping or the hourly cron, writing_since stayed empty, and the
+		 * card showed nothing at all: no spinner, no progress, no sign that
+		 * Resume had done anything beyond changing a word on the screen.
+		 * Edwin resumed a campaign with three posts left, saw a dead page,
+		 * pressed "Check now" — and THAT is what started the writing. Check
+		 * now is a fallback for the automatic collection. It should not be
+		 * the only thing that works.
+		 *
+		 * run_campaign() RATHER THAN IE_Api::write() DIRECTLY, because the
+		 * answer has to be recorded as well as asked for. run_campaign() is
+		 * what stamps writing_since from the server's reply, and
+		 * writing_since is what the spinner watches. Calling the API here
+		 * would start the batch and still leave the screen silent, which is
+		 * the same bug with one more request in it.
+		 *
+		 * NOT ALLOWED TO START WHAT NOBODY APPROVED, and this guard no longer
+		 * lives here.
+		 *
+		 * It did, for a day. pause() has no approval check — it refuses a
+		 * finished campaign and nothing else — so a campaign that was planned
+		 * and never approved can be paused and resumed like any other, and an
+		 * unapproved resume reaching run_campaign() would have started and
+		 * CHARGED for a batch nobody agreed to. So resume() tested
+		 * batch_started before polling.
+		 *
+		 * THAT WAS THE RIGHT CHECK IN THE WRONG PLACE. run_campaign() has
+		 * three callers — this one, the hourly cron, and the server's ping —
+		 * and fixing the one in front of me left two unguarded while the
+		 * screens read as covered. The same shape as every other bug this
+		 * week. The question belongs to run_campaign(), which now asks it of
+		 * everybody and defaults to refusing, so this call needs no guard and
+		 * no argument: it passes no $may_start, which means "do not start
+		 * anything that costs money".
+		 *
+		 * NOT ALLOWED TO FAIL THE RESUME EITHER. The posts are already back
+		 * on the schedule — that happened above, locally, and must not be
+		 * rolled back over a network error. A failure is logged and the
+		 * release count is returned as if nothing had been asked, which
+		 * leaves the campaign active with work pending: exactly the state the
+		 * sweep picks up. One fast attempt plus a slow reliable one, the same
+		 * arrangement pause() has. */
+		$poll = self::run_campaign( $campaign_id );
+
+		if ( is_wp_error( $poll ) ) {
+			self::log( sprintf( '%s: resumed, but the server could not be reached: %s',
+				$campaign_id, $poll->get_error_message() ) );
+		}
 
 		return $released;
 	}

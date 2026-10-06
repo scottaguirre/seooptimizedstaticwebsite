@@ -33,7 +33,7 @@ const Module = require('module');
 const { execFileSync } = require('child_process');
 
 let passed = 0, failed = 0;
-const DECLARED = 104;
+const DECLARED = 111;   // 104 + 3 campaign-date filter + 4 written state, 6 October
 
 function test(name, fn) {
   try {
@@ -395,6 +395,33 @@ test('A POST UNDER A REMOVED CAMPAIGN IS NOT COUNTED AS PUBLISHED EITHER', () =>
   assert.strictEqual(stateOf({ slotStatus: 'published', removedAt: new Date() }), 'removed');
 });
 
+test('A WRITTEN POST IS NOT "PLANNED" — THE CREDITS WERE SPENT', () => {
+  /* FOUND BY PAUSING A BATCH, 6 October. Edwin stopped a four-post campaign
+   * after the first article. The server wrote it and charged 75 credits, then
+   * paused before WordPress collected it — and the report showed four posts,
+   * all "Planned", with no sign that anything had been paid for.
+   *
+   * 'ready' had no word here and fell through to 'planned', which is the
+   * state of a post that does not exist and has cost nothing. The two are
+   * opposites on the only question this screen is asked.
+   *
+   * It went unnoticed for as long as it did because, until a batch could be
+   * stopped mid-run, 'ready' was a state posts passed through in seconds
+   * rather than sat in. */
+  assert.strictEqual(stateOf({ slotStatus: 'ready' }), 'written');
+  assert.strictEqual(stateOf({ slotStatus: 'pending' }), 'planned');
+  assert.strictEqual(stateOf({}), 'planned', 'an absent status is not a written post');
+});
+
+test('deleted and removed still beat written', () => {
+  /* The new state goes in at the BOTTOM of the chain, below every fact that
+   * explains a missing post. A written post under a removed campaign is a
+   * removed post: the credits are equally gone and the campaign is the thing
+   * that explains it. */
+  assert.strictEqual(stateOf({ slotStatus: 'ready', removedAt: new Date() }), 'removed');
+  assert.strictEqual(stateOf({ slotStatus: 'ready', deletedAt: new Date() }), 'deleted');
+});
+
 test('DELETED BEATS REMOVED, BECAUSE IT IS THE MORE SPECIFIC FACT', () => {
   // A deleted post under a removed campaign: we know it is gone, so say so.
   assert.strictEqual(
@@ -488,6 +515,62 @@ await atest('filtering by state uses the same definition as the pill', async () 
   assert.strictEqual(published.length, 1);
 });
 
+await atest('A WRITTEN POST REACHES THE SCREEN AS WRITTEN, NOT PLANNED', async () => {
+  /* END TO END, because stateOf() being right is not the same as the page
+   * being right: the pill map, the filter dropdown and the headline all read
+   * the state separately and any of them can be missing an entry.
+   *
+   * Asserted on the rendered page rather than the row, since the row is what
+   * the unit test above already covers. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      slots: [
+        slot({ index: 0, topic: 'Written one', status: 'ready', publishedAt: null }),
+        slot({ index: 1, topic: 'Not written', status: 'pending', publishedAt: null }),
+      ],
+    })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  /* MATCHED ON THE PILL ELEMENT, NOT ON THE WORDS.
+   *
+   * This asserted `html.includes('Written, waiting')` first, and a mutation
+   * that removed the entry from the PILLS map SURVIVED it — the filter
+   * dropdown carries the same phrase, so the page still "included" it while
+   * every row rendered as Planned.
+   *
+   * slotPill falls back to PILLS.planned for an unknown state, which is right
+   * for a page that must not crash and is exactly what makes a missing entry
+   * invisible. A STRING THAT APPEARS TWICE ON A PAGE CANNOT TELL YOU WHICH OF
+   * THE TWO IS RIGHT. */
+  assert.match(html, /<span class="pill[^>]*>Written, waiting<\/span>/,
+    'the row pill is not showing the written state — spent credits read as "Planned"');
+
+  /* THE FILTER TOO. A state the pill shows and the dropdown cannot filter is
+   * a row somebody can see and not isolate, which is the exact complaint the
+   * two comments beside the STATES list already record. */
+  assert.match(html, /<option value="written"/,
+    'the state has a pill but no filter');
+});
+
+await atest('the headline counts written posts only when there are some', async () => {
+  /* On a healthy account this is always zero — 'ready' is a state posts pass
+   * through in seconds — so a permanent "0 written, waiting" would be a
+   * number that never moves. It stops being zero exactly when something is
+   * holding posts back. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({ slots: [slot({ status: 'ready', publishedAt: null })] })],
+  });
+  assert.ok((await render('/blog-report')).body.includes('1 written, waiting'));
+
+  given({ sites: [SITE_A], campaigns: [campaign()] });
+  assert.ok(!(await render('/blog-report')).body.includes('written, waiting'),
+    'a healthy account is being shown a count that is always zero');
+});
+
 await atest('"under a removed campaign" is filterable, though it is stored nowhere', async () => {
   /* The state is computed from the campaign's removedAt and the slot's
    * status together. Pushing that into the database query would mean a second
@@ -509,10 +592,14 @@ await atest('"under a removed campaign" is filterable, though it is stored nowhe
 await atest('A DATE RANGE INCLUDES THE WHOLE OF THE LAST DAY', async () => {
   /* "to=2026-09-12" meaning "up to 00:00 on the 12th" silently drops
    * everything published that day — the day somebody filtering to today cares
-   * about most. */
+   * about most.
+   *
+   * `view: 'posts'` is explicit here and did not need to be before 6 October,
+   * when the dates meant the publish date on both tabs. They now mean the
+   * thing the tab lists. */
   given({ sites: [SITE_A], campaigns: [campaign()] });   // published 2026-09-12T09:00Z
 
-  const inclusive = await rowsFor('u1', readFilters({ from: '2026-09-12', to: '2026-09-12' }));
+  const inclusive = await rowsFor('u1', readFilters({ view: 'posts', from: '2026-09-12', to: '2026-09-12' }));
 
   assert.strictEqual(inclusive.length, 1, 'a post published on the end date was excluded');
 });
@@ -520,11 +607,99 @@ await atest('A DATE RANGE INCLUDES THE WHOLE OF THE LAST DAY', async () => {
 await atest('a date range excludes what falls outside it', async () => {
   given({ sites: [SITE_A], campaigns: [campaign()] });
 
-  const before = await rowsFor('u1', readFilters({ from: '2026-09-13' }));
-  const after = await rowsFor('u1', readFilters({ to: '2026-09-11' }));
+  const before = await rowsFor('u1', readFilters({ view: 'posts', from: '2026-09-13' }));
+  const after = await rowsFor('u1', readFilters({ view: 'posts', to: '2026-09-11' }));
 
   assert.strictEqual(before.length, 0);
   assert.strictEqual(after.length, 0);
+});
+
+await atest('THE CAMPAIGNS TAB FILTERS ON THE CAMPAIGN DATE, NOT THE POST DATE', async () => {
+  /* WHAT EDWIN HIT. He filtered 1–5 October on the campaigns tab and got back
+   * a campaign approved on 28 September — a correct answer to "which
+   * campaigns have a post publishing in this range", which is not the
+   * question he asked, and which no column on screen could explain.
+   *
+   * THE FIXTURE SEPARATES THE TWO DATES BY SIX WEEKS, and that is the only
+   * thing making this assertion mean anything: a version still matching on
+   * the publish date passes any test whose campaign was created and published
+   * in the same week. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      createdAt: new Date('2026-08-01T10:00:00Z'),
+      slots: [slot({
+        publishAt: new Date('2026-09-12T09:00:00Z'),
+        publishedAt: new Date('2026-09-12T09:00:00Z'),
+      })],
+    })],
+  });
+
+  const byCreation = await rowsFor('u1', readFilters({ view: 'campaigns', from: '2026-08-01', to: '2026-08-01' }));
+  assert.strictEqual(byCreation.length, 1, 'the campaigns tab did not match on the created date');
+
+  const byPublication = await rowsFor('u1', readFilters({ view: 'campaigns', from: '2026-09-12', to: '2026-09-12' }));
+  assert.strictEqual(byPublication.length, 0, 'the campaigns tab is still matching on the publish date');
+
+  /* THE POSTS TAB UNCHANGED — the same two ranges, the other way round.
+   * Asserted beside it rather than in its own test, because the PAIR is the
+   * claim: each tab filters the thing it lists. Split apart, either half
+   * passes while the other is broken. */
+  const posts = await rowsFor('u1', readFilters({ view: 'posts', from: '2026-09-12', to: '2026-09-12' }));
+  assert.strictEqual(posts.length, 1, 'the posts tab stopped matching on the publish date');
+
+  const postsByCreation = await rowsFor('u1', readFilters({ view: 'posts', from: '2026-08-01', to: '2026-08-01' }));
+  assert.strictEqual(postsByCreation.length, 0, 'the posts tab is matching on the campaign date');
+});
+
+await atest('A CAMPAIGN NOBODY APPROVED STILL ANSWERS A DATE FILTER', async () => {
+  /* WHY THE FILTER USES createdAt AND NOT batch.startedAt.
+   *
+   * Every campaign has a created date; only an approved one has an approved
+   * date. Filtering on approval would drop every planned-but-never-run
+   * campaign — a status filter nobody asked for, removing rows the reader has
+   * no way to know are missing.
+   *
+   * Edwin's rule when he chose it: "any status unless I specify the status."
+   * Two of the nine campaigns in the screenshot that started this showed a
+   * dash under Approved. Both would have vanished. */
+  given({
+    sites: [SITE_A],
+    campaigns: [campaign({
+      createdAt: new Date('2026-08-01T10:00:00Z'),
+      batch: undefined,                                   // never approved
+      slots: [slot({ status: 'pending', publishedAt: null })],
+    })],
+  });
+
+  const rows = await rowsFor('u1', readFilters({ view: 'campaigns', from: '2026-08-01', to: '2026-08-01' }));
+
+  assert.strictEqual(rows.length, 1,
+    'an unapproved campaign fell out of a date filter — the dates are acting as a status filter');
+  assert.strictEqual(rows[0].campaignApprovedAt, null, 'the fixture is approved after all');
+});
+
+await atest('a date range does not change which statuses are represented', async () => {
+  /* The other half of the same rule, and the half a wrong implementation
+   * still passes the test above: using createdAt but ALSO requiring a batch
+   * would drop the planned campaign here while leaving the one above intact. */
+  given({
+    sites: [SITE_A],
+    campaigns: [
+      campaign({ _id: 'c-1', name: 'Planned', createdAt: new Date('2026-08-01T10:00:00Z'), batch: undefined, status: 'active' }),
+      campaign({ _id: 'c-2', name: 'Done', createdAt: new Date('2026-08-01T11:00:00Z'), status: 'completed' }),
+    ],
+  });
+
+  const all = await rowsFor('u1', readFilters({ view: 'campaigns', from: '2026-08-01', to: '2026-08-01' }));
+  assert.strictEqual(new Set(all.map(r => r.campaign)).size, 2,
+    'a date range dropped one of the two statuses');
+
+  const done = await rowsFor('u1', readFilters({
+    view: 'campaigns', from: '2026-08-01', to: '2026-08-01', campaignStatus: 'completed',
+  }));
+  assert.deepStrictEqual([...new Set(done.map(r => r.campaign))], ['Done'],
+    'a status filter stopped working inside a date range');
 });
 
 await atest('filters combine rather than override each other', async () => {
@@ -1729,11 +1904,31 @@ await atest('THE CAMPAIGNS TAB SHOWS WHEN EACH ONE WAS APPROVED', async () => {
   assert.ok(html.includes(shownDay(approved)), 'the approval date is not shown');
 
   /* ALL THREE DATES ARE DIFFERENT IN THIS FIXTURE, which is the only thing
-   * that makes the assertion mean anything. A version showing the planning
-   * date, or the publication date, would also "show a date" — and both would
-   * be wrong. */
-  assert.ok(!html.includes(shownDay(planned)),
-    'the column is showing the planning date, not the approval date');
+   * that makes these assertions mean anything. A version showing the planning
+   * date, or the publication date, would also "show a date".
+   *
+   * UNTIL 6 OCTOBER THIS ASSERTED THE PLANNING DATE WAS ABSENT FROM THE PAGE.
+   * That was a fair proxy while Approved was the only date column; a Created
+   * column now sits beside it deliberately, because the date filter matches on
+   * it and a filter whose column is off-screen cannot be checked.
+   *
+   * So the question became which cell holds which date, and absence cannot
+   * answer it. The two headers must appear in the documented order, and the
+   * two dates in the same order within the row. */
+  assert.match(html, /<th>Created<\/th>\s*<th>Approved<\/th>/,
+    'Created and Approved are not adjacent, in that order');
+  assert.ok(html.includes(shownDay(planned)), 'the planning date is not shown at all');
+
+  const createdAt = html.indexOf(shownDay(planned));
+  const approvedAt = html.indexOf(shownDay(approved));
+  assert.ok(createdAt < approvedAt,
+    'the two dates are in the wrong cells — Approved is showing the planning date');
+
+  /* The publication date belongs to the posts tab and has never appeared
+   * here. Asserted because adding one date column is exactly when a second
+   * gets added by accident. */
+  assert.ok(!html.includes(shownDay(published)),
+    'a publication date has appeared on the campaigns tab');
 
   const rows = await rowsFor('u1', {});
   assert.strictEqual(day(rows[0].campaignApprovedAt), day(approved));

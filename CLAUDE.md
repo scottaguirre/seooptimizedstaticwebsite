@@ -733,47 +733,93 @@ COVERED BY TESTS OF THE BEHAVIOUR IT DRIVES IF THOSE TESTS SUPPLY THE FIELD.**
 Now there is a test that reads the form with the box unticked and asserts the
 key is `false` rather than absent.
 
-### NEXT — number the options in the target-page dropdown, 4 October
+### Numbered options in the target-page dropdown — 5 October, plugin 0.24.0
 
-**Agreed with Edwin, 4 October. Small, and specified.** He asked, then chose
-between the readings himself:
+**INSTALLED AND CONFIRMED ON SCREEN, 5 October.** Edwin opened a campaign form
+and the options are numbered. Plugin only.
+
+Asked for on 4 October and specified by Edwin himself after three readings
+were put to him:
 
 > *"Number the options — '1. Home loans · 2. Refinancing' — so you can refer
 > to a page by number instead of a long title."*
 
-**Presentation only.** Not a count of campaigns per page, not a separate list
+Presentation only. Not a count of campaigns per page, not a separate list
 screen — both were offered and neither is what he meant.
 
-#### THE RULE THIS MUST FOLLOW, AND IT IS ALREADY WRITTEN DOWN ONCE
+#### THE NUMBER IS ADDED WHERE IT IS SEEN AND NEVER STORED
 
-**THE NUMBER IS ADDED WHERE IT IS DISPLAYED AND NEVER STORED.** The " —
-pillar" marker in the same dropdown has a docblock explaining exactly this,
-and the reason applies unchanged:
+The same trap the " — pillar" marker has documented since 2 October, and now
+two things obey one rule. `read_form()` keeps the selected page's title; it
+becomes the campaign's label and travels to the server as `targetPage.title`,
+which `writePost` drops into *"It becomes a link to the X page"*. A numbered
+title means every post in the silo refers to **"the 2. Refinancing page"**.
 
-`read_form()` keeps the selected page's title, it becomes the campaign's
-label, and it travels to the server as `targetPage.title`, which `writePost`
-drops into the sentence *"It becomes a link to the X page"*. A decorated title
-means every post in the silo refers to **"the 3. Home Loans page"**.
+So the number and the marker are both composed in the `<option>` text in
+`class-ie-admin.php` and nowhere else. `target_pages()` returns the real title
+and keeps returning it.
 
-So the number goes in the `<option>` text in `class-ie-admin.php`, beside
-where the pillar marker is added, and nowhere else. `target_pages()` returns
-the real title and keeps returning it.
+#### A POSITION, NOT AN IDENTITY — raised and accepted, do not re-raise
 
-#### RAISED AND ACCEPTED — do not bring it up again
+`target_pages()` orders pages by `menu_order title` and appends pillars by
+date, so publishing a page or adding a pillar shifts everything after it.
+Edwin was told and answered *"fine with this: The number is a position in the
+list, not an identity."* Settled. Do not build stability it was never meant to
+have, and do not write a number into a campaign record or into any message
+someone might act on later.
 
-**The number is a position in the list, not an identity.** `target_pages()`
-orders pages by `menu_order title` and appends pillars by date. Publish a new
-page, rename one, or add a pillar, and the numbering shifts — what was 3
-yesterday is 4 today.
+#### Tests
 
-That is fine for its stated purpose, reading a long list and saying "the third
-one" in the same sitting. It is not a stable reference, so it must not be
-written down anywhere as if it were, and it should not appear in the campaign
-record or in any message the owner might act on later.
+`IE_Settings::target_pages()` in `test-admin-tabs.php` now serves from
+`$GLOBALS['ie_target_pages']`. **The single hard-coded row it returned before
+could not express ordering at all**, and ordering is the entire feature.
 
-**Edwin was told this and accepted it:** *"fine with this: The number is a
-position in the list, not an identity."* It is settled — do not re-raise it as
-a concern, and do not build stability it was never meant to have.
+**6 mutations, 6 caught.** Including numbering by post id instead of position
+— which on a site whose first page happens to be post 1 would read "1. Home
+Loans" and look perfectly correct — the counter never incrementing, starting
+at zero, losing the pillar marker, and **storing the number with the title**,
+which is the one that would reach the published prose.
+
+`test-admin-tabs.php` 93 → **97**.
+
+### FOR TOMORROW — Design 6's trust tick, and it is a taste call not a bug
+
+**WRITTEN DOWN 5 OCTOBER, having lived only in conversation until now.** It
+had been carried from session to session in summaries and was never in this
+file, which is how a thing quietly disappears.
+
+**What it is.** The About page's trust list — "Licensed, insured and bonded" —
+renders each point as a white tick in a coloured circle. Most themes use
+green; `style6.css` overrides `--trust-bg` to the theme's own orange
+`#ee5519`. White on that is **3.53:1**, against 5.07:1 for the green and
+6.33:1 for style4's red.
+
+**IT IS NOT AN ACCESSIBILITY FAILURE, AND I DESCRIBED IT AS ONE FOR DAYS.**
+The CSS says so itself, three lines below the colour, and I had repeated
+"fails AA" without re-reading it:
+
+> *"The tick is a 2px glyph and not text, so no WCAG rule is broken — but it
+> is thinner than elsewhere."*
+
+Contrast rules cover text and meaningful graphics. A decorative tick beside a
+label that already states the fact is neither. Nothing fails. It simply looks
+**lighter on Design 6 than on the other themes**, most visibly over a
+photograph.
+
+**The change, if Edwin wants it:** `--trust-bg: #d6440c` in
+`src/css/themes/style6.css` — the same orange a shade deeper, 4.48:1. One
+line.
+
+**ASK BEFORE TOUCHING IT.** `style6.css` is on the hand-styled list: Edwin
+styled these by hand on 10 September and they are deliberate aesthetic
+choices. He lifted the hard do-not-touch rule on 24 September to "change what
+the work needs, and say plainly that you changed how a page looks" — which is
+permission to edit and report, not permission to restyle on a hunch. This is a
+hunch about taste, so it is his call.
+
+**ALSO STILL UNWRITTEN: the geo-relevant interlink idea.** Discussed across
+several sessions, never captured anywhere, and the only remaining item in this
+project that exists purely in conversation. Capture it before it is lost.
 
 ### PROMPT AND QUALITY-RULE WORK — Edwin's own day, 4 October
 
@@ -817,6 +863,127 @@ take it to the next level · elevate your · research has shown · call us
 today*. Every one is a phrase a post is failed for and the writer was never
 told to avoid. The fix that ends the class is to build the prompt's list from
 `FILLER` — one source of truth.
+
+**6. THE TARGET PAGE'S QUALIFIER — FIXED 5 OCTOBER, AND THE FINDING WAS
+OVERSTATED.** Found on a real campaign: target page
+`small-business-loans-for-women`, keyword **"small business loans for
+women"**, twelve topics back and **not one mentioned women**.
+
+**EDWIN PUSHED BACK AND HE WAS LARGELY RIGHT.** His argument: silo posts exist
+to build topical relevance and pass authority to the pillar; the pillar
+already targets the keyword; link equity is identical whether a post says
+"women" or not; and those twelve topics — cash flow, term loan vs line of
+credit, APR, collateral, underwriting — *are* the topical neighbourhood of
+business lending. The rule was also doing its job: chasing the page's own
+search is cannibalisation, which is what it exists to stop.
+
+So this was a reasonable behaviour described as a defect. **The one argument
+that survived:** the pillar's advantage is the NARROW term. A cluster that
+never touches the niche builds authority for the head term, where it probably
+cannot win, instead of the niche, where it can. And there was no way to get
+even one audience-specific topic, because the word was excluded outright.
+
+**THE FIX, AND IT IS THE RULE NOT THE FORM.** Edwin approved changing the
+wording rather than adding a second field — no new box to fill in, nothing new
+to store or send. Rule (b) now bans the keyword itself and rewordings of the
+same search, says plainly that the audience or qualifier is NOT banned, and
+shows both sides:
+
+    banned  "small business loans for women"
+    banned  "business loans for female owners"   (reworded)
+    fine    "women owned business certification requirements"
+    fine    "sba programs for women owned businesses"
+
+Plus a line stopping the opposite failure: *"Most topics will not need the
+qualifier at all. The point is that it is available, not that it is
+required."* Twelve posts all chasing the audience phrase would compete with
+each other and with the page.
+
+**IT MAKES AUDIENCE TOPICS POSSIBLE, NOT GUARANTEED.** The model picks the
+mix. A guaranteed split would need a number passed through — not built, and
+nobody knows which split performs better anyway.
+
+**NEW SUITE: `test-suggest-prompt.js`, 8 tests, in `deploy.sh`.**
+`suggestTopics.js` had **no tests of any kind** — `buildPrompt` and `ANGLES`
+were exported and nothing imported them. Every rule in the file that decides
+what a whole campaign is about was a sentence nobody checked.
+
+**7 mutations, 6 caught first time.** The survivor: deleting the keyword from
+*"the page the business wants to rank for X"* left the suite green, because
+the banned-query rule quotes the same words below it. **A keyword that reaches
+the model only as a prohibition tells it what to avoid and never what to
+support.** Now asserted in its own sentence.
+
+**AND THE FIFTH PROSE-AS-CODE INSTANCE, IN THE SAME HOUR.** A test asserts the
+old wording is absent from the prompt. The comment explaining the removal
+quoted the old wording, so the test failed on the explanation. The comment was
+reworded rather than the test weakened, and it now says why it does not quote
+itself.
+
+**7. `suggestTopics.js` HAS NO BLOG VARIANT AT ALL.** Checked: no `isPillar`,
+no second prompt, nothing. `writePost` got `SYSTEM_BLOG` on 3 October and
+topic suggestion never did, so every campaign still gets:
+
+    Propose N blog topics for a local trade business.
+
+    BUSINESS
+      Name: … Trade: … Town: … Services: …
+
+…and a rule saying the town "belongs in at most two titles" — an instruction
+to USE the location, not avoid it. On a lending blog with no premises that
+produced **"Central Texas Heat Can Turn Utility Bills Into a Cash-Flow Gap"**.
+
+**THE SAME ROOT CAUSE AS 1 AND 2, IN A THIRD PLACE.** Prompts and checks built
+for trade sites, applied to content blogs. Worth fixing as one decision rather
+than three patches.
+
+**FIXED 5 OCTOBER — see "There was no blog mode".** It was fixed as one
+decision, as this paragraph asked. What remains of this finding is items 1 and
+2 above, which are quality RULES rather than prompts.
+
+**8. "AT LEAST FOUR OF SIX ANGLES" PERMITS 6 / 3 / 2 / 1.** Raised by Edwin on
+5 October, from the first blog-mode campaign he ran — twelve topics for
+`small business loans for women` on hilltophomeloans.net, with blog mode live.
+
+His question was *"why do the topics look far from the keyword?"*, and the
+answer is that distance is the design: a post chasing the page's own search
+cannibalises the page it exists to feed. Lexically far, semantically close —
+every one of the twelve was about business borrowing. **That part is working.**
+
+The real weakness is the SHAPE of the spread. Counted by angle:
+
+| angle | topics |
+|---|---|
+| a symptom they can see right now | 6 |
+| a decision they are stuck on | 3 |
+| a well-meant mistake | 2 |
+| what actually happens | 1 |
+| where the money goes | 0 |
+
+Six of twelve were one construction: *a cost appeared — vehicle, equipment,
+hiring, build-out, franchise fees, supplier deposit — and you need money.*
+Each is a fine post. Twelve of them across a year read as a template.
+
+**THE RULE PASSED.** Four of six angles were used, which is all it asks. A
+minimum count says nothing about balance, and the model satisfies it in the
+cheapest way available — repeat the easiest angle, touch three others once.
+
+Likely fix: a cap as well as a floor. *No more than a third of the topics may
+use the same angle.* That is one sentence in the prompt and one assertion over
+the returned set in `checkTopicSet()` — which already counts repeated opening
+words and repeated phrases, so it is the right home for it.
+
+**NOT BUILT. It is a judgement call about how hard to constrain the model**,
+and over-constraining produces worse topics than a lopsided spread does.
+Edwin's day.
+
+**Two things the checker caught on that same campaign, correctly, before a
+credit was spent:** a 0.60 query overlap between "business loan for vehicle
+repair" and "business loan for equipment repair", and three titles beginning
+with "A". The first would have **refused the plan**, not merely warned —
+`queryConflicts()` uses the same comparison at the same threshold, and
+`/api/blog/plan` returns 400 on any conflict. Worth knowing that the topic
+screen's amber warnings are not all advisory.
 
 **What is NOT a problem, measured rather than assumed:**
 
@@ -1016,10 +1183,107 @@ asserts the spellings. **A misspelled filter name does not error — it never
 fires**, the feature ships doing nothing, and every direct-call test still
 passes because none of them goes through WordPress.
 
-**SEOPress and AIOSEO are deliberately not fed.** They stay in
-`another_seo_plugin()` so the class stands down, and on those two a post falls
-back to that plugin's default. Their filter names are unverified, and an
-unverified hook name is a feature that silently does nothing.
+**SEOPress and AIOSEO were not fed in 0.21.0** — their filter names were
+unverified, and an unverified hook name is a feature that silently does
+nothing. **Closed in 0.23.0, below.**
+
+### A VERIFICATION COMMAND IS CODE TOO — 5 October
+
+Cost two round trips with Edwin and a deploy cycle, and nothing was ever wrong.
+
+Checking whether the slug boundary fix had reached the server, I gave him:
+
+    grep -c "charAt( SLUG_MAX )" /home/ubuntu/app/utils/blog/planCampaign.js
+
+It answered **0**, and 0 was taken as "the fix is not there". The file says:
+
+    if ('-' === clean.charAt(SLUG_MAX)) {
+
+**The pattern was written in PHP spacing for a JavaScript file.** Two spaces
+that do not exist. Nearly every file read that day was PHP, and the habit came
+along to a `.js` file without being noticed.
+
+**A GREP THAT MATCHES NOTHING AND A THING THAT IS NOT THERE PRODUCE THE SAME
+OUTPUT.** `0` is not evidence of absence; it is evidence that the pattern did
+not match, and those are only the same claim when the pattern is right.
+
+#### THE DEPLOY OUTPUT HAD ALREADY ANSWERED IT
+
+    building file list ... done
+    ./
+    CLAUDE.md
+    package-lock.json
+
+rsync sent **two files**. `planCampaign.js` was not among them *because the
+server's copy was already identical* — which is the proof the fix had shipped.
+I read a file's absence from the transfer list as the file being missing, when
+it meant the opposite.
+
+**Evidence that contradicts a check is worth more than the check.** Having
+written the check, I went looking for reasons it might be right — the rsync
+excludes, a failed commit — rather than asking first whether the check itself
+was sound.
+
+#### HOW TO NOT DO IT AGAIN
+
+- **Grep for the shortest distinctive token**, not a formatted expression.
+  `grep -n charAt` would have answered correctly the first time and is shorter
+  to type.
+- **Match the language's spacing**, or avoid spacing entirely. PHP here writes
+  `foo( $bar )`; JavaScript writes `foo(bar)`. A pattern carried between them
+  silently fails.
+- **A check that returns a negative deserves one confirming run** by a
+  different route before anything is concluded from it. Behaviour is the best
+  route: calling `slugify()` on the known title took one line and settled it.
+
+### All four SEO plugins now fed — 5 October, plugin 0.23.0
+
+**INSTALLED 5 October. Plugin only.** Never exercised on a live site and it
+cannot be from here: it only does anything when SEOPress or AIOSEO is active,
+and Edwin runs no SEO plugin at all. **All four vendor paths — Yoast, Rank
+Math, SEOPress, AIOSEO — are covered by tests and by nothing else.** The first
+customer with one of them installed is the first real run.
+
+Names read from the vendors' own documentation, not recalled:
+
+    seopress_titles_title · seopress_titles_desc      SEOPress, since 2.7.1
+    aioseo_title · aioseo_description                 AIOSEO, one argument each
+
+Four `add_filter` calls onto the same two methods Yoast and Rank Math already
+use. Nothing else changed — the ownership check, the empty-value fallback and
+the stand-down from printing are all untouched.
+
+**AND IT KILLS AN OLDER OPEN QUESTION BY MAKING IT IRRELEVANT.** The note had
+said AIOSEO needed investigating because version 4 moved its data out of post
+meta into a table of its own, so `update_post_meta` could not reach it. True —
+and it stopped mattering the moment 0.21.0 fed filters instead of writing
+fields. **The value is handed over as the plugin is about to print it, so
+where it keeps its own copy is not our business.** The investigation was never
+needed; the design change removed it.
+
+#### A STALE COMMENT CORRECTED WHILE PASSING
+
+`another_seo_plugin()`'s docblock still said *"IE_Publisher writes to their
+meta keys at publish time, so standing down does not mean losing the title."*
+**0.21.0 removed those writes.** Leaving that sentence would have been worse
+than silence: the next reader would have believed a mechanism that no longer
+exists. It now says what is true — stand down from PRINTING, not from winning,
+because the vendor filters carry our value instead.
+
+#### THE MUTATION THAT FOUND A DESCRIPTION IN THE TITLE TAG
+
+Wiring `aioseo_title` to `filter_description` **survived every check**. Eight
+hooks, all spelled correctly, all present — and one of them answering the
+wrong question, which would put the meta description inside the `<title>` tag
+on every post on an AIOSEO site.
+
+The test had asserted the names were present and that there were eight of
+them. **PRESENCE IS NOT PAIRING.** It now extracts every registration and
+asserts the whole hook-to-method map as one value, so a mis-wiring fails on
+the row it broke.
+
+**7 mutations, 6 caught first time; the survivor turned into the map test and
+now caught.** `test-pillar-plugin.php` 60 → **62**.
 
 #### AND SO THE PUBLISHER STOPPED WRITING THEIR KEYS — A REVERSAL FROM THIS MORNING
 
@@ -2494,7 +2758,1037 @@ bug does not bite — an example chosen from those argues for the wrong thing.
 Checked by running `bucketCounts(9)` rather than by hand, which is how the
 previous version got it wrong.
 
+## A ring of two linked one way twice — 6 October 2026 (server)
+
+Edwin planned two pillars and found the second one linking back to the first
+**twice**. Both anchors, one destination, both inside the same article.
+
+`ringNeighbours()` in `utils/blog/linkPlan.js`:
+
+    const prev = index > 0 ? slots[index - 1] : null;
+    const next = index < n - 1 ? slots[index + 1] : slots[0];
+
+At n = 2, post 1 is the last post, so `next` closes the ring back to slot 0 —
+which is also the post immediately behind it. `prev` and `next` resolve to the
+same slot.
+
+### A rule that is right everywhere except at its smallest case
+
+The ring is **correct for n >= 3**. Post 2 of three links back to post 1 and
+forward to post 0, and those are different posts. Only at exactly two does "the
+one behind me" collapse into "the one I close the ring to".
+
+Every fixture in `test-pillar-campaign.js` had three or four slots, so every
+test written against the rule passed. **A rule whose only broken case is its
+smallest one survives review and fails in use** — and it fails on the
+cheapest campaign anyone can plan, which is the one a new customer tries first.
+
+So the pair is spelt out rather than derived: post 0 forward to post 1, post 1
+back to post 0. One link each.
+
+### The direction is not arbitrary
+
+`prev` is expected to be published already; `next` is allowed to be a
+placeholder, swapped in when its target publishes. Post 0 is written first,
+when its partner does not exist, so it takes the FORWARD link. Give post 0 the
+backward link instead and it points at nothing — which is mutation 2 below, and
+it is caught.
+
+### Five mutations, four caught, and the fifth is honest
+
+Deleting the pair case (2 tests) · swapping its directions (2) · letting it
+fire at n = 3 (1, caught by the existing byte-for-byte ordinary-post case) ·
+leaving post 1 with both links (2).
+
+**`if (n < 2) return { prev: null, next: null }` survived, and no test should
+be written for it.** With the guard gone, a single-slot campaign gets
+`next = slots[0]`, which is itself — and `buildSlot()` already refuses that with
+`next.index !== self.index`. Nothing observable changes. It is a true equivalent
+mutant, kept as defence in depth, and inventing an assertion to kill it would be
+testing the implementation rather than the behaviour.
+
+### The absent-key pattern caught my own test first
+
+My assertions read `assert.strictEqual(slot.nextAnchor, null)` and got
+`undefined`. The keys are **assigned only when the link exists**, the same rule
+`slot.money` follows — `writePost()` and `qualityCheck()` both ask
+`if (slot.nextAnchor)`, and an absent key is what makes that guard mean
+something. The cases now assert `'nextAnchor' in slot === false`.
+
+`test-pillar-campaign.js` 44 → 50. **Server-side, so it needs a deploy, not a
+plugin upload.** Campaigns already planned keep their stored anchors; the ring
+is computed at generation time, so only posts written after the deploy change.
+
+## Tick or untick every topic — 6 October 2026 (plugin 0.32.0)
+
+Edwin's request, after doing it by hand. Suggest topics returns up to twelve
+rows and the usual editing move is "none of these except three": twelve clicks
+to clear before three to choose. A header checkbox makes it two.
+
+**It is a control, not a field.** No `name` attribute, so it never reaches
+`$_POST` and `read_topics()` never sees it. The row boxes stay the only record
+of what was chosen — a header box that posted a value would be a second opinion
+about the same fact, and its value is not an answer about any topic.
+
+**Indeterminate when the rows disagree**, rather than guessing a side. A
+half-ticked list showing a ticked header invites one click that silently
+unticks everything the owner just kept. The rows report upward as well as
+down.
+
+**Scoped to its own table**, from the header box's `closest('table')` rather
+than a document query. The campaign form carries other checkboxes — the pillar
+box, the home-page box — and a selector loose enough to reach them turns
+"untick every topic" into "untick everything on the screen".
+
+### What a test can actually assert here
+
+The behaviour is in a browser script, so these cases guard the CONTRACT the
+script depends on: the box exists, it posts nothing, and the row boxes are
+inside the `tbody` it reads. A layout change that moved them would break the
+feature in the browser and nowhere else.
+
+The "posts nothing" case extracts the whole `<input>` tag and asserts no
+`name=` in it, rather than grepping the page for a string — the page is full of
+inputs and a looser search would pass whatever happened to be nearby.
+
+Three mutations, all caught: box removed (2 tests) · box given a name (1) · box
+moved into the tbody (1). `test-admin-tabs.php` 112 → 115.
+
+## The answer that could not travel — 6 October 2026 (plugin 0.31.0)
+
+A pillar campaign asks "Search it should win" for every topic and **refuses to
+plan without it**. That answer is stored on the campaign slot and used to write
+the post. Then the post publishes, and `insert_post()` stamps exactly one thing
+on it: `PILLAR_META = '1'`.
+
+The keyword went in the bin. So when a later campaign aimed at that pillar
+needed its keyword, nothing could answer, and `read_keyword()` derived one from
+the post TITLE. A pillar's title is a headline:
+
+    Can You Apply for a Loan in the US Without Being a Citizen?
+      → "can you apply for a loan in the us without being a citizen?"  (13 words)
+
+Run through `buildAnchorPool()`, that produced live anchor text reading
+`understanding can you apply for a loan in the us without being a citizen?` and
+`Hilltop Home Loans's can you apply for a loan in the us without being a
+citizen?` — question mark and all.
+
+**The owner had already answered the question.** It just had no way to travel
+from the campaign that knew it to the campaign that needed it.
+
+### Edwin found this, by asking about his own screen
+
+He asked: *"Isn't the box 'Search it should win' the same as the main keyword
+for that pillar post?"* It is. I had spent the previous hour describing a
+missing feature — a keyword field to be added — that **already existed**, twice
+over, because I was arguing from memory instead of reading the code.
+
+Corrected twice in one evening, both times by him looking at the thing. The
+rule that follows is not subtle: **read the code before describing what it
+does, especially when the description is confident.**
+
+### Stamping the flag without the keyword is the whole bug
+
+`PILLAR_META` says "a later campaign may aim at this post" and withholds the
+one fact that campaign needs. The two facts are only ever true together, so
+they are now stamped in the **same block, under the same condition** — two
+separate `if`s with the same test is how one later acquires a guard the other
+does not.
+
+`KEYWORD_META = '_ie_target_query'` lives on `IE_Settings` for the reason
+`PILLAR_META` does: the publisher writes it, the admin screen reads it, and a
+key spelled out in two files gets renamed in one of them.
+
+### Written only when there is something to write
+
+An empty row is worse than no row. The reader has to tell *"this pillar has no
+keyword"* from *"this pillar was published before the field existed"* — and it
+is the second that must keep falling back to the title. Every pillar already
+live on every site carries no keyword meta. Dropping the fallback would leave
+each of them with **no** keyword rather than a bad one.
+
+**Third time in two days** that backward compatibility has been the deciding
+constraint — after `batch_started` in the approval gate and `writing_since`
+before it. A new field never arrives on a clean site.
+
+### Three readers, one order of preference
+
+`read_keyword()` now asks: what was typed on this form → what the pillar was
+planned to win → derived from the title. And the dropdown's `data-keyword`
+asks the same question in the same order, which is not decoration: **a box
+showing one value while the server stores another is worse than a bad default**,
+because agreeing with a bad default at least does what it looks like it will do.
+
+The title fallback is still *correct* for an ordinary service page.
+`keyword_from_title()` strips the brand after a `|`, the town and the state:
+"Water Heater Repair | Acme Plumbing" → "water heater repair". Measured on
+Edwin's real data, service pages give 3-word keywords and article titles give
+9 to 15. The guessing was never wrong in general — only for articles, and
+articles are exactly what pillars are.
+
+### Two mutations survived the first run, and they were the same mistake
+
+Both were inside `read_keyword()`: ignore the stored keyword, and drop the
+title fallback. My tests covered `stored_keyword()` and the dropdown — **the
+box, not the handler.** I had written a comment about the screen and the server
+needing to agree, and then tested only the screen.
+
+`read_keyword()` is private, so the cases drive it through reflection. Testing
+something that resembles the function is not testing the function.
+
+Eight mutations, all caught after that: no stamp (2) · no empty guard (2) ·
+stamp for non-pillars (1) · ignore the stored keyword (1) · drop the title
+fallback (1) · dropdown still offers the headline (2) · `stored_keyword()`
+reads a different key (4) · `KEYWORD_META` renamed on `IE_Settings` only (2).
+
+### The publisher cases drive insert_post() for real
+
+The existing `PILLAR_META` test is a **source grep**, and a source grep cannot
+tell a line that runs from a line inside an `if` that is never true. The new
+cases invoke `insert_post()` through reflection and assert on the meta it left
+behind. Two WordPress stubs were missing and the suite said so loudly —
+`get_date_from_gmt()` and `get_gmt_from_date()`.
+
+`test-pillar-plugin.php` 62 → 67 · `test-admin-tabs.php` 105 → 112.
+
+### The stub's constants are a copy, so a test checks the copy
+
+`test-admin-tabs.php` stubs `IE_Settings`, so its `PILLAR_META` and
+`KEYWORD_META` are duplicates of the real declarations. A stub omitting a
+constant fatals, which is loud and fine. A stub **inventing its own spelling**
+would let every test pass while the publisher wrote one key and the screen read
+another — silent on a real site. One case reads `class-ie-settings.php` and
+asserts the strings match. A source test, because a spelling is the one thing
+only the source can confirm.
+
+## Nothing asked who was paying — 6 October 2026 (plugin 0.30.0)
+
+`IE_Campaigns::campaigns_with_work()` returned any campaign with status
+`active` and a `pending` slot. **A campaign is `active` from the moment it is
+created** — the second planning finishes, before approval — and every slot is
+`pending` because nothing is written. So a freshly planned campaign matched
+both tests perfectly and sat at the top of the hourly cron's list.
+`run_campaign()` took it and posted to `/api/blog/write`, which creates a job
+and charges per post.
+
+**The server cannot refuse on our behalf.** `BlogCampaign` has no
+`approvedAt` field and `/api/blog/write` rejects only `cancelled`, because
+from the server's side *calling that endpoint is the approval*. Approval
+exists in exactly one place in this system, and it is in WordPress. Anything
+reaching the server without checking it has already spent the money.
+
+### Edwin asked whether we had already done this, and the answer came from running it
+
+He was right to ask — the same question caught a false failure report two
+days earlier. What settled it was not re-reading the code:
+
+- Sizes of all five relevant files on his Mac matched my copies byte for
+  byte, so staleness was ruled out rather than assumed.
+- CLAUDE.md's only mentions of it were the ones written the day before,
+  describing it as unfixed.
+- Then a throwaway probe seeded a campaign exactly as it exists the instant
+  planning ends and called the sweep's own code path. `picked_up_by_sweep:
+  true`, one `write` call, `cancel: false`.
+
+**The probe is the part worth copying.** Reading the source said the hole was
+there; running it proved it, in a form that could be re-run after the fix and
+printed `sweep_calls: 0, owner_calls: 1`. Ten minutes, and no argument left
+to have.
+
+### It was not one line, and the first design would have broken approval
+
+I told Edwin one line in `run_campaign()`. Then:
+
+**`handle_run_now()` IS `run_campaign()`.** Both the priced "Write all N
+posts" button and the free "Check now" go through it. A flat approval check
+there would have made approving a campaign impossible — the entire product —
+and the mutation proving it is #8 below. So the question is not "is this
+approved" but **"is this caller allowed to spend money"**, which is a
+parameter: `run_campaign( $id, $may_start = false )`.
+
+**`false` by default, deliberately.** A caller added later has to ask for
+permission to spend, rather than inheriting it. Exactly one call site passes
+`true`: `handle_run_now()`, which is the owner, on their own screen, behind a
+nonce and a confirm dialog that states the cost.
+
+### TWO WITNESSES, AND THE SECOND IS THE WHOLE DESIGN
+
+Testing `batch_started` alone is wrong, and the failure is expensive.
+`batch_started` is stamped **from the server's reply**. If the approving call
+times out, the server may well be writing — and this site would be left
+unapproved, with the sweep refusing to poll or collect for ever: a campaign
+paid for whose posts never arrive.
+
+So `approved_at` is stamped by `run_campaign()` **before the request goes
+out**, because approval is something the *owner* did and this site should
+record its own owner's decision rather than infer it from an answer.
+
+This is the same confusion that forced `writing_since` into existence a day
+earlier: **one field standing for both "the owner agreed" and "the server
+confirmed" can answer neither question reliably.** Second time that exact
+split has been needed in two days.
+
+`batch_started` is still read, and that is not belt-and-braces — **every
+campaign in flight across the fleet right now has `batch_started` and no
+`approved_at`**, because the field did not exist when they were approved.
+Testing `approved_at` alone would have stranded all of them, mid-flight, on
+the next sweep.
+
+### A 402 is an answer; a timeout is not
+
+A credits refusal **clears `approved_at`**. Left stamped, the sweep keeps
+trying — and the moment the owner tops up for something unrelated, a campaign
+they never got to start writes itself an hour later. They pressed the button
+once, were told no, and get to press it again themselves.
+
+Only `approved_at` is cleared. A part-written campaign that hits 402 on a gap
+fill keeps `batch_started` and stays approved: its money was committed long
+ago. Telling the two apart needs `WP_Error::get_error_data()`, which is why
+`IE_Api::post()` carries the whole decoded body on an error.
+
+### THE GUARD GOES AFTER THE PAUSED BRANCH, AND THE ASYMMETRY IS THE POINT
+
+`run_campaign()`'s paused branch sends a cancel. The approval gate sits
+**after** it, so a cancel is never blocked by a bookkeeping field. If the gate
+ever wrongly judged a campaign unapproved, blocking its cancel would mean
+writing and charging for a batch the owner had stopped — the 825-credit
+failure again. Blocking a *start* costs an hour's delay. **Only one of those
+two mistakes is recoverable, so the cancel goes first.**
+
+### The second guard, which is not about money at all
+
+Gating `run_campaign()` alone would have traded one bug for another.
+`run_catch_up()` deliberately does **one campaign per run** and takes
+`$pending[0]`. A campaign that is listed and then refused downstream eats the
+whole sweep in silence — so a single never-approved draft would sit at the
+head of the queue for ever and **every real campaign behind it would stop
+being collected.**
+
+So `campaigns_with_work()` is approval-aware too. That is not a new policy:
+read its name and its own docblock — posts still to **collect from the
+server**. An unapproved campaign has nothing to collect, because nothing was
+ever written for it. Listing it was always wrong; what made it dangerous was
+`run_campaign()` treating the list as an instruction to start.
+
+**Two guards, two different failures, and they must agree about what
+"approved" means.** Mutation 12 — the queue reading `batch_started` only —
+survived the first run, and the case it needed is the lost-reply one again:
+the gate would let the sweep act, but the queue would never hand it over, so
+nothing arrives until the owner finds "Check now". The resume bug, one layer
+further in.
+
+### The stub that hid the worst mutation
+
+`test-admin-tabs.php` declared `IE_Publisher::run_campaign( $id )`. PHP lets
+a user-defined function be called with extra arguments and **silently drops
+them**, so it accepted `run_campaign( $id, true )` without a word — and the
+mutation deleting that `true`, which breaks approval for every customer,
+survived all 104 tests. The stub records its arguments now.
+
+**Third time this exact trap has cost something here**, after the pause
+cancel and the orphan-links stub. A stub's signature is part of the contract;
+a stub more forgiving than the real class is how bugs reach production.
+
+The opposite also showed up and behaved well: the pause suite's `WP_Error`
+had no `get_error_data()`, so the new code died with "Call to undefined
+method" rather than passing quietly. **A stub less capable than the real
+class fails loudly. That is the safe direction to be wrong in.**
+
+### Thirteen mutations, all caught
+
+Gate deleted (4 tests) · gate reads `batch_started` only (1) · gate reads
+`approved_at` only (6) · `approved_at` stamped after the request instead of
+before (2) · `$may_start` defaults to `true` (3) · the 402 no longer clears
+the approval (1) · gate moved above the paused branch (1) · the approve
+button stops passing `true` (1, admin suite) · the button passes `false` (1)
+· queue guard deleted (1) · queue reads `approved_at` only (3) · queue reads
+`batch_started` only (1) · `&&` becomes `||` (3). Counts differ in every
+case; two needed a new test before they were caught.
+
+`test-ie-pause.js` 33 → 43 · `test-admin-tabs.php` 104 → 105. The fixture
+`seed_campaign()` gained `batch_started`, because a campaign with written,
+scheduled posts has necessarily been approved and the old fixture described a
+state no customer can be in.
+
+## Resume never told the server — 6 October 2026 (plugin 0.29.0)
+
+`handle_resume_campaign()` called `IE_Publisher::resume()` and redirected.
+`resume()` moved the held posts back onto the schedule, set the status to
+active, logged a line, and returned. **It never contacted the server.**
+
+So the posts a paused batch had not written yet waited for the next server
+ping or the hourly cron, `writing_since` stayed empty, and the campaign card
+showed nothing at all: no spinner, no progress, no sign that Resume had done
+anything beyond changing a word on the screen. Edwin resumed a campaign with
+three posts left, saw a dead page, pressed "Check now" — and that is what
+started the writing.
+
+"Check now" is described on its own button as a fallback for the automatic
+collection. It should never be the only thing that works.
+
+### The shape of the bug: a pair where only one half grew
+
+Pause stopped being WordPress-only earlier the same day (0.26.0). It now
+sends its cancel immediately and lets `run_campaign()` re-send it on every
+sweep — one fast attempt plus a slow reliable one.
+
+Resume was left as the local half of a pair whose other half had just grown
+a second half. Nothing in the twenty-two tests then in `test-ie-pause.js`
+could have caught it, and none of them is wrong: every one asks what resume
+does to WORDPRESS — the post statuses, the held dates, the schedule screens
+— and the entire failure was that resume said nothing to anybody else. The
+same sentence was written about pause the same day. **When one side of a
+symmetric pair learns to talk to the server, the other side is a bug until
+proven otherwise.**
+
+### Why the poll goes through `run_campaign()` and not `IE_Api::write()`
+
+Because the answer has to be recorded as well as asked for. `run_campaign()`
+is what stamps `writing_since` from the server's reply, and `writing_since`
+is what the spinner watches. Calling the API directly would start the batch
+and still leave the screen silent — the same dead page with one more request
+behind it. The mutation that swaps one for the other is caught by a
+`writing_since` assertion, not by a call-count one.
+
+### THE GUARD IS THE APPROVAL, AND I PLANNED THE WRONG ONE
+
+I told Edwin the guard should be "is there anything left to write". Both
+halves of that were wrong, and the second half was dangerous.
+
+**Collecting is work too.** A campaign whose posts are all written and
+waiting on the server has nothing left to WRITE and everything left to
+FETCH. Gating on pending slots would skip the poll there and reproduce the
+same stall in a smaller window. `run_campaign()` documents itself as safe to
+call repeatedly at any stage, so there is no stage worth excluding.
+
+**The question that matters is one neither of us asked: has this campaign
+been approved?** `pause()` refuses a finished campaign and checks nothing
+else — it has no approval guard — so a campaign that was planned and never
+approved can be paused and resumed like any other. `run_campaign()` on an
+active campaign with pending slots posts to `/api/blog/write`, which starts
+a job and charges per post. An unguarded poll here would have turned Resume
+into "write all of this now", at 75 credits a post, on a campaign whose own
+card is still showing the price as a question.
+
+So the guard is `! empty( $campaign['batch_started'] )` — the record of
+approval, and the same test `IE_Admin::bucket()` uses to decide which tab a
+campaign belongs on and whether to put a price on its button. One fact, two
+readers, which is the rule the 0.25.0 work was about.
+
+### Found while reading for this: the sweep has the same hole, unguarded
+
+`IE_Campaigns::campaigns_with_work()` returns any campaign with status
+`active` and a pending slot. A campaign is `active` from the moment it is
+created, **before approval** — that is why `IE_Admin::bucket()` tests
+`batch_started` rather than status to populate the Drafts tab.
+`run_campaign()` then calls `IE_Api::write()` with no approval check of its
+own.
+
+So the hourly catch-up cron can, in principle, pick a never-approved
+campaign off that list and have it written and charged. Not observed in
+production and not fixed here: the fix is a one-line guard in
+`run_campaign()`, but it changes when every site in the fleet starts
+writing, and that is not a change to fold into a resume build. **Edwin's
+call — ask before building it.**
+
+**FIXED IN 0.30.0, and the guard in `resume()` above is gone with it — see
+"Nothing asked who was paying" below. It was not one line, and the estimate
+was wrong in a way worth keeping on the record:** `run_campaign()` is also
+what the approve button calls, so a flat approval check there would have
+stopped anyone approving a campaign at all.
+
+### Six mutations, all caught
+
+Deleting the poll (4 tests). Dropping the approval guard (1). Returning the
+poll's `WP_Error` from `resume()` (1). Swapping `run_campaign()` for
+`IE_Api::write()` (1). Moving the poll above `set_status('active')`, which
+makes it send a cancel instead of a poll (2). Moving it above the
+not-paused early return (3). Counts differ in every case.
+
+`test-ie-pause.js` 27 → 33. The six new cases all set `batch_started`
+through an `APPROVED` fixture; `seed_campaign()` deliberately does not, so
+every pre-existing resume test is unapproved and does not poll — which is
+also what keeps `test-orphan-links.php`, which exercises resume, at 70/70.
+
+## Four follow-ons from one live run — 6 October 2026 (plugin 0.28.0)
+
+Everything here was found by Edwin using the pause fix on a real campaign.
+None of it would have come out of a test suite, and three of the four are
+consequences of the new capability rather than bugs that predated it.
+
+### 1. A resumed batch never showed a spinner
+
+`$watching` was keyed off `batch_started` — stamped ONCE, at approval,
+deliberately, because it is also the record that the money was committed. A
+campaign approved at 22:12, paused, and resumed an hour later was already past
+the ten-minute window, so the spinner could never appear. Three posts were
+written and charged and the page showed nothing.
+
+**The spinner was timing rather than knowing.** It asked "was this approved
+recently?" when the question it wanted was "is the server writing?" — and the
+plugin receives that answer on every poll and was throwing it away.
+
+So: `writing_since`, set when the server first answers `writing`, cleared the
+moment it stops and again in `pause()` so a resume cannot inherit a stale one.
+`batch_started` goes back to meaning only what `$approved` and `is_finished()`
+use it for.
+
+> **THE FIXTURE IS THE TEST.** Approval old, writing new — the shape no
+> earlier test had. A version still reading `batch_started` passes every other
+> test in that file and fails this one.
+
+### 2. "Arriving" on a paused campaign
+
+Four rows said "Arriving" for a campaign that was stopped; three of the four
+posts were written and paid for. **The same word for posts that exist and are
+paid for and posts that do not exist at all.**
+
+The plugin cannot tell those apart — it learns a post exists only when it
+collects one, and a paused campaign collects nothing. So the card says "Held",
+which is the fact this screen actually knows, and the blog report says
+"Written, waiting", which is the fact that one can see.
+
+### 3. `pluralise()` did not know about past participles
+
+**"loan terms explaineds"** shipped as live anchor text.
+
+```
+"loan terms explained"    -> "loan terms explaineds"
+"mortgage rates compared" -> "compareds"
+```
+
+The guard directly above already excluded `-ing`, because a gerund is not a
+countable noun. **`-ed` is the same fact about a different suffix**, and nobody
+had met it because until pillar campaigns every keyword was a service name. A
+pillar's keyword comes from its post TITLE, and titles end in words that
+service names never do.
+
+Exceptions named rather than inferred: bed, shed, weed, feed, seed, deed,
+reed, creed, speed, breed.
+
+### 4. MY OWN TEMPLATE, MISSING A GUARD THAT SITS FOUR LINES AWAY
+
+**"loan terms explained explained"**, from the blog branch I added on
+5 October. The local branch has had this guard for weeks, with a comment
+explaining it:
+
+```js
+( suffixable && ! /(service|services)$/i.test(keyword) ) ? `${keyword} services` : null,
+```
+
+> **A RULE LEARNED ON ONE BRANCH OF AN if/else DOES NOT CROSS TO THE OTHER ON
+> ITS OWN.** I wrote the second branch a day after reading the first and did
+> not carry the lesson over. Worth remembering next time a function grows a
+> parallel path: the new branch starts with none of the scar tissue.
+
+Also dropped: `how ${keyword} actually work(s)` when the keyword ends in `-ed`
+or `-ing`. It is the only template with a verb in it, a verb must agree with a
+noun, and "how loan terms explained actually works" agrees with a participle.
+No verb form rescues it, so it steps aside and the prefix wrappers carry the
+bucket — they go in FRONT of the keyword and cannot be tripped by its ending.
+
+### STILL OPEN, AND IT IS THE REAL ONE
+
+**A pillar campaign's keyword is a post title, not a search phrase.** The
+plugin derives it with `strtolower( get_the_title() )`, so "Loan Terms
+Explained" is a headline, and every anchor template in `anchorPool.js` assumes
+a noun phrase naming a thing. "water heater repair" wraps cleanly; "loan terms
+explained" does not wrap at all.
+
+Three of the four fixes above are patches on that one fact. The next one will
+be too. **Edwin's call, not built.**
+
+### Mutation: 7 run, 6 caught
+
+The survivor: pause no longer clearing `writing_since`. The card hides the
+spinner while paused anyway, so nothing was visible until Resume — at which
+point a stale timestamp claims it is writing before the first poll has
+happened. **A spinner wrong in the other direction is the same bug wearing the
+other hat.** Tested, re-run, caught.
+
+## The screen could not tell you the cancel had worked — 6 October 2026 (plugin 0.27.0)
+
+The pause fix shipped and worked on the first live run: 1 of 4 written, 75
+credits instead of 300, `stoppedForPause: true` in the log 16 seconds after
+the button was pressed.
+
+**Edwin could not tell.** The campaign card kept a spinner and the words
+"Writing your posts". He pressed the write button again; the admin refused it,
+because a paused campaign cannot be written, and the spinner carried on
+through that too. He reported it as the fix not working.
+
+### Three screens, each wrong in its own way
+
+| What it showed | What was true |
+|---|---|
+| spinner: "Writing your posts" | nothing was running |
+| heading: "publishing on schedule" | the campaign was paused |
+| all four posts: "Planned" | one was written and charged 75 credits |
+
+**1. `$watching` never consulted `$paused`** — which is computed two lines
+above it, for the buttons. So the spinner ran for ten minutes after approval
+whatever happened in between. **It made two opposite outcomes identical on
+screen: "stopped as you asked" and "ignoring you".**
+
+**2. The headline chain had no branch for paused.** It handled deleted,
+cancelled and finished, then fell through to the present tense. The source
+beside it already argued that *"a campaign that has nothing left to publish is
+not publishing on schedule"* — paused is that same sentence, and the rule
+written for one case had stayed written for one case.
+
+**3. `stateOf()` had no word for `ready`,** so a written post fell through to
+`planned` — the state of a post that does not exist and has cost nothing. The
+two are opposites on the only question the report is asked.
+
+> **A NEW CAPABILITY TURNS A RARE STATE INTO A COMMON ONE.** `ready` was a
+> state posts passed through in seconds, so nothing needed a word for it.
+> Making batches stoppable turned it into a state posts SIT in — and three
+> screens had been quietly rounding it off for months. The report's own footer
+> already argued the principle: a deleted post stays listed "because the
+> credits were spent and that record has to survive".
+
+### The fix
+
+- `$watching` gains `&& ! $paused`
+- A `paused` branch in the headline chain, after `is_finished` — a campaign
+  with everything live is finished whether or not somebody paused it on the way
+- A `written` state: its own pill ("Written, waiting"), its own filter option,
+  and a headline count shown only when it is non-zero
+
+### Mutation: 9 run, 8 caught, and the survivor was MY TEST
+
+Removing the `written` entry from the `PILLS` map survived. `slotPill` falls
+back to `PILLS.planned` for an unknown state — right for a page that must not
+crash, and exactly what makes a missing entry invisible.
+
+My test asserted `html.includes('Written, waiting')`. **The filter dropdown
+contains that same phrase**, so the page still "included" it while every row
+rendered as Planned — the original bug, passing its own test.
+
+> **A STRING THAT APPEARS TWICE ON A PAGE CANNOT TELL YOU WHICH OF THE TWO IS
+> RIGHT.** Now matched on the pill element:
+> `/<span class="pill[^>]*>Written, waiting<\/span>/`. Re-run, caught.
+
+### And a command of mine that lied
+
+I asked for `tail -40 ~/app/logs/app.log | grep …`, which searches only the
+last forty lines and silently misses anything newer that other traffic pushed
+past. Grep first, then tail. **Seventh time a search in this project has
+returned a confident wrong answer** — and the first where the search was a
+shell command I typed in chat rather than code in the repo.
+
+## Pause could not stop a batch — 6 October 2026 (plugin 0.26.0)
+
+Edwin approved eleven articles, pressed **Pause campaign** a few seconds
+later, and watched the spinner carry on. All eleven were written and **825
+credits** were charged. The confirm dialog he had just agreed to said *"nothing
+new is written"*.
+
+### Three faults, and none of them looked wrong alone
+
+**1. The message promised something pause could not do.** It was accurate
+about the publishing schedule and false about the only thing moving fast
+enough to matter.
+
+**2. Pause never reached the server in time.** `IE_Publisher::pause()` was
+WordPress-only: local status, scheduled posts held back as drafts. There was
+no `IE_API::pause()`. The server learned the status on the **hourly
+reconciliation** — long after a batch that takes minutes had finished.
+
+**3. The write loop could not be stopped.** `blogGenerator.js` had no cancel
+check of any kind, so the message would have changed nothing even if it had
+arrived.
+
+### The loop already knew how to stop
+
+```js
+if (outcome.outOfCredits) { stoppedForCredits = true; …; break; }
+```
+
+The cancel check sits in exactly that position. The pattern, the logging and
+the partial-charge accounting all existed; what was missing was a second
+reason to use them.
+
+### The transport, and the design I got wrong first
+
+The first version read the local record inside `IE_API::write()` and set the
+flag whenever the campaign was paused, so every caller would get it without
+having to remember.
+
+**It could never have fired.** `run_campaign()` returns early for any campaign
+that is not `active`, so the one state that needs to send a cancel is the one
+state that never reaches that method. **A hidden condition that cannot be
+true is worse than no condition, because it reads as covered.**
+
+What shipped instead is an explicit parameter and two senders:
+
+- `pause()` sends it **once, immediately** — that is what makes it fast.
+- `run_campaign()` re-sends it **on every sweep while the campaign stays
+  paused** — that is what makes it reliable.
+
+Neither alone is enough. Four facts have already been lost in this plugin to
+one-shot calls with nothing behind them, and a lost cancel is the most
+expensive of them: the failure mode is writing and charging for everything the
+owner just said to stop.
+
+### Between posts is the only honest place to stop
+
+A model call in flight is paid for the moment it is sent, so abandoning one
+spends the credits and keeps nothing. Pause means "no more after this one",
+and the dialog now says so:
+
+> If posts are being written right now, the one in progress finishes and is
+> charged — the rest are stopped.
+
+One more article is the honest worst case. Promising zero and delivering
+eleven is what the old wording did.
+
+### Measured
+
+| | before | after |
+|---|---|---|
+| posts written after Pause | 11 of 11 | 1 (the one in flight) |
+| credits charged | 825 | 75 |
+| campaign status afterwards | active | paused |
+| unwritten slots | — | `pending`, resumable |
+
+### THE MUTATION THAT SURVIVED, AND WHAT IT TAUGHT
+
+Nine mutations, **eight caught**. The survivor: deleting the two lines that
+put the flag **into the request body**. Every caller still passed `true`, the
+server still read `cancel`, and the value never travelled between them.
+
+Nothing could have caught it. `test-ie-pause.js` replaces the whole `IE_Api`
+class with a stub — right for asking what the publisher *does*, and it leaves
+everything between the caller and the wire unexamined. `self::post()` is a
+static call resolved against `IE_Api` itself, so no stub and no subclass can
+intercept it: the only options were a real HTTP request or replacing the class.
+
+**The fix was to make the untestable thing testable, not to grep for the
+line.** `write()` was split: `write_body()` builds the array, `write()` posts
+it, and the new `wp-plugin/test-api-body.php` runs `write_body()` for real.
+Re-run, that mutation and five more are caught.
+
+> **PRESENCE IS NOT PAIRING — fourth instance**, and the pattern is now
+> unmistakable. Eight SEO filter names, all correct, one wired to the wrong
+> method. The business payload: `trade`/`town` sent, `type`/`location` stored.
+> Now a flag passed in, accepted, and dropped before the request. **Every one
+> was two correct endpoints disagreeing in the gap between them, and in every
+> case the gap had no test because neither side owned it.**
+
+### Four things the harnesses caught in my own work
+
+- **A stub that returned `true` where the real `chargeCredits` returns the
+  remaining balance.** The writer assigned it to `user.credits`,
+  `Number(true)` is 1, and the second post reported "out of credits" on an
+  account with 100,000. Every assertion about how many posts a batch writes
+  would have been measuring that instead of the cancel.
+- **A stub declared `write($id)` accepting `write($id, array(), true)`.** PHP
+  drops extra arguments to a user-defined function silently. Both pause stubs
+  now carry the real signature.
+- **`test-orphan-links.php` broke on the new dependency**, which is the stub
+  doing its job: a new call in the code under test *should* break every
+  harness modelling the old world.
+- **A JavaScript arrow function pasted into a PHP file.** `php -l` caught it
+  in one second. The habit of linting before running is worth more than it
+  looks when two languages are open at once.
+
+### New suites
+
+- `test-batch-cancel.js`, 10 assertions. **The first test blogGenerator.js has
+  ever had** — it requires Mongoose, which is why. The module-stubbing harness
+  from `test-campaign-reconcile.js` works on it.
+- `wp-plugin/test-api-body.php`, 7 assertions, for what reaches the wire.
+- `test-ie-pause.js` 20 → 26. **Twenty of the twenty-six could not have caught
+  this and are not wrong**: every one asks what pause does to WordPress, and
+  the whole failure was that pause said nothing to anybody else.
+
+## There was no blog mode — 5 October 2026
+
+Edwin asked the question that found this: *"if an empty site gets an external
+theme installed and our plugin is used to create the pillars, more likely it
+won't be a local business site… it could be about plumbing in general, a
+business loan, climate change. Will this affect what we are building?"*
+
+Yes. **The engine was written for a local trade business and nothing in it
+ever asked whether it was looking at one.**
+
+### The four symptoms, all measured by running the code
+
+**1. The writer was told the business had a trade, then shown nothing.**
+
+Production prompt for a site with no trade:
+
+```
+BUSINESS
+  Name:     Climate Desk
+  Trade:    trade
+  Town:
+  Services: carbon offset programs
+```
+
+`Trade:    trade` — the literal word. `buildContext` substituted `'trade'` and
+`'the business'` for missing values so prompts would never read "undefined".
+**An invented value is harder to spot than a missing one, because it looks
+like data.**
+
+**2. The topic prompt demanded an impossible angle.** One of six angles is
+"Something true of this town specifically", and the prompt requires topics
+spread across at least four of the six. An angle that cannot be answered gets
+answered anyway — which is where "Central Texas Heat Can Turn Utility Bills
+Into a Cash-Flow Gap" came from on a lending blog.
+
+**3. Anchors described a visit.** All ten descriptive phrases — "what happens
+on the visit", "have someone look at it", "see how the job is done" — on every
+campaign, every industry. Plus `local ${keyword}`, which was never even gated
+on a town: **"local carbon offset programs"**.
+
+**4. A prepositional keyword emptied the semantic bucket.** "small business
+loans for women" cannot take a suffix, which killed 14 of 17 templates. Three
+phrases for the five the mix wanted, so anchors repeated.
+
+### The guard that was already there, and why it never fired
+
+`writePost.js` had this, with a comment that states the rule exactly:
+
+```js
+/* AN EMPTY VALUE IS A CLAIM THAT THE VALUE EXISTS. */
+const hasBusiness = !!(business.name || business.trade || business.town);
+```
+
+**`name` is never empty.** `IE_Settings::business()` falls back to the
+WordPress site title. So the condition is always true, and the guard caught
+only the pillar case — where no business object is passed at all — and missed
+every content blog, which is the case its own comment describes.
+
+> **A GUARD WHOSE CONDITION INCLUDES A FIELD THAT IS NEVER EMPTY IS NOT A
+> GUARD.** It was defeated by a fallback added in a different file, months
+> later, by someone solving an unrelated problem. Neither change was wrong on
+> its own.
+
+### The fix: one decision, five readers
+
+`utils/blog/siteKind.js` — `isLocalBusiness()`. **A trade or a town. Not the
+name**, for the reason above.
+
+Five behaviours read it: the writer's business block, the topic prompt's
+business block, the angle list, the descriptive anchors, the semantic anchors.
+Each could have asked "is there a town?" in one line at its own call site —
+**which is exactly how the business-payload bug two entries down got in.** The
+symptom here would have been blander and therefore worse: not a crash, just
+topics quietly going generic on sites that should have had the local angle.
+
+So `test-site-kind.js` (26 assertions) is mostly about **agreement**. The
+interesting failure is not "the blog got a town angle", it is "four files
+disagreed about what kind of site this is".
+
+Also new: `businessBlock.js`, because writePost and suggestTopics each held a
+character-identical copy of the template and therefore a character-identical
+copy of the bug.
+
+### What it deliberately does NOT decide
+
+**Whether the subject involves a "job".** The angle "what actually happens
+during the job" assumes somebody turns up — wrong on a climate blog, right on
+a general plumbing blog, and **both have no town**. Nothing available can tell
+those apart, so it stays for both. A town angle with no town is mechanically
+impossible; that is a different kind of claim from a guess about subject
+matter, and only the mechanical one is made automatically.
+
+Asserted, so the next person meets the decision rather than the result:
+`assert.deepStrictEqual(flagged, ['local'])`.
+
+### Measured result, 11 posts, "small business loans for women"
+
+| | before | after |
+|---|---|---|
+| semantic phrases | 3 | 5 |
+| shortfall warnings | 1 | 0 |
+| repeated anchors | 4 | 2 (the exact bucket, by design) |
+| anchors claiming a visit | 2 | 0 |
+
+A local plumber's output is byte-identical to before. That is asserted from
+both sides: `test-site-kind.js` checks the blog loses the local machinery,
+`test-suggest-prompt.js` checks a lender **with** a town keeps it — because
+removing the angle from everyone would read as a success in the first file
+while quietly costing every real local business its best angle.
+
+### Three things the tests caught in my own work
+
+- **A comment that contradicted its code, in the direction this project
+  normally gets wrong in reverse.** I wrote that the spread requirement is
+  "kept as a proportion", then wrote `usable.length - 1` — 4 of 5, which is
+  the four-fifths the same paragraph argues against. Caught because the test
+  asserted the *number*, not the formula.
+- **A test that failed on correct code.** My first anchor rule banned the word
+  "work" outright and rejected "how carbon offset programs actually work",
+  which is correct English about how a thing functions. Narrowed to the
+  service sense, and backed by an exact check — no phrase from
+  `LOCAL_DESCRIPTIVE` may appear in a blog's pool — that no wording rule can
+  get wrong.
+- **Verb agreement with the wrong noun.** `how small business loans for women
+  actually works`. The head noun is "loans"; "women" is a modifier after a
+  preposition. `pluralise()` already knew this rule for a different question,
+  so `headNoun()` is now named and shared rather than re-derived.
+
+### Mutation
+
+19 mutations, 19 caught, counts all different. Including both polarities of
+the decision, the original name-counts-too bug, each vocabulary being
+forgotten, the placeholders returning, and each of the five readers deciding
+for itself.
+
+One mutation reported CRASH rather than a verdict — a perl escape broke the
+file instead of changing its behaviour. **A mutation that does not run is not
+a surviving mutation, and it is not a caught one either.** Re-run through
+Python with a proper AST-free splice, it was caught.
+
+## The fix that only ever applied to one field out of four — 5 October 2026 (plugin 0.25.0)
+
+Read the entry below this one first. That bug was fixed on 30 September by
+sending the business with every plan and every hourly sweep. **The fix worked
+for `name` and silently did nothing for the other three fields, for five
+weeks**, and the entry below — written by me — describes it as fixed.
+
+### What Edwin saw
+
+A campaign feeding a page for **"small business loans for women"** on
+hilltophomeloans.net shipped with these anchors:
+
+| Post | Anchor |
+|---|---|
+| Business Loan or Credit Card… | **Junk Removal Leander** |
+| Why Bank Statements… | **Leander** small business loans for women |
+| APR and Interest Rate… | how the job is usually handled |
+| Receivables Are Growing… | what the work involves |
+
+### Two separate causes, and only one of them is a bug
+
+**1. A deleted theme was still describing the site.** Edwin imported a
+generated theme into that site months ago for testing, then deleted every page
+and post and installed Kadence. `wp_options` kept the row:
+
+```
+local_business_theme_global_settings
+  business_name  "Junk Removal Leander"
+  business_type  "Junk Removal"
+  location       "Leander, TX"
+```
+
+Deleting content does not touch options. Switching themes does not touch
+options. Deleting the theme's *files* does not either — WordPress only runs an
+uninstall routine if the theme wrote one, and these do not.
+
+And `IE_Settings::theme_prefixes()` tries `local_business_theme_`
+**unconditionally**, on every site, whatever theme is active. It is the
+historic fallback for sites exported before the slug was configurable. On a
+site that once held a generated theme, it is a ghost.
+
+*That is a data problem on one site, and arguably correct behaviour.*
+
+**2. Three of the four fields could never be corrected.** This is the bug.
+
+`IE_Settings::business()` answers in WordPress's vocabulary — `trade`, `town`
+— because that is what the generated themes call those fields. The server's
+`readBusiness()` keeps a `LIMITS` map of the only four fields it stores:
+
+```
+name · type · location · phone
+```
+
+It does not rename anything on arrival. **A key it does not recognise is not
+an error, is not logged, and does not appear anywhere. It is dropped.**
+
+The translation between the two vocabularies was written **once, inline,
+inside `IE_API::activate()`**. The two senders added on 30 September —
+`plan()` and the `campaigns_present()` sweep — passed `business()` straight
+through. So:
+
+- `name` and `phone` happened to match, and updated normally.
+- `trade` and `town` were discarded by every call except activation.
+- The server's `type` and `location` were **frozen at whatever the site
+  reported the day its licence was pasted in**, permanently.
+
+### Why five weeks of green suites never saw it
+
+`test-business-shape.js` proves `readBusiness()` stores exactly its four
+fields. The plugin's suites prove `business()` returns exactly its four
+fields. **Both are right. Neither has ever met the other.** The mismatch lived
+in the gap between two passing suites.
+
+> **PRESENCE IS NOT PAIRING — second instance.** The first was the eight SEO
+> filters: every name present, correctly spelled, one wired to the wrong
+> method. Here: every field name correct, in two different vocabularies. A
+> word spelled correctly in both files can still be spelled correctly in two
+> *different* files.
+
+And the thing that hid it best: **activation set a plausible business**, so
+the server's copy was never empty. It was two-thirds stale, which looks
+exactly like a customer who has not changed their details.
+
+> **A "FIXED" NOTE IS A CLAIM, AND CLAIMS DECAY.** The comment above `plan()`
+> describes this fix at length and quotes roofingamerica.xyz's "…in Leander"
+> as the symptom it cures. The same anchor turned up on a different site five
+> weeks later. When a comment says a bug is fixed, the next person stops
+> looking — so the comment has to be as exact as the code. Both comments now
+> say which field the old fix reached.
+
+### The fix
+
+One translation, `IE_Settings::business_payload()`, returning the server's
+four names. All three senders call it. `class-ie-api.php` — the file that
+talks to the server — **may no longer call `business()` at all**; the admin
+screens still do, deliberately, because `town` never leaves WordPress.
+
+`wp-plugin/test-business-keys.php`, 11 assertions, in `deploy.sh`. It **reads
+the server's `LIMITS` out of `businessShape.js`** rather than listing the
+fields again — a list typed into the test would be a third vocabulary and a
+third place to drift, which is the bug itself.
+
+13 mutations, 13 caught, counts all different. Two notes on the harness:
+
+- **A first run reported every mutation with a blank count** — the same shape
+  as the false ALL-CAUGHT of 4 October. Blank counts and identical counts are
+  the same signal. Re-run with the counts printed.
+- **My pass/fail detector was `grep -q FAIL`**, which matched test *names*
+  containing the word and reported four clean PHP suites as FAILED. Use the
+  exit code; these suites all set one.
+
+### Reading code as text, instance seven
+
+The call-site check needed to prove `class-ie-api.php` never calls
+`business()`. A grep cannot: the file now explains this bug at length and
+names the banned call repeatedly in prose, so a grep reports the explanation
+as the offence and **fails on correct code** — the exact way my backtick rule
+died on 4 October.
+
+So it uses `token_get_all()`. Comments arrive as single tokens and cannot be
+mistaken for calls. The extractor is itself tested against a fixture whose
+answer is written down, because *both* call-site assertions pass if the
+extractor simply finds nothing.
+
+One mutation "survived" and was inert: removing the `T_STRING` type check does
+not turn the tokeniser into a grep, because a comment is one token whose text
+is the whole comment. The protection comes from tokenising at all, not from
+the type check. **Replacing the tokeniser with a regex is the mutation that
+matters, and the fixture catches it.**
+
+### Still open
+
+- The descriptive anchor bucket in `anchorPool.js` is ten hardcoded trade
+  phrases — "what the work involves", "how the job is usually handled" — used
+  on every campaign whatever the industry. Nonsense on a lender.
+- A keyword containing a preposition sets `suffixable = false` and collapses
+  the semantic bucket from ~18 candidates to 4. "small business loans for
+  women" needed 5 and got 4, so one anchor repeated. The planner reported it
+  in `anchorWarnings`; worth checking the UI actually shows it.
+
+Both are the same root cause as findings 1, 2, 6 and 7: **trade-site machinery
+running on a content blog.** Not built — Edwin's call.
+
 ## The business nobody ever updated — 30 September 2026 (plugin 0.14.0)
+
+**Fixed for `name` only. See the entry above.**
 
 Edwin's report, row 27: a **published** post on a **running** campaign,
 linking with the anchor **"TK Water Damage Restoration"**. Other rows read
@@ -4087,6 +5381,15 @@ That is precisely the site where deletions happen: posts get tidied up months
 after a campaign ends. Hence the **Check for deleted posts** button.
 
 ## Source greps have now missed four real bugs — 28 September 2026
+
+> **The count is out of date; this is the ledger, so leave the entry as
+> written and read it with the later ones.** 4 October added two more: a
+> string-searching PHP test that passed on the backtick bug `php -l` caught
+> at once, and `grep -c "charAt( SLUG_MAX )"` — PHP spacing against a
+> JavaScript file, returning a 0 that was indistinguishable from absent.
+> 5 October added a seventh, in the other direction: a grep for
+> `IE_Settings::business()` matches the comments explaining why it was
+> removed. **The fix is `token_get_all()`, not a cleverer pattern.**
 
 Add this one to the pile, because it is the worst of the four:
 

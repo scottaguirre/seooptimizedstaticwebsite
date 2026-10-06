@@ -446,6 +446,22 @@ async function writeCampaign(job, { onProgress }) {
     ? slotIndexes
     : (Number.isInteger(slotIndex) ? [slotIndex] : null);
 
+  /* Read fresh from the collection, never from the in-memory campaign.
+   *
+   * `campaign` below is loaded once, before the first post. Reading
+   * `campaign.batch.cancelRequested` off it would be a snapshot taken minutes
+   * before anyone could possibly have pressed Pause — a check that compiles,
+   * runs, and can never be true.
+   *
+   * The same mistake already cost this file a worse bug: the finish used to
+   * test the stale in-memory `slots`, decided nothing had been written, and
+   * set the campaign back to 'draft' immediately after charging for every
+   * post in it. See the note above `const fresh = ...` further down. */
+  const cancelRequested = async id => {
+    const row = await BlogCampaign.findById(id).select('batch.cancelRequested').lean();
+    return !!(row && row.batch && row.batch.cancelRequested);
+  };
+
   const campaign = await BlogCampaign.findById(campaignId).populate('site');
   if (!campaign) {
     throw new Error('The campaign this batch belongs to no longer exists');
@@ -481,15 +497,63 @@ async function writeCampaign(job, { onProgress }) {
   const written = [];
   const failedIndexes = [];
   let stoppedForCredits = false;
+  let stoppedForPause = false;
 
+  /* CLEARED AS THE BATCH STARTS, in the same write that claims it.
+   *
+   * A cancel left over from the previous run would stop this one before it
+   * wrote anything — the campaign would resume, halt instantly, and look as
+   * though it had failed for no reason. Done here rather than at the end so
+   * that a worker killed mid-batch cannot leave the flag behind either. */
   await BlogCampaign.updateOne(
     { _id: campaign._id },
-    { $set: { status: 'writing', 'batch.job': job._id, 'batch.startedAt': new Date() } }
+    {
+      $set: {
+        status: 'writing',
+        'batch.job': job._id,
+        'batch.startedAt': new Date(),
+        'batch.cancelRequested': false,
+        'batch.cancelledAt': null,
+      },
+    }
   );
 
   await onProgress({ stage: 'Writing posts', total, done, current: '' });
 
   for (const slot of inScope) {
+    /* STOP IF SOMEBODY ASKED, BEFORE PAYING FOR THE NEXT POST.
+     *
+     * Re-read every iteration, because the flag is set by a different process
+     * minutes after this loop started. One tiny indexed read per post, beside
+     * a model call that takes tens of seconds and costs 75 credits.
+     *
+     * BETWEEN POSTS IS THE ONLY HONEST PLACE FOR IT. A model call in flight
+     * has been paid for already; abandoning it spends the credits and keeps
+     * nothing. So pause means "no more after this one", and the plugin's
+     * confirm dialog now says exactly that rather than "nothing new is
+     * written" — which is what it promised while writing eleven articles. */
+    if (await cancelRequested(campaign._id)) {
+      stoppedForPause = true;
+
+      await onProgress({
+        stage: 'Stopped: paused',
+        total,
+        done,
+        current: '',
+        skippedPage: { page: slot.topic, reason: 'The campaign was paused.' },
+      });
+
+      log.info('blog.batch.cancelled', {
+        campaignId: String(campaign._id),
+        stoppedBeforeSlot: slot.index,
+        written: written.length,
+        of: total,
+        creditsCharged,
+      });
+
+      break;
+    }
+
     const outcome = await writeOneSlot({ campaign, slot, user, job, onProgress });
 
     if (outcome.ok) {
@@ -603,16 +667,33 @@ async function writeCampaign(job, { onProgress }) {
     s => s.status === 'ready' || s.status === 'scheduled' || s.status === 'published'
   );
 
+  /* A CANCELLED BATCH LEAVES THE CAMPAIGN PAUSED, not active and not draft.
+   *
+   * 'active' would be a lie the report repeats: the campaign is not running,
+   * somebody stopped it. 'draft' would be worse — it is the state a campaign
+   * that never wrote anything goes to, and it would hide however many posts
+   * this batch DID write and charge for behind a word meaning "nothing has
+   * happened yet".
+   *
+   * It also matches what WordPress already believes. IE_Publisher::pause()
+   * set the local record to paused before this flag was ever read, so any
+   * other answer here puts the two sides out of step until the next sweep. */
+  const finalStatus = stoppedForPause ? 'paused' : (anythingLive ? 'active' : 'draft');
+
   await BlogCampaign.updateOne(
     { _id: campaign._id },
     {
       $set: {
-        status: anythingLive ? 'active' : 'draft',
+        status: finalStatus,
         crossCheck: cross,
         'batch.finishedAt': new Date(),
         'batch.written': written.length,
         'batch.failed': failedIndexes.length,
         'batch.creditsCharged': creditsCharged,
+        // Cleared however the batch ended, so a resume is not cancelled by a
+        // flag nobody set this time round.
+        'batch.cancelRequested': false,
+        ...(stoppedForPause ? { 'batch.cancelledAt': new Date() } : {}),
       },
     }
   );
@@ -625,12 +706,19 @@ async function writeCampaign(job, { onProgress }) {
     of: total,
     creditsCharged,
     stoppedForCredits,
+    stoppedForPause,
   });
 
   // Thrown only when the batch achieved nothing. A partial batch is a success
   // with a caveat: eleven posts were written and paid for, and marking the job
   // failed would hide them behind an error page.
-  if (!written.length && !alreadyWritten) {
+  /* A PAUSE THAT CAUGHT THE BATCH BEFORE ITS FIRST POST IS NOT A FAILURE.
+   *
+   * Without the third clause, pressing Pause quickly enough would write
+   * nothing — exactly what was asked for — and then throw, which marks the
+   * job failed and shows the owner an error about posts that "could not be
+   * written". Nothing went wrong; they stopped it. */
+  if (!written.length && !alreadyWritten && !stoppedForPause) {
     throw new Error(
       stoppedForCredits
         ? 'Not enough credits to write any posts in this campaign.'
@@ -638,7 +726,7 @@ async function writeCampaign(job, { onProgress }) {
     );
   }
 
-  await onProgress({ stage: 'completed', total, done, current: '' });
+  await onProgress({ stage: stoppedForPause ? 'Stopped: paused' : 'completed', total, done, current: '' });
 
   return {
     creditsCharged,
@@ -647,6 +735,7 @@ async function writeCampaign(job, { onProgress }) {
       failed: failedIndexes,
       total,
       stoppedForCredits,
+      stoppedForPause,
       crossCheck: cross,
     },
   };

@@ -226,6 +226,27 @@ function get_the_title( $p = 0 ) {
 	return isset( $GLOBALS['ie_url_posts'][ $id ] ) ? $GLOBALS['ie_url_posts'][ $id ]['title'] : '';
 }
 
+/* POST META, which this stub did without until 6 October.
+ *
+ * read_keyword() now asks the POST what keyword it was planned to win, before
+ * falling back to deriving one from its title — so the campaign form and its
+ * handler both reach get_post_meta(), and without it the whole form section
+ * died with "Call to undefined function" rather than failing one assertion.
+ *
+ * Served from a global so a case can set one: a stub that cannot express the
+ * stored keyword cannot tell "read it" from "ignored it", and that difference
+ * is the entire fix. */
+function get_post_meta( $id, $key = '', $single = false ) {
+	$id = (int) $id;
+
+	if ( ! isset( $GLOBALS['ie_post_meta'][ $id ][ $key ] ) ) {
+		return $single ? '' : array();
+	}
+
+	$value = $GLOBALS['ie_post_meta'][ $id ][ $key ];
+	return $single ? $value : array( $value );
+}
+
 /* WHICH POSTS STILL EXIST.
  *
  * null means "all of them", so every test written before deleted-post
@@ -303,11 +324,31 @@ $GLOBALS['ie_options'] = array();
 $GLOBALS['ie_existing_posts'] = null;   // null = every post still exists
 
 class IE_Settings {
+	/* THE META KEYS, SPELLED THE SAME WAY THE REAL CLASS SPELLS THEM.
+	 *
+	 * A stub that omits a constant does not quietly disagree — PHP fatals on
+	 * "Undefined constant", which is the loud failure and the right one. The
+	 * danger is the other direction: a stub inventing its OWN spelling would
+	 * let every test pass while the publisher wrote one key and this screen
+	 * read another, and that failure is silent on a real site. So these are
+	 * copied from class-ie-settings.php and must stay copied. */
+	const PILLAR_META  = '_ie_is_pillar';
+	const KEYWORD_META = '_ie_target_query';
+
 	public static function is_connected() { return true; }
 	public static function credits_per_post() { return 75; }
 	public static function get( $k, $d = null ) { return $d; }
+	/* SERVED FROM A GLOBAL so a test can describe a whole list. The single
+	 * hard-coded row it used to return could not express ordering at all, and
+	 * numbering the options is entirely about ordering.
+	 *
+	 * isset(), not array_key_exists(): a test clears the fixture by setting it
+	 * to null and gets the default back, which is what every test written
+	 * before today expects. */
 	public static function target_pages() {
-		return array( 12 => array( 'title' => 'quality plumbing leander', 'url' => 'http://site/quality-plumbing-leander/' ) );
+		return isset( $GLOBALS['ie_target_pages'] )
+			? $GLOBALS['ie_target_pages']
+			: array( 12 => array( 'title' => 'quality plumbing leander', 'url' => 'http://site/quality-plumbing-leander/' ) );
 	}
 	public static function credits() { return 7000; }
 	public static function server_url() { return 'https://threecomets.com'; }
@@ -337,7 +378,23 @@ class IE_Publisher {
 	public static function log( $m ) {}
 	public static function pause( $id ) { return 0; }
 	public static function resume( $id ) { return 0; }
-	public static function run_campaign( $id ) { return array(); }
+	/* THE SIGNATURE MATCHES THE REAL ONE, and it did not until 6 October.
+	 *
+	 * This read `run_campaign( $id )`. PHP lets a user-defined function be
+	 * called with extra arguments and silently drops them, so it accepted
+	 * `run_campaign( $id, true )` without a word — and a mutation that
+	 * deleted that `true` from handle_run_now() survived the whole suite.
+	 * That `true` is what permits the one call in the plugin allowed to spend
+	 * money; without it nobody could approve a campaign at all, and 104 tests
+	 * stayed green.
+	 *
+	 * Third time this exact trap has cost something here. The arguments are
+	 * recorded now, so a case can assert them rather than hope. */
+	public static function run_campaign( $id, $may_start = false ) {
+		$GLOBALS['ie_run_calls'][] = array( 'id' => $id, 'may_start' => (bool) $may_start );
+
+		return isset( $GLOBALS['ie_run_result'] ) ? $GLOBALS['ie_run_result'] : array();
+	}
 	public static function publish_now( $id ) { return 1; }
 	public static function on_transition( $a, $b, $c ) {}
 	public static function sweep_deleted() { return array( 'slots' => 0, 'campaigns' => 0 ); }
@@ -1316,6 +1373,163 @@ test( 'a PAUSED campaign whose posts all published is not offered Resume', funct
 	has( $html, 'closed out', 'the closed-out campaign is not described' );
 } );
 
+test( 'A PAUSED CAMPAIGN STOPS SAYING IT IS PUBLISHING ON SCHEDULE', function () {
+	/* The same argument the finished-campaign test above makes, about a state
+	 * nobody had applied it to.
+	 *
+	 * The headline chain checked deleted, cancelled and finished and then fell
+	 * through to the present tense, so a paused campaign read "publishing on
+	 * schedule" — directly above its own Resume button. The source already
+	 * argued that "a campaign that has nothing left to publish is not
+	 * publishing on schedule". Paused is that same sentence and was not
+	 * covered by it. A RULE WRITTEN FOR ONE CASE STAYS WRITTEN FOR ONE CASE.
+	 *
+	 * Edwin saw it on a campaign paused mid-batch: the heading claimed a
+	 * schedule was running, the spinner claimed posts were being written, and
+	 * neither was true. */
+	$c = campaign( 'c-paused', 'small business loans for women',
+		array( slot( 0, 'scheduled', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['status'] = 'paused';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'publishing on schedule',
+		'a paused campaign still claims to be publishing on schedule' );
+	has( $html, 'paused', 'the heading does not say the campaign is paused' );
+} );
+
+test( 'THE SPINNER DOES NOT RUN ON A PAUSED CAMPAIGN', function () {
+	/* WORSE THAN COSMETIC, because it made two opposite outcomes identical.
+	 *
+	 * $watching sits two lines below $paused and never consulted it, so the
+	 * spinner and the words "Writing your posts" stayed on screen for ten
+	 * minutes after approval whatever had happened since.
+	 *
+	 * Edwin pressed Pause; the batch stopped correctly after the post already
+	 * in flight — 1 of 4 written, 75 credits rather than 300 — and the page
+	 * went on saying it was writing. He pressed the write button again, the
+	 * admin refused it because a paused campaign cannot be written, and the
+	 * spinner carried on through that too. NOTHING ON THE PAGE COULD TELL
+	 * "stopped as you asked" FROM "ignoring you".
+	 *
+	 * batch_started is deliberately recent: watching stops after ten minutes
+	 * anyway, so an older fixture would pass this test against the broken
+	 * code and prove nothing. */
+	$c = campaign( 'c-spin', 'small business loans for women',
+		array( slot( 0, 'scheduled', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['status']        = 'paused';
+	$c['batch_started'] = gmdate( 'c', time() - 30 );
+	$c['writing_since'] = current_time( 'mysql' );
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Writing your posts',
+		'a paused campaign is still showing the writing spinner' );
+	hasnt( $html, 'window.location.reload',
+		'a paused campaign is still reloading itself every fifteen seconds' );
+} );
+
+test( 'a running batch still gets its spinner', function () {
+	/* The opposite failure, and it would be silent: no spinner means a page
+	 * that never refreshes, so posts arrive and the owner never sees them
+	 * without reloading by hand. */
+	$c = campaign( 'c-run', 'small business loans for women',
+		array( slot( 0, 'pending', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['status']        = 'active';
+	$c['batch_started'] = gmdate( 'c', time() - 30 );
+	$c['writing_since'] = current_time( 'mysql' );
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	has( $html, 'Writing your posts', 'a running batch lost its spinner' );
+} );
+
+test( 'A RESUMED BATCH GETS A SPINNER, THOUGH APPROVAL WAS HOURS AGO', function () {
+	/* WHAT EDWIN HIT AFTER THE PAUSE FIX LANDED. He resumed a campaign, three
+	 * posts were written and charged for, and the page showed nothing at all.
+	 *
+	 * The spinner was keyed off batch_started, which is stamped ONCE — at
+	 * approval — and deliberately never re-stamped, because it is also the
+	 * record that the money was committed. So a campaign approved at 22:12,
+	 * paused, and resumed an hour later had `time() - batch_started` already
+	 * past the ten-minute window, and the spinner could never appear.
+	 *
+	 * writing_since answers the question the screen was actually asking. The
+	 * fixture is the shape that matters and the one no earlier test had:
+	 * APPROVAL OLD, WRITING NEW. A version still reading batch_started fails
+	 * here and passes everything else in this file. */
+	$c = campaign( 'c-resumed', 'small business loans for women',
+		array( slot( 0, 'pending', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['status']        = 'active';
+	$c['batch_started'] = gmdate( 'c', time() - 7200 );   // approved two hours ago
+	$c['writing_since'] = current_time( 'mysql' );         // writing right now
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	has( $html, 'Writing your posts',
+		'a resumed batch gets no spinner — the screen is reading the approval clock' );
+} );
+
+test( 'a campaign that is not writing gets no spinner, however recently it was approved', function () {
+	/* The other half, and the one the old timer got wrong in the opposite
+	 * direction: approved a moment ago, nothing writing — between the approval
+	 * and the first poll, or after a batch that already finished. */
+	$c = campaign( 'c-idle', 'small business loans for women',
+		array( slot( 0, 'scheduled', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['status']        = 'active';
+	$c['batch_started'] = gmdate( 'c', time() - 30 );
+	$c['writing_since'] = '';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Writing your posts',
+		'a campaign that is not writing is claiming to be' );
+} );
+
+test( 'A PAUSED CAMPAIGN SAYS HELD, NOT ARRIVING', function () {
+	/* "Arriving" is a promise nothing is keeping. Edwin paused a four-post
+	 * campaign, three were written and charged for, and all four rows said
+	 * "Arriving" — the same word for posts that exist and are paid for and
+	 * posts that do not exist at all.
+	 *
+	 * ONE WORD FOR BOTH IS DELIBERATE HERE. The plugin cannot tell them
+	 * apart: it learns a post exists only when it collects one, and a paused
+	 * campaign collects nothing. The blog report can, and now says "Written,
+	 * waiting". This screen says the thing it actually knows. */
+	$c = campaign( 'c-held', 'small business loans for women',
+		array( slot( 0, 'pending', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['status'] = 'paused';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	$html = render( 'running' );
+
+	has( $html, 'Held', 'a paused campaign does not say its posts are held' );
+	hasnt( $html, 'Arriving',
+		'a paused campaign still promises posts are arriving' );
+} );
+
+test( 'a running campaign still says Arriving', function () {
+	/* The guard must not take the word away from the campaigns it is true of. */
+	$c = campaign( 'c-arr', 'small business loans for women',
+		array( slot( 0, 'pending', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['status'] = 'active';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	has( render( 'running' ), 'Arriving', 'a running campaign lost its Arriving pill' );
+} );
+
 test( 'A CAMPAIGN THAT IS STILL RUNNING KEEPS ITS PAUSE BUTTON', function () {
 	/* The guard must not be so keen it disarms the tab it was not about. */
 	$c = campaign( 'c-live', 'commercial plumbing services',
@@ -1962,6 +2176,389 @@ test( 'THE BOX IS ON THE FORM, AND ONLY FOR SILO CAMPAIGNS', function () {
 	$row = substr( $html, strpos( $html, 'ie-needs-target' ) );
 	ok( strpos( $row, 'name="target_url"' ) !== false && strpos( $row, 'name="target_url"' ) < strpos( $row, '</table>' ),
 		'the URL box is outside the target-page row' );
+} );
+
+/* =====================================================================
+ * Numbering the target-page dropdown
+ *
+ * Asked for on 4 October: "number the options — '1. Home loans · 2.
+ * Refinancing' — so you can refer to a page by number instead of a long
+ * title." Presentation only.
+ * ===================================================================== */
+
+function ie_three_targets() {
+	$GLOBALS['ie_target_pages'] = array(
+		12 => array( 'title' => 'Home Loans', 'url' => 'http://site/home-loans/', 'is_pillar' => false ),
+		14 => array( 'title' => 'Refinancing', 'url' => 'http://site/refinancing/', 'is_pillar' => false ),
+		19 => array( 'title' => 'What Lenders Check', 'url' => 'http://site/what-lenders-check/', 'is_pillar' => true ),
+	);
+	$GLOBALS['ie_campaigns'] = array();
+}
+
+test( 'THE OPTIONS ARE NUMBERED IN THE ORDER THEY ARE SHOWN', function () {
+	ie_three_targets();
+	$html = render( 'new' );
+
+	has( $html, '1. Home Loans' );
+	has( $html, '2. Refinancing' );
+	$GLOBALS['ie_target_pages'] = null;
+} );
+
+test( 'the pillar marker survives the numbering', function () {
+	/* Two decorations on one label, and the number goes first. Both are added
+	 * at display time; neither is stored. */
+	ie_three_targets();
+	$html = render( 'new' );
+
+	has( $html, '3. What Lenders Check — pillar' );
+	$GLOBALS['ie_target_pages'] = null;
+} );
+
+test( 'THE NUMBER NEVER REACHES THE STORED TITLE', function () {
+	/* THE WHOLE REASON THIS IS DONE AT DISPLAY TIME.
+	 *
+	 * read_form() keeps the selected page's title. It becomes the campaign's
+	 * label and travels to the server as targetPage.title, which writePost
+	 * drops into the sentence "It becomes a link to the X page". A numbered
+	 * title would have every post in the silo referring to "the 2.
+	 * Refinancing page".
+	 *
+	 * The same trap the " — pillar" marker already documents. One rule, now
+	 * with two things obeying it. */
+	ie_three_targets();
+	ie_url_post( 14, 'page', 'publish', 'Refinancing' );
+
+	$_POST = array(
+		'topics'         => "Paying off a loan early\nWhat lenders check",
+		'target_page_id' => '14',
+	);
+	ie_run_handler( array( 'IE_Admin', 'handle_review_topics' ) );
+	$_POST = array();
+
+	$draft = get_transient( 'x' );
+	same( 'Refinancing', $draft['form']['title'], 'the list number was stored with the title' );
+
+	$GLOBALS['ie_target_pages'] = null;
+} );
+
+test( 'numbering counts the options, not the post ids', function () {
+	/* The ids here are 12, 14 and 19. A loop that printed the key rather than
+	 * a counter would read "12. Home Loans" and look plausible on a site whose
+	 * first page happens to be post 1. */
+	ie_three_targets();
+	$html = render( 'new' );
+
+	hasnt( $html, '12. Home Loans' );
+	hasnt( $html, '14. Refinancing' );
+	$GLOBALS['ie_target_pages'] = null;
+} );
+
+/* ------------------------------------------------------------------ *
+ * The one caller allowed to spend money — 6 October
+ *
+ * run_campaign() refuses by default now. A campaign is 'active' with every
+ * slot 'pending' from the moment it is created, which is exactly what the
+ * hourly cron looks for, so until today the sweep could write and charge a
+ * campaign nobody had approved.
+ *
+ * handle_run_now() is the exception, and it has to be: it serves both the
+ * priced "Write all N posts" button and the free "Check now". If it stopped
+ * passing true, nobody could approve a campaign at all — and that mutation
+ * survived this entire suite, because the IE_Publisher stub above declared
+ * run_campaign( $id ) and PHP dropped the second argument in silence.
+ * ------------------------------------------------------------------ */
+
+test( 'THE APPROVE BUTTON ASKS PERMISSION TO SPEND, and nothing else does', function () {
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Water heater repair', array( slot( 0, 'pending' ), slot( 1, 'pending' ) ), false ),
+	);
+
+	$GLOBALS['ie_run_calls']  = array();
+	$GLOBALS['ie_run_result'] = array( 'inserted' => 2 );
+
+	$_GET = array( 'campaign' => 'c1' );
+	ie_run_handler( array( 'IE_Admin', 'handle_run_now' ) );
+
+	same( 1, count( $GLOBALS['ie_run_calls'] ), 'handle_run_now did not run the campaign' );
+	same( 'c1', $GLOBALS['ie_run_calls'][0]['id'] );
+	ok( true === $GLOBALS['ie_run_calls'][0]['may_start'],
+		'the approve button no longer permits the batch to start — nobody can approve a campaign' );
+
+	$GLOBALS['ie_run_result'] = null;
+} );
+
+/* ---------------------------------------------------------------------
+ * The keyword a pillar was planned to win — 6 October
+ *
+ * The owner types "Search it should win" for every topic in a pillar campaign,
+ * and the form refuses to plan one without it. Publishing now stamps that
+ * answer onto the post, so the campaign that later AIMS at the pillar can read
+ * it instead of guessing from the headline.
+ *
+ * Both halves of this screen have to ask the same question in the same order.
+ * read_keyword() decides what gets stored; the dropdown's data-keyword decides
+ * what the owner SEES in the box. If those disagree, the screen shows one
+ * value and saves another — a worse bug than the bad default it replaces,
+ * because a bad default at least does what it looks like it will do.
+ * ------------------------------------------------------------------ */
+
+test( 'THE BOX PREFERS THE KEYWORD THE PILLAR WAS PLANNED TO WIN', function () {
+	/* THE FIX, seen from the screen. Before this the box offered a thirteen-
+	 * word headline with its question mark still on, and agreeing with it took
+	 * no action at all. */
+	$GLOBALS['ie_campaigns']   = array();
+	$GLOBALS['ie_target_pages'] = array(
+		40 => array(
+			'title' => 'Can You Apply for a Loan in the US Without Being a Citizen?',
+			'url'   => 'http://site/loan-without-citizenship/',
+		),
+	);
+	$GLOBALS['ie_post_meta'] = array(
+		40 => array( IE_Settings::KEYWORD_META => 'loan without us citizenship' ),
+	);
+
+	$html = render( 'new' );
+
+	has( $html, 'data-keyword="loan without us citizenship"',
+		'the box still offers a keyword derived from the headline' );
+	hasnt( $html, 'data-keyword="can you apply for a loan in the us without being a citizen?"',
+		'the headline is still being offered as a search term' );
+
+	$GLOBALS['ie_target_pages'] = null;
+	$GLOBALS['ie_post_meta']    = array();
+} );
+
+test( 'A PAGE WITH NO STORED KEYWORD STILL FALLS BACK TO ITS TITLE', function () {
+	/* NOT TIDINESS — this is what keeps every pillar already published on every
+	 * site working. None of them carries the meta, because the field did not
+	 * exist when they published. Without the fallback each would have no
+	 * keyword at all, which is worse than a bad one.
+	 *
+	 * It is also still the RIGHT answer for an ordinary service page, whose
+	 * title is already a search phrase: "quality plumbing leander" minus the
+	 * town gives "quality plumbing". */
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_post_meta'] = array();
+
+	$html = render( 'new' );
+
+	has( $html, 'data-keyword="quality plumbing"',
+		'the title fallback is gone — every pillar published before today loses its keyword' );
+} );
+
+test( 'the screen and the handler agree about which keyword wins', function () {
+	/* TWO READERS, ONE RULE. The dropdown fills the box and read_keyword()
+	 * decides what is stored, and they are separate code paths that have to
+	 * reach the same answer. A box showing what the server will not save is the
+	 * failure this guards.
+	 *
+	 * Asserted through the handler's own helper rather than by re-deriving the
+	 * rule here, so a change to the order of preference has to break this. */
+	$GLOBALS['ie_post_meta'] = array(
+		40 => array( IE_Settings::KEYWORD_META => 'loan without us citizenship' ),
+	);
+
+	same( 'loan without us citizenship', IE_Admin::stored_keyword( 40 ),
+		'the handler cannot see what the pillar was planned to win' );
+	same( '', IE_Admin::stored_keyword( 41 ),
+		'a page with no stored keyword reported one anyway' );
+	same( '', IE_Admin::stored_keyword( 0 ),
+		'a missing page id did not come back empty' );
+
+	$GLOBALS['ie_post_meta'] = array();
+} );
+
+test( 'THE HANDLER STORES THE PILLAR KEYWORD, NOT ONLY THE BOX SHOWING IT', function () {
+	/* THE MUTATION THAT SURVIVED THE FIRST RUN, and the worst of the set.
+	 *
+	 * The dropdown's data-keyword is what the owner SEES. read_keyword() is
+	 * what gets SAVED. Those are separate code paths, and a version where only
+	 * the first learned about the stored keyword would put the right phrase in
+	 * the box, store the thirteen-word headline anyway, and give no sign at
+	 * all — the screen lying about what it is going to do, which is worse than
+	 * the bad default this replaces.
+	 *
+	 * Driven through reflection because read_keyword() is private and the
+	 * whole point is to test IT rather than something that resembles it. */
+	$method = new ReflectionMethod( 'IE_Admin', 'read_keyword' );
+	$method->setAccessible( true );
+
+	$GLOBALS['ie_url_posts'] = array(
+		40 => array( 'title'  => 'Can You Apply for a Loan in the US Without Being a Citizen?',
+		             'url'    => 'http://site/x/',
+		             'type'   => 'post',
+		             'status' => 'publish' ),
+	);
+	$GLOBALS['ie_post_meta'] = array(
+		40 => array( IE_Settings::KEYWORD_META => 'loan without us citizenship' ),
+	);
+
+	$_POST = array();
+
+	same( 'loan without us citizenship', $method->invoke( null, get_post( 40 ) ),
+		'the handler stored a keyword derived from the headline' );
+
+	$GLOBALS['ie_post_meta'] = array();
+	$GLOBALS['ie_url_posts'] = array();
+} );
+
+test( 'WHAT THE OWNER TYPES NOW BEATS WHAT THEY TYPED MONTHS AGO', function () {
+	/* The order of preference, asserted rather than assumed. They are looking
+	 * at this campaign and this page right now; a stored answer that silently
+	 * overrode the box would make the field look broken. */
+	$method = new ReflectionMethod( 'IE_Admin', 'read_keyword' );
+	$method->setAccessible( true );
+
+	$GLOBALS['ie_url_posts'] = array(
+		40 => array( 'title'  => 'Can You Apply for a Loan in the US Without Being a Citizen?',
+		             'url'    => 'http://site/x/',
+		             'type'   => 'post',
+		             'status' => 'publish' ),
+	);
+	$GLOBALS['ie_post_meta'] = array(
+		40 => array( IE_Settings::KEYWORD_META => 'loan without us citizenship' ),
+	);
+
+	$_POST = array( 'keyword' => 'non citizen mortgage' );
+
+	same( 'non citizen mortgage', $method->invoke( null, get_post( 40 ) ),
+		'a stored keyword overrode what the owner typed on this form' );
+
+	$_POST = array();
+	$GLOBALS['ie_post_meta'] = array();
+	$GLOBALS['ie_url_posts'] = array();
+} );
+
+test( 'THE HANDLER STILL FALLS BACK TO THE TITLE WITH NOTHING STORED', function () {
+	/* The other mutation that survived. Dropping the fallback returns an empty
+	 * keyword for every ordinary service page AND for every pillar published
+	 * before the field existed — no keyword at all, which is worse than a bad
+	 * one and would be invisible until the anchors came back wrong. */
+	$method = new ReflectionMethod( 'IE_Admin', 'read_keyword' );
+	$method->setAccessible( true );
+
+	$GLOBALS['ie_url_posts'] = array(
+		41 => array( 'title'  => 'Water Heater Repair | Acme Plumbing', 'url' => 'http://site/y/',
+		             'type'   => 'page',
+		             'status' => 'publish' ),
+	);
+	$GLOBALS['ie_post_meta'] = array();
+
+	$_POST = array();
+
+	same( 'water heater repair', $method->invoke( null, get_post( 41 ) ),
+		'the title fallback is gone — service pages and old pillars lose their keyword' );
+
+	$GLOBALS['ie_url_posts'] = array();
+} );
+
+/* ---------------------------------------------------------------------
+ * Tick or untick every topic — 6 October
+ *
+ * Suggest topics returns up to twelve rows, and the usual editing move is
+ * "none of these except three": twelve clicks to clear before three to
+ * choose. Edwin asked for the header box after doing exactly that.
+ *
+ * The behaviour is in a script, so what can be asserted here is the CONTRACT
+ * the script depends on — the box exists, it posts nothing, and the row boxes
+ * it drives are where the script expects to find them. A script hunting for a
+ * tbody that moved would fail in the browser and nowhere else.
+ * ------------------------------------------------------------------ */
+
+/** Put topics on the New campaign form the way a suggest run would. */
+function ie_draft_topics( $rows ) {
+	$GLOBALS['ie_transient'] = array(
+		'form'     => array(),
+		'topics'   => $rows,
+		'warnings' => array(),
+	);
+}
+
+test( 'THE TOPICS TABLE HAS A TICK-ALL BOX', function () {
+	ie_draft_topics( array(
+		array( 'topic' => 'Bank statements and loan denials',
+		       'targetQuery' => 'business loan denied bank statements',
+		       'linkPhrase' => 'bank statement issues' ),
+		array( 'topic' => 'Debt coverage when cash flow looks fine',
+		       'targetQuery' => 'debt service coverage ratio loan',
+		       'linkPhrase' => 'debt coverage before applying' ),
+	) );
+
+	$html = render( 'new' );
+
+	has( $html, 'id="ie_use_all"', 'there is no tick-all box on the topics table' );
+	has( $html, 'name="use[0]"', 'the row boxes are gone' );
+	has( $html, 'name="use[1]"', 'the second row box is gone' );
+
+	$GLOBALS['ie_transient'] = false;
+} );
+
+test( 'THE TICK-ALL BOX POSTS NOTHING OF ITS OWN', function () {
+	/* It is a control, not a field. If it carried a name it would arrive in
+	 * $_POST beside use[], and read_topics() would then have two records of
+	 * the same decision — one of which is whatever the box happened to look
+	 * like, which is not an answer about any topic. */
+	ie_draft_topics( array(
+		array( 'topic' => 'One', 'targetQuery' => 'one query here', 'linkPhrase' => 'one' ),
+	) );
+
+	$html = render( 'new' );
+
+	$start = strpos( $html, 'id="ie_use_all"' );
+	ok( false !== $start, 'the box is missing' );
+
+	// The whole <input> tag the id sits in.
+	$open = strrpos( substr( $html, 0, $start ), '<input' );
+	$tag  = substr( $html, $open, strpos( $html, '>', $start ) - $open );
+
+	hasnt( $tag, 'name=', 'the tick-all box posts a value, which read_topics() would see' );
+
+	$GLOBALS['ie_transient'] = false;
+} );
+
+test( 'the row boxes live in a tbody, which is what the script drives', function () {
+	/* The script takes the header box's own <table> and reads
+	 * `tbody input[type=checkbox]` from it — scoped that way on purpose,
+	 * because the form carries other checkboxes (the pillar box, the home-page
+	 * box) and a looser selector would turn "untick every topic" into "untick
+	 * everything on the screen".
+	 *
+	 * So the markup has to keep the row boxes inside a tbody and the other
+	 * boxes outside this table. Asserted because a layout change that moved
+	 * them would break the feature silently in the browser. */
+	ie_draft_topics( array(
+		array( 'topic' => 'One', 'targetQuery' => 'one query here', 'linkPhrase' => 'one' ),
+		array( 'topic' => 'Two', 'targetQuery' => 'two query here', 'linkPhrase' => 'two' ),
+	) );
+
+	$html  = render( 'new' );
+	$tbody = substr( $html, strpos( $html, '<tbody>' ), strpos( $html, '</tbody>' ) - strpos( $html, '<tbody>' ) );
+
+	same( 2, substr_count( $tbody, 'type="checkbox"' ),
+		'the row boxes are no longer both inside the tbody the script reads' );
+	hasnt( $tbody, 'id="ie_use_all"', 'the tick-all box moved into the rows it is meant to drive' );
+	hasnt( $tbody, 'name="is_pillar"', 'the pillar box is inside the topics table and would be unticked with it' );
+
+	$GLOBALS['ie_transient'] = false;
+} );
+
+test( 'THE STUB SPELLS THE META KEYS THE WAY THE REAL CLASS DOES', function () {
+	/* This suite stubs IE_Settings, so its constants are a COPY — and a copy
+	 * that drifts is exactly the silent failure the constants exist to prevent:
+	 * the publisher writes one key, this screen reads another, the box falls
+	 * back to the headline for ever, and no test fails.
+	 *
+	 * Reading the real file is the only way to check a spelling, which is why
+	 * this is a source test when almost nothing else here is. */
+	$real = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-settings.php' );
+
+	foreach ( array(
+		'PILLAR_META'  => IE_Settings::PILLAR_META,
+		'KEYWORD_META' => IE_Settings::KEYWORD_META,
+	) as $name => $value ) {
+		ok( false !== strpos( $real, "const $name = '$value';" ),
+			"the stub's $name ('$value') is not what class-ie-settings.php declares" );
+	}
 } );
 
 echo "\n$passed passed, $failed failed\n";

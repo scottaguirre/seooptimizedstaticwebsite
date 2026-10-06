@@ -66,6 +66,30 @@ test('something already plural is left alone', () => {
   assert.strictEqual(pluralise('residential plumbing services'), 'residential plumbing services');
 });
 
+test('A PAST PARTICIPLE IS NOT PLURALISED', () => {
+  /* SHIPPED AS LIVE ANCHOR TEXT on hilltophomeloans.net: a post linked to its
+   * pillar with the words "loan terms explaineds".
+   *
+   * The gerund guard above already knew the shape of this mistake — a gerund
+   * is not a countable noun, so `-ing` is excluded. `-ed` is the same fact
+   * about a different suffix, and nobody had met it because until pillar
+   * campaigns every keyword was a service name. A PILLAR'S KEYWORD COMES FROM
+   * ITS POST TITLE, and titles end in words that service names never do. */
+  assert.strictEqual(pluralise('loan terms explained'), 'loan terms explained');
+  assert.strictEqual(pluralise('mortgage rates compared'), 'mortgage rates compared');
+  assert.strictEqual(pluralise('fees itemised'), 'fees itemised');
+});
+
+test('a real noun ending in -ed still pluralises', () => {
+  /* The guard must not be so keen that it refuses words which genuinely are
+   * nouns. Few enough to name, and each is one syllable with no verb behind
+   * it here. The wrong direction to err is "sheds" where the phrase meant
+   * "shed light" — not "shed" where it meant the building. */
+  assert.strictEqual(pluralise('garden shed'), 'garden sheds');
+  assert.strictEqual(pluralise('hospital bed'), 'hospital beds');
+  assert.strictEqual(pluralise('grass seed'), 'grass seeds');
+});
+
 /* -------------------------------------------------------------------------
  * Exact means exact
  * ---------------------------------------------------------------------- */

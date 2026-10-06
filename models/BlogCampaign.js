@@ -333,6 +333,33 @@ const blogCampaignSchema = new mongoose.Schema({
     written: { type: Number, default: 0 },
     failed: { type: Number, default: 0 },
     creditsCharged: { type: Number, default: 0 },
+
+    /**
+     * Stop after the post currently being written.
+     *
+     * WHY A FLAG IN THE DATABASE AND NOT A SIGNAL. The batch runs in a
+     * worker; the request that wants it stopped arrives on a web process,
+     * minutes later, possibly on another machine. There is nothing to signal.
+     * The loop re-reads this between posts, which is the only place it can —
+     * a model call already in flight is paid for the moment it is sent, so
+     * abandoning one costs the money and keeps nothing.
+     *
+     * WHAT IT COST TO LEARN. Edwin approved eleven articles, pressed Pause a
+     * few seconds later, and watched the spinner carry on. All eleven were
+     * written and 825 credits charged. Pause was WordPress-only —
+     * IE_Publisher::pause() holds scheduled posts back as drafts — and the
+     * write loop had no cancel check of any kind. The confirm dialog said
+     * "nothing new is written", which was true of everything except the batch
+     * running at that moment.
+     *
+     * CLEARED WHEN THE BATCH ENDS, however it ends. A flag left set would
+     * cancel the next batch instantly: the campaign would resume, stop before
+     * writing anything, and look like it had failed for no reason.
+     */
+    cancelRequested: { type: Boolean, default: false },
+
+    /** When a batch actually stopped because of the flag above. */
+    cancelledAt: { type: Date },
   },
 
   /**

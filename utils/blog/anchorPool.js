@@ -42,6 +42,51 @@
 // to correct it; it is to stop keeping a second copy.
 
 const { DEFAULT_MIX } = require('./anchors');
+const { isLocalBusiness } = require('./siteKind');
+
+/**
+ * Descriptive anchors for a business somebody calls out.
+ *
+ * Every one of these assumes a job, a visit or a repair, which is right on
+ * the sites this was written for and nowhere else.
+ */
+const LOCAL_DESCRIPTIVE = [
+  'what the work involves',
+  'how the job is usually handled',
+  'what it costs to put right',
+  'have someone look at it',
+  'get it looked at properly',
+  'what happens on the visit',
+  'talk it through with someone',
+  'find out what is involved',
+  'see how the job is done',
+  'have it assessed',
+];
+
+/**
+ * Descriptive anchors for a site about a subject.
+ *
+ * THE TEST EACH ONE HAD TO PASS: read it aloud after "…which is covered in"
+ * and check it says nothing about who performs anything. "what it costs to
+ * put right" fails — something is broken and someone is coming. "how the
+ * numbers break down" passes, and works for loans, offsets, roofing and
+ * climate alike.
+ *
+ * Ten, the same as the local set, because the shortfall check compares bucket
+ * length against the mix and a shorter set would quietly start warning.
+ */
+const GENERAL_DESCRIPTIVE = [
+  'what this actually involves',
+  'how this usually works',
+  'what it costs in practice',
+  'where people usually go wrong',
+  'the part most people miss',
+  'what to check first',
+  'how the numbers break down',
+  'a closer look at the details',
+  'what to know before deciding',
+  'read the full explanation',
+];
 
 /** 'Water Heater Repair' -> 'water heater repair' */
 function normalise(text) {
@@ -96,6 +141,39 @@ const NOT_A_NOUN = new Set([
 ]);
 
 /**
+ * The word a verb after this phrase has to agree with.
+ *
+ * "small business loans for women" takes a PLURAL verb — "how they actually
+ * work" — and the clue is "loans", not "women". The last word of a phrase is
+ * the head noun only when no preposition follows it; after one, everything is
+ * a modifier. pluralise() below already knows this and refuses to touch such
+ * phrases; this needs the same fact to answer a different question, so it is
+ * named and shared rather than re-derived.
+ *
+ * Written after "how small business loans for women actually works" came out
+ * of the template that uses it.
+ */
+function headNoun(phrase) {
+  const words = String(phrase).trim().split(/\s+/);
+
+  for (let i = 0; i < words.length; i++) {
+    if (PREPOSITIONS.has(words[i].toLowerCase())) {
+      return i > 0 ? words[i - 1] : '';
+    }
+  }
+
+  return words[words.length - 1] || '';
+}
+
+/** Does a verb following this phrase need to be plural? */
+function takesPluralVerb(phrase) {
+  const head = headNoun(phrase);
+  // 'programs', 'loans' — but not 'business', 'analysis', which are singular
+  // nouns that merely end in s.
+  return /[^s]s$/i.test(head) && !/(ss|us|is)$/i.test(head);
+}
+
+/**
  * The plural of a keyword phrase, or the phrase unchanged when pluralising it
  * would produce nonsense.
  *
@@ -117,6 +195,26 @@ function pluralise(phrase) {
   // Gerunds and mass nouns: plumbing, roofing, heating, cleaning. "plumbings"
   // is not a word, and the ones that are ("cleanings") read like a dentist.
   if (/ing$/i.test(last)) return phrase;
+
+  /* PAST PARTICIPLES AND ADJECTIVES — not nouns, so they have no plural.
+   *
+   * "loan terms explained" became "loan terms explaineds" and shipped as live
+   * anchor text on hilltophomeloans.net. "mortgage rates compared" would have
+   * become "compareds".
+   *
+   * THE GUARD ABOVE ALREADY KNEW THIS SHAPE OF MISTAKE and only knew one
+   * instance of it. `-ing` is here because a gerund is not a countable noun;
+   * `-ed` is the same fact about a different suffix, and nobody had met it
+   * because every keyword until now was a service name. A pillar's keyword
+   * comes from its post TITLE, and titles end in words services never do.
+   *
+   * THE EXCEPTIONS ARE REAL NOUNS THAT HAPPEN TO END IN -ed, and they are few
+   * enough to name: a bed, a shed, a weed, a feed. Each is one syllable with
+   * no verb behind it in this context, and leaving them unpluralised would
+   * only lose one anchor from the semantic bucket — the wrong direction to
+   * err would be "sheds" where the phrase meant "shed light". */
+  const REAL_ED_NOUNS = /(^|\s)(bed|shed|weed|feed|seed|deed|reed|creed|speed|breed)$/i;
+  if (/ed$/i.test(last) && !REAL_ED_NOUNS.test(last)) return phrase;
 
   if (/(s|x|z|ch|sh)$/i.test(last)) return phrase;          // already plural-ish
   if (/[^aeiou]y$/i.test(last)) {
@@ -143,6 +241,11 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
   if (!keyword) {
     throw new Error('buildAnchorPool: targetPage.keyword is required');
   }
+
+  /* ASKED ONCE, FROM THE SHARED DECISION. Not `if (town)` scattered through
+   * the templates below — the question "is this a local business?" is bigger
+   * than "did a town arrive", and four files now have to agree on it. */
+  const local = isLocalBusiness(business);
 
   const town = String(business.location || '').trim().replace(/,\s*[A-Z]{2}$/, '');
   const name = String(business.name || '').trim();
@@ -203,41 +306,106 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
       // in the SEMANTIC bucket is an exact-match anchor wearing the wrong
       // label — it would quietly inflate the exact share past its 30%.
       plural !== keyword ? plural : null,
-      town && suffixable ? `${keyword} in ${town}` : null,
-      town && suffixable ? `${plural} in ${town}` : null,
-      `professional ${keyword}`,
-      `local ${keyword}`,
-      // Skipped when the keyword already ends in service/services, which
-      // otherwise produced "residential plumbing services services".
-      ( suffixable && ! /(service|services)$/i.test(keyword) ) ? `${keyword} services` : null,
-      // Phrase match: the keyword plus a qualifier. Moved here on
-      // 19 September after being wrongly filed under `exact`.
-      suffixable ? `${keyword} company` : null,
-      suffixable ? `${keyword} specialists` : null,
-      town ? `${town} ${keyword}` : null,
-      suffixable ? `getting ${plural} done properly` : null,
-      suffixable ? `having ${keyword} carried out` : null,
-      town && suffixable ? `${keyword} for ${town} homes` : null,
-      suffixable ? `booking ${keyword}` : null,
-      suffixable ? `arranging ${keyword}` : null,
-      suffixable ? `scheduling ${keyword}` : null,
-      suffixable ? `${keyword} work` : null,
-      `experienced ${keyword}`,
-      town && suffixable ? `${keyword} near ${town}` : null,
+
+      /* EVERY TEMPLATE BELOW THIS LINE DESCRIBES A SERVICE BEING BOUGHT.
+       *
+       * "booking", "scheduling", "having it carried out", "company",
+       * "specialists", "professional", "experienced" — each one asserts that
+       * the keyword names something a person hires. On a site about a subject
+       * they are simply false: "professional carbon offset programs" and
+       * "local carbon offset programs" both shipped.
+       *
+       * `local` is the loudest of them and was not even gated on a town. */
+      ...(local ? [
+        town && suffixable ? `${keyword} in ${town}` : null,
+        town && suffixable ? `${plural} in ${town}` : null,
+        `professional ${keyword}`,
+        `local ${keyword}`,
+        // Skipped when the keyword already ends in service/services, which
+        // otherwise produced "residential plumbing services services".
+        ( suffixable && ! /(service|services)$/i.test(keyword) ) ? `${keyword} services` : null,
+        // Phrase match: the keyword plus a qualifier. Moved here on
+        // 19 September after being wrongly filed under `exact`.
+        suffixable ? `${keyword} company` : null,
+        suffixable ? `${keyword} specialists` : null,
+        town ? `${town} ${keyword}` : null,
+        suffixable ? `getting ${plural} done properly` : null,
+        suffixable ? `having ${keyword} carried out` : null,
+        town && suffixable ? `${keyword} for ${town} homes` : null,
+        suffixable ? `booking ${keyword}` : null,
+        suffixable ? `arranging ${keyword}` : null,
+        suffixable ? `scheduling ${keyword}` : null,
+        suffixable ? `${keyword} work` : null,
+        `experienced ${keyword}`,
+        town && suffixable ? `${keyword} near ${town}` : null,
+      ] : [
+        /* NONE OF THESE ARE GATED ON `suffixable`, AND THAT IS THE POINT.
+         *
+         * A keyword containing a preposition — "small business loans for
+         * women" — kills 14 of the 17 local templates above, because you
+         * cannot append to a phrase that already ends in a modifier. That
+         * left 3 phrases for the 5 the mix wanted, so anchors repeated.
+         *
+         * These wrap the keyword instead of extending it, so the preposition
+         * is harmless: "small business loans for women explained" and
+         * "understanding small business loans for women" both read correctly.
+         * The bucket that collapsed to 3 now holds 5 or 6 whatever the
+         * keyword looks like. */
+        `understanding ${keyword}`,
+        /* SKIPPED WHEN THE KEYWORD ALREADY ENDS THAT WAY, which produced
+         * "loan terms explained explained" on a live campaign.
+         *
+         * THE GUARD FOUR LINES INTO THE LOCAL SET ABOVE ALREADY DOES THIS —
+         * `${keyword} services` is skipped when the keyword ends in
+         * service/services, for exactly this reason and with a comment saying
+         * so. I wrote this template a day later and did not copy the lesson
+         * across. A rule learned on one branch of an if/else does not cross to
+         * the other on its own. */
+        / explained$/i.test(keyword) ? null : `${keyword} explained`,
+        `more on ${keyword}`,
+        `a closer look at ${keyword}`,
+        `read more about ${keyword}`,
+
+        /* SKIPPED WHEN THE KEYWORD IS NOT A NOUN PHRASE.
+         *
+         * This is the only template here that puts a VERB after the keyword,
+         * and a verb has to agree with a noun. "loan terms explained" has no
+         * head noun at the end — headNoun() returns "explained" and the
+         * template produced "how loan terms explained actually works", which
+         * agrees with a past participle instead of with "terms".
+         *
+         * Fixing the agreement would not fix the phrase: no verb form makes
+         * that anchor read well, because the keyword is a TITLE rather than
+         * the name of a thing. So the template steps aside, which is what the
+         * three prefix wrappers above it exist for — they put words in FRONT
+         * of the keyword and cannot be tripped by how it ends.
+         *
+         * THE UNDERLYING PROBLEM IS NOT HERE. A pillar campaign's keyword
+         * comes from its post title, so it is a headline; every anchor
+         * template in this file assumes a noun phrase. That is a design
+         * conversation, logged in CLAUDE.md. This stops the worst of it. */
+        /(ed|ing)$/i.test(keyword.split(/\s+/).pop())
+          ? null
+          : `how ${keyword} actually work${takesPluralVerb(keyword) ? '' : 's'}`,
+      ]),
     ].filter(Boolean)),
 
+    /**
+     * What the reader gets by clicking, without naming the keyword.
+     *
+     * TWO SETS, BECAUSE EVERY PHRASE IN THE ORIGINAL ONE DESCRIBES A VISIT.
+     * "what happens on the visit", "have someone look at it", "see how the
+     * job is done" — ten phrases about a tradesman arriving somewhere, used
+     * on every campaign, whatever the site was about. On a blog explaining
+     * carbon offset programmes, two of eleven posts linked to the pillar with
+     * the words "what the work involves". There is no work and nobody visits.
+     *
+     * The general set says nothing about who does what. It is not better
+     * writing — it is writing that is not making a claim about the subject.
+     */
     descriptive: unique([
       ...(overrides.descriptive || []),
-      'what the work involves',
-      'how the job is usually handled',
-      'what it costs to put right',
-      'have someone look at it',
-      'get it looked at properly',
-      'what happens on the visit',
-      'talk it through with someone',
-      'find out what is involved',
-      'see how the job is done',
-      'have it assessed',
+      ...(local ? LOCAL_DESCRIPTIVE : GENERAL_DESCRIPTIVE),
     ]),
 
     /**
@@ -332,4 +500,8 @@ function usedAnchorsFrom(campaigns = []) {
   return used;
 }
 
-module.exports = { buildAnchorPool, usedAnchorsFrom, pluralise };
+module.exports = {
+  buildAnchorPool, usedAnchorsFrom, pluralise,
+  headNoun, takesPluralVerb,
+  LOCAL_DESCRIPTIVE, GENERAL_DESCRIPTIVE,
+};

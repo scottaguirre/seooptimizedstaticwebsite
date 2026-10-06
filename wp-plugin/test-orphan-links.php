@@ -273,6 +273,33 @@ class IE_Settings {
  * deleted finds nothing and silently sends nothing at all.
  */
 class IE_Api {
+	/* ADDED 6 OCTOBER, AND THIS SUITE IS WHAT DEMANDED IT.
+	 *
+	 * IE_Publisher::pause() now tells the server to stop a batch that is
+	 * already writing. Before that it was WordPress-only, which is how eleven
+	 * articles came to be written and 825 credits charged after Pause was
+	 * pressed. Two tests in this file exercise pause and both died on "Call
+	 * to undefined method IE_Api::write()".
+	 *
+	 * THAT IS THE STUB DOING ITS JOB. A new dependency in the code under test
+	 * should break every harness that models the old world; the alternative
+	 * is a stub quietly more capable than the thing it stands for.
+	 *
+	 * The signature matches the real one for the same reason: PHP drops extra
+	 * arguments to a user-defined function silently, so a narrower stub would
+	 * accept the new three-argument call without complaint and hide whether
+	 * the cancel flag was ever passed at all.
+	 *
+	 * What the flag DOES is asserted in test-ie-pause.js, and what reaches
+	 * the wire in test-api-body.php. Here it only has to exist. */
+	public static function write( $campaign_id, $slot_indexes = array(), $cancel = false ) {
+		$GLOBALS['ie_writes'][] = array(
+			'campaign' => $campaign_id,
+			'cancel'   => (bool) $cancel,
+		);
+		return array( 'status' => 'writing' );
+	}
+
 	public static function published( $campaign_id, $slot_index, $at = '' ) {
 		$GLOBALS['ie_published'][] = array(
 			'campaign' => $campaign_id,

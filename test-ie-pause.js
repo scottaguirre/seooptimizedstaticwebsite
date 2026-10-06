@@ -60,10 +60,11 @@ const STUB = `<?php
 define('ABSPATH', '/tmp/');
 define('HOUR_IN_SECONDS', 3600);
 
-$GLOBALS['options'] = array();
-$GLOBALS['posts']   = array();
-$GLOBALS['meta']    = array();
-$GLOBALS['log']     = array();
+$GLOBALS['options']   = array();
+$GLOBALS['posts']     = array();
+$GLOBALS['meta']      = array();
+$GLOBALS['log']       = array();
+$GLOBALS['api_calls'] = array();
 
 function get_option($k, $d = false) { return isset($GLOBALS['options'][$k]) ? $GLOBALS['options'][$k] : $d; }
 function update_option($k, $v, $a = null) { $GLOBALS['options'][$k] = $v; return true; }
@@ -130,17 +131,68 @@ function esc_html($s) { return $s; }
 function __($s, $d = '') { return $s; }
 function _n($a, $b, $n, $d = '') { return 1 === (int) $n ? $a : $b; }
 
+/* get_error_data() IS PART OF THE REAL CLASS, and this stub did not have it.
+ *
+ * run_campaign() reads it to tell a definite refusal from a lost message: a
+ * 402 for credits is an answer, a timeout is not, and only the first should
+ * clear approved_at. Without the method the whole case died with "Call to
+ * undefined method" — which is how the stub told me, rather than quietly
+ * passing. A stub LESS capable than the real class fails loudly; a stub MORE
+ * forgiving than the real class is the one that ships bugs. */
 class WP_Error {
-  public $code; public $message;
-  public function __construct($c = '', $m = '') { $this->code = $c; $this->message = $m; }
+  public $code; public $message; public $data;
+  public function __construct($c = '', $m = '', $d = null) {
+    $this->code = $c; $this->message = $m; $this->data = $d;
+  }
   public function get_error_message() { return $this->message; }
+  public function get_error_data() { return $this->data; }
 }
 function is_wp_error($t) { return $t instanceof WP_Error; }
 
 // The publisher's siblings. Only the members pause/resume reach are needed.
+//
+// write() RECORDS ITS ARGUMENTS, and its signature matches the real one on
+// purpose. PHP lets a user-defined function be called with extra arguments and
+// silently drops them, so a stub declared \`write($id)\` accepts
+// \`write($id, array(), true)\` without complaint — and every test written
+// against it would pass whether the cancel flag was sent or not. A stub more
+// forgiving than the real thing is how more than one bug has already reached
+// production here.
 class IE_Api {
   public static function published($a, $b, $c) {}
-  public static function write($id) { return array(); }
+
+  public static function write($id, $slot_indexes = array(), $cancel = false) {
+    $GLOBALS['api_calls'][] = array(
+      'method' => 'write',
+      'id'     => $id,
+      'cancel' => (bool) $cancel,
+    );
+
+    /* TWO KINDS OF FAILURE, because run_campaign() now treats them
+     * differently and a stub with only one could not tell them apart.
+     *
+     * api_fail is a lost message — a timeout, a dropped connection. Nobody
+     * knows whether the server acted on it, so the approval must survive.
+     *
+     * api_402 is an answer: not enough credits. The shape matches what
+     * IE_Api::post() really builds on a non-2xx, data and all, because the
+     * code under test reads that data to tell the two apart. A stub that
+     * returned a bare WP_Error here would make the 402 look like a
+     * timeout and the case would prove nothing. */
+    if ( ! empty($GLOBALS['api_fail']) ) {
+      return new WP_Error('http', 'the server did not answer');
+    }
+
+    if ( ! empty($GLOBALS['api_402']) ) {
+      return new WP_Error('ie_api', 'This campaign needs 225 credits and you have 0.', array(
+        'status' => 402,
+        'body'   => '',
+        'data'   => array( 'creditsError' => true, 'creditsAvailable' => 0 ),
+      ));
+    }
+
+    return array('status' => 'writing');
+  }
 }
 class IE_Settings {
   public static function get($k, $d = null) { return $d; }
@@ -181,10 +233,56 @@ function seed_campaign($id, $slots, $offsets) {
     );
   }
 
+  /* batch_started IS PART OF THE FIXTURE, and leaving it out was a campaign
+   * that cannot exist.
+   *
+   * Every slot above is 'scheduled' with a real post at 'future' — posts that
+   * were written, charged for and inserted. A campaign in that state has
+   * necessarily been approved, and batch_started is the record of approval.
+   * Without it these rows described something impossible: a campaign whose
+   * posts had been written and paid for and which nobody had agreed to pay
+   * for.
+   *
+   * It did not matter until run_campaign() started asking the question. It
+   * matters now, and a fixture that cannot occur in production is worth
+   * fixing rather than working around — tests written against it prove
+   * things about a state no customer will ever be in. unapprove() below is
+   * for the cases that genuinely need the other state. */
+  $GLOBALS['options']['ie_campaigns'][$id] = array(
+    'id'            => $id,
+    'status'        => 'active',
+    'label'         => 'Test',
+    'publish_mode'  => 'future',
+    'batch_started' => gmdate('Y-m-d H:i:s', time() - 3600),
+    'slots'         => $rows,
+  );
+}
+
+/** A campaign that was planned and never approved. */
+function unapprove($id) {
+  $all = get_option('ie_campaigns', array());
+  $all[$id]['batch_started'] = '';
+  $all[$id]['approved_at']   = '';
+  update_option('ie_campaigns', $all, false);
+}
+
+/** A campaign as it exists the instant planning finishes: nothing written. */
+function seed_planned($id, $count) {
+  $rows = array();
+  for ($i = 0; $i < $count; $i++) {
+    $rows[] = array(
+      'index'      => $i,
+      'topic'      => 'Topic ' . $i,
+      'status'     => 'pending',
+      'post_id'    => 0,
+      'publish_at' => '',
+    );
+  }
+
   $GLOBALS['options']['ie_campaigns'][$id] = array(
     'id'           => $id,
     'status'       => 'active',
-    'label'        => 'Test',
+    'label'        => 'Never approved',
     'publish_mode' => 'future',
     'slots'        => $rows,
   );
@@ -484,6 +582,599 @@ test('a paused campaign cannot collide with another', () => {
     out(array('before' => $before, 'after' => count(IE_Campaigns::collisions())));
   `);
   assert.strictEqual(r.after, 0);
+});
+
+/* ------------------------------------------------------------------ *
+ * Stopping a batch that is already running — 6 October
+ *
+ * PAUSE USED TO BE WORDPRESS-ONLY. It set the local status and held
+ * scheduled posts back as drafts, and the server learned about it on the
+ * hourly reconciliation — long after a batch that takes minutes had
+ * finished. Edwin approved eleven articles, pressed Pause a few seconds
+ * later, and watched the spinner carry on: all eleven were written and 825
+ * credits were charged.
+ *
+ * None of the twenty tests above could have caught it, and they are not
+ * wrong. Every one of them asks what pause does to WORDPRESS — the post
+ * statuses, the held dates, the schedule screens — and the whole failure was
+ * that pause said nothing to anybody else.
+ * ------------------------------------------------------------------ */
+
+test('PAUSE TELLS THE SERVER TO STOP, IMMEDIATELY', () => {
+  /* Not on the next sweep. A batch writes roughly one article a minute at 75
+   * credits each, so an hour's delay is the entire campaign. */
+  const r = run(`
+    seed_campaign('c1', 3, array(3, 10, 17));
+    $GLOBALS['api_calls'] = array();
+    IE_Publisher::pause('c1');
+    out(array('calls' => $GLOBALS['api_calls']));
+  `);
+
+  const cancels = r.calls.filter(c => c.method === 'write' && c.cancel === true);
+
+  assert.strictEqual(cancels.length, 1,
+    'pause did not send a cancel — the server will keep writing and charging');
+  assert.strictEqual(cancels[0].id, 'c1');
+});
+
+test('PAUSE CLEARS writing_since, SO A RESUME DOES NOT INHERIT A STALE SPINNER', () => {
+  /* writing_since is what the campaign card now watches: the moment the
+   * server last said it was writing, replacing a ten-minute timer started at
+   * approval that a resumed batch was always past.
+   *
+   * run_campaign() clears it when the server stops saying 'writing', which is
+   * correct and can be an hour away — the sweep is hourly and a paused
+   * campaign is polled on no other schedule.
+   *
+   * WITHOUT THIS LINE the value survives the pause. The card hides the
+   * spinner anyway while paused, so nothing is visible until Resume — and
+   * then a stale timestamp from before the pause makes the page claim it is
+   * writing before the first poll has even happened. A spinner that is wrong
+   * in the other direction is the same bug wearing the other hat. */
+  const r = run(`
+    seed_campaign('c1', 3, array(3, 10, 17));
+    $all = IE_Campaigns::all();
+    $all['c1']['writing_since'] = current_time('mysql');
+    update_option('ie_campaigns', $all, false);
+
+    IE_Publisher::pause('c1');
+
+    $c = IE_Campaigns::get('c1');
+    out(array(
+      'status' => $c['status'],
+      'writing_since' => isset($c['writing_since']) ? $c['writing_since'] : null,
+    ));
+  `);
+
+  assert.strictEqual(r.status, 'paused');
+  assert.strictEqual(r.writing_since, '',
+    'pause left writing_since set — a resume would show a spinner before anything was writing');
+});
+
+test('THE CANCEL GOES BEFORE THE POSTS ARE HELD', () => {
+  /* Holding walks every slot and calls wp_update_post on each. On a 52-post
+   * campaign that is not instant, and every moment of it is potentially
+   * another article written and charged. Order is the whole point, so it is
+   * asserted rather than assumed from the reading order of the source. */
+  const r = run(`
+    seed_campaign('c1', 3, array(3, 10, 17));
+    $GLOBALS['api_calls'] = array();
+    $GLOBALS['hold_order'] = array();
+    IE_Publisher::pause('c1');
+    out(array('calls' => $GLOBALS['api_calls'], 'log' => $GLOBALS['log']));
+  `);
+
+  assert.ok(r.calls.length >= 1, 'no API call was made at all');
+  assert.strictEqual(r.calls[0].cancel, true,
+    'something else happened before the cancel was sent');
+});
+
+test('A FAILED CANCEL DOES NOT ROLL BACK THE PAUSE', () => {
+  /* The pause is local and has already happened. Undoing it because a network
+   * call failed would leave a campaign that the owner believes is stopped and
+   * that WordPress will go on publishing from — the worse of the two
+   * failures by a distance. The retry below is what covers the lost call. */
+  const r = run(`
+    seed_campaign('c1', 2, array(3, 10));
+    $GLOBALS['api_fail'] = true;
+    IE_Publisher::pause('c1');
+    $c = IE_Campaigns::get('c1');
+    out(array(
+      'status' => $c['status'],
+      'log'    => array_column(IE_Publisher::get_log(), 'message'),
+    ));
+  `);
+
+  assert.strictEqual(r.status, 'paused', 'a network error undid the pause');
+  assert.ok(r.log.join(' ').includes('could not tell the server to stop'),
+    'the failure was swallowed without a word');
+});
+
+test('EVERY SWEEP RE-SENDS THE CANCEL WHILE THE CAMPAIGN STAYS PAUSED', () => {
+  /* THE RETRY, and the reason pause() alone is not enough.
+   *
+   * Four facts have already been lost in this plugin to one-shot calls with
+   * nothing behind them, and a lost cancel is the most expensive of them:
+   * the failure mode is writing and charging for everything the owner just
+   * said to stop.
+   *
+   * run_campaign() used to return before this on `'active' !== status`,
+   * which is right for collecting and publishing and was wrong for the one
+   * message that matters. */
+  const r = run(`
+    seed_campaign('c1', 2, array(3, 10));
+    IE_Publisher::pause('c1');
+    $GLOBALS['api_calls'] = array();
+    $first  = IE_Publisher::run_campaign('c1');
+    $second = IE_Publisher::run_campaign('c1');
+    out(array('calls' => $GLOBALS['api_calls'], 'first' => $first, 'second' => $second));
+  `);
+
+  const cancels = r.calls.filter(c => c.cancel === true);
+
+  assert.strictEqual(cancels.length, 2,
+    'the sweep stopped re-sending the cancel — one lost request loses the campaign');
+  assert.strictEqual(r.first.cancelSent, true);
+  assert.strictEqual(r.second.skipped, true, 'a paused campaign was given work to do');
+});
+
+test('a paused campaign is still not collected or published', () => {
+  /* The early return it replaces was doing a real job. A paused campaign must
+   * send its cancel and then stop — not fall through into the collect and
+   * publish steps below it, which is the obvious way to get this wrong. */
+  const r = run(`
+    seed_campaign('c1', 2, array(3, 10));
+    IE_Publisher::pause('c1');
+    $GLOBALS['api_calls'] = array();
+    $out = IE_Publisher::run_campaign('c1');
+    out(array('out' => $out, 'calls' => $GLOBALS['api_calls']));
+  `);
+
+  assert.strictEqual(r.out.skipped, true);
+  assert.strictEqual(r.out.reason, 'campaign is paused');
+  assert.strictEqual(r.calls.length, 1,
+    'a paused campaign made more than the one call it is allowed');
+});
+
+test('AN ACTIVE CAMPAIGN NEVER SENDS A CANCEL', () => {
+  /* The opposite failure, and the one that would be silent: a cancel sent on
+   * an ordinary run would stop every batch the moment it started, and the
+   * owner would see a campaign that writes one post and halts. */
+  const r = run(`
+    seed_campaign('c1', 2, array(3, 10));
+    $GLOBALS['api_calls'] = array();
+    IE_Publisher::run_campaign('c1');
+    out(array('calls' => $GLOBALS['api_calls']));
+  `);
+
+  const writes = r.calls.filter(c => c.method === 'write');
+
+  assert.ok(writes.length >= 1, 'an active campaign made no write call at all');
+  assert.ok(writes.every(c => c.cancel === false),
+    'an active campaign sent a cancel — every batch would stop after one post');
+});
+
+/* ------------------------------------------------------------------ *
+ * Starting it again — the other half of the same pair
+ *
+ * The five cases above are all about pause telling the server something.
+ * Resume told it nothing. It moved the dates, set the status, redirected,
+ * and left the unwritten posts waiting for the next ping — so the screen
+ * sat dead and "Check now", which is meant to be a fallback, was the only
+ * thing that actually restarted the work.
+ *
+ * Every resume test in this file predates that and still passes, because
+ * every one of them asks what resume does to WORDPRESS. seed_campaign()
+ * sets no batch_started, so none of them is approved and none of them
+ * polls. That is deliberate: the poll's guard is the approval, and tests
+ * that set it are the ones below.
+ * ------------------------------------------------------------------ */
+
+test('RESUME TELLS THE SERVER TO CARRY ON, IMMEDIATELY', () => {
+  /* The mirror of PAUSE TELLS THE SERVER TO STOP. Without this the posts
+   * that had not been written yet wait for the hourly cron, and the owner
+   * is looking at a page that gives no sign anything is happening. */
+  const r = run(`
+    seed_campaign('c1', 3, array(3, 10, 17));
+    IE_Publisher::pause('c1');
+    $GLOBALS['api_calls'] = array();
+    IE_Publisher::resume('c1');
+    out(array('calls' => $GLOBALS['api_calls']));
+  `);
+
+  assert.strictEqual(r.calls.length, 1,
+    'resume did not contact the server — the remaining posts wait for the sweep');
+  assert.strictEqual(r.calls[0].method, 'write');
+  assert.strictEqual(r.calls[0].id, 'c1');
+});
+
+test('RESUME SENDS A POLL, NOT A CANCEL', () => {
+  /* The opposite failure, and it would be invisible on the screen: a
+   * cancel here would stop the batch resume had just restarted, and the
+   * campaign would sit active with work pending and nothing writing. The
+   * paused branch of run_campaign() sends cancels, so the order of the two
+   * things resume does — status to active FIRST, poll second — is what
+   * keeps this a poll. Asserted, because reading the source cannot tell
+   * you which branch ran. */
+  const r = run(`
+    seed_campaign('c1', 3, array(3, 10, 17));
+    IE_Publisher::pause('c1');
+    $GLOBALS['api_calls'] = array();
+    IE_Publisher::resume('c1');
+    out(array('calls' => $GLOBALS['api_calls']));
+  `);
+
+  assert.ok(r.calls.length >= 1, 'no call was made at all');
+  assert.ok(r.calls.every(c => c.cancel === false),
+    'resume sent a cancel — it stopped the batch it had just restarted');
+});
+
+test('THE POLL IS WHAT SETS writing_since, SO THE SPINNER APPEARS', () => {
+  /* THE REASON IT GOES THROUGH run_campaign() AND NOT IE_Api::write().
+   *
+   * writing_since is what the card watches, and it is stamped from the
+   * server's reply inside run_campaign(). Calling the API directly would
+   * start the batch and still leave the screen silent — the same dead page
+   * with one more request behind it.
+   *
+   * pause() clears writing_since, so a value here cannot be left over. */
+  const r = run(`
+    seed_campaign('c1', 3, array(3, 10, 17));
+    IE_Publisher::pause('c1');
+
+    $paused = IE_Campaigns::get('c1');
+    IE_Publisher::resume('c1');
+    $after = IE_Campaigns::get('c1');
+
+    out(array(
+      'before' => isset($paused['writing_since']) ? $paused['writing_since'] : null,
+      'after'  => isset($after['writing_since']) ? $after['writing_since'] : null,
+      'status' => $after['status'],
+    ));
+  `);
+
+  assert.strictEqual(r.before, '', 'the pause did not clear writing_since');
+  assert.ok(r.after, 'writing_since was never stamped — the card shows no spinner');
+  assert.strictEqual(r.status, 'active');
+});
+
+test('AN UNAPPROVED CAMPAIGN IS RESUMED WITHOUT BEING CHARGED FOR', () => {
+  /* THE GUARD, and the thing I got wrong when I planned this.
+   *
+   * pause() has no approval check — it refuses a finished campaign and
+   * nothing else — so a campaign that was planned and never approved can
+   * be paused and resumed like any other. run_campaign() on an active
+   * campaign with pending slots does not ask whether anyone agreed to pay:
+   * it posts to /api/blog/write, which starts a job and charges per post.
+   *
+   * So an unguarded poll here would turn Resume into "write all of this
+   * now", at 75 credits a post, on a campaign whose own card is still
+   * showing the price as a question. The release still has to happen —
+   * resume's local job is unchanged. */
+  const r = run(`
+    seed_campaign('c1', 3, array(3, 10, 17));
+    unapprove('c1');
+    IE_Publisher::pause('c1');
+    $GLOBALS['api_calls'] = array();
+    $released = IE_Publisher::resume('c1');
+    $c = IE_Campaigns::get('c1');
+    out(array(
+      'calls'    => $GLOBALS['api_calls'],
+      'released' => $released,
+      'status'   => $c['status'],
+    ));
+  `);
+
+  assert.strictEqual(r.calls.length, 0,
+    'an unapproved campaign was written and charged for by pressing Resume');
+  assert.strictEqual(r.released, 3, 'the posts were not put back on the schedule');
+  assert.strictEqual(r.status, 'active');
+});
+
+test('A FAILED POLL DOES NOT FAIL THE RESUME', () => {
+  /* The same rule the pause side already has, in the same direction. The
+   * posts are already back on the schedule: that happened locally, before
+   * this, and a network error must not undo it. The campaign is left
+   * active with work pending, which is precisely what the sweep collects —
+   * so the cost of the lost request is a delay, not a stuck campaign. */
+  const r = run(`
+    seed_campaign('c1', 2, array(3, 10));
+    IE_Publisher::pause('c1');
+    $GLOBALS['api_fail'] = true;
+    $released = IE_Publisher::resume('c1');
+    $c = IE_Campaigns::get('c1');
+    out(array(
+      'released'  => is_object($released) ? 'WP_Error' : $released,
+      'status'    => $c['status'],
+      'scheduled' => count(array_filter($GLOBALS['posts'], function ($p) {
+        return 'future' === $p['post_status'];
+      })),
+      'log' => array_column(IE_Publisher::get_log(), 'message'),
+    ));
+  `);
+
+  assert.strictEqual(r.released, 2,
+    'a network error turned resume into an error and the owner sees it as a failed resume');
+  assert.strictEqual(r.status, 'active', 'a failed poll left the campaign paused');
+  assert.strictEqual(r.scheduled, 2, 'the posts were not released');
+  assert.ok(r.log.join(' ').includes('the server could not be reached'),
+    'the failure was swallowed without a word');
+});
+
+test('RESUMING A CAMPAIGN THAT IS NOT PAUSED CONTACTS NOBODY', () => {
+  /* resume() returns 0 for a campaign that is not paused, and has since it
+   * was written. The poll must sit behind that return, not in front of it:
+   * a Resume link followed twice, or pressed from a stale tab, would
+   * otherwise fire a second write at the server for no reason. */
+  const r = run(`
+    seed_campaign('c1', 2, array(3, 10));
+    $GLOBALS['api_calls'] = array();
+    $out = IE_Publisher::resume('c1');
+    out(array('out' => $out, 'calls' => $GLOBALS['api_calls']));
+  `);
+
+  assert.strictEqual(r.out, 0);
+  assert.strictEqual(r.calls.length, 0,
+    'resuming a running campaign poked the server anyway');
+});
+
+/* ------------------------------------------------------------------ *
+ * Who is allowed to spend money — 6 October
+ *
+ * A campaign is 'active' from the moment it is created, before approval,
+ * and all its slots are 'pending'. That is exactly the pair
+ * campaigns_with_work() looks for, so a freshly planned campaign sat at
+ * the top of the hourly cron's list — and run_campaign() posted it to
+ * /api/blog/write, which starts a job and charges per post.
+ *
+ * Nothing asked whether anyone had agreed to pay. The server cannot ask
+ * on our behalf: it has no approvedAt field, because calling that
+ * endpoint IS the approval. Approval exists in one place in this system,
+ * and run_campaign() is the gate in front of it.
+ * ------------------------------------------------------------------ */
+
+test('THE SWEEP WILL NOT WRITE A CAMPAIGN NOBODY APPROVED', () => {
+  /* THE BUG, as it actually existed. Ten unapproved posts is 750 credits,
+   * charged within the hour, while the campaign's own card still shows
+   * the price as a question on a button nobody pressed. */
+  const r = run(`
+    seed_planned('c1', 10);
+    $GLOBALS['api_calls'] = array();
+    $out = IE_Publisher::run_campaign('c1');
+    out(array('calls' => $GLOBALS['api_calls'], 'out' => $out));
+  `);
+
+  assert.strictEqual(r.calls.length, 0,
+    'an unapproved campaign was sent to the server, which starts a job and charges');
+  assert.strictEqual(r.out.skipped, true);
+  assert.strictEqual(r.out.reason, 'campaign has not been approved');
+});
+
+test('AND IT IS NOT EVEN PUT IN THE QUEUE', () => {
+  /* THE SECOND GUARD, AND IT IS NOT BELT-AND-BRACES — it stops a different
+   * failure from the gate above.
+   *
+   * run_catch_up() deliberately does ONE campaign per run and takes
+   * $pending[0]. A campaign that is listed and then refused downstream eats
+   * the whole sweep in silence, so a single never-approved draft would sit
+   * at the head of the queue for ever and every real campaign behind it
+   * would stop being collected. The gate alone would have traded "charges
+   * for work nobody approved" for "never collects anything again", which is
+   * not a fix.
+   *
+   * campaigns_with_work() means posts still to COLLECT FROM THE SERVER. An
+   * unapproved campaign has nothing to collect because nothing was written
+   * for it, so excluding it is the function matching its own description. */
+  const r = run(`
+    seed_planned('c1', 5);           // planned, never approved — was first in the list
+    seed_campaign('c2', 2, array(3, 10));
+    $all = IE_Campaigns::all();
+    $all['c2']['slots'][0]['status'] = 'pending';   // real work, waiting behind it
+    update_option('ie_campaigns', $all, false);
+
+    out(array('work' => IE_Campaigns::campaigns_with_work()));
+  `);
+
+  assert.ok(!r.work.includes('c1'),
+    'an unapproved campaign is still queued — it will eat one sweep per hour for ever');
+  assert.ok(r.work.includes('c2'),
+    'the guard swallowed a campaign that genuinely has work');
+  assert.strictEqual(r.work[0], 'c2',
+    'the approved campaign is not at the head of the queue, so the sweep never reaches it');
+});
+
+test('THE QUEUE LISTS A CAMPAIGN WHOSE APPROVING CALL WAS LOST', () => {
+  /* THE CASE THAT NEEDS BOTH WITNESSES HERE TOO, and it survived a mutation
+   * run until this case existed.
+   *
+   * The owner presses approve and the response never arrives. approved_at is
+   * stamped, batch_started is not — the server may well be writing, and this
+   * site does not know. The gate in run_campaign() lets the sweep act on it.
+   * But if the QUEUE only looked at batch_started, the sweep would never be
+   * handed the campaign in the first place, so the gate would never be
+   * reached and nothing would arrive until the owner found "Check now" by
+   * themselves.
+   *
+   * Which is the resume bug exactly: a fallback button as the only thing
+   * that works. Two guards have to agree about what "approved" means, or the
+   * narrower one silently decides. */
+  const r = run(`
+    seed_planned('c1', 3);
+    $GLOBALS['api_fail'] = true;
+    IE_Publisher::run_campaign('c1', true);   // approved; the reply is lost
+    $GLOBALS['api_fail'] = false;
+
+    $c = IE_Campaigns::get('c1');
+    out(array(
+      'approved_at'   => isset($c['approved_at']) ? $c['approved_at'] : null,
+      'batch_started' => isset($c['batch_started']) ? $c['batch_started'] : null,
+      'work'          => IE_Campaigns::campaigns_with_work(),
+    ));
+  `);
+
+  assert.ok(r.approved_at, 'the approval was not recorded at all');
+  assert.ok(!r.batch_started, 'the fixture no longer reproduces a lost reply');
+  assert.ok(r.work.includes('c1'),
+    'the sweep will never pick this up — the posts only arrive if the owner presses Check now');
+});
+
+test('THE QUEUE STILL LISTS A CAMPAIGN APPROVED UNDER AN OLDER VERSION', () => {
+  /* The same fleet problem as the gate's. Every campaign in flight today has
+   * batch_started and no approved_at. Testing approved_at alone here would
+   * have emptied the queue on every site at once — posts written and paid
+   * for, never collected, and nothing on any screen to say why. */
+  const r = run(`
+    seed_planned('c1', 3);
+    $all = IE_Campaigns::all();
+    $all['c1']['batch_started'] = gmdate('Y-m-d H:i:s', time() - 86400);
+    update_option('ie_campaigns', $all, false);
+    out(array('work' => IE_Campaigns::campaigns_with_work()));
+  `);
+
+  assert.ok(r.work.includes('c1'),
+    'a campaign approved before approved_at existed was dropped from the queue');
+});
+
+test('THE OWNER PRESSING THE BUTTON STILL STARTS IT', () => {
+  /* The other half, and the reason this is a parameter rather than a flat
+   * refusal. handle_run_now() is the approve button AND "Check now", and
+   * both go through run_campaign(). A guard that could not tell the owner
+   * from the cron would have broken approval altogether — the whole
+   * product. */
+  const r = run(`
+    seed_planned('c1', 3);
+    $GLOBALS['api_calls'] = array();
+    $out = IE_Publisher::run_campaign('c1', true);
+    out(array('calls' => $GLOBALS['api_calls'], 'out' => $out));
+  `);
+
+  assert.strictEqual(r.calls.length, 1, 'the approve button no longer starts anything');
+  assert.strictEqual(r.calls[0].cancel, false);
+  assert.ok(!r.out.skipped, 'the owner was refused');
+});
+
+test('APPROVAL IS RECORDED BEFORE THE REQUEST GOES OUT, NOT AFTER', () => {
+  /* WHY THERE ARE TWO WITNESSES AND NOT ONE.
+   *
+   * batch_started is stamped from the SERVER'S reply. If the guard read
+   * only that, a lost response on the approving call would leave the
+   * server writing, this site unapproved, and the sweep refusing to poll
+   * or collect for ever: a paid-for campaign whose posts never arrive.
+   *
+   * approved_at is what the owner did, recorded by their own site before
+   * anyone is asked anything. Here the call fails outright and the record
+   * must survive it. */
+  const r = run(`
+    seed_planned('c1', 3);
+    $GLOBALS['api_fail'] = true;
+    IE_Publisher::run_campaign('c1', true);
+    $c = IE_Campaigns::get('c1');
+    out(array(
+      'approved_at'   => isset($c['approved_at']) ? $c['approved_at'] : null,
+      'batch_started' => isset($c['batch_started']) ? $c['batch_started'] : null,
+    ));
+  `);
+
+  assert.ok(r.approved_at,
+    'a failed request lost the approval — the sweep would never touch this campaign again');
+  assert.ok(!r.batch_started,
+    'batch_started was stamped without the server ever confirming anything');
+});
+
+test('ONCE APPROVED, THE SWEEP CARRIES THE CAMPAIGN ON ITS OWN', () => {
+  /* The guard must not turn into a permanent refusal. The automatic
+   * collection is how posts arrive; "Check now" is a fallback and should
+   * never be the only thing that works — the exact bug resume had. */
+  const r = run(`
+    seed_planned('c1', 3);
+    $GLOBALS['api_fail'] = true;
+    IE_Publisher::run_campaign('c1', true);   // the owner approves; the call fails
+    $GLOBALS['api_fail'] = false;
+    $GLOBALS['api_calls'] = array();
+    $out = IE_Publisher::run_campaign('c1');  // the sweep, with no permission to start
+    out(array('calls' => $GLOBALS['api_calls'], 'out' => $out));
+  `);
+
+  assert.strictEqual(r.calls.length, 1,
+    'the sweep abandoned a campaign the owner had already approved');
+  assert.ok(!r.out.skipped);
+});
+
+test('A CAMPAIGN APPROVED BEFORE approved_at EXISTED IS NOT STRANDED', () => {
+  /* BACKWARD COMPATIBILITY, and it is not belt-and-braces. Every campaign
+   * in flight across the fleet right now has batch_started and no
+   * approved_at, because the field did not exist when they were approved.
+   * Testing approved_at alone would have stopped all of them dead on the
+   * next sweep — posts written and paid for, never collected. */
+  const r = run(`
+    seed_planned('c1', 3);
+    $all = IE_Campaigns::all();
+    $all['c1']['batch_started'] = gmdate('Y-m-d H:i:s', time() - 86400);
+    update_option('ie_campaigns', $all, false);
+
+    $GLOBALS['api_calls'] = array();
+    $out = IE_Publisher::run_campaign('c1');
+    out(array('calls' => $GLOBALS['api_calls'], 'out' => $out));
+  `);
+
+  assert.strictEqual(r.calls.length, 1,
+    'a campaign approved under an older version was abandoned mid-flight');
+  assert.ok(!r.out.skipped);
+});
+
+test('A REFUSAL FOR CREDITS CLEARS THE APPROVAL, SO IT CANNOT START ITSELF LATER', () => {
+  /* A 402 is an ANSWER, not a lost message, and the difference decides
+   * what approved_at should say afterwards. Left stamped, the sweep keeps
+   * trying — and the moment the owner tops up for something else, a
+   * campaign they never got to start writes itself an hour later. They
+   * pressed the button once, were told no, and get to press it again
+   * themselves. */
+  const r = run(`
+    seed_planned('c1', 3);
+    $GLOBALS['api_402'] = true;
+    $out = IE_Publisher::run_campaign('c1', true);
+    $c = IE_Campaigns::get('c1');
+
+    $GLOBALS['api_402'] = false;
+    $GLOBALS['api_calls'] = array();
+    $sweep = IE_Publisher::run_campaign('c1');
+
+    out(array(
+      'was_error'   => is_object($out),
+      'approved_at' => isset($c['approved_at']) ? $c['approved_at'] : null,
+      'calls'       => $GLOBALS['api_calls'],
+      'sweep'       => $sweep,
+    ));
+  `);
+
+  assert.strictEqual(r.was_error, true, 'the credits refusal was not reported as an error');
+  assert.ok(!r.approved_at, 'the approval survived a refusal for money');
+  assert.strictEqual(r.calls.length, 0,
+    'the sweep started a campaign the server had already refused for credits');
+  assert.strictEqual(r.sweep.reason, 'campaign has not been approved');
+});
+
+test('A PAUSED CAMPAIGN STILL SENDS ITS CANCEL, APPROVED OR NOT', () => {
+  /* THE ORDER OF THE TWO GUARDS, and the asymmetry is deliberate.
+   *
+   * The approval gate sits AFTER the paused branch. If it ever wrongly
+   * judged a campaign unapproved, blocking its cancel would mean writing
+   * and charging for a batch the owner had stopped — the 825-credit
+   * failure, again. Blocking a START costs an hour's delay. Only one of
+   * those two mistakes is recoverable, so the cancel goes first. */
+  const r = run(`
+    seed_campaign('c1', 2, array(3, 10));
+    unapprove('c1');
+    IE_Publisher::pause('c1');
+    $GLOBALS['api_calls'] = array();
+    $out = IE_Publisher::run_campaign('c1');
+    out(array('calls' => $GLOBALS['api_calls'], 'out' => $out));
+  `);
+
+  assert.strictEqual(r.calls.length, 1,
+    'an unapproved paused campaign could not tell the server to stop');
+  assert.strictEqual(r.calls[0].cancel, true);
+  assert.strictEqual(r.out.reason, 'campaign is paused');
 });
 
 console.log('');

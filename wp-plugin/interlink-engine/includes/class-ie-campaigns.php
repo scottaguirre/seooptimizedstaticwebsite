@@ -389,6 +389,39 @@ class IE_Campaigns {
 				continue;
 			}
 
+			/* AND SOMEBODY HAS TO HAVE APPROVED IT — which this did not ask,
+			 * and the omission is what let the hourly cron write and charge
+			 * for campaigns nobody had agreed to pay for.
+			 *
+			 * A campaign is 'active' from the moment it is created, before
+			 * approval, and every slot is 'pending' because nothing is
+			 * written. So the two tests this function used to make were both
+			 * true of a campaign that had just been planned and nothing else.
+			 *
+			 * THIS IS NOT A NEW POLICY, IT IS THE FUNCTION FINALLY MATCHING
+			 * ITS OWN DESCRIPTION. Read the name and the line above: posts
+			 * still to COLLECT FROM THE SERVER. An unapproved campaign has
+			 * nothing to collect, because nothing was ever written for it.
+			 * Listing it was always wrong; what made it dangerous was
+			 * run_campaign() taking the list as an instruction to start.
+			 *
+			 * THE SECOND REASON, WHICH IS NOT ABOUT MONEY. run_catch_up()
+			 * deliberately does ONE campaign per run and takes $pending[0],
+			 * so a campaign that is listed and then refused downstream
+			 * silently eats the whole sweep. The gate in run_campaign() stops
+			 * the spending; without this, a single never-approved draft would
+			 * sit at the head of the queue for ever and the real campaigns
+			 * behind it would never be collected again. Two guards, two
+			 * different failures.
+			 *
+			 * Both witnesses, for the same reason as the gate: approved_at is
+			 * what the owner did, batch_started is what the server confirmed,
+			 * and every campaign in flight across the fleet today has the
+			 * second and not the first. */
+			if ( empty( $campaign['approved_at'] ) && empty( $campaign['batch_started'] ) ) {
+				continue;
+			}
+
 			foreach ( $campaign['slots'] as $slot ) {
 				if ( 'pending' === $slot['status'] ) {
 					$ids[] = $campaign['id'];

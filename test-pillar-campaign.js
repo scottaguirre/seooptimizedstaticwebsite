@@ -838,6 +838,120 @@ if (!BlogCampaign) {
   });
 }
 
+/* =====================================================================
+ * A ring of two — 6 October
+ *
+ * The ring rule is "link to the one behind you, and the last closes back to
+ * the first". Right for three or more. At exactly two it hands post 1 a prev
+ * of slot 0 AND a next of slot 0, because the post behind it and the post it
+ * closes the ring to are the same post — two links, one destination, both in
+ * the same article.
+ *
+ * Edwin planned two pillars and found the second one linking back to the
+ * first twice. Nothing caught it because the fixtures all have three or four
+ * slots, and a rule that is right everywhere except its smallest case passes
+ * every test written against the normal case.
+ * ================================================================== */
+
+section('A ring of two is a pair');
+
+const PAIR = [
+  { topic: 'Can You Apply for a Loan Without Being a Citizen',
+    targetQuery: 'loan without us citizenship',
+    linkPhrase: 'applying for a loan as a non-citizen' },
+  { topic: 'How Soon Can You Apply After Becoming a Citizen',
+    targetQuery: 'loan after becoming a us citizen',
+    linkPhrase: 'a new citizen loan application' },
+];
+
+let pairPlan;
+
+test('a two-post pillar campaign plans', () => {
+  pairPlan = planForCampaign({
+    topics: PAIR,
+    isPillar: true,
+    schedule: { everyDays: 1, publishTime: '09:00', timezone: 'America/Chicago' },
+  });
+
+  assert.strictEqual(pairPlan.slots.length, 2);
+});
+
+test('THE SECOND POST LINKS BACK ONCE, NOT TWICE', () => {
+  /* THE BUG, as Edwin found it live. Both anchors pointed at post 0 and the
+   * article carried two links to the same URL. */
+  const { slot } = buildLinkPlan(pillarCampaign(pairPlan, { 0: 'https://x/one/' }), 1);
+
+  assert.strictEqual(slot.prevAnchor, 'applying for a loan as a non-citizen',
+    'the backward link to the first post is gone');
+  /* ABSENT, not null — the same rule slot.money follows a few cases up.
+   * writePost and qualityCheck both ask `if (slot.nextAnchor)`, and an absent
+   * key is what makes that guard mean something. */
+  assert.strictEqual('nextAnchor' in slot, false,
+    'the second post still links forward as well as back — two links, one destination');
+});
+
+test('THE FIRST POST LINKS FORWARD ONCE', () => {
+  /* The other half of the pair. Post 0 is written before post 1 exists, so it
+   * takes the FORWARD link — the one allowed to be a placeholder until its
+   * target publishes. Give it the backward link instead and it points at
+   * nothing. */
+  const { slot } = buildLinkPlan(pillarCampaign(pairPlan), 0);
+
+  assert.strictEqual(slot.nextAnchor, 'a new citizen loan application',
+    'the first post has no link to its partner at all');
+  assert.strictEqual('prevAnchor' in slot, false,
+    'the first post links backward to something that does not exist');
+});
+
+test('the pair points at each other, and at nothing else', () => {
+  /* Stated as the whole shape rather than two separate facts, because "one
+   * link each" is the thing being asked for and either assertion alone can
+   * hold while the pair is still wrong. */
+  const campaign = pillarCampaign(pairPlan, { 0: 'https://x/one/', 1: 'https://x/two/' });
+
+  const first  = buildLinkPlan(campaign, 0).slot;
+  const second = buildLinkPlan(campaign, 1).slot;
+
+  const linksOf = s => [s.prevAnchor, s.nextAnchor].filter(Boolean);
+
+  assert.strictEqual(linksOf(first).length, 1, `post 0 has ${linksOf(first).length} ring links`);
+  assert.strictEqual(linksOf(second).length, 1, `post 1 has ${linksOf(second).length} ring links`);
+  assert.strictEqual('money' in first, false, 'a pillar grew a money link');
+});
+
+test('THREE OR MORE IS UNCHANGED — the last still closes the ring', () => {
+  /* The fix must not be a special case that leaked. In a ring of four, post 3
+   * links back to post 2 and forward to post 0, and those are different
+   * posts — so it keeps both, exactly as before. */
+  const { slot } = buildLinkPlan(pillarCampaign(pillarPlan), 3);
+
+  assert.strictEqual(slot.prevAnchor, 'common behaviour problems');
+  assert.strictEqual(slot.nextAnchor, 'training a puppy in its first eight weeks',
+    'the last post no longer closes the ring back to the first');
+});
+
+test('a one-post campaign still has no ring at all', () => {
+  /* The n < 2 branch, which the pair case sits directly above and could
+   * plausibly have swallowed.
+   *
+   * A SILO campaign, not a pillar one: planCampaign refuses a single-post
+   * pillar outright ("one would have no links at all"), which is the right
+   * rule and means the only way to reach this branch is an ordinary campaign
+   * with one post. It still has its money link; it just has no ring. */
+  const solo = planForCampaign({
+    topics: [SERVICE_TOPICS[0]],
+    targetPage: TARGET,
+    business: BUSINESS,
+    schedule: { everyDays: 1, publishTime: '09:00', timezone: 'America/Chicago' },
+  });
+
+  const { slot } = buildLinkPlan(serviceCampaign(solo), 0);
+
+  assert.strictEqual('prevAnchor' in slot, false);
+  assert.strictEqual('nextAnchor' in slot, false);
+  assert.ok(slot.money, 'a single-post campaign lost its money link too');
+});
+
 /* ===================================================================== */
 
 run();

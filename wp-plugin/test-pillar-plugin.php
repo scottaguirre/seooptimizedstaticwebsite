@@ -311,7 +311,17 @@ function ie_render_title( $post_id, $default, $singular = true ) {
 }
 function wp_update_post( $p, $err = false ) { return isset( $p['ID'] ) ? (int) $p['ID'] : 0; }
 function wp_publish_post( $id ) { return (int) $id; }
-function wp_insert_post( $p, $err = false ) { return 999; }
+/* RECORDS WHAT IT WAS GIVEN, so a case can drive insert_post() for real
+ * instead of reading its source. The id is fixed at 999, which is what the
+ * meta assertions key off. */
+function wp_insert_post( $p, $err = false ) {
+	$GLOBALS['ie_inserted'][] = $p;
+	return 999;
+}
+function get_date_from_gmt( $s, $format = 'Y-m-d H:i:s' ) { return $s; }
+function get_gmt_from_date( $s, $format = 'Y-m-d H:i:s' ) {
+	return gmdate( $format, $s ? strtotime( $s . ' UTC' ) : time() );
+}
 function sanitize_title( $t ) { return strtolower( preg_replace( '/[^a-z0-9]+/i', '-', (string) $t ) ); }
 function get_users( $a = array() ) { return array( 1 ); }
 function get_userdata( $id ) { return (object) array( 'ID' => (int) $id ); }
@@ -985,10 +995,70 @@ test( 'THE FILTER NAMES ARE THE ONES THE VENDORS DOCUMENT', function () {
 	 * them quotes the names while explaining where they came from. */
 	$src  = php_strip_whitespace( __DIR__ . '/interlink-engine/includes/class-ie-seo.php' );
 
-	foreach ( array( 'wpseo_title', 'wpseo_metadesc',
-		'rank_math/frontend/title', 'rank_math/frontend/description' ) as $hook ) {
+	foreach ( array(
+		'wpseo_title', 'wpseo_metadesc',                                 // Yoast
+		'rank_math/frontend/title', 'rank_math/frontend/description',    // Rank Math
+		'seopress_titles_title', 'seopress_titles_desc',                 // SEOPress
+		'aioseo_title', 'aioseo_description',                            // All in One SEO
+	) as $hook ) {
 		ok( false !== strpos( $src, "'" . $hook . "'" ), "the $hook filter is no longer registered" );
 	}
+} );
+
+test( 'ALL FOUR SEO PLUGINS ARE FED, NOT JUST THE TWO VERIFIED FIRST', function () {
+	/* SEOPress and AIOSEO were left out of 0.21.0 for one reason — their hook
+	 * names had not been checked — and the comment said so rather than
+	 * dressing the gap up as a decision. Checked against their own docs on 5
+	 * October and added.
+	 *
+	 * THE PAIRING, NOT JUST THE PRESENCE. Found by mutation: wiring
+	 * `aioseo_title` to filter_description survived every other check here,
+	 * and it would put the META DESCRIPTION INSIDE THE <title> TAG on every
+	 * post on an AIOSEO site. Nothing errors, nothing is missing, and the
+	 * list-of-names test above passes — eight hooks, all spelled right, one
+	 * of them answering the wrong question.
+	 *
+	 * So the map is asserted whole: every hook, and which method each reaches. */
+	$src = php_strip_whitespace( __DIR__ . '/interlink-engine/includes/class-ie-seo.php' );
+
+	preg_match_all(
+		"/add_filter\\(\\s*'([^']+)',\\s*array\\(\\s*__CLASS__,\\s*'(filter_title|filter_description)'/",
+		$src,
+		$m
+	);
+
+	$wired = array_combine( $m[1], $m[2] );
+
+	same( array(
+		'wpseo_title'                    => 'filter_title',
+		'wpseo_metadesc'                 => 'filter_description',
+		'rank_math/frontend/title'       => 'filter_title',
+		'rank_math/frontend/description' => 'filter_description',
+		'seopress_titles_title'          => 'filter_title',
+		'seopress_titles_desc'           => 'filter_description',
+		'aioseo_title'                   => 'filter_title',
+		'aioseo_description'             => 'filter_description',
+	), $wired, 'a vendor filter is missing, renamed, or wired to the wrong method' );
+} );
+
+test( 'A SEOPRESS SITE GETS OUR TITLE ON OUR POST AND THEIRS ELSEWHERE', function () {
+	/* Same two methods Yoast and Rank Math already use, so this is not
+	 * re-testing the logic — it is proving the new hooks reach it, and that
+	 * the ownership check still refuses a customer's own page. */
+	$id = ie_seo_post();
+	$GLOBALS['ie_queried']  = $id;
+	$GLOBALS['ie_singular'] = true;
+
+	same( 'What Information Do You Need for a Loan Application?',
+		IE_SEO::filter_title( 'SEOPress would have said this' ) );
+
+	ie_add_post( 900, 'Their own page', 'page', 'publish' );   // no _ie_campaign
+	$GLOBALS['ie_queried'] = 900;
+
+	same( 'Their own title', IE_SEO::filter_title( 'Their own title' ),
+		"a SEOPress site's own page lost its title" );
+	same( 'Their own description.', IE_SEO::filter_description( 'Their own description.' ),
+		"a SEOPress site's own page lost its description" );
 } );
 
 /* =====================================================================
@@ -1386,6 +1456,136 @@ test( 'THE GENERATED THEME TRIMS ITS OWN SITEMAP', function () {
 		'the generated theme no longer trims its sitemap' );
 	ok( false !== strpos( $code, "( 'users' === \$name ) ? false : \$provider" ),
 		'the theme filter no longer drops the users section' );
+} );
+
+/* =====================================================================
+ * The keyword a pillar was planned to win — 6 October
+ *
+ * The pillar form asks "Search it should win" for every topic and REFUSES to
+ * plan the campaign without it. That answer was stored on the slot, used to
+ * write the post, and then dropped: publishing stamped the pillar FLAG and
+ * nothing else.
+ *
+ * So a later campaign aimed at that pillar had nothing to read, and
+ * read_keyword() derived a keyword from the post TITLE. A pillar's title is a
+ * headline. "Can You Apply for a Loan in the US Without Being a Citizen?" came
+ * out as a thirteen-word keyword with the question mark attached, and the
+ * anchors built from it read "understanding can you apply for a loan in the us
+ * without being a citizen?".
+ *
+ * THESE CASES DRIVE insert_post() FOR REAL, through reflection, rather than
+ * grepping its source. The one test that already covered PILLAR_META is a
+ * source grep, and a source grep cannot tell a line that runs from a line
+ * inside an if that is never true.
+ * ================================================================== */
+
+/** Run the real insert_post() and return the meta it left on post 999. */
+function ie_insert( $campaign_extra, $slot_extra ) {
+	$GLOBALS['ie_meta']     = array();
+	$GLOBALS['ie_inserted'] = array();
+
+	$method = new ReflectionMethod( 'IE_Publisher', 'insert_post' );
+	$method->setAccessible( true );
+
+	$campaign = array_merge( array(
+		'id'           => 'c1',
+		'publish_mode' => 'future',
+		'slots'        => array(),
+	), $campaign_extra );
+
+	$slot = array_merge( array(
+		'index'      => 0,
+		'topic'      => 'Applying for a loan without citizenship',
+		'publish_at' => gmdate( 'c', time() + 86400 ),
+		'post_id'    => 0,
+		'status'     => 'pending',
+	), $slot_extra );
+
+	$method->invoke( null, $campaign, $slot, array(
+		'title'   => 'Can You Apply for a Loan in the US Without Being a Citizen?',
+		'slug'    => 'loan-without-citizenship',
+		'content' => '<p>body</p>',
+	) );
+
+	return isset( $GLOBALS['ie_meta'][999] ) ? $GLOBALS['ie_meta'][999] : array();
+}
+
+test( 'A PUBLISHED PILLAR CARRIES THE KEYWORD IT WAS PLANNED TO WIN', function () {
+	/* THE FIX. The owner typed this months before the campaign that needs it
+	 * exists, and until now it went no further than the campaign record. */
+	$meta = ie_insert(
+		array( 'is_pillar' => true ),
+		array( 'target_query' => 'loan without us citizenship' )
+	);
+
+	same( '1', $meta[ IE_Settings::PILLAR_META ], 'the pillar flag was not stamped' );
+	same( 'loan without us citizenship', $meta[ IE_Settings::KEYWORD_META ],
+		'the keyword was dropped — a later campaign will derive one from the headline' );
+} );
+
+test( 'the keyword is stamped through the constant both sides read', function () {
+	/* Spelled out in two files, renamed in one, and the failure is silent: the
+	 * publisher stamps a key the admin screen never looks for, the owner sees
+	 * the headline default again, and nothing anywhere says why. The same
+	 * reasoning as the PILLAR_META case above, which this follows. */
+	$publisher = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-publisher.php' );
+
+	ok( strpos( $publisher, 'IE_Settings::KEYWORD_META' ) !== false,
+		'the publisher uses a literal rather than the constant' );
+
+	$meta = ie_insert(
+		array( 'is_pillar' => true ),
+		array( 'target_query' => 'second mortgage rules' )
+	);
+
+	ok( isset( $meta['_ie_target_query'] ),
+		'the constant no longer resolves to the key the admin screen reads' );
+} );
+
+test( 'AN ORDINARY CAMPAIGN STAMPS NEITHER', function () {
+	/* The opposite failure, and it would be quiet. Only pillars appear in the
+	 * Target Page dropdown, so a supporting post carrying a keyword is a row
+	 * nothing reads and nothing maintains — and it would make every supporting
+	 * post look like a pillar to anything that later keys off the keyword
+	 * rather than the flag. PILLAR_META's own rule: written only when true. */
+	$meta = ie_insert(
+		array( 'is_pillar' => false ),
+		array( 'target_query' => 'loan without us citizenship' )
+	);
+
+	ok( ! isset( $meta[ IE_Settings::PILLAR_META ] ), 'a non-pillar was flagged' );
+	ok( ! isset( $meta[ IE_Settings::KEYWORD_META ] ),
+		'a supporting post was given a pillar keyword' );
+} );
+
+test( 'AN EMPTY KEYWORD WRITES NO ROW AT ALL', function () {
+	/* An empty row is worse than no row, and this is the case that decides
+	 * whether the title fallback can survive.
+	 *
+	 * The reader has to tell "this pillar has no keyword" from "this pillar
+	 * was published before the field existed". Absence is the only answer that
+	 * means the second, and the second is the one that must keep falling back
+	 * to the title — otherwise every pillar already live on every site ends up
+	 * with no keyword rather than a bad one. */
+	$meta = ie_insert(
+		array( 'is_pillar' => true ),
+		array( 'target_query' => '   ' )
+	);
+
+	same( '1', $meta[ IE_Settings::PILLAR_META ], 'the flag should still be stamped' );
+	ok( ! isset( $meta[ IE_Settings::KEYWORD_META ] ),
+		'an empty keyword was stored, which reads as "answered with nothing"' );
+} );
+
+test( 'a slot with no target_query at all does not fatal', function () {
+	/* Campaigns planned before the column existed have slots with no such key.
+	 * isset() rather than a bare read is the difference between a warning in
+	 * every customer's log and nothing at all. */
+	$meta = ie_insert( array( 'is_pillar' => true ), array() );
+
+	same( '1', $meta[ IE_Settings::PILLAR_META ], 'the flag was not stamped' );
+	ok( ! isset( $meta[ IE_Settings::KEYWORD_META ] ),
+		'a keyword appeared from a slot that has no such key' );
 } );
 
 echo "\n$passed passed, $failed failed\n";

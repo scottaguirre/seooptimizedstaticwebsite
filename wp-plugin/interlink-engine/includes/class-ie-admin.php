@@ -1346,6 +1346,24 @@ class IE_Admin {
 			$state = __( 'cancelled — the rest was never written', 'interlink-engine' );
 		} elseif ( IE_Campaigns::is_finished( $campaign ) ) {
 			$state = __( 'finished', 'interlink-engine' );
+		} elseif ( IE_Campaigns::is_paused( $campaign ) ) {
+			/* PAUSED BELONGS WITH THE OTHER SPECIFIC STATES, and it was
+			 * missing from this chain entirely.
+			 *
+			 * A paused campaign fell through to the `else` and read
+			 * "publishing on schedule" — present tense, about a campaign that
+			 * is publishing nothing — directly above its own Resume button.
+			 *
+			 * The paragraph above this chain already made exactly this
+			 * argument about finished campaigns: "a campaign that has nothing
+			 * left to publish is not publishing on schedule". Paused is the
+			 * same sentence and was not covered by it. A rule written for one
+			 * case tends to stay written for one case.
+			 *
+			 * AFTER `is_finished`, deliberately. A campaign with every post
+			 * live and nothing outstanding is finished whether or not somebody
+			 * paused it on the way, and "finished" is the more useful word. */
+			$state = __( 'paused', 'interlink-engine' );
 		} else {
 			$state = 'draft' === $campaign['publish_mode']
 				? __( 'saving as drafts', 'interlink-engine' )
@@ -1567,6 +1585,30 @@ class IE_Admin {
 								<?php endif; ?>
 							<?php elseif ( $slot['error'] ) : ?>
 								<span class="ie-pill ie-pill-late" title="<?php echo esc_attr( $slot['error'] ); ?>"><?php esc_html_e( 'Failed', 'interlink-engine' ); ?></span>
+							<?php elseif ( IE_Campaigns::is_paused( $campaign ) ) : ?>
+								<?php
+								/* "ARRIVING" ON A PAUSED CAMPAIGN IS A PROMISE
+								 * NOTHING IS KEEPING.
+								 *
+								 * Nothing is arriving: the campaign is stopped,
+								 * and whatever the server has written is sitting
+								 * there until somebody resumes it. Edwin paused a
+								 * four-post campaign, three were written and
+								 * charged for, and all four rows said "Arriving"
+								 * — the same word for posts that exist and are
+								 * paid for and posts that do not exist at all.
+								 *
+								 * ONE WORD FOR BOTH, AND THAT IS DELIBERATE. The
+								 * plugin cannot tell them apart: it learns a post
+								 * exists only when it collects it, and a paused
+								 * campaign collects nothing. The blog report CAN
+								 * — it reads the server's own slot statuses and
+								 * now says "Written, waiting" — so the honest
+								 * thing here is the fact this screen actually
+								 * knows, which is that the campaign is held. */
+								?>
+								<span class="ie-pill ie-pill-wait"
+								      title="<?php esc_attr_e( 'The campaign is paused, so nothing is being written or published for it. Posts already written are kept and will arrive when you resume. The blog report on Three Comets shows which have been written.', 'interlink-engine' ); ?>"><?php esc_html_e( 'Held', 'interlink-engine' ); ?></span>
 							<?php else : ?>
 								<span class="ie-pill ie-pill-wait"><?php esc_html_e( 'Arriving', 'interlink-engine' ); ?></span>
 							<?php endif; ?>
@@ -1709,8 +1751,48 @@ class IE_Admin {
 			 * with room to spare, and after that a page left open overnight
 			 * stops reloading itself forever.
 			 */
-			$started  = $approved ? strtotime( $campaign['batch_started'] ) : 0;
-			$watching = $pending && $approved && $started && ( time() - $started ) < 600;
+			/* WHEN THE SERVER LAST SAID IT WAS WRITING — not when the campaign
+			 * was approved.
+			 *
+			 * This read batch_started, which is stamped once, at approval, and
+			 * never again. For a single uninterrupted batch the two are the
+			 * same moment. For a campaign paused and resumed an hour later
+			 * they are not: writing restarts, batch_started still points at
+			 * the original approval, `time() - started` is already past the
+			 * window, and the spinner can never appear. Edwin resumed a
+			 * campaign, three posts were written and charged, and the page
+			 * showed nothing at all.
+			 *
+			 * writing_since is set by run_campaign() when the server first
+			 * answers 'writing', and cleared the moment it stops — see the
+			 * note there. The screen now asks "is it writing?" rather than
+			 * "was it approved recently?", which is the question it was always
+			 * trying to answer. */
+			$started = empty( $campaign['writing_since'] )
+				? 0
+				: strtotime( $campaign['writing_since'] );
+
+			/* AND NOT PAUSED, which it did not check until 6 October.
+			 *
+			 * $paused is worked out a dozen lines above, to decide which
+			 * buttons to offer, and was never consulted here. So a paused
+			 * campaign kept a spinner and the words "Writing your posts" for
+			 * ten minutes after approval, whatever had actually happened.
+			 *
+			 * THAT IS WORSE THAN COSMETIC, because it made two opposite
+			 * outcomes identical on screen. Edwin pressed Pause, the batch
+			 * stopped correctly after the post in flight — 1 of 4 written, 75
+			 * credits instead of 300 — and the page went on saying it was
+			 * writing. He then pressed the write button again, the admin
+			 * refused it (a paused campaign cannot be written), and the
+			 * spinner carried on through that too. Nothing on the page could
+			 * distinguish "stopped as you asked" from "ignoring you".
+			 *
+			 * A progress indicator that is wrong about whether anything is
+			 * happening is not a smaller bug than the thing it was reporting
+			 * on. It is the only part the owner can see. */
+			$watching = $pending && $approved && $started && ! $paused
+				&& ( time() - $started ) < 600;
 			?>
 
 			<?php if ( $watching ) : ?>
@@ -1849,7 +1931,25 @@ class IE_Admin {
 				<?php else : ?>
 					<a class="button"
 					   href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ie_pause_campaign&campaign=' . rawurlencode( $campaign['id'] ) ), 'ie_pause_campaign' ) ); ?>"
-					   onclick="return confirm('<?php echo esc_js( __( 'Pause this campaign? Scheduled posts are held back as drafts and nothing new is written. Posts already published stay up.', 'interlink-engine' ) ); ?>')">
+					   <?php
+						/* SAYS WHAT HAPPENS TO A BATCH IN FLIGHT, which the
+						 * old wording did not.
+						 *
+						 * It read "nothing new is written". True of the
+						 * schedule, false of the one thing moving fast enough
+						 * to matter. Edwin approved eleven articles, pressed
+						 * Pause seconds later, and all eleven were written
+						 * and 825 credits charged — while a dialog he had
+						 * just agreed to told him they would not be.
+						 *
+						 * The server can only stop BETWEEN posts: a model
+						 * call in flight is paid for the moment it is sent,
+						 * so abandoning it spends the credits and keeps
+						 * nothing. One more article is the honest worst case,
+						 * and the sentence now says so rather than promising
+						 * zero and delivering eleven. */
+						?>
+					   onclick="return confirm('<?php echo esc_js( __( 'Pause this campaign? If posts are being written right now, the one in progress finishes and is charged — the rest are stopped. Scheduled posts are held back as drafts. Posts already published stay up.', 'interlink-engine' ) ); ?>')">
 						<?php esc_html_e( 'Pause campaign', 'interlink-engine' ); ?>
 					</a>
 				<?php endif; ?>
@@ -2077,25 +2177,62 @@ class IE_Admin {
 						<select name="target_page_id" id="ie_target">
 							<option value=""><?php esc_html_e( 'Choose a page…', 'interlink-engine' ); ?></option>
 							<?php $ie_town = IE_Settings::business(); $ie_town = isset( $ie_town['town'] ) ? $ie_town['town'] : ''; ?>
+							<?php $ie_n = 0; ?>
 							<?php foreach ( $pages as $id => $page ) : ?>
-								<?php // The cleaned term travels with the option so the box can fill itself. ?>
+								<?php $ie_n++; ?>
+								<?php
+								/* The term travels with the option so the box can fill
+								 * itself — AND IT ASKS THE SAME QUESTION read_keyword()
+								 * ASKS, in the same order.
+								 *
+								 * It used to derive from the title unconditionally,
+								 * which was fine while the server did the same. Now the
+								 * server prefers the keyword a pillar was planned to
+								 * win, and a dropdown still offering the headline would
+								 * put one value on the screen and store another. A
+								 * pre-filled box the owner can see and the server then
+								 * ignores is a worse bug than the one being fixed: at
+								 * least a bad default is honest about what it will do. */
+								$ie_stored = self::stored_keyword( $id );
+								$ie_kw     = '' !== $ie_stored
+									? $ie_stored
+									: self::keyword_from_title( $page['title'], $ie_town );
+								?>
 								<option value="<?php echo esc_attr( $id ); ?>"
-									data-keyword="<?php echo esc_attr( self::keyword_from_title( $page['title'], $ie_town ) ); ?>"
+									data-keyword="<?php echo esc_attr( $ie_kw ); ?>"
 									<?php selected( (int) $value( 'target_page_id' ), (int) $id ); ?>>
 									<?php
-									/* THE MARKER IS ADDED HERE, WHERE IT IS SEEN, and
-									 * never stored. target_pages() returns the pillar's
-									 * real title because read_form() keeps that title:
-									 * it becomes the campaign's label AND is sent as
-									 * targetPage.title, which writePost drops into "It
-									 * becomes a link to the X page". A decorated title
-									 * would have every post in the silo referring to
-									 * "the Leash Pulling (pillar) page". */
+									/* THE NUMBER AND THE MARKER ARE BOTH ADDED HERE,
+									 * WHERE THEY ARE SEEN, AND NEITHER IS EVER STORED.
+									 *
+									 * target_pages() returns the real title because
+									 * read_form() keeps that title: it becomes the
+									 * campaign's label AND is sent as targetPage.title,
+									 * which writePost drops into "It becomes a link to
+									 * the X page". A decorated title would have every
+									 * post in the silo referring to "the Leash Pulling
+									 * (pillar) page" — or, now, to "the 3. Home Loans
+									 * page".
+									 *
+									 * The number was asked for on 4 October so a long
+									 * list can be talked about by position. IT IS A
+									 * POSITION IN THIS RENDERING, NOT AN IDENTITY:
+									 * target_pages() orders pages by menu_order title
+									 * and appends pillars by date, so publishing a page
+									 * or adding a pillar shifts everything after it.
+									 * Edwin was told and accepted that. It must
+									 * therefore never be written into a campaign record
+									 * or into a message someone might act on later. */
 									echo esc_html(
-										empty( $page['is_pillar'] )
-											? $page['title']
-											/* translators: %s: the pillar post's title */
-											: sprintf( __( '%s — pillar', 'interlink-engine' ), $page['title'] )
+										sprintf(
+											/* translators: 1: position in the list, 2: the page's title */
+											__( '%1$d. %2$s', 'interlink-engine' ),
+											$ie_n,
+											empty( $page['is_pillar'] )
+												? $page['title']
+												/* translators: %s: the pillar post's title */
+												: sprintf( __( '%s — pillar', 'interlink-engine' ), $page['title'] )
+										)
 									);
 									?>
 								</option>
@@ -2395,7 +2532,30 @@ class IE_Admin {
 							 * inputs, and no fixed-width classes anywhere.
 							 */
 							?>
-							<th style="width:2rem"></th>
+							<?php
+							/* TICK OR UNTICK THE LOT.
+							 *
+							 * Suggest topics returns up to twelve rows and the
+							 * common editing move is "none of these except
+							 * three" — twelve clicks to clear, then three to
+							 * choose. The header box makes it two.
+							 *
+							 * IT IS NOT A FIELD. No name attribute, so it is
+							 * never posted and read_topics() never sees it: the
+							 * row boxes remain the only record of what was
+							 * chosen. A control that submitted a value of its
+							 * own would be a second opinion about the same
+							 * fact.
+							 *
+							 * INDETERMINATE WHEN THE ROWS DISAGREE, rather than
+							 * guessing a side. A half-ticked list shown as
+							 * "ticked" invites one click that silently unticks
+							 * everything the owner just chose. */
+							?>
+							<th style="width:2rem">
+								<input type="checkbox" id="ie_use_all" checked
+									title="<?php esc_attr_e( 'Tick or untick every topic', 'interlink-engine' ); ?>">
+							</th>
 							<th style="width:36%"><?php esc_html_e( 'Topic', 'interlink-engine' ); ?></th>
 							<th style="width:19%"><?php esc_html_e( 'Search it should win', 'interlink-engine' ); ?></th>
 							<th style="width:22%"><?php esc_html_e( 'How other posts refer to it', 'interlink-engine' ); ?></th>
@@ -2422,6 +2582,72 @@ class IE_Admin {
 					<?php endforeach; ?>
 					</tbody>
 				</table>
+
+				<script>
+				/**
+				 * The header box drives the row boxes, and the row boxes drive
+				 * the header box back.
+				 *
+				 * ONE WAY WOULD BE A LIE. Tick all, untick one row, and a
+				 * header still showing ticked claims every topic is in — and
+				 * the next click on it would untick the eleven the owner had
+				 * just kept. So the rows report upward as well: all ticked,
+				 * none ticked, or indeterminate.
+				 *
+				 * SCOPED TO THIS TABLE by starting from the header box's own
+				 * <table>, not by querying the document. The campaign form has
+				 * other checkboxes on it — the pillar box, the home-page box —
+				 * and a selector loose enough to reach them would turn "untick
+				 * every topic" into "untick everything on the screen".
+				 *
+				 * Progressive enhancement: with script off the header box does
+				 * nothing and has no name, so nothing is posted and nothing is
+				 * lost. The row boxes still work by hand, as they always did.
+				 */
+				(function () {
+					var all = document.getElementById('ie_use_all');
+					if (!all) { return; }
+
+					var table = all.closest('table');
+					if (!table) { return; }
+
+					function rows() {
+						return table.querySelectorAll('tbody input[type="checkbox"]');
+					}
+
+					function sync() {
+						var boxes = rows();
+						var on = 0;
+
+						for (var i = 0; i < boxes.length; i++) {
+							if (boxes[i].checked) { on++; }
+						}
+
+						all.checked = boxes.length > 0 && on === boxes.length;
+						all.indeterminate = on > 0 && on < boxes.length;
+					}
+
+					all.addEventListener('change', function () {
+						/* indeterminate is cleared by the browser on click, so
+						 * the value read here is already the one the owner
+						 * asked for — ticked from a part-ticked list means
+						 * "all of them". */
+						var boxes = rows();
+						for (var i = 0; i < boxes.length; i++) {
+							boxes[i].checked = all.checked;
+						}
+						all.indeterminate = false;
+					});
+
+					table.addEventListener('change', function (e) {
+						if (e.target && e.target !== all && 'checkbox' === e.target.type) {
+							sync();
+						}
+					});
+
+					sync();
+				}());
+				</script>
 			<?php else : ?>
 				<table class="form-table" role="presentation">
 					<tr>
@@ -2702,7 +2928,33 @@ class IE_Admin {
 		return trim( preg_replace( '/\s+/', ' ', strtolower( $text ) ) );
 	}
 
-	/** The typed search term, or one derived from the page title. */
+	/**
+	 * The search term for the target page, in order of who actually knows it.
+	 *
+	 * THREE SOURCES, AND THE MIDDLE ONE IS NEW. It used to be two: what the
+	 * owner typed on this form, or a guess from the page title.
+	 *
+	 * 1. WHAT THEY TYPED HERE wins, always. They are looking at this campaign
+	 *    and this page, and an answer given now beats one given months ago.
+	 *
+	 * 2. WHAT THEY TYPED WHEN THEY BUILT THE PILLAR. A pillar campaign asks
+	 *    "Search it should win" for every post and refuses to plan without it.
+	 *    That answer is stamped onto the post at publish, and reading it back
+	 *    here is the whole point of stamping it: the owner should not be asked
+	 *    the same question twice.
+	 *
+	 * 3. THE TITLE, derived. Still correct for an ordinary service page —
+	 *    "Water Heater Repair | Acme Plumbing" gives "water heater repair", and
+	 *    keyword_from_title() strips the brand, the town and the state to get
+	 *    there. It is only a bad answer for an ARTICLE, whose title is a
+	 *    headline, and source 2 is what now covers those.
+	 *
+	 * THE FALLBACK STAYS, and that is not tidiness. Every pillar already
+	 * published on every site carries no keyword meta, because the field did
+	 * not exist when they published. Dropping the fallback would leave each of
+	 * them with no keyword at all, which is worse than a bad one — the same
+	 * backward-compatibility shape as the approval gate in run_campaign().
+	 */
 	private static function read_keyword( $page ) {
 		$typed = isset( $_POST['keyword'] ) ? sanitize_text_field( wp_unslash( $_POST['keyword'] ) ) : '';
 
@@ -2710,11 +2962,36 @@ class IE_Admin {
 			return trim( $typed );
 		}
 
+		$stored = self::stored_keyword( $page );
+
+		if ( '' !== $stored ) {
+			return $stored;
+		}
+
 		$business = IE_Settings::business();
 		return self::keyword_from_title(
 			get_the_title( $page ),
 			isset( $business['town'] ) ? $business['town'] : ''
 		);
+	}
+
+	/**
+	 * The keyword a pillar was planned to win, if this post is one and carries
+	 * it.
+	 *
+	 * Its own method because the FORM needs it as well as the handler: the box
+	 * is pre-filled from the dropdown by script, and a default that disagrees
+	 * with what the server will store is a screen that lies about what it is
+	 * going to do.
+	 */
+	public static function stored_keyword( $page ) {
+		$post_id = is_object( $page ) ? ( isset( $page->ID ) ? (int) $page->ID : 0 ) : (int) $page;
+
+		if ( ! $post_id ) {
+			return '';
+		}
+
+		return trim( (string) get_post_meta( $post_id, IE_Settings::KEYWORD_META, true ) );
 	}
 
 	/**
@@ -3534,7 +3811,17 @@ class IE_Admin {
 
 		$campaign_id = isset( $_GET['campaign'] ) ? sanitize_text_field( wp_unslash( $_GET['campaign'] ) ) : '';
 
-		$result = IE_Publisher::run_campaign( $campaign_id );
+		/* THE ONE CALLER ALLOWED TO SPEND MONEY, and the only one that passes
+		 * true. run_campaign() refuses by default now: a planned campaign is
+		 * 'active' with pending slots from the moment it is created, which is
+		 * precisely what the hourly cron looks for, so until today the sweep
+		 * could write and charge a campaign nobody had approved.
+		 *
+		 * This is the approval. Both buttons that reach here — the priced
+		 * "Write all N posts" and the free "Check now" — are the owner, on
+		 * their own screen, behind a nonce and a confirm dialog that states
+		 * the cost. Nothing else in the plugin can say that. */
+		$result = IE_Publisher::run_campaign( $campaign_id, true );
 
 		// Through redirect_error, not redirect: this is the one call that
 		// spends money, so it is the one that can fail for want of it, and

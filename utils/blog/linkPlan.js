@@ -39,12 +39,41 @@
 function ringNeighbours(slots, index) {
     const n = slots.length;
     if (n < 2) return { prev: null, next: null };
-  
+
+    /* A RING OF TWO IS A PAIR, AND IT HAS ONLY ONE EDGE.
+     *
+     * The general rule below hands post 1 a prev of slot 0 AND a next of
+     * slot 0 — because it is the last post, so it closes the ring back to the
+     * start, which is also the post immediately behind it. Two links, one
+     * destination, both inside the same article. Edwin planned two pillars and
+     * found the second one linking back to the first twice.
+     *
+     * THE RING IS NOT WRONG FOR n >= 3. Post 2 of three links back to post 1
+     * and forward to post 0, and those are different posts. It is wrong for
+     * exactly n = 2, where "the one behind me" and "the one I close the ring
+     * to" are the same post. A rule that is right everywhere except at its
+     * smallest case is the kind that survives review and fails in use.
+     *
+     * SO THE PAIR IS SPELT OUT RATHER THAN DERIVED. Post 0 links forward to
+     * post 1; post 1 links back to post 0. One link each, mutual — which is
+     * what two hub articles pointing at each other means.
+     *
+     * THE DIRECTION IS NOT ARBITRARY. `prev` is expected to be published
+     * already; `next` is allowed to be a placeholder, swapped in when its
+     * target publishes. Post 0 is written first, when its partner does not
+     * exist, so it takes the forward link. Post 1 takes the backward one. Give
+     * post 0 the backward link instead and it would point at nothing. */
+    if (n === 2) {
+      return index === 0
+        ? { prev: null, next: slots[1] }
+        : { prev: slots[0], next: null };
+    }
+
     const prev = index > 0 ? slots[index - 1] : null;
-  
+
     // The last post closes the ring to slot 0, which by then certainly exists.
     const next = index < n - 1 ? slots[index + 1] : slots[0];
-  
+
     return { prev, next };
   }
   

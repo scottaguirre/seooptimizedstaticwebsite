@@ -13,6 +13,7 @@
 // output_text. Same shape buildPricingTable() and generateFaqAnswers() use.
 
 const path = require('path');
+const { businessBlock } = require('./businessBlock');
 
 const APP = path.join(__dirname, '..');
 
@@ -317,27 +318,29 @@ function buildPrompt(slot, ctx) {
     );
   }
 
-  /* OMITTED RATHER THAN RENDERED EMPTY.
+  /* OMITTED RATHER THAN RENDERED EMPTY — now per FIELD, not per block.
    *
    * A pillar campaign has no business behind it, and every field here would
    * print as a blank. Four labels with nothing after them is worse than no
    * block at all: the model reads it as a business whose name and town it is
    * supposed to know and cannot see, and invents one. AN EMPTY VALUE IS A
-   * CLAIM THAT THE VALUE EXISTS. */
-  const hasBusiness = !!(business && (business.name || business.trade || business.town));
-
-  const businessBlock = hasBusiness ? `
-BUSINESS
-  Name:     ${business.name}
-  Trade:    ${business.trade}
-  Town:     ${business.town}
-  Services: ${(business.services || []).join(', ')}
-` : '';
+   * CLAIM THAT THE VALUE EXISTS.
+   *
+   * THE GUARD THAT USED TO BE HERE NEVER FIRED. It asked
+   * `name || trade || town`, and a name is always present — the plugin falls
+   * back to the WordPress site title when the theme has no business name. So
+   * it caught the pillar case, where no business is passed at all, and missed
+   * every content blog, which is the case it was describing. A guard whose
+   * condition includes a field that is never empty is not a guard.
+   *
+   * See businessBlock.js. Deciding it there also ended the second copy of
+   * this template, which lived in suggestTopics.js and was wrong identically. */
+  const block = businessBlock(business);
 
   return `${systemFor(ctx)}
 
 Write one blog post.
-${businessBlock}
+${block}
 TOPIC
   ${slot.topic}
 ${slot.targetQuery ? `

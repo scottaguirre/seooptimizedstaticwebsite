@@ -26,6 +26,8 @@
 //    the single highest-liability category and it is banned outright.
 
 const path = require('path');
+const { isLocalBusiness } = require('./siteKind');
+const { businessBlock } = require('./businessBlock');
 
 const ANGLES = [
   {
@@ -54,6 +56,25 @@ const ANGLES = [
   },
   {
     key: 'local',
+    /* DROPPED WHEN THERE IS NO TOWN. The only angle with this flag.
+     *
+     * On a plumber with a van this is the best angle in the list. With no
+     * town it is impossible — and the model answers it anyway, because the
+     * prompt asks for topics spread across at least four of six. A lending
+     * blog returned "Central Texas Heat Can Turn Utility Bills Into a
+     * Cash-Flow Gap": a post whose reader wants a cheaper electricity bill,
+     * not a loan. The town came from a deleted theme's leftover settings row
+     * that the site had no other connection to.
+     *
+     * NO OTHER ANGLE IS FLAGGED, and "what actually happens during the job"
+     * was the close call. It assumes somebody turns up and does something,
+     * which is wrong on a climate blog and perfectly right on a general
+     * plumbing blog — and both have no town. Nothing available here can tell
+     * those apart, so guessing would trade a known failure for an unknown
+     * one. A town angle without a town is mechanically impossible; that is a
+     * different kind of claim from a taste call, and it is the only one being
+     * made automatically. */
+    localOnly: true,
     name: 'Something true of this town specifically',
     example: 'What Central Texas hard water does to a tank over five years',
     note: 'Must be a real physical or climatic fact — water chemistry, soil, freeze risk, housing stock. NEVER local law.',
@@ -83,27 +104,56 @@ function getClient(opts) {
   return mod.getOpenAI();
 }
 
-function buildPrompt({ business, targetPage, count, avoid = [] }) {
+/**
+ * @param {object} input
+ * @param {boolean} [input.isLocal]  does this site have a trade or a town?
+ *   Taken from ctx, where buildContext decided it once from the raw business.
+ *   Defaults to asking siteKind directly rather than assuming either answer:
+ *   a caller that forgets to pass it gets the right answer, not the common
+ *   one. Assuming `true` would put a town angle on blogs again; assuming
+ *   `false` would quietly strip the best angle off every plumber.
+ */
+function buildPrompt({ business, targetPage, count, avoid = [], isLocal }) {
+  const local = 'boolean' === typeof isLocal ? isLocal : isLocalBusiness(business);
+
   // Falls back to the page title when no intent sentence is given, which is
   // weaker steering but better than none.
   const intent = targetPage.intent
-    || `use the business's ${targetPage.title} service`;
-  const angles = ANGLES
+    || (local
+      ? `use the business's ${targetPage.title} service`
+      : `read more about ${targetPage.title} on this site`);
+
+  /* THE TOWN ANGLE IS REMOVED, NOT LEFT IN WITH AN EMPTY TOWN.
+   *
+   * Leaving it in and hoping the model notices there is no town does not
+   * work: the prompt below REQUIRES topics spread across at least four
+   * angles, so an impossible angle gets answered rather than skipped. */
+  const usable = ANGLES.filter(a => local || !a.localOnly);
+
+  const angles = usable
     .map(a => `- ${a.name}\n    e.g. "${a.example}"\n    ${a.note}`)
     .join('\n');
+
+  /* "at least four" of six is two-thirds. Of five it is four-fifths, which is
+   * nearly all of them and leaves almost no room to choose — and that
+   * pressure is half of why the model answered an impossible angle instead
+   * of skipping it. Kept as a proportion of what is actually on offer rather
+   * than as a constant that silently tightened when the list got shorter.
+   *
+   * WRITTEN AS `usable.length - 1` FIRST, which gives 4 of 5 — the thing the
+   * paragraph above says not to do. The comment was right and the code was
+   * wrong, which is the failure this project has hit most often in reverse;
+   * the test caught it because it asserted the number, not the formula. */
+  const spread = Math.max(2, Math.round(usable.length * 2 / 3));
 
   const avoidBlock = avoid.length
     ? `\nALREADY COVERED — propose nothing that overlaps these:\n${avoid.map(t => `  - ${t}`).join('\n')}\n`
     : '';
 
-  return `Propose ${count} blog topics for a local trade business.
-
-BUSINESS
-  Name:     ${business.name}
-  Trade:    ${business.trade}
-  Town:     ${business.town}
-  Services: ${business.services.join(', ')}
-
+  return `Propose ${count} blog topics for ${local
+    ? 'a local trade business'
+    : `a site about ${targetPage.keyword}`}.
+${businessBlock(business)}
 THESE POSTS EXIST TO SUPPORT ONE PAGE
   ${targetPage.title} — the page the business wants to rank for "${targetPage.keyword}".
   Every topic must be something a person with that problem would plausibly
@@ -128,10 +178,11 @@ THE READER MUST END UP WANTING THIS
   "when to replace instead" does not.
 ${avoidBlock}
 THE TEST FOR A GOOD TOPIC
-  What was this customer doing in the hour before they picked up the phone?
-  A topic is good if it meets them in that hour.
+  ${local
+    ? 'What was this customer doing in the hour before they picked up the phone?\n  A topic is good if it meets them in that hour.'
+    : 'What was this reader doing in the ten minutes before they typed the search?\n  A topic is good if it meets them in those ten minutes.'}
 
-USE THESE ANGLES — spread the ${count} topics across at least four of them:
+USE THESE ANGLES — spread the ${count} topics across at least ${spread} of them:
 ${angles}
 
 NEVER PROPOSE
@@ -147,9 +198,35 @@ FOR EACH TOPIC RETURN
                 a) No two topics may target the same or a near-identical
                    query. Two posts chasing one search split their strength
                    and one of them was wasted.
-                b) No query may be "${targetPage.keyword}" or a close variant.
-                   That is the service page's search — a post chasing it
-                   competes with the page these posts exist to promote.
+                b) No query may be "${targetPage.keyword}" itself, or the
+                   same search reworded. That is the page's own search and a
+                   post chasing it competes with the page these posts exist
+                   to promote.
+
+                   BUT THE AUDIENCE OR QUALIFIER IN THAT PHRASE IS NOT
+                   BANNED. This rule used to forbid near variants as well,
+                   which the model reasonably took to mean the opposite.
+
+                   (The old wording is deliberately not quoted here. A test
+                   asserts that it is absent from the prompt, and quoting it
+                   in the explanation of its own removal is enough to fail
+                   that test — the fifth time in this project a check has
+                   been unable to tell an assertion from its negation.)
+                   Asked to support "small business loans for women" it
+                   returned twelve topics and not one of them mentioned
+                   women — it had removed the single word that made the page
+                   distinct, because that word looked like the closest
+                   variant of all.
+
+                   A topic may be about that audience so long as it targets
+                   a DIFFERENT search:
+                     banned  "small business loans for women"
+                     banned  "business loans for female owners"  (reworded)
+                     fine    "women owned business certification requirements"
+                     fine    "sba programs for women owned businesses"
+
+                   Most topics will not need the qualifier at all. The point
+                   is that it is available, not that it is required.
               Long-tail is the point: "water heater popping noise at night"
               beats "water heater noise" — but there IS a floor. Do not stack
               qualifiers until nobody could plausibly type it. "water heater
@@ -173,10 +250,12 @@ VARY THE TITLES
   Across the ${count} topics, no more than two may begin with the same word,
   and no more than two may be questions.
 
-  THE TOWN NAME BELONGS IN AT MOST TWO TITLES. Appending "in ${business.town}"
+${local ? `  THE TOWN NAME BELONGS IN AT MOST TWO TITLES. Appending "in ${business.town}"
   to every headline is the clearest tell of generated content there is. The
   location does its work in the body, the meta description and the target
-  query — it does not need to be in the headline to rank. Mix the constructions: a symptom
+  query — it does not need to be in the headline to rank.
+
+` : ''}  Mix the constructions: a symptom
   stated flatly, a number, a comparison, a claim. A year of posts that all
   begin "Why Your..." reads as machine output no matter how good each one is.
 

@@ -45,6 +45,35 @@ class IE_Settings {
 	 */
 	const PILLAR_META = '_ie_is_pillar';
 
+	/**
+	 * THE SEARCH PHRASE THIS PILLAR WAS BUILT TO WIN.
+	 *
+	 * The owner already typed it, in "Search it should win", when they planned
+	 * the pillar campaign — and the form REFUSES to plan one without it. It is
+	 * stored on the campaign slot, used to write the post, and until now was
+	 * dropped on the floor the moment the post published.
+	 *
+	 * So when a later campaign aimed at that pillar needed its keyword, nothing
+	 * could answer. read_keyword() fell back to deriving one from the post
+	 * TITLE, and a pillar's title is a headline: "Can You Apply for a Loan in
+	 * the US Without Being a Citizen?" became a thirteen-word keyword with the
+	 * question mark still attached, and the anchors built from it read
+	 * "understanding can you apply for a loan in the us without being a
+	 * citizen?".
+	 *
+	 * The answer existed. It had no way to travel from the campaign that knew
+	 * it to the campaign that needed it. This key is that way.
+	 *
+	 * ONE QUESTION, ASKED ONCE. Being asked for the same fact twice is bad; the
+	 * second asking arriving with a wrong default already filled in is worse
+	 * than not asking at all, because agreeing with it takes no action.
+	 *
+	 * Underscore-prefixed for the same reason as PILLAR_META, and declared here
+	 * for the same reason: the publisher writes it and the admin screen reads
+	 * it, and a key spelled out in two files gets renamed in one of them.
+	 */
+	const KEYWORD_META = '_ie_target_query';
+
 	private static function all() {
 		$s = get_option( self::OPTION, array() );
 		return is_array( $s ) ? $s : array();
@@ -319,6 +348,52 @@ class IE_Settings {
 			'trade' => isset( $global['business_type'] ) ? $global['business_type'] : '',
 			'town'  => isset( $global['location'] ) ? $global['location'] : '',
 			'phone' => isset( $global['phone'] ) ? $global['phone'] : '',
+		);
+	}
+
+	/**
+	 * The same details under the names the SERVER uses.
+	 *
+	 * TWO VOCABULARIES FOR ONE THING, and that is the whole reason this
+	 * function exists. business() answers in WordPress's words — trade, town —
+	 * because that is what the generated themes call them. The server's
+	 * readBusiness() (utils/blog/businessShape.js) keeps a LIMITS map of the
+	 * only four fields it will store:
+	 *
+	 *     name · type · location · phone
+	 *
+	 * and it does not rename anything on arrival. A key it does not recognise
+	 * is not an error and is not logged — it is simply dropped.
+	 *
+	 * THE BUG THIS REPLACES. The translation above was written once, inline,
+	 * in activate(). plan() and the hourly sweep sent business() raw, so
+	 * `trade` and `town` were discarded by every call except activation. The
+	 * server's `location` could therefore never change after the licence was
+	 * first pasted in — which is precisely the failure the comment above
+	 * plan() describes itself as fixing. It fixed `name`. The other three kept
+	 * the original bug for months, invisibly, because a dropped key looks
+	 * exactly like a site that has not changed its address.
+	 *
+	 * Found on hilltophomeloans.net: a deleted theme's leftover
+	 * `local_business_theme_global_settings` row still said "Junk Removal
+	 * Leander" in "Leander, TX", and a campaign for "small business loans for
+	 * women" shipped with the anchors "Junk Removal Leander" and "Leander
+	 * small business loans for women".
+	 *
+	 * SO THERE IS NOW ONE TRANSLATION AND EVERY CALLER USES IT. An inline
+	 * mapping at a call site is a copy, and the reason three call sites
+	 * disagreed is that two of them never had one.
+	 *
+	 * @return array{name:string,type:string,location:string,phone:string}
+	 */
+	public static function business_payload() {
+		$business = self::business();
+
+		return array(
+			'name'     => isset( $business['name'] ) ? (string) $business['name'] : '',
+			'type'     => isset( $business['trade'] ) ? (string) $business['trade'] : '',
+			'location' => isset( $business['town'] ) ? (string) $business['town'] : '',
+			'phone'    => isset( $business['phone'] ) ? (string) $business['phone'] : '',
 		);
 	}
 }

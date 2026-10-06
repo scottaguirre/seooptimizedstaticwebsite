@@ -158,9 +158,7 @@ function keep(row, f) {
   }
 
   if (f.from || f.to) {
-    // The date a reader means is the one in the Published column: when it
-    // went out, or when it is due to.
-    const when = row.publishedAt || row.publishAt;
+    const when = dateFilteredOn(row, f.view);
     if (!when) return false;
 
     const t = new Date(when).getTime();
@@ -169,6 +167,59 @@ function keep(row, f) {
   }
 
   return true;
+}
+
+/**
+ * Which date the From/To boxes mean, for the tab being looked at.
+ *
+ * EACH TAB FILTERS THE THING IT LISTS. The boxes meant the post's publish
+ * date on both tabs, and on the campaigns tab that answers a different
+ * question from the one the table appears to be answering:
+ *
+ *     "campaigns with a post published between these dates"   ← what it did
+ *     "campaigns from between these dates"                    ← what was asked
+ *
+ * Edwin filtered 1–5 October and got a campaign approved on 28 September. It
+ * was the correct answer to the first question. Nothing on screen could tell
+ * him which question had been answered, because the table shows Approved and
+ * Removed and the filter was matching on neither — so a right answer was
+ * indistinguishable from a broken filter.
+ *
+ * CREATED, NOT APPROVED, and that is a rule rather than a preference. Every
+ * campaign has a created date; only an approved one has an approved date.
+ * Filtering on approval would silently drop every campaign that was planned
+ * and never run — a STATUS filter applied without being asked for, removing
+ * rows the reader has no way to know are missing. In Edwin's screenshot two
+ * of the nine campaigns show "—" under Approved; both would have vanished.
+ *
+ * His words when he chose it: *"any status unless I specify the status."*
+ * Campaign status has its own control. A date filter may not quietly become
+ * a second one.
+ *
+ * @param {object} row
+ * @param {string} view  'campaigns' | 'posts'
+ */
+function dateFilteredOn(row, view) {
+  if ('campaigns' === view) return row.campaignCreatedAt || null;
+
+  // On the posts tab the date a reader means is the one in the Published
+  // column: when it went out, or when it is due to.
+  return row.publishedAt || row.publishAt || null;
+}
+
+/**
+ * What the filter bar should say the dates do, on this tab.
+ *
+ * Exported rather than written into the template because the rule it
+ * describes lives here. A label kept beside the markup is a second statement
+ * of the same fact, and the two drift — which is how this file already lost
+ * an argument once, when a comment went on describing a 15/50 anchor mix
+ * weeks after the code had moved to 30/40.
+ */
+function dateFilterLabel(view) {
+  return 'campaigns' === view
+    ? 'Campaigns created between these dates'
+    : 'Posts published, or due, between these dates';
 }
 
 /**
@@ -187,6 +238,29 @@ function stateOf(row) {
   if (row.slotStatus === 'published') return 'published';
   if (row.slotStatus === 'scheduled') return 'scheduled';
   if (row.slotStatus === 'failed') return 'failed';
+
+  /* WRITTEN AND PAID FOR, WAITING FOR WORDPRESS TO TAKE IT.
+   *
+   * 'ready' had no word here and fell through to 'planned', which is the
+   * state of a post that does not exist and has cost nothing. The two are
+   * the opposite of each other on the only question an owner asks of this
+   * screen: has this been charged for?
+   *
+   * FOUND BY PAUSING A BATCH. Edwin stopped a four-post campaign after the
+   * first article; the server wrote it, charged 75 credits, and the campaign
+   * paused before WordPress collected it. The report showed four posts, all
+   * "Planned", total spend invisible — on a screen whose own footer argues
+   * that a deleted post must stay listed "because the credits were spent and
+   * that record has to survive". The same argument applies here and nobody
+   * had made it, because until a batch could be stopped mid-run, 'ready' was
+   * a state posts passed through in seconds rather than sat in.
+   *
+   * A NEW STATE RATHER THAN FOLDING IT INTO 'scheduled'. Scheduled means
+   * WordPress has it and a date is set. This means the server has it and
+   * nothing on the site knows about it yet — which is exactly the difference
+   * somebody chasing a missing post needs to see. */
+  if (row.slotStatus === 'ready') return 'written';
+
   return 'planned';
 }
 
@@ -221,4 +295,7 @@ function campaignStatusOf(row) {
   return 'running';
 }
 
-module.exports = { readFilters, keep, stateOf, campaignStatusOf };
+module.exports = {
+  readFilters, keep, stateOf, campaignStatusOf,
+  dateFilteredOn, dateFilterLabel,
+};

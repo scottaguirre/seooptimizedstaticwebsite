@@ -67,17 +67,30 @@ class IE_SEO {
 		 *   developer.yoast.com/features/seo-tags/titles/api/
 		 *   developer.yoast.com/features/seo-tags/descriptions/api/
 		 *   rankmath.com/docs/filters-and-hooks/frontend/meta-data/
+		 *   seopress.org/support/hooks/filter-meta-title/
+		 *   seopress.org/support/hooks/filter-meta-description/
+		 *   aioseo.com/docs/aioseo_title/ · aioseo.com/docs/aioseo_description/
 		 *
-		 * SEOPRESS AND AIOSEO ARE NOT HERE. They stay in
-		 * another_seo_plugin(), so this class stands down for them, and
-		 * nothing feeds them either — on those two a post falls back to that
-		 * plugin's own default. Written down rather than guessed at: their
-		 * filter names have not been verified, and an unverified hook name is
-		 * a feature that silently does nothing. */
+		 * ALL FOUR PLUGINS, from 0.23.0. SEOPress and AIOSEO were left out of
+		 * 0.21.0 for one reason and one only — their hook names had not been
+		 * checked — and the note here said so rather than pretending the gap
+		 * was a decision. They are checked now.
+		 *
+		 * AIOSEO ALSO SETTLES AN OLDER WORRY, by making it irrelevant. The
+		 * open question was where version 4 stores its data, because it moved
+		 * out of post meta into a table of its own and update_post_meta could
+		 * not reach it. True, and it stopped mattering the moment this class
+		 * fed filters instead of writing fields: THE VALUE IS HANDED OVER AS
+		 * THE PLUGIN IS ABOUT TO PRINT IT, so where it keeps its own copy is
+		 * not our business. */
 		add_filter( 'wpseo_title', array( __CLASS__, 'filter_title' ), 20 );
 		add_filter( 'wpseo_metadesc', array( __CLASS__, 'filter_description' ), 20 );
 		add_filter( 'rank_math/frontend/title', array( __CLASS__, 'filter_title' ), 20 );
 		add_filter( 'rank_math/frontend/description', array( __CLASS__, 'filter_description' ), 20 );
+		add_filter( 'seopress_titles_title', array( __CLASS__, 'filter_title' ), 20 );
+		add_filter( 'seopress_titles_desc', array( __CLASS__, 'filter_description' ), 20 );
+		add_filter( 'aioseo_title', array( __CLASS__, 'filter_title' ), 20 );
+		add_filter( 'aioseo_description', array( __CLASS__, 'filter_description' ), 20 );
 	}
 
 	/**
@@ -122,15 +135,21 @@ class IE_SEO {
 	/**
 	 * Is another SEO plugin doing this job?
 	 *
-	 * STAND DOWN RATHER THAN COMPETE. Yoast, Rank Math, SEOPress and All in One
-	 * SEO all filter the title and print a description. Two plugins doing it is
-	 * either two description tags or a priority fight that changes depending on
-	 * activation order — and the owner, editing in the box they know, would see
-	 * no effect on the page.
+	 * STAND DOWN FROM PRINTING, NOT FROM WINNING — and the distinction is the
+	 * whole of 0.21.0. Yoast, Rank Math, SEOPress and All in One SEO each
+	 * print a title and a description of their own. A second pair from this
+	 * class means two <title> tags and two descriptions, with the winner
+	 * decided by plugin activation order.
 	 *
-	 * IE_Publisher writes to their meta keys at publish time, so standing down
-	 * does not mean losing the title and description that were written here.
-	 * They arrive through the other plugin, in the field the owner can edit.
+	 * So title() and description() go quiet when one of them is active. OUR
+	 * VALUE STILL WINS, through that plugin's own output filters registered
+	 * in boot() — one tag each, rendered by them, containing our text.
+	 *
+	 * THE OLD REASON WRITTEN HERE IS GONE, and leaving it would have been
+	 * worse than saying nothing: it said the publisher writes into their meta
+	 * keys so standing down loses nothing. It no longer does. 0.21.0 removed
+	 * those writes precisely because a copy in their box is a field the owner
+	 * can edit to no effect once our filter overrides the output.
 	 *
 	 * Checked by CONSTANT, not by a plugin file path. A renamed folder, a
 	 * premium build, a must-use install — the path moves, the constant does

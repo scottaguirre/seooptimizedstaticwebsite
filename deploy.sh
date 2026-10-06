@@ -71,6 +71,8 @@ fi
 echo "Running tests..."
 for suite in \
   test-generators-parse.js \
+  test-suggest-prompt.js \
+  test-site-kind.js \
   test-business-shape.js \
   test-business-type-picker.js \
   test-page-meta.js \
@@ -109,6 +111,7 @@ for suite in \
   test-wp-canonical.js \
   test-wp-single.js \
   test-ie-pause.js \
+  test-batch-cancel.js \
   test-ie-video.js \
   test-ie-topics.js
 do
@@ -140,7 +143,9 @@ if command -v php > /dev/null 2>&1; then
     wp-plugin/test-admin-tabs.php \
     wp-plugin/test-orphan-links.php \
     wp-plugin/test-pillar-plugin.php \
-    wp-plugin/test-server-url.php
+    wp-plugin/test-server-url.php \
+    wp-plugin/test-business-keys.php \
+    wp-plugin/test-api-body.php
   do
     if ! php "$suite" > /dev/null; then
       echo
