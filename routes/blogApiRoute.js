@@ -56,6 +56,8 @@ const { requireSite } = require('../middleware/requireSite');
 const { blogActivateLimiter, blogApiLimiter } = require('../middleware/rateLimits');
 const { quotePosts, CREDITS_PER_POST } = require('../utils/blogPricing');
 const { planForCampaign } = require('../utils/blog/campaignPlan');
+// The refusal sentence lives with the conflict kinds it describes.
+const { conflictMessage } = require('../utils/blog/planCampaign');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { parseReportedRemoval } = require('../utils/blog/removalTime');
@@ -319,11 +321,24 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
     });
 
     if (plan.conflicts && plan.conflicts.length) {
-      // Refused rather than silently adjusted. A post that cannibalises the
-      // page it is meant to feed is worse than no post, and the customer is
-      // the one who should decide how to reword it.
+      /* Refused rather than silently adjusted. A post that cannibalises the
+       * page it is meant to feed is worse than no post, and the customer is
+       * the one who should decide how to reword it.
+       *
+       * THE SENTENCE NOW NAMES THE CONFLICT THAT ACTUALLY FIRED — 7 October.
+       * It read "Some topics would compete with the target page" for all three
+       * kinds queryConflicts raises, and only one of them is about the target
+       * page. Edwin hit it on a pair of HIS OWN topics overlapping each other,
+       * read the sentence, and went to look at the pillar — exactly where it
+       * sent him, and the wrong place. The detail was in the panel above
+       * saying "duplicate:", so the screen disagreed with itself.
+       *
+       * THE SENTENCES LIVE WITH THE KINDS, in planCampaign.js, because that is
+       * where the kinds are invented. A sentence per kind written here would
+       * be a second copy of a decision made there — the mistake this project
+       * has paid for more than any other. */
       return res.status(400).json({
-        error: 'Some topics would compete with the target page.',
+        error: conflictMessage(plan.conflicts),
         conflicts: plan.conflicts,
       });
     }

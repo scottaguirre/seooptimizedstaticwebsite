@@ -41,10 +41,11 @@ const path = require('path');
 const { checkPost, linkSpread } = require('./utils/blog/qualityCheck');
 const { worthRewriting, REWRITE_WORTHY } = require('./utils/blog/qualityCheck');
 const { checkTopicSet, withoutOuterArticles } = require('./utils/blog/qualityCheck');
+const { findFiller, OPENERS_ONLY } = require('./utils/blog/qualityCheck');
 
 let passed = 0;
 let failed = 0;
-const DECLARED = 31;
+const DECLARED = 37;
 
 function test(name, fn) {
   try {
@@ -690,6 +691,80 @@ test('AN EMPTY KEYWORD EXEMPTS NOTHING', () => {
 
   const warnings = templateWarnings(BANKRUPTCY_TITLES, { keyword: '' });
   assert.ok(warnings.length, 'with no keyword at all, nothing should be exempt');
+});
+
+/* ------------------------------------------------------------------ *
+ * Filler, and the one phrase that was failing nearly every post
+ * ------------------------------------------------------------------
+ * From the production log, 7 October — the last ten recorded quality
+ * failures, nine of them identical:
+ *
+ *     "failures":["filler: whether you"]
+ *
+ * `filler` is outside REWRITE_WORTHY, so each of those posts shipped with a
+ * red verdict and no retry. Nothing was overspent; the verdict simply stopped
+ * meaning anything, which is the failure mode the FILLER list's own comment
+ * warns about.
+ * ------------------------------------------------------------------ */
+
+console.log('\nFiller\n');
+
+test('A MID-SENTENCE "whether you" IS NOT FILLER', () => {
+  /* The sentence that was failing posts, in the shape the model actually
+   * writes it. Delete the phrase and the sentence breaks — which is the
+   * list's own test for membership, failed. */
+  const real = 'The discharge date is what lenders check, whether you filed '
+    + 'Chapter 7 or Chapter 13.';
+
+  assert.deepStrictEqual(findFiller(real), []);
+});
+
+test('an opening "Whether you" still is', () => {
+  /* The frame the entry was added for: "Whether you're a homeowner or a
+   * renter, we've got you covered." */
+  assert.deepStrictEqual(findFiller('Whether you are new to borrowing or not, start here.'),
+    ['whether you']);
+});
+
+test('AFTER A FULL STOP COUNTS AS AN OPENING', () => {
+  /* The frame does not need a paragraph of its own. A check that only looked
+   * at the first characters of the text would miss every instance that opens
+   * the second sentence of a paragraph, which is where it usually lands. */
+  const text = 'Lenders differ on this. Whether you are a sole trader or a '
+    + 'corporation, the paperwork is the same.';
+
+  assert.deepStrictEqual(findFiller(text), ['whether you']);
+});
+
+test('and so does the start of a paragraph', () => {
+  /* textOf joins sections and paragraphs with newlines, so a paragraph
+   * boundary arrives here as \n and nothing else. */
+  const text = 'A discharge takes time.\nWhether you are ready or not, the '
+    + 'clock starts at filing.';
+
+  assert.deepStrictEqual(findFiller(text), ['whether you']);
+});
+
+test('"whether your" is the same frame and is still caught', () => {
+  /* NO WORD BOUNDARY AFTER THE PHRASE, deliberately. "Whether your business
+   * is new or established" is the marketing frame as surely as "whether you
+   * are", and a \b at the end would let every one of them through — a fix
+   * that quietly narrows further than it was asked to. */
+  assert.deepStrictEqual(findFiller('Whether your business is new or established, read on.'),
+    ['whether you']);
+});
+
+test('EVERY OTHER ENTRY IS STILL CAUGHT WHEREVER IT LANDS', () => {
+  /* The danger in this change is that it becomes a way out for the whole
+   * list. Only two entries move; "when it comes to" and "in today's world"
+   * are filler in any position and must stay that way.
+   *
+   * The second assertion pins the SIZE of the exception. A later edit that
+   * drops a third phrase into OPENERS_ONLY has to come here and say so. */
+  const mid = 'Lenders vary a great deal when it comes to a past bankruptcy.';
+  assert.deepStrictEqual(findFiller(mid), ['when it comes to']);
+
+  assert.deepStrictEqual([...OPENERS_ONLY].sort(), ['as a homeowner', 'whether you']);
 });
 
 console.log(`\n  ${passed} passed, ${failed} failed\n`);

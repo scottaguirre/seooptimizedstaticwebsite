@@ -45,6 +45,65 @@ const STOPWORDS = new Set([
   'of', 'for', 'to', 'in', 'on', 'at', 'by', 'from', 'with', 'as',
   'is', 'are', 'be', 'was', 'were',
   'your', 'you', 'my', 'it', 'its', 'that', 'this', 'their',
+
+  /* VS AND VERSUS ARE CONNECTORS, added 7 October from a live refusal.
+   *
+   *   keyword  "business bankruptcy vs personal bankruptcy"
+   *   heading  "Personal and Business Bankruptcies Leave Different Lending
+   *            Records"
+   *
+   * That heading carries business, bankruptcy and personal, and failed on
+   * "vs" alone — after a retry that could not fix it either. A comparison
+   * whose two sides are both named IS the comparison; demanding the literal
+   * token is demanding a typographic choice between "vs", "versus", "and"
+   * and a colon.
+   *
+   * THIS DOES NOT WEAKEN THE CHECK, because the thing being compared is still
+   * required on both sides. "Personal Bankruptcy Explained" still fails for
+   * missing "business". The word that carries no information is the one
+   * between them.
+   *
+   * NOT THE SAME CASE AS without / no / not, three lines of comment below.
+   * Those invert the meaning — drop "without" and the phrase becomes the
+   * opposite page. Drop "vs" from a heading that names both sides and the
+   * meaning is untouched. */
+  'vs', 'versus',
+
+  /* AFTER AND BEFORE — Edwin, 7 October, and this one is a KNOWING TRADE
+   * rather than a bug fix. Said plainly because the next reader deserves to
+   * know what it cost.
+   *
+   * WHAT PROMPTED IT. A published post failed twice, retry included, on:
+   *
+   *     meta description is missing: after
+   *
+   *   keyword  "ucc lien after bankruptcy"
+   *   meta     "A bankruptcy discharge can clear personal liability while a
+   *            UCC lien filing remains tied to business collateral."
+   *
+   * That sentence says the thing. It carries ucc, lien and bankruptcy, and the
+   * "after" is in "discharge … remains" rather than in a preposition. Demanding
+   * the token costs a retry and, when the retry also declines, ships a post
+   * marked failed for a sentence that is right.
+   *
+   * WHAT IT COSTS, AND IT IS REAL. A title reading "UCC Liens BEFORE
+   * Bankruptcy" now satisfies a keyword of "ucc lien after bankruptcy". There
+   * is a test below that states exactly that, so it is recorded rather than
+   * discovered.
+   *
+   * WHY THAT IS ACCEPTABLE HERE AND "without" IS NOT. This function asks
+   * whether the element CONTAINS the words of a keyword the writer was handed
+   * in the same prompt, alongside the topic. A model told to write about UCC
+   * liens surviving a discharge does not write "before" by accident. "loans
+   * with credit check" against "loans WITHOUT credit check" is a different
+   * animal: that is a claim inverted into the opposite offer, and it is a slip
+   * a model makes while trying to sound positive.
+   *
+   * BOTH, NOT JUST "after". Edwin asked for "after". Listing one and not the
+   * other means "loan before bankruptcy" still demands its preposition while
+   * "loan after bankruptcy" does not — an inconsistency nobody could predict
+   * from the outside, and worse than either answer on its own. */
+  'after', 'before',
 ]);
 
 /* IRREGULAR PLURALS, because the suffix rule below cannot reach them.

@@ -53,6 +53,81 @@ test('filler words are dropped', () => {
    * Matching is unaffected — forms() handles the inflection on both sides. */
 });
 
+test('VS AND VERSUS ARE CONNECTORS, not words to demand', () => {
+  /* A live refusal, 7 October, after a retry that could not fix it either:
+   *
+   *   keyword  "business bankruptcy vs personal bankruptcy"
+   *   heading  "Personal and Business Bankruptcies Leave Different Lending
+   *            Records"
+   *
+   * That heading names both sides of the comparison and failed on "vs" alone.
+   * A comparison whose two sides are both present IS the comparison; the
+   * literal token is a typographic choice between vs, versus, and, and a
+   * colon.
+   *
+   * THE CHECK IS NOT WEAKENED, and the second assertion is the one that says
+   * so: drop one SIDE of the comparison and it still fails. */
+  assert.deepStrictEqual(contentWords('business bankruptcy vs personal bankruptcy'),
+    ['business', 'bankruptcy', 'personal']);
+
+  const kw = 'business bankruptcy vs personal bankruptcy';
+  assert.strictEqual(
+    includes(kw, 'Personal and Business Bankruptcies Leave Different Lending Records').ok,
+    true);
+  assert.deepStrictEqual(
+    includes(kw, 'Personal Bankruptcy Explained').missing, ['business']);
+
+  assert.ok(contentWords('repair versus replacement').length === 2,
+    '"versus" is still being demanded');
+});
+
+test('AFTER AND BEFORE ARE NOT DEMANDED — a knowing trade, 7 October', () => {
+  /* The live failure that prompted it, which a retry could not fix either:
+   *
+   *   keyword  "ucc lien after bankruptcy"
+   *   meta     "A bankruptcy discharge can clear personal liability while a
+   *            UCC lien filing remains tied to business collateral."
+   *
+   * The sentence says the thing — the "after" is in "discharge … remains"
+   * rather than in a preposition — and the post shipped marked failed. */
+  assert.deepStrictEqual(contentWords('ucc lien after bankruptcy'),
+    ['ucc', 'lien', 'bankruptcy']);
+
+  const live = 'A bankruptcy discharge can clear personal liability while a '
+    + 'UCC lien filing remains tied to business collateral.';
+
+  assert.strictEqual(includes('ucc lien after bankruptcy', live).ok, true);
+
+  /* BOTH WORDS, AND THIS LINE IS WHY. Edwin asked for "after"; listing it
+   * alone survives every assertion above, because not one of them uses a
+   * keyword containing "before" — and it leaves the pair inconsistent, so a
+   * keyword saying "before" would still demand its preposition while one
+   * saying "after" would not. Found by a surviving mutation, not by reading. */
+  assert.deepStrictEqual(contentWords('business loan before filing bankruptcy'),
+    ['business', 'loan', 'filing', 'bankruptcy']);
+});
+
+test('AND HERE IS WHAT THAT COSTS — recorded, not discovered later', () => {
+  /* A title saying BEFORE now satisfies a keyword saying AFTER. That is the
+   * price of the line above and it is written down as a passing assertion so
+   * nobody meets it as a surprise in six months.
+   *
+   * It is tolerable here and would not be for "without": this function asks
+   * whether an element contains the words of a keyword the writer was handed
+   * in the same prompt, next to the topic. A model told to write about UCC
+   * liens surviving a discharge does not write "before" by accident. "loans
+   * with credit check" against "loans WITHOUT credit check" is a claim
+   * inverted into the opposite offer, which is a slip a model does make. */
+  assert.strictEqual(
+    includes('ucc lien after bankruptcy', 'UCC Liens Before Bankruptcy').ok,
+    true);
+
+  /* The guard that still holds: drop a real word and it fails. */
+  assert.deepStrictEqual(
+    includes('ucc lien after bankruptcy', 'Liens Before Bankruptcy').missing,
+    ['ucc']);
+});
+
 test('WITHOUT, NO AND NOT ARE NOT FILLER — they invert the meaning', () => {
   /* The one place a "small word" carries the most meaning in the phrase. Treat
    * "without" as glue and "loans with credit check" satisfies "loans WITHOUT

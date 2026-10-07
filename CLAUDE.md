@@ -2812,6 +2812,214 @@ bug does not bite — an example chosen from those argues for the wrong thing.
 Checked by running `bucketCounts(9)` rather than by hand, which is how the
 previous version got it wrong.
 
+## Two stopword lists, two different bugs — 7 October 2026 (server)
+
+Both found by reading the production log of the first campaign written under
+the keyword rule. **The rule itself worked**: 4 of 11 posts were refused and
+rewritten, and 2 of those passed on the second attempt. These are the two
+places where it refused something it should not have.
+
+### `vs` was a word the keyword rule demanded
+
+    keyword  "business bankruptcy vs personal bankruptcy"
+    heading  "Personal and Business Bankruptcies Leave Different Lending
+              Records"
+
+That heading names both sides of the comparison and failed on **"vs" alone** —
+after a retry that could not fix it either, so the post shipped with the fault.
+A comparison whose two sides are both present IS the comparison; the literal
+token is a typographic choice between vs, versus, and, and a colon.
+
+**It does not weaken the check**: drop one SIDE and it still fails. "Personal
+Bankruptcy Explained" is still missing "business", and there is a test saying
+so beside the one that allows the heading.
+
+**Not the same case as without / no / not**, which stay out of the list because
+they INVERT the meaning — "loans with credit check" is the opposite page from
+"loans without". Dropping "vs" from a heading that names both sides changes
+nothing.
+
+### `vs` was already in the OTHER list and had never once fired
+
+`planCampaign.js` lists `vs` as a stopword and has done for months. It stemmed
+before filtering, and the stemmer runs on glue too, so:
+
+    vs -> v      was -> wa      this -> thi      does -> doe
+
+**Four dead entries.** None of those stems is in the list, so the words
+survived and were counted as content words — "thi" and "wa" shared between two
+queries inflated every overlap score a little, and the deliberate `vs` entry
+could never match anything.
+
+A list entry that cannot fire is the shape this project keeps paying for: the
+cancel flag read after the request, the intent fallback behind a `||` whose
+left side was never empty, the `hasBusiness` guard defeated by a fallback in
+another file. **Found only because the same word was being fixed next door.**
+
+Filtered on BOTH sides now, not just moved: stemming can also PRODUCE a
+stopword ("its" is not listed, "it" is), and a single filter in either position
+misses one of the two cases.
+
+### `after` and `before` — a knowing trade, not a bug fix
+
+The published UCC post failed twice, retry included, on:
+
+    meta description is missing: after
+
+    keyword  "ucc lien after bankruptcy"
+    meta     "A bankruptcy discharge can clear personal liability while a UCC
+              lien filing remains tied to business collateral."
+
+That sentence says the thing — the "after" is in "discharge … remains" rather
+than in a preposition. Demanding the token costs a retry and, when the retry
+also declines, ships a post marked failed for a sentence that is right. Edwin's
+call, 7 October: drop it.
+
+**What it costs, and it is real.** A title reading "UCC Liens BEFORE
+Bankruptcy" now satisfies a keyword of "ucc lien after bankruptcy". There is a
+PASSING TEST stating exactly that, so the loss is recorded rather than
+discovered in six months.
+
+**Why this is acceptable and `without` still is not.** This function asks
+whether an element contains the words of a keyword the writer was handed in the
+same prompt, beside the topic. A model told to write about UCC liens surviving
+a discharge does not write "before" by accident. "loans with credit check"
+against "loans WITHOUT credit check" is a claim inverted into the opposite
+offer, and that is a slip a model makes while trying to sound positive.
+
+**Both words, not just the one asked for.** Edwin asked for "after". Listing it
+alone survived every assertion in the suite — not one existing test used a
+keyword containing "before" — and it would have left the pair inconsistent: a
+keyword saying "before" demanding its preposition while one saying "after" did
+not. Caught by a mutation, not by reading.
+
+The same post also failed `vague: 0.62 concrete markers per 100 words` against
+a floor of 1.0 — a real content signal, readable for the first time now that
+"whether you" is no longer failing nine posts in ten. With `after` dropped, the
+live post passes the keyword rule outright: all four places, one body mention.
+
+That post also failed `vague: 0.62 concrete markers per 100 words` against a
+floor of 1.0 — a real content signal, readable for the first time now that
+"whether you" is no longer failing nine posts in ten.
+
+## The silo's own subject was proof of duplication — 7 October 2026 (server)
+
+A twelve-post campaign refused outright on Edwin's screen:
+
+    duplicate: "business loan proof of ownership" vs
+               "business loan ownership change" (overlap 0.60)
+
+Shared tokens: **business, loan, ownership.** Three of five, exactly the
+threshold. **Two of those three are the silo's own subject** — every post
+feeding a "business loan with bankruptcy record" pillar says "business loan",
+by construction and on purpose. Strip the subject and the real overlap is
+"ownership" alone, 1 of 3, which is two different posts about ownership and
+correctly fine.
+
+So the metric read the one thing these posts are REQUIRED to have in common as
+proof they were the same post. The longer the pillar keyword, the more of the
+score it supplies, and a large silo becomes hard to plan at all.
+
+**Third place this exact insight has been needed in one day** — the title-
+template exemption, the article that broke it, and now the duplicate score.
+Every post in a water heater campaign says "water heater".
+
+`distinctive()` strips the target keyword's tokens from both sides before
+scoring, and **falls back to the full sets when stripping empties one**: a
+query that is nothing but the subject would otherwise reduce to `{}`, and
+`overlap()` answers 0 for an empty set — two near-identical queries comparing
+as unrelated, the worst answer for the worst pair.
+
+### The refusal named the wrong thing
+
+The route said *"Some topics would compete with the target page"* for all three
+kinds `queryConflicts` raises, and only `cannibalises` is about the target page.
+Edwin hit it on a pair of **his own topics** overlapping each other, read that
+sentence and went to look at the pillar — exactly where it sent him, and the
+wrong place. The yellow panel above it already said "duplicate:", so the screen
+disagreed with itself.
+
+`conflictMessage()` now lives in `planCampaign.js`, beside the kinds it
+describes, because a sentence per kind written at the route is a second copy of
+a decision made there. Ranked, not concatenated: cannibalisation wins the one
+sentence on offer when both are present.
+
+### Eight mutations, seven caught after a fix, one documented
+
+- **The survivor that mattered: stripping only ONE side.** Every earlier test
+  stayed green — the asymmetric score is LOWER, so the pair that should pass
+  still passed, and the genuine twin was caught by `isSubset` rather than by
+  its score. **Under-reporting duplicates is the quiet direction** and nothing
+  pointed at it. The new fixture needs the score itself: four distinctive
+  tokens each, three shared, neither set containing the other, so `isSubset`
+  cannot rescue it.
+- **Documented as equivalent:** deleting `if (!subject.size) return tokens`.
+  With an empty subject the filter removes nothing and `out` is a copy of
+  `tokens`; callers only read membership and size. It stays because a pillar
+  campaign has no money page, so that is the common path.
+
+## One phrase was failing nine posts in ten — 7 October 2026 (server)
+
+Found in the production log while chasing a credit question that turned out to
+be nothing. The last ten recorded quality failures, nine of them identical:
+
+    "failures":["filler: whether you"]
+
+`whether you` is one entry in `FILLER`, added to catch the marketing frame —
+*"Whether you're a homeowner or a renter, we've got you covered."* The rule for
+that list, in its own comment, is **"a phrase that carries no information — you
+can delete it and the sentence loses nothing."** The frame passes that test.
+This does not:
+
+> "The discharge date is what lenders check, **whether you** filed Chapter 7 or
+> Chapter 13."
+
+Delete the phrase and the sentence breaks. Same eleven characters, opposite
+verdicts, and a substring match cannot tell them apart.
+
+**What it cost.** `filler` is deliberately outside `REWRITE_WORTHY`, so every
+one of those posts shipped with a red verdict and no retry — nothing overspent,
+and the verdict quietly stopped meaning anything. The FILLER list's own comment
+warns that noise is how a check gets ignored. This was that, in progress, and it
+was invisible from the screen.
+
+**The position is the signal, not the words.** The frame opens a paragraph; the
+legitimate use sits inside a sentence. `OPENERS_ONLY` holds the two entries that
+move; the other forty stay as they are, because "when it comes to" and "in
+today's world" are filler wherever they land. A test pins the SIZE of that set,
+so a later edit dropping a third phrase in has to come and say so.
+
+Two details that look like oversights and are not:
+
+- **No word boundary after the phrase.** "Whether **your** business is new or
+  established" is the same frame as "whether you are", and a `\b` would let
+  every one of them through — a fix narrowing further than it was asked to.
+  There is a test for it, and the mutation is caught.
+- **A sentence end counts as an opening, not just a paragraph.** The frame
+  usually lands on the second sentence of a paragraph, so a check reading only
+  the first characters of the text would miss nearly all of it.
+
+**`as a homeowner` is in the set and Edwin did not ask for it.** Same bug: "As a
+homeowner, you should know…" is the frame, "your rights as a homeowner are
+limited" is a sentence. Leaving a known false positive in place because nobody
+has hit it yet is how this one reached nine in ten. Said plainly in the code and
+to him.
+
+Six mutations, all caught.
+
+### The credit question it came out of
+
+600 credits for what looked like four posts. The ledger — `blog.post.written`
+carries `creditsCharged` and `creditsRemaining` on every charge — showed **75 a
+post, stepping down evenly, eight posts**: a four-post campaign at 22:43 that
+was not in the conversation. No billing fault.
+
+**I had told Edwin ~375 a post, twice, and shaped his decisions with it.**
+`blogPricing.js` says 75. The 375 came from dividing one balance drop by two
+posts and never checking it against the source — arithmetic on a single data
+point, presented as a figure. It was wrong in the expensive direction, so it
+cost him nothing but caution; the method was the problem either way.
+
 ## An article broke the subject exemption — 7 October 2026 (server)
 
 Edwin, reading the warning banner on the campaign form:

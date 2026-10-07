@@ -190,6 +190,196 @@ test('a topic chasing the money keyword IS caught', () => {
   assert.ok(bad.conflicts.some(c => c.kind === 'cannibalises'), 'should have flagged it');
 });
 
+/* ------------------------------------------------------------------ *
+ * The silo's own subject is not evidence of duplication
+ * ------------------------------------------------------------------ */
+
+const { compareQueries, queryTokens } = require('./utils/blog/planCampaign');
+
+/** compareQueries with no town, keeping only the duplicate half. */
+function pairs(queries, keyword) {
+  return compareQueries(
+    queries.map(q => ({ id: q, targetQuery: q })),
+    keyword,
+    0.6,
+    queryTokens('')
+  ).filter(c => c.kind === 'duplicate');
+}
+
+test('A STOPWORD THAT STEMS TO SOMETHING ELSE IS STILL REMOVED', () => {
+  /* FOUR DEAD ENTRIES IN THAT LIST, found while fixing the same word in
+   * keywordCoverage.js. queryTokens stemmed before filtering, and the stemmer
+   * runs on glue too, so any stopword whose stem is not itself a stopword
+   * survived the filter and was counted as a content word:
+   *
+   *     vs -> v     was -> wa     this -> thi     does -> doe
+   *
+   * "thi" and "wa" shared between two queries inflated every overlap score a
+   * little, and `vs` — listed deliberately — could never once have fired.
+   *
+   * A list entry that cannot match is the shape this project keeps paying
+   * for: the cancel flag read after the request, the intent fallback behind a
+   * `||` that could not be reached. */
+  assert.deepStrictEqual([...queryTokens('business bankruptcy vs personal bankruptcy')],
+    ['busines', 'bankruptcy', 'personal']);
+
+  assert.deepStrictEqual([...queryTokens('what was this does it matter')], ['matter']);
+});
+
+test('and a word that BECOMES a stopword is removed too', () => {
+  /* Filtered on both sides, not just moved. Stemming can PRODUCE a stopword —
+   * "its" is not in the list, "it" is — so a single filter in either position
+   * misses one of the two cases. */
+  assert.deepStrictEqual([...queryTokens('its repair cost')], ['repair', 'cost']);
+});
+
+test('TWO TOPICS SHARING ONLY THE SUBJECT ARE NOT DUPLICATES', () => {
+  /* The plan this function refused on Edwin's screen, 7 October:
+   *
+   *     "business loan proof of ownership" vs "business loan ownership change"
+   *     (overlap 0.60)
+   *
+   * Shared: business, loan, ownership — three of five, exactly the threshold,
+   * so a twelve-post campaign was refused outright. TWO OF THOSE THREE ARE THE
+   * SILO'S SUBJECT. Every post feeding a "business loan with bankruptcy
+   * record" pillar says "business loan", by construction and on purpose, so
+   * the metric was reading the one thing these posts are REQUIRED to share as
+   * proof they were the same post.
+   *
+   * Strip the subject and the real overlap is "ownership" alone: 1 of 3. */
+  assert.deepStrictEqual(
+    pairs(['business loan proof of ownership', 'business loan ownership change'],
+      'business loan with bankruptcy record'),
+    []);
+});
+
+test('a genuine twin is still caught, subject or no subject', () => {
+  /* The exemption must not become a way through for everything. These two
+   * differ by a plural and nothing else. */
+  const found = pairs(['business loan ucc lien', 'business loan ucc liens'],
+    'business loan with bankruptcy record');
+
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+});
+
+test('WITHOUT A SHARED SUBJECT THE SAME PAIR IS REFUSED', () => {
+  /* The same two queries against a keyword sharing nothing with them. Nothing
+   * is stripped, the raw overlap stands, and the pair is flagged — which is
+   * what Edwin saw, and what proves the shared subject was the entire reason.
+   * A test that only showed the pair passing could not tell this fix from a
+   * loosened threshold. */
+  const found = pairs(['business loan proof of ownership', 'business loan ownership change'],
+    'kitchen tap replacement');
+
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+});
+
+test('a query that is nothing but the subject falls back to the full sets', () => {
+  /* Stripping would empty both, and overlap() answers 0 for an empty set —
+   * two near-identical queries comparing as unrelated, the worst answer for
+   * the worst pair. The guard is `out.size ? out : tokens` in distinctive(). */
+  const found = pairs(['business loan bankruptcy record', 'bankruptcy record business loan'],
+    'business loan with bankruptcy record');
+
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+});
+
+test('BOTH SIDES ARE STRIPPED, NOT JUST ONE', () => {
+  /* FOUND BY A SURVIVING MUTATION. Stripping only `ta` left every earlier test
+   * green: the asymmetric score is LOWER, so the pair that should pass still
+   * passed, and the genuine twin was caught by isSubset rather than by its
+   * score. Under-reporting duplicates is the quiet direction, and no test
+   * pointed at it.
+   *
+   * This pair needs the score itself. Four distinctive tokens each, three
+   * shared — 3 of 5, exactly the threshold — and neither set contains the
+   * other, so isSubset cannot rescue it:
+   *
+   *   both sides stripped   {ucc,lien,filing,fee} vs {ucc,lien,filing,cost}
+   *                         3 / 5 = 0.60  flagged
+   *   one side stripped     {ucc,lien,filing,fee} vs {busines,loan,ucc,lien,
+   *                         filing,cost} = 3 / 7 = 0.43  missed */
+  const found = pairs(
+    ['business loan ucc lien filing fee', 'business loan ucc lien filing cost'],
+    'business loan with bankruptcy record');
+
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+});
+
+test('no target keyword at all leaves the comparison untouched', () => {
+  /* A pillar campaign has no money page, so there is no subject to strip and
+   * the pair must compare exactly as it did before this existed. */
+  const found = pairs(['business loan proof of ownership', 'business loan ownership change'], '');
+
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+});
+
+/* ------------------------------------------------------------------ *
+ * The refusal says which conflict actually fired
+ * ------------------------------------------------------------------ */
+
+const { conflictMessage } = require('./utils/blog/planCampaign');
+
+test('A DUPLICATE PAIR IS NOT DESCRIBED AS COMPETING WITH THE PILLAR', () => {
+  /* What Edwin read, 7 October: "Some topics would compete with the target
+   * page." The conflict was two of HIS OWN topics overlapping each other, and
+   * the panel above the sentence already said "duplicate:" — so the screen
+   * disagreed with itself and the sentence sent him to the wrong place.
+   *
+   * ASSERTING THE OLD WORDING ABSENT IS THE HALF THAT MATTERS. A check that
+   * only looked for the new sentence would pass on a message that printed
+   * both. */
+  const message = conflictMessage([{ kind: 'duplicate', a: 'x', b: 'y' }]);
+
+  assert.ok(/same search as each other/.test(message), message);
+  assert.ok(!/target page/.test(message), message);
+});
+
+test('cannibalisation keeps the sentence it always had', () => {
+  assert.strictEqual(conflictMessage([{ kind: 'cannibalises', a: 'x' }]),
+    'Some topics would compete with the target page.');
+});
+
+test('a missing keyword says so', () => {
+  assert.ok(/no main keyword/.test(conflictMessage([{ kind: 'missing', a: 'x' }])));
+});
+
+test('CANNIBALISATION IS NAMED FIRST WHEN BOTH ARE PRESENT', () => {
+  /* Ranked, not concatenated. A post competing with the pillar is the fault
+   * the whole design exists to prevent, so it wins the one sentence on
+   * offer — and the order must not depend on which conflict happens to come
+   * first in the array, which is why the duplicate leads here. */
+  const message = conflictMessage([
+    { kind: 'duplicate', a: 'x', b: 'y' },
+    { kind: 'cannibalises', a: 'z' },
+  ]);
+
+  assert.strictEqual(message, 'Some topics would compete with the target page.');
+});
+
+test('an unknown kind still produces a sentence, not undefined', () => {
+  /* The route puts this straight into a 400 body. A new kind added to
+   * compareQueries without a sentence here must not reach a customer as
+   * "undefined", and an empty list must not either. */
+  assert.ok(conflictMessage([{ kind: 'something-new' }]).length > 10);
+  assert.ok(conflictMessage([]).length > 10);
+  assert.ok(conflictMessage().length > 10);
+});
+
+test('THE ROUTE USES IT RATHER THAN ITS OWN COPY', () => {
+  /* The sentences live with the kinds because a copy at the call site is a
+   * second definition of a decision made in planCampaign.js. Asserted by
+   * reading the route, since it cannot be required here — models/Job is not
+   * present in every checkout. */
+  const route = require('fs').readFileSync(
+    require('path').join(__dirname, 'routes/blogApiRoute.js'), 'utf8');
+
+  assert.ok(/conflictMessage\(plan\.conflicts\)/.test(route),
+    'the route no longer calls conflictMessage');
+  assert.ok(!/error: 'Some topics would compete with the target page\.'/.test(route),
+    'the route still carries its own copy of the sentence');
+});
+
 test('the anchor mix is spread, not clumped', () => {
   const types = plan.slots.map(s => s.anchorType);
   assert.ok(new Set(types).size > 1, `all anchors are ${types[0]}`);

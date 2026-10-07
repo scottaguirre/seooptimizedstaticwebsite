@@ -324,13 +324,35 @@ const STOPWORDS = new Set([
   'you', 'i', 'me', 'can', 'will', 'get', 'got', 'so', 'if', 'vs',
 ]);
 
+/* STOPWORDS ARE REMOVED BEFORE STEMMING AS WELL AS AFTER — fixed 7 October.
+ *
+ * The order used to be stem, then filter, and the stemmer runs on every word
+ * including the glue. So a stopword whose stem is not itself a stopword was
+ * never removed, and the entry in the list above could not fire:
+ *
+ *     vs    -> v        does -> doe
+ *     was   -> wa       this -> thi
+ *
+ * Four dead entries, `vs` among them — found while fixing the SAME word in
+ * keywordCoverage.js, which had never listed it at all. A list entry that can
+ * never match is the shape this project keeps paying for: the cancel flag read
+ * after the request, the intent fallback behind a `||` that could not be
+ * reached, the `hasBusiness` guard defeated by a fallback in another file.
+ *
+ * FILTERED ON BOTH SIDES, not just moved. Stemming can still PRODUCE a
+ * stopword — "its" is not in the list but "it" is — and a single filter in
+ * either position misses one of the two cases.
+ *
+ * This makes the comparison slightly stricter in the right direction: "thi"
+ * and "wa" were being counted as content words shared between two queries,
+ * which inflated every overlap score a little. */
 function queryTokens(query) {
   return new Set(
     String(query || '')
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
-      .filter(Boolean)
+      .filter(w => w && !STOPWORDS.has(w))
       .map(w => w.replace(/(ies)$/, 'y').replace(/(es|s)$/, ''))
       .filter(w => w && !STOPWORDS.has(w))
   );
@@ -431,12 +453,51 @@ function compareQueries(items = [], moneyKeyword = '', threshold = 0.6, extraTok
     }
   }
 
+  /* THE SUBJECT IS NOT EVIDENCE OF DUPLICATION — added 7 October, from a plan
+   * this function refused on Edwin's screen:
+   *
+   *     "business loan proof of ownership" vs "business loan ownership change"
+   *     (overlap 0.60)
+   *
+   * Shared tokens: business, loan, ownership. Three of five, which is exactly
+   * the threshold, so the campaign was refused outright. TWO OF THOSE THREE
+   * ARE THE SILO'S OWN SUBJECT — every post feeding a "business loan with
+   * bankruptcy record" pillar says "business loan", by construction and on
+   * purpose. Strip the subject and the real overlap is "ownership" alone,
+   * 1 of 3, which is two different topics about ownership and correctly fine.
+   *
+   * So the metric was reading the one thing these posts are REQUIRED to have
+   * in common as proof they were the same post. The longer the pillar keyword,
+   * the more of the score it supplies, and a twelve-post silo cannot be
+   * planned without tripping it.
+   *
+   * SAME INSIGHT AS THE TITLE-TEMPLATE EXEMPTION, in a third place: every post
+   * in a water heater campaign says "water heater", and flagging that is noise.
+   *
+   * FALLS BACK TO THE FULL SETS WHEN STRIPPING EMPTIES ONE. A query that is
+   * nothing but the subject reduces to {}, overlap() answers 0 for an empty
+   * set, and two such queries would compare as unrelated — the worst possible
+   * answer for the worst possible pair. */
+  const subject = queryTokens(moneyKeyword);
+
+  const distinctive = (tokens) => {
+    /* AN EQUIVALENT MUTATION LIVES ON THIS LINE, and it is documented rather
+     * than tested around. Deleting it changes nothing: with an empty subject
+     * the filter below removes nothing, `out` is a copy of `tokens`, and every
+     * caller only ever reads membership and size. It stays because a pillar
+     * campaign has no money page at all, so this is the common path, and
+     * copying every token set for no reason is work nobody asked for. */
+    if (!subject.size) return tokens;
+    const out = new Set([...tokens].filter(t => !subject.has(t)));
+    return out.size ? out : tokens;
+  };
+
   for (let i = 0; i < withQuery.length; i++) {
     for (let j = i + 1; j < withQuery.length; j++) {
       const A = withQuery[i];
       const B = withQuery[j];
-      const ta = queryTokens(A.targetQuery);
-      const tb = queryTokens(B.targetQuery);
+      const ta = distinctive(queryTokens(A.targetQuery));
+      const tb = distinctive(queryTokens(B.targetQuery));
 
       const score = overlap(ta, tb);
       const nested = isSubset(ta, tb) || isSubset(tb, ta);
@@ -460,6 +521,37 @@ function compareQueries(items = [], moneyKeyword = '', threshold = 0.6, extraTok
  * @param {number} threshold   set overlap above which two queries are "the same"
  * @returns {Array<{kind:string, a:string, b?:string, detail:string}>}
  */
+/**
+ * The one sentence a refused plan should show its owner.
+ *
+ * WHY IT LIVES HERE AND NOT AT THE ROUTE. The route read every conflict kind
+ * this file can raise and said the same thing about all three:
+ *
+ *     "Some topics would compete with the target page."
+ *
+ * Only `cannibalises` is about the target page. Edwin hit it on a pair of HIS
+ * OWN topics overlapping each other, read that sentence, and went to look at
+ * the pillar — exactly where it sent him, and the wrong place. The detail was
+ * on screen above saying "duplicate:", so the page disagreed with itself.
+ *
+ * The kinds are invented in compareQueries, forty lines up. A sentence per
+ * kind written anywhere else is a second copy of a decision made here, and
+ * this project has paid for that more than any other mistake.
+ *
+ * RANKED, NOT CONCATENATED. A post competing with the pillar is the fault the
+ * whole design exists to prevent, so it is named first when more than one kind
+ * is present; the full list travels alongside and the plugin renders it.
+ */
+function conflictMessage(conflicts = []) {
+  const kinds = new Set((conflicts || []).map(c => c && c.kind));
+
+  if (kinds.has('cannibalises')) return 'Some topics would compete with the target page.';
+  if (kinds.has('duplicate')) return 'Two or more topics are chasing the same search as each other.';
+  if (kinds.has('missing')) return 'Some topics have no main keyword.';
+
+  return 'Some topics could not be planned.';
+}
+
 function queryConflicts(plan, threshold = 0.6) {
   return compareQueries(
     plan.slots.map(s => ({ id: s.id, targetQuery: s.targetQuery })),
@@ -470,6 +562,7 @@ function queryConflicts(plan, threshold = 0.6) {
 }
 
 module.exports.queryConflicts = queryConflicts;
+module.exports.conflictMessage = conflictMessage;
 module.exports.compareQueries = compareQueries;
 module.exports.isKeywordWithQualifiers = isKeywordWithQualifiers;
 module.exports.queryTokens = queryTokens;

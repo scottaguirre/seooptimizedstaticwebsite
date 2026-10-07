@@ -91,9 +91,52 @@ const FILLER = [
     return (text.trim().match(/\S+/g) || []).length;
   }
   
+  /* FILLER ONLY WHERE IT OPENS SOMETHING — added 7 October, from the log.
+   *
+   * Nine of the last ten recorded quality failures were one string:
+   *
+   *     filler: whether you
+   *
+   * The rule for the list above is "a phrase that carries no information — you
+   * can delete it and the sentence loses nothing". "Whether you're a homeowner
+   * or a renter, we've got you covered" passes that test. "Whether you filed
+   * Chapter 7 or Chapter 13, the discharge date is what lenders check" does
+   * not: delete the phrase and the sentence breaks. Same five characters,
+   * opposite verdicts, and a substring match cannot tell them apart.
+   *
+   * WHAT IT COST. `filler` is deliberately outside REWRITE_WORTHY, so these
+   * posts shipped with a red verdict and no retry — no credits wasted, but
+   * nearly every post in the log marked failed for one false positive. The
+   * comment on the list above says noise is how a check gets ignored. This was
+   * that, in progress.
+   *
+   * SO THE POSITION IS THE SIGNAL, not the words. The marketing frame opens a
+   * paragraph; the legitimate use sits inside a sentence. Two entries move to
+   * this rule and the other forty stay as they are, because "when it comes to"
+   * and "in today's world" are filler wherever they land.
+   *
+   * "as a homeowner" IS IN HERE AND EDWIN DID NOT ASK FOR IT. It is the same
+   * bug: "As a homeowner, you should know…" is the frame, "your rights as a
+   * homeowner are limited" is a sentence. Leaving a known false positive in
+   * place because nobody has hit it yet is how this one got to nine in ten.
+   *
+   * NO WORD BOUNDARY AFTER THE PHRASE, deliberately. "Whether your business is
+   * new or established" is the same frame as "whether you are", and a \b would
+   * let it through. */
+  const OPENERS_ONLY = new Set(['whether you', 'as a homeowner']);
+
+  /** Does `phrase` begin the text, a paragraph, or a sentence within it? */
+  function opensSomething(lower, phrase) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[.!?]\\s+|\\n\\s*)${escaped}`).test(lower);
+  }
+
   function findFiller(text) {
-    const lower = text.toLowerCase();
-    return FILLER.filter(p => lower.includes(p));
+    const lower = String(text || '').toLowerCase();
+
+    return FILLER.filter(p => (OPENERS_ONLY.has(p)
+      ? opensSomething(lower, p)
+      : lower.includes(p)));
   }
   
   function findRisky(text) {
@@ -510,7 +553,7 @@ const FILLER = [
   module.exports = {
     checkPost, crossCheck, formatReport, linkSpread,
     findFiller, findRisky, specificity, textOf,
-    FILLER, RISKY,
+    FILLER, RISKY, OPENERS_ONLY,
     worthRewriting, REWRITE_WORTHY,
   };
   
