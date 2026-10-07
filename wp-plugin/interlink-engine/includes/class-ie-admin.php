@@ -1263,7 +1263,7 @@ class IE_Admin {
 						?>
 						<?php if ( $row['post_id'] && empty( $row['deleted'] ) ) : ?>
 							<a href="<?php echo esc_url( get_edit_post_link( $row['post_id'] ) ); ?>">
-								<?php echo esc_html( $row['topic'] ); ?>
+								<?php echo esc_html( self::headline( $row['post_id'], $row['topic'] ) ); ?>
 							</a>
 						<?php else : ?>
 							<?php echo esc_html( $row['topic'] ); ?>
@@ -1517,7 +1517,18 @@ class IE_Admin {
 			<table class="widefat striped">
 				<thead>
 					<tr>
-						<th><?php esc_html_e( 'Topic', 'interlink-engine' ); ?></th>
+						<?php
+						/* "POST", NOT "TOPIC" — renamed with the column's
+						 * contents, 7 October.
+						 *
+						 * The cell now shows the published headline once there
+						 * is one, so "Topic" would have been right for an
+						 * unwritten row and wrong for every written one. The
+						 * screen above this already calls the same column
+						 * "Post", and this file's own comment forty lines down
+						 * records what two names for one thing cost last time. */
+						?>
+						<th><?php esc_html_e( 'Post', 'interlink-engine' ); ?></th>
 						<th class="ie-terms" hidden><?php esc_html_e( 'Main keyword of the post', 'interlink-engine' ); ?></th>
 						<th><?php esc_html_e( 'Publishes', 'interlink-engine' ); ?></th>
 						<th><?php esc_html_e( 'State', 'interlink-engine' ); ?></th>
@@ -1531,7 +1542,7 @@ class IE_Admin {
 						<td>
 							<?php // Not a link when there is nothing behind it — see the same guard in "Coming up". ?>
 							<?php if ( $slot['post_id'] && ! $slot_gone ) : ?>
-								<a href="<?php echo esc_url( get_edit_post_link( $slot['post_id'] ) ); ?>"><?php echo esc_html( $slot['topic'] ); ?></a>
+								<a href="<?php echo esc_url( get_edit_post_link( $slot['post_id'] ) ); ?>"><?php echo esc_html( self::headline( $slot['post_id'], $slot['topic'] ) ); ?></a>
 							<?php else : ?>
 								<?php echo esc_html( $slot['topic'] ); ?>
 							<?php endif; ?>
@@ -3055,6 +3066,50 @@ class IE_Admin {
 			get_the_title( $page ),
 			isset( $business['town'] ) ? $business['town'] : ''
 		);
+	}
+
+	/**
+	 * What to call a slot on screen: the published headline, or the topic.
+	 *
+	 * THE TWO ARE NOT THE SAME SENTENCE, and the campaign card showed the
+	 * wrong one for its whole life. The topic is what the owner ticked at
+	 * planning time; the headline is what the model actually wrote, hours or
+	 * days later. Edwin's own campaign, 7 October:
+	 *
+	 *     topic     Conditional Approval Can Still Leave a Business Loan
+	 *               Unfunded
+	 *     headline  Conditional Approval for a Business Loan: What the Meaning
+	 *               Is Before Funding
+	 *
+	 * So the card named a post nobody could find on the site, and the link
+	 * beside it opened something with a different title.
+	 *
+	 * THE HEADLINE IS THE H1. IE_Publisher writes post_title from
+	 * written.title, the theme renders that as the H1, and IE_SEO writes the
+	 * <title> tag from the same value — one string wearing three hats, which
+	 * is why asking for "the H1" and asking for the post title are the same
+	 * request today. The day a title-tag template arrives they part company,
+	 * and this reads post_title, which is the H1 of the two.
+	 *
+	 * FALLS BACK TO THE TOPIC, and that is not belt-and-braces: every slot is
+	 * shown before it is written, when there is no post and no headline. A
+	 * blank cell there would be worse than the old wrong one.
+	 *
+	 * @param int    $post_id  the slot's post, 0 before it is written
+	 * @param string $fallback the topic, used when there is no post title
+	 */
+	public static function headline( $post_id, $fallback = '' ) {
+		$post_id = (int) $post_id;
+
+		if ( $post_id ) {
+			$title = get_the_title( $post_id );
+
+			if ( '' !== trim( (string) $title ) ) {
+				return $title;
+			}
+		}
+
+		return (string) $fallback;
 	}
 
 	/**

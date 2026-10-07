@@ -643,14 +643,101 @@ const FILLER = [
     }
   
     // --- title monotony -----------------------------------------------------
-  
-    const firstWords = topics.map(t => (t.topic || '').trim().split(/\s+/)[0].toLowerCase());
+
+    /* THE SUBJECT, AND THE BAR FOR CALLING SOMETHING A TEMPLATE. Both checks
+     * below read them. They used to be computed inside the phrase check alone,
+     * and the first-word check beside it answered the same question its own
+     * way — so one of them got the article fix on 7 October and the other did
+     * not, in the same file, ten lines apart. */
+    const subject = String(targetPage.keyword || '').toLowerCase();
+
+    /* The subject itself is not a template. Every post in a water heater
+     * campaign says "water heater"; flagging that is noise, and noise is how a
+     * check gets ignored. Anything contained in the target keyword is expected.
+     *
+     * AN ARTICLE USED TO BREAK THIS — fixed 7 October, from a live warning
+     * Edwin read on screen:
+     *
+     *     "a business" appears in 7 of 12 titles — it reads as a template
+     *
+     * against a target keyword of "business loan with bankruptcy record". The
+     * phrase flagged was the subject with the word "a" stuck to the front, and
+     * the test is a raw substring match, so `"business loan with bankruptcy
+     * record".includes("a business")` is false and the exemption missed it.
+     * "business loan" on its own was exempt the whole time.
+     *
+     * ONLY THE OUTER ARTICLES COME OFF, and only a/an/the. Stripping leading
+     * PREPOSITIONS as well would have been the obvious generalisation and it
+     * would have broken the case this check was written for: a model told the
+     * business is in Leander appends "in Leander" to every headline, and a
+     * keyword of "water heater repair" does not contain "leander" — but strip
+     * the "in" and it does not contain "leander" either, so that one survives.
+     * It is "for a business" and "of the loan" that the narrow rule leaves
+     * flagged, and those are templates. */
+    /* WHOLE WORDS, NOT A SUBSTRING — found by a mutation that would not die.
+     *
+     * This was `subject.includes(phrase)`, and a substring test says the
+     * single letter "a" is contained in "business loan with bankruptcy
+     * record", because it sits inside "bankruptcy". So four headlines opening
+     * on "A" were exempt as THE SUBJECT, and the article fix appeared to work
+     * while actually doing nothing on that fixture.
+     *
+     * It survived three attempts to kill it. The exemption was swallowing the
+     * check for any word short enough to appear inside a longer one — "us" in
+     * "business", "an" in "loan", "rec" in "record". */
+    const padded = ` ${subject} `;
+    const containsWords = (phrase) => phrase && padded.includes(` ${phrase} `);
+
+    const isSubject = (phrase) =>
+      containsWords(phrase) || containsWords(withoutOuterArticles(phrase));
+
+    /* HALF THE SET, NEVER FEWER THAN TWO. A fixed number cannot mean the same
+     * thing at four topics and at twelve. */
+    const limit = Math.max(2, Math.ceil(topics.length / 2));
+
+    /* THE FIRST WORD, SKIPPING ARTICLES — rewritten 7 October, from two
+     * warnings Edwin read on one banner:
+     *
+     *     3 titles begin with "a"        — vary the construction
+     *     3 titles begin with "business" — vary the construction
+     *
+     * Three faults in six lines, and every one of them was already solved ten
+     * lines below by the phrase check:
+     *
+     *   "a" IS AN ARTICLE. "A Voided Business Check…" and "A Declining Average
+     *   Balance…" are English, not a construction. The opening article says
+     *   nothing about the shape of a headline.
+     *
+     *   "business" IS THE SUBJECT, and the subject is what every post in a
+     *   silo shares on purpose. Third place that same exemption has been
+     *   needed in one day.
+     *
+     *   THE BAR WAS A FIXED THREE. The phrase check beside it has always been
+     *   proportional, so on twelve topics it needed seven repeats while this
+     *   one needed three. Three of twelve is a quarter, which is not monotony;
+     *   three of four is.
+     *
+     * THE REAL SIGNAL IS THE FIRST CONTENT WORD. "A Voided Business Check"
+     * opens on "voided"; "Business Credit Report Errors" opens on "business",
+     * which is the subject and exempt. What is left is a model reaching for
+     * the same verb or noun to start six headlines, which is the thing worth
+     * saying. */
+    const openers = topics
+      .map(t => withoutOuterArticles(String(t.topic || '').trim().toLowerCase())
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)[0])
+      .filter(Boolean);
+
     const counts = {};
-    for (const w of firstWords) counts[w] = (counts[w] || 0) + 1;
+    for (const w of openers) counts[w] = (counts[w] || 0) + 1;
+
     for (const [w, n] of Object.entries(counts)) {
-      if (n > 2) warnings.push(`${n} titles begin with "${w}" — vary the construction`);
+      if (n > limit && !isSubject(w)) {
+        warnings.push(`${n} titles begin with "${w}" — vary the construction`);
+      }
     }
-  
+
     // Not "are questions" — "What Happens During X" has no question mark and is
     // a statement. The pattern being flagged is the CONSTRUCTION: opening on an
     // interrogative word, which is the shape a model reaches for by default.
@@ -675,38 +762,8 @@ const FILLER = [
       }
     }
   
-    /* The subject itself is not a template. Every post in a water heater
-     * campaign says "water heater"; flagging that is noise, and noise is how a
-     * check gets ignored. Anything contained in the target keyword is expected.
-     *
-     * AN ARTICLE USED TO BREAK THAT EXEMPTION — fixed 7 October, from a live
-     * warning Edwin read on screen:
-     *
-     *     "a business" appears in 7 of 12 titles — it reads as a template
-     *
-     * against a target keyword of "business loan with bankruptcy record". The
-     * phrase flagged was the subject with the word "a" stuck to the front, and
-     * the test is a raw substring match, so `"business loan with bankruptcy
-     * record".includes("a business")` is false and the exemption missed it.
-     * "business loan" on its own was exempt the whole time.
-     *
-     * ONLY THE OUTER ARTICLES COME OFF, and only a/an/the. Stripping leading
-     * PREPOSITIONS as well would have been the obvious generalisation and it
-     * would have broken the case this check was written for: a model told the
-     * business is in Leander appends "in Leander" to every headline, and a
-     * keyword of "water heater repair" does not contain "leander" — but strip
-     * the "in" and it does not contain "leander" either, so that one survives.
-     * It is "for a business" and "of the loan" that the narrow rule leaves
-     * flagged, and those are templates. */
-    const subject = String(targetPage.keyword || '').toLowerCase();
-
-    const isSubject = (phrase) => {
-      if (subject.includes(phrase)) return true;
-      const bare = withoutOuterArticles(phrase);
-      return !!bare && subject.includes(bare);
-    };
-
-    const limit = Math.max(2, Math.ceil(topics.length / 2));
+    /* `subject`, `isSubject` and `limit` are shared with the first-word check
+     * above — see the note there for why they moved. */
     const repeated = [...phraseCounts.entries()]
       .filter(([phrase]) => !isSubject(phrase))
       .filter(([, n]) => n > limit)

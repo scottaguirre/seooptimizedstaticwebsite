@@ -2571,6 +2571,109 @@ test( 'THE KEYWORD HELP TEXT DOES NOT DEFINE ITS OWN LABEL', function () {
 		'the town instruction no longer says who it applies to' );
 } );
 
+test( 'THE CARD SHOWS THE PUBLISHED HEADLINE, NOT THE TOPIC', function () {
+	/* Edwin, 7 October: "I want the card to show the h1 name of the article."
+	 *
+	 * They are different sentences, and the card showed the wrong one for its
+	 * whole life. The topic is what he ticked at planning time; the headline is
+	 * what the model wrote hours or days later. From his own campaign:
+	 *
+	 *     topic     Conditional Approval Can Still Leave a Business Loan
+	 *               Unfunded
+	 *     headline  Conditional Approval for a Business Loan: What the Meaning
+	 *               Is Before Funding
+	 *
+	 * So the card named a post nobody could find on the site, and the link
+	 * beside it opened something with a different title.
+	 *
+	 * BOTH HALVES ARE ASSERTED. A check that only looked for the headline
+	 * would pass on a cell printing both, one after the other. */
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Bankruptcy', array( slot( 0, 'scheduled' ) ), true ),
+	);
+	ie_url_post( 100, 'post', 'publish', 'Why a UCC Filing or Lien May Remain After Bankruptcy' );
+
+	$html = render();
+
+	has( $html, 'Why a UCC Filing or Lien May Remain After Bankruptcy',
+		'the card is still showing the planning topic' );
+	hasnt( $html, 'Topic 0', 'the planning topic is still on the card' );
+
+	$GLOBALS['ie_url_posts'] = array();
+} );
+
+test( 'a slot with no post yet still shows its topic', function () {
+	/* NOT BELT-AND-BRACES. Every slot is on screen before it is written, when
+	 * there is no post and no headline to read. A blank cell there would be
+	 * worse than the wrong sentence this change removes. */
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Bankruptcy', array( slot( 0, 'pending' ) ), true ),
+	);
+
+	$html = render();
+
+	has( $html, 'Topic 0', 'an unwritten slot lost its name entirely' );
+} );
+
+test( 'A WRITTEN POST WITH NO TITLE FALLS BACK RATHER THAN RENDERING BLANK', function () {
+	/* get_the_title() answers '' for a post that has gone. An empty cell is a
+	 * row the owner cannot identify at all, which is worse than either name. */
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Bankruptcy', array( slot( 0, 'scheduled' ) ), true ),
+	);
+	ie_url_post( 100, 'post', 'publish', '' );
+
+	$html = render();
+
+	has( $html, 'Topic 0', 'a titleless post left the cell empty' );
+
+	$GLOBALS['ie_url_posts'] = array();
+} );
+
+test( 'COMING UP SHOWS THE HEADLINE TOO — the other table that names a post', function () {
+	/* FOUND BY A SURVIVING MUTATION. Reverting "Coming up" to the topic left
+	 * every test above green, because all of them render the campaign card
+	 * and none of them render the schedule table.
+	 *
+	 * Two tables on one screen naming the same post, and a fix applied to one
+	 * of them is this project's most expensive recurring shape — eight SEO
+	 * filter names with one wired wrong, trade/town against type/location, the
+	 * intent fallback corrected in suggestTopics and not in enrichTopic. */
+	$GLOBALS['ie_campaigns'] = many_running( 6, 2 );
+	ie_url_post( 101, 'post', 'publish', 'Why a UCC Filing or Lien May Remain After Bankruptcy' );
+
+	$html = render( 'running' );
+
+	has( $html, '>Coming up<', 'the schedule table did not render — this proves nothing' );
+
+	/* ASSERTED ON THE SECTION, NOT THE PAGE. My first version of this searched
+	 * the whole document and survived the mutation it was written for: the
+	 * campaign cards below render the SAME slot, and they had already been
+	 * fixed, so the headline was on the page whatever "Coming up" printed. */
+	$at = strpos( $html, '>Coming up<' );
+	$section = substr( $html, $at, strpos( $html, '</table>', $at ) - $at );
+
+	has( $section, 'Why a UCC Filing or Lien May Remain After Bankruptcy',
+		'Coming up is still showing the planning topic' );
+	hasnt( $section, 'Topic 1', 'the planning topic is still in the schedule table' );
+
+	$GLOBALS['ie_url_posts'] = array();
+} );
+
+test( 'THE COLUMN IS NAMED FOR WHAT IT NOW HOLDS', function () {
+	/* "Topic" would have been right for an unwritten row and wrong for every
+	 * written one. "Coming up", one screen above, already calls the same
+	 * column "Post", and this file's own history records what two names for
+	 * one thing cost the last time. */
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Bankruptcy', array( slot( 0, 'scheduled' ) ), true ),
+	);
+
+	$html = render();
+
+	hasnt( $html, '>Topic<', 'the column is still headed Topic' );
+} );
+
 test( 'THE CAMPAIGN CARD CALLS THE KEYWORD BY ITS NAME TOO', function () {
 	/* ONE VALUE, THREE SCREENS, AND THEY HAD THREE NAMES FOR IT.
 	 *

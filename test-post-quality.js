@@ -45,7 +45,7 @@ const { findFiller, OPENERS_ONLY } = require('./utils/blog/qualityCheck');
 
 let passed = 0;
 let failed = 0;
-const DECLARED = 37;
+const DECLARED = 42;
 
 function test(name, fn) {
   try {
@@ -616,6 +616,145 @@ test('AN ARTICLE NO LONGER BREAKS THE SUBJECT EXEMPTION', () => {
 
   assert.deepStrictEqual(warnings, [],
     `the subject is still reported as a template: ${warnings.join(' | ')}`);
+});
+
+/* The first-word half of the same section. Edwin read both of these on one
+ * banner, over twelve topics:
+ *
+ *     3 titles begin with "a"        — vary the construction
+ *     3 titles begin with "business" — vary the construction
+ */
+function openerWarnings(topics, targetPage) {
+  const set = checkTopicSet(
+    topics.map((t, i) => ({ topic: t, targetQuery: `q${i} distinct thing`, linkPhrase: 'a phrase' })),
+    targetPage,
+    { name: 'Hilltop Home Loans' }
+  );
+
+  return set.warnings.filter(w => /begin with/.test(w));
+}
+
+test('AN OPENING ARTICLE IS NOT A CONSTRUCTION', () => {
+  /* "A Voided Business Check…" and "A Declining Average Balance…" are English.
+   * The article says nothing about the shape of a headline, and the check
+   * counted the raw first word. */
+  /* FOUR TITLES OPENING ON THE SAME ARTICLE, NOT THREE AND AN "AN".
+   *
+   * My first fixture had three "A" and one "An". With the article fix removed
+   * the raw count of "a" is three, the proportional bar at six topics is
+   * three, and `n > limit` is false — so it passed with the fix gone and
+   * proved nothing. Twice in one sitting a fixture has sat exactly ON the
+   * threshold it was meant to cross.
+   *
+   * The four content words here — voided, declining, new, lapsed — are all
+   * distinct, so nothing else can raise the warning. */
+  const titles = [
+    'A voided business check can delay a loan deposit',
+    'A declining average balance worries an underwriter',
+    'A new EIN does not erase a prior filing',
+    'A lapsed UCC filing still shows on a search',
+    'Liens limit new borrowing',
+    'Factoring contracts complicate a request',
+  ];
+
+  assert.deepStrictEqual(openerWarnings(titles, { keyword: 'business loan with bankruptcy record' }), []);
+});
+
+test('THE SUBJECT IS NOT A CONSTRUCTION EITHER', () => {
+  /* Third place this exemption has been needed in one day. Every post in a
+   * silo opens on the subject sooner or later; that is what a silo is. */
+  const titles = [
+    'Business credit report errors survive a discharge',
+    'Business tax returns and the gaps lenders notice',
+    'Business judgments remain relevant afterwards',
+    'Business bank accounts raise questions',
+    'UCC liens limit new borrowing',
+    'Factoring contracts complicate a request',
+  ];
+
+  assert.deepStrictEqual(openerWarnings(titles, { keyword: 'business loan with bankruptcy record' }), []);
+});
+
+test('A REAL OPENING TEMPLATE IS STILL CAUGHT', () => {
+  /* The exemption must not swallow the check. "why" is neither an article nor
+   * anybody's subject, and four of six is past half. */
+  const titles = [
+    'Why lenders ask for discharge papers',
+    'Why a judgment still matters',
+    'Why underwriting reopens on an ownership change',
+    'Why a new EIN changes nothing',
+    'UCC liens limit new borrowing',
+    'Factoring contracts complicate a request',
+  ];
+
+  const found = openerWarnings(titles, { keyword: 'business loan with bankruptcy record' });
+
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+  assert.ok(/4 titles begin with "why"/.test(found[0]), found[0]);
+});
+
+test('THE SUBJECT EXEMPTION MATCHES WHOLE WORDS, NOT SUBSTRINGS', () => {
+  /* FOUND BY A MUTATION THAT WOULD NOT DIE, and it is the more serious of the
+   * two bugs this test file gained today.
+   *
+   * isSubject was `subject.includes(phrase)` — a substring test. So against a
+   * keyword of "business loan with bankruptcy record", the single letter "a"
+   * counted as the subject, because it sits inside "bankruptcy". Four
+   * headlines opening on "A" were therefore exempt, and the article fix looked
+   * like it worked while doing nothing at all on that fixture.
+   *
+   * Here it is with a word somebody would really write. "heat" is inside
+   * "heater" and is not a word of "water heater repair", so a substring test
+   * exempts a genuine template and a whole-word test reports it. */
+  const titles = [
+    'Heat loss through an uninsulated line',
+    'Heat recovery is rarely worth it here',
+    'Heat settings most households get wrong',
+    'Heat and hard water together',
+    'Anode rods and what they cost',
+    'Pressure drops nobody notices',
+  ];
+
+  const found = openerWarnings(titles, { keyword: 'water heater repair' });
+
+  assert.strictEqual(found.length, 1, JSON.stringify(found));
+  assert.ok(/4 titles begin with "heat"/.test(found[0]), found[0]);
+
+  /* And the exemption still works for a word that really is the subject. */
+  assert.deepStrictEqual(
+    openerWarnings([
+      'Heater replacement timing',
+      'Heater noise at ten years',
+      'Heater sizing for four people',
+      'Heater anode rods',
+      'Pressure drops nobody notices',
+      'Anode rods and what they cost',
+    ], { keyword: 'water heater repair' }),
+    []);
+});
+
+test('THE BAR IS PROPORTIONAL, LIKE THE CHECK BESIDE IT', () => {
+  /* It was a fixed `n > 2`, so on twelve topics the phrase check needed seven
+   * repeats and this one needed three. Three of twelve is a quarter, which is
+   * not monotony; three of four is.
+   *
+   * BOTH SIZES ARE ASSERTED. A test at one length cannot tell a proportional
+   * bar from a fixed one that happens to agree there. */
+  const three = ['Why one', 'Why two', 'Why three'];
+
+  /* NINE DISTINCT OPENERS, not nine copies of one. My first version padded
+   * with "Separate heading 0..8" and the test went red on "separate" — the
+   * padding was itself a template. */
+  const padding = ['Liens', 'Judgments', 'Factoring', 'Payroll', 'Deposits',
+    'Reserves', 'Statements', 'Timelines', 'Underwriting']
+    .map((w, i) => `${w} matter here ${i}`);
+
+  const twelve = [...three, ...padding];
+
+  assert.strictEqual(openerWarnings(three, { keyword: 'x' }).length, 1,
+    'three of three is not being reported');
+  assert.deepStrictEqual(openerWarnings(twelve, { keyword: 'x' }), [],
+    'three of twelve is still being reported as a template');
 });
 
 test('THE TOWN TEMPLATE IS STILL CAUGHT — the case this check was written for', () => {

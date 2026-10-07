@@ -2812,6 +2812,108 @@ bug does not bite — an example chosen from those argues for the wrong thing.
 Checked by running `bucketCounts(9)` rather than by hand, which is how the
 previous version got it wrong.
 
+## The first-word check, and the exemption that was not working — 7 October 2026 (server)
+
+Two warnings on one banner, over twelve topics:
+
+    3 titles begin with "a"        — vary the construction
+    3 titles begin with "business" — vary the construction
+
+Three faults in six lines, and **every one of them was already solved ten lines
+below** by the phrase check in the same function:
+
+- **"a" is an article.** "A Voided Business Check…" is English, not a
+  construction. The opening article says nothing about the shape of a headline.
+- **"business" is the subject**, which every post in a silo shares on purpose.
+  Third place that exemption was needed in one day.
+- **The bar was a fixed `n > 2`.** The phrase check has always been
+  proportional, so on twelve topics it needed seven repeats and this one needed
+  three. Three of twelve is a quarter; three of four is monotony.
+
+`subject`, `isSubject` and `limit` now sit above both checks and both read
+them. The real signal is the **first content word**: "A Voided Business Check"
+opens on "voided", "Business Credit Report Errors" opens on the subject and is
+exempt, and what is left is a model reaching for the same verb to start six
+headlines.
+
+### The exemption was a substring test and had been quietly broken
+
+**Found by a mutation that would not die, and it is the more serious bug.**
+`isSubject` was `subject.includes(phrase)`. Against a keyword of "business loan
+with bankruptcy record", the single letter **"a" counted as the subject**,
+because it sits inside "bankruptcy". Four headlines opening on "A" were exempt,
+and the article fix appeared to work while doing nothing at all on that
+fixture.
+
+It swallowed the check for any word short enough to live inside a longer one —
+"heat" in "heater", "us" in "business", "an" in "loan". Whole-word matching
+now, with a test using "heat" against "water heater repair", which is a word
+somebody would really write.
+
+### Three fixtures sat exactly ON the threshold they were meant to cross
+
+In one sitting:
+
+- The article fixture had three "A" titles out of six. The bar at six topics is
+  three, `n > limit` is false, and it passed with the fix removed.
+- Replacing one with "An" did not help — the raw count of "a" was still three.
+- The proportional-bar fixture padded with nine copies of "Separate heading",
+  and went red because **the padding was itself a template**.
+
+A fixture sitting on a threshold cannot test what the threshold is applied to.
+
+Five mutations, all caught once those were fixed. `test-post-quality.js`
+37 → 42.
+
+## The card named a post nobody could find — 7 October 2026 (plugin 0.34.0)
+
+Edwin: *"I want the card to show the h1 name of the article."*
+
+The campaign card printed `$slot['topic']` — what the owner ticked at planning
+time — not the headline the model wrote hours or days later. From his own
+campaign:
+
+    topic     Conditional Approval Can Still Leave a Business Loan Unfunded
+    headline  Conditional Approval for a Business Loan: What the Meaning Is
+              Before Funding
+
+So the card named a post that does not exist on the site, and the link beside
+it opened something with a different title.
+
+**The headline IS the H1.** `IE_Publisher` writes `post_title` from
+`written.title`, the theme renders that as the H1, and `IE_SEO` writes the
+`<title>` tag from the same value — one string wearing three hats, which is why
+asking for "the H1" and asking for the post title are the same request today.
+`headline()` reads `post_title`, which is the H1 of the two the day a title-tag
+template arrives and they part company.
+
+**Falls back to the topic, and that is not belt-and-braces**: every slot is on
+screen before it is written, when there is no post and no headline to read.
+
+### The column is renamed with its contents
+
+"Topic" would have been right for an unwritten row and wrong for every written
+one. **"Coming up", one screen above, already called the same column "Post"** —
+and this file's own comment, forty lines from the change, records what two
+names for one thing cost the last time ("waiting to collect" against "not
+written yet").
+
+### Two survivors, and both were tests being wrong rather than code
+
+- **Reverting "Coming up" alone survived.** Every test rendered the campaign
+  card and none rendered the schedule table. Two tables on one screen naming
+  the same post, a fix applied to one of them — the most expensive recurring
+  shape in this project, now with a test.
+- **Then the new test survived it too.** It searched the whole document, and
+  the campaign cards below render the SAME slot and were already fixed, so the
+  headline was on the page whatever "Coming up" printed. **A page-wide
+  assertion cannot test a section when something else on the page says the
+  same thing.** Now scoped to the slice between `>Coming up<` and its
+  `</table>`.
+
+Four mutations, all caught once those two were fixed. `test-admin-tabs.php`
+121 → 126.
+
 ## Two stopword lists, two different bugs — 7 October 2026 (server)
 
 Both found by reading the production log of the first campaign written under
