@@ -89,4 +89,76 @@ function isLocalBusiness(business = {}) {
   return !!(tradeOf(business) || townOf(business));
 }
 
-module.exports = { isLocalBusiness, tradeOf, townOf, PLACEHOLDERS };
+/**
+ * What the reader of these posts should end up wanting.
+ *
+ * ONE FUNCTION BECAUSE IT WAS TWO, AND THE PAIR HAS ALREADY DRIFTED ONCE.
+ * suggestTopics.js and enrichTopic.js each wrote this out, and for months
+ * enrich had only the local branch — so a blog whose owner left the intent
+ * blank was told its readers must end up wanting to use a service that does
+ * not exist. Nobody noticed, because the plugin's dropdown never submitted an
+ * empty value and neither fallback had ever run. The 0.33.0 work made the
+ * empty option real, and the gap with it. The sentences are identical; there
+ * was never a reason for two copies.
+ *
+ * THE SUBJECT IS THE KEYWORD, NOT THE TITLE — 7 October, Edwin.
+ *
+ * It read `targetPage.title`, and a title is a headline. On his bankruptcy
+ * pillar the hard constraint came out as "read more about How to Qualify for
+ * a Business Loan After Bankruptcy on this site" — fourteen words of headline
+ * doing the work of one instruction. Weak steering, and it makes the box feel
+ * like something the owner has to fill in by hand, which is how a campaign
+ * ended up aimed at a different subject entirely.
+ *
+ * The keyword is the same page in a searcher's words, and it is the one field
+ * on that form the owner cannot leave vague — the help text under it reads
+ * "No post will be allowed to compete with this term". Reading it here is what
+ * makes LEAVING THE INTENT EMPTY the correct answer on a blog rather than a
+ * merely tolerated one, and it lets the dropdown go back to being a refinement
+ * for trades instead of a question every owner must answer.
+ *
+ * STILL FALLS BACK TO THE TITLE, for a target page stored before the keyword
+ * box existed. Weaker steering beats none.
+ *
+ * @param {object}  targetPage  { intent, keyword, title }
+ * @param {object}  business    for the local/blog branch
+ * @param {boolean} [isLocal]   overrides the business, for a caller that has
+ *                              already decided — a missing value must not read
+ *                              as `false`, so this is checked by type.
+ */
+function readerIntent(targetPage, business, isLocal) {
+  const page = targetPage || {};
+
+  const typed = String(page.intent || '').trim();
+  if (typed) return typed;
+
+  const subject = String(page.keyword || '').trim() || String(page.title || '').trim();
+  const local = 'boolean' === typeof isLocal ? isLocal : isLocalBusiness(business || {});
+
+  /* THE BLOG SENTENCE IS AN ACTION NOW — Edwin, 7 October, option A.
+   *
+   * It read "read more about X on this site", and READING MORE IS NOT A WANT.
+   * The topic prompt calls this line "the hard constraint" and asks that every
+   * reader finish each post CLOSER to it — but nobody is moved toward reading
+   * more, so there was nothing to steer against, and the clause beside it did
+   * the steering instead: "something a person with that problem would
+   * plausibly search, WITHOUT being the same subject as that page." That
+   * clause exists to push topics away from the pillar, and with no counter-
+   * weight it pushed them all the way out.
+   *
+   * MEASURED, NOT ARGUED. With the old sentence, eleven suggested topics for
+   * a pillar on "business loan with bankruptcy record" came back with three
+   * mentioning bankruptcy at all; the rest — NSF fees, chargebacks, switching
+   * bank accounts — would have suited any lending pillar on the site.
+   *
+   * THE COUNTERWEIGHT HAS ITS OWN LIMIT. Tighten this far enough and topics
+   * start competing with the pillar, which is the one failure the whole silo
+   * design exists to prevent. "decide what to do next" is deliberately about
+   * the READER'S decision rather than about the subject: it pulls toward the
+   * pillar's problem without naming the pillar's own ground. */
+  return local
+    ? `use the business's ${subject} service`
+    : `understand ${subject} well enough to decide what to do next`;
+}
+
+module.exports = { isLocalBusiness, tradeOf, townOf, readerIntent, PLACEHOLDERS };

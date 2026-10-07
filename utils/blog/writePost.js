@@ -15,6 +15,14 @@
 const path = require('path');
 const { businessBlock } = require('./businessBlock');
 
+/* THE PROMPT ASKS FOR EXACTLY WHAT THE CHECKER MEASURES, by taking the word
+ * list from the function that does the measuring. qualityCheck.js runs
+ * keywordCoverage() on the result and this file names contentWords() in the
+ * instruction, so there is one definition of "which words count". Two
+ * hand-written copies would drift by one stopword, and the writer would then
+ * be refused for having obeyed the prompt. */
+const { contentWords } = require('./keywordCoverage');
+
 const APP = path.join(__dirname, '..');
 
 /** The app's lazily-built OpenAI client. */
@@ -344,11 +352,30 @@ ${block}
 TOPIC
   ${slot.topic}
 ${slot.targetQuery ? `
-THE SEARCH THIS POST MUST SATISFY
+THE MAIN KEYWORD OF THIS POST
   "${slot.targetQuery}"
-  Answer that question directly and completely. Someone who typed those words
-  should not need to open another result. Do not repeat the phrase mechanically
-  — say the thing it is asking about.
+  Answer that search directly and completely. Someone who typed those words
+  should not need to open another result.
+
+  THESE WORDS MUST ALL APPEAR in each of three places — the title, which
+  becomes both the page's title tag and its H1; the meta description; and at
+  least one subheading:
+
+      ${contentWords(slot.targetQuery).join(' · ')}
+
+  In any order, with whatever you like between them, and plurals or tenses are
+  fine: "Rate Changes" satisfies "rate change". What fails is a word going
+  missing — a headline reading "what the letter actually means" has lost every
+  one of them.
+
+  DO NOT PASTE THE PHRASE IN THREE TIMES. Write a real headline, a real
+  description and a real subheading that happen to contain those words. A
+  title, a description and a heading that are all the same phrase is the
+  clearest sign on a page that nobody wrote it.
+
+  IN THE BODY, use the phrase "${slot.targetQuery}" EXACTLY ONCE, in a
+  sentence where it belongs. Not twice, and not none. Link phrases do not
+  count towards it — this has to be a sentence of your own.
 ` : ''}
 LENGTH
   1000-1300 words, in 4-6 sections.

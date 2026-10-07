@@ -29,9 +29,34 @@ function getClient(opts) {
   return mod.getOpenAI();
 }
 
+const { readerIntent } = require('./siteKind');
+
 function buildPrompt({ business, targetPage, topics, existing = [] }) {
-  const intent = targetPage.intent
-    || `use the business's ${targetPage.title} service`;
+  /* THE SAME FALLBACK suggestTopics.js HAS, AND NOW LITERALLY THE SAME CODE.
+   *
+   * This file read `use the business's ${title} service` with no second
+   * branch, so a blog whose owner left the intent blank was told its readers
+   * must end up wanting to use a service that does not exist. suggestTopics.js
+   * grew the non-local branch when blog mode shipped; this file did not, and
+   * nobody noticed because the plugin's dropdown never submitted an empty
+   * value, so neither fallback had ever run.
+   *
+   * TWO FUNCTIONS ANSWERING ONE QUESTION, and one of them had been corrected.
+   * That is the shape this project keeps hitting — eight SEO filter names with
+   * one wired wrong, trade/town against type/location, a cancel accepted and
+   * dropped. On 6 October the branch was copied across, and the comment here
+   * justified two copies by saying the two prompts word the sentence
+   * differently. THE WRAPPERS DIFFER AND THE SENTENCE DID NOT: this file says
+   * "The reader should end up wanting to: X" where suggestTopics prints X
+   * under a heading, but X itself was identical in both, character for
+   * character. The difference was in the line around the decision, not in the
+   * decision — so what was duplicated was exactly the part that had already
+   * drifted once. The wrappers stay where they are; X comes from one function
+   * in siteKind.js now.
+   *
+   * Reached only on a silo campaign with typed topics: a pillar campaign never
+   * calls enrich, because there is no target page to derive a query from. */
+  const intent = readerIntent(targetPage, business);
 
   const existingBlock = existing.length
     ? `\nALREADY IN THIS CAMPAIGN — your queries must not overlap these:\n` +

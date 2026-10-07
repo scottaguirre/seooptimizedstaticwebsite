@@ -3,7 +3,7 @@
  * Plugin Name:       Three Comets Blog Generator
  * Plugin URI:        https://threecomets.com
  * Description:       Plans a quarter of blog posts, writes them all at once, schedules them across the weeks, and wires every one into the service page you want to rank.
- * Version:           0.32.0
+ * Version:           0.33.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Three Comets
@@ -441,7 +441,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'IE_VERSION', '0.32.0' );
+define( 'IE_VERSION', '0.33.0' );
 define( 'IE_FILE', __FILE__ );
 define( 'IE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IE_URL', plugin_dir_url( __FILE__ ) );

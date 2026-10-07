@@ -1461,7 +1461,7 @@ test( 'THE GENERATED THEME TRIMS ITS OWN SITEMAP', function () {
 /* =====================================================================
  * The keyword a pillar was planned to win — 6 October
  *
- * The pillar form asks "Search it should win" for every topic and REFUSES to
+ * The pillar form asks "Main keyword of this post" for every topic and REFUSES to
  * plan the campaign without it. That answer was stored on the slot, used to
  * write the post, and then dropped: publishing stamped the pillar FLAG and
  * nothing else.

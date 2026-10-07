@@ -40,10 +40,11 @@ const path = require('path');
 
 const { checkPost, linkSpread } = require('./utils/blog/qualityCheck');
 const { worthRewriting, REWRITE_WORTHY } = require('./utils/blog/qualityCheck');
+const { checkTopicSet, withoutOuterArticles } = require('./utils/blog/qualityCheck');
 
 let passed = 0;
 let failed = 0;
-const DECLARED = 19;
+const DECLARED = 31;
 
 function test(name, fn) {
   try {
@@ -382,13 +383,22 @@ test('EVERY RETRIED CODE IS ONE checkPost CAN ACTUALLY EMIT', () => {
    * Reads the VOCABULARY out of qualityCheck.js rather than asserting
    * behaviour from its text — every code it can raise is a fail('<code>' or a
    * warn-side literal, and the question here is only whether the two files
-   * use the same spellings. */
-  const quality = read('utils/blog/qualityCheck.js');
+   * use the same spellings.
+   *
+   * TWO FILES SINCE 7 OCTOBER. The keyword rule raises its own codes inside
+   * keywordCoverage.js, because that is where the rule is and a code invented
+   * at the call site would be a second copy of a decision made there.
+   * checkPost passes them through verbatim, so they are codes it can emit and
+   * this scan has to look where they are written. It went red on the first
+   * run after the wiring, which is the whole reason this test exists. */
+  const quality = read('utils/blog/qualityCheck.js')
+    + read('utils/blog/keywordCoverage.js');
+
   const emitted = new Set(
     [...quality.matchAll(/fail\(\s*'([a-z0-9-]+)'/g)].map(m => m[1])
   );
 
-  assert.ok(emitted.size >= 8, `only found ${emitted.size} codes — the pattern stopped matching`);
+  assert.ok(emitted.size >= 12, `only found ${emitted.size} codes — the pattern stopped matching`);
 
   for (const code of REWRITE_WORTHY) {
     assert.ok(emitted.has(code), `'${code}' is retried but checkPost never raises it`);
@@ -423,6 +433,263 @@ test('the retry decides by CODE, not by message text', () => {
   /* And the converse: a retried code with no message text at all still
    * retries. A rule that needed the prose would answer false here. */
   assert.ok(worthRewriting({ codes: ['no-meta'], failures: [] }));
+});
+
+/* ------------------------------------------------------------------ *
+ * The post's own keyword
+ * ------------------------------------------------------------------
+ * Edwin's rule, 6-7 October: the keyword INCLUDED in the title tag, the meta
+ * description, the H1 and at least one H2, and in the body exactly once.
+ *
+ * The rule itself is proved in test-keyword-coverage.js. What is proved here
+ * is only the WIRING — that checkPost runs it, on the right strings, for the
+ * right posts, and that a failure reaches the retry. The rule was finished
+ * and tested a day before anything called it, and a file nothing calls is a
+ * file that cannot be wrong.
+ * ------------------------------------------------------------------ */
+
+console.log('\nThe post\'s own keyword\n');
+
+const KW = 'slab leak detection';
+const KW_SLOT = { ...SLOT, targetQuery: KW };
+
+/** A post that satisfies the rule in all four places. */
+function covered({ bodyKeyword = true } = {}) {
+  const mention = bodyKeyword
+    ? 'Slab leak detection starts with the water meter. '
+    : 'The work starts with the water meter. ';
+
+  return post({
+    title: 'What Slab Leak Detection Actually Involves',
+    sections: [
+      { heading: null, paragraphs: [body(13) + mention + `Call ${MONEY} before opening concrete.`] },
+      { heading: 'How Slab Leak Detection Is Priced', paragraphs: [body(13) + `This follows ${PREV}.`] },
+      { heading: 'What comes next', paragraphs: [body(13) + `There is also ${NEXT}.`] },
+      { heading: 'Before you call', paragraphs: [body(13)] },
+    ],
+  });
+}
+
+/** …and the matching description, since post() hard-codes a slab-floor one. */
+function withMeta(p, metaDescription = 'How slab leak detection works, what it costs, and when it is worth doing.') {
+  return { ...p, metaDescription };
+}
+
+test('A POST THAT COVERS THE KEYWORD PASSES', () => {
+  const check = checkPost(withMeta(covered()), KW_SLOT);
+
+  assert.strictEqual(check.ok, true, check.failures.join(' | '));
+});
+
+test('a post missing the keyword from its description is refused', () => {
+  /* The exact fault on Edwin's live 6 October post: the title carried the
+   * keyword by luck and the description did not, because nothing asked. */
+  const check = checkPost(covered(), KW_SLOT);   // post()'s slab-floor meta
+
+  assert.strictEqual(check.ok, false);
+  assert.ok(check.codes.includes('keyword-meta'), check.codes.join(', '));
+  assert.ok(check.failures.some(f => f.includes(`keyword "${KW}"`)),
+    `the failure does not name the keyword: ${check.failures.join(' | ')}`);
+});
+
+test('ZERO BODY MENTIONS IS REFUSED — Edwin, 7 October', () => {
+  const check = checkPost(withMeta(covered({ bodyKeyword: false })), KW_SLOT);
+
+  assert.strictEqual(check.ok, false);
+  assert.ok(check.codes.includes('keyword-body'), check.codes.join(', '));
+  assert.ok(check.failures.some(f => /never appears in the body/.test(f)));
+});
+
+test('A HEADING MENTION IS NOT COUNTED AS THE BODY MENTION', () => {
+  /* THE BUG THIS STOPS, and it would have failed every obedient post. The
+   * rule REQUIRES the keyword in a subheading and allows it ONCE in the body.
+   * qualityCheck's own textOf() joins headings and paragraphs into one string,
+   * so handing that to the counter means the heading the rule demanded is
+   * read as a body mention — and a post doing exactly as it was told comes
+   * back "appears 2 times in the body, limit is 1".
+   *
+   * covered() has the keyword in its H1, in one H2 and once in the prose,
+   * which is the compliant shape. Exactly one mention is the assertion. */
+  const check = checkPost(withMeta(covered()), KW_SLOT);
+
+  assert.strictEqual(check.ok, true, check.failures.join(' | '));
+  assert.ok(!check.codes.includes('keyword-body'),
+    'the subheading was counted as a body mention');
+});
+
+test('NO TARGET QUERY, NO KEYWORD CHECK', () => {
+  /* buildPrompt omits the whole keyword block for a slot with no
+   * targetQuery, so such a post was never told any of this. Refusing it
+   * would punish it for a question nobody put to it — and would fail every
+   * campaign planned before 0.31.0.
+   *
+   * wellSpread() carries none of the keyword and SLOT carries no query. */
+  const check = checkPost(wellSpread(), SLOT);
+
+  assert.ok(!check.codes.some(c => c.startsWith('keyword-')),
+    `keyword codes raised with no targetQuery: ${check.codes.join(', ')}`);
+});
+
+test('a keyword failure is one the writer is retried for', () => {
+  /* Edwin's words: "fails and gets rewritten." A failure code outside
+   * REWRITE_WORTHY ships the post as-is with a red mark beside it. */
+  const check = checkPost(withMeta(covered({ bodyKeyword: false })), KW_SLOT);
+
+  assert.ok(worthRewriting(check), 'a keyword failure does not trigger a rewrite');
+});
+
+test('THE PROMPT ASKS FOR WHAT THIS CHECK MEASURES', () => {
+  /* The failure this project has hit more than any other: a prompt whose rule
+   * differs by a word from the check enforcing it. Both sides now read
+   * contentWords() from keywordCoverage.js, and that shared call is the
+   * assertion — not the wording around it, which will be reworded.
+   *
+   * The old sentence is asserted ABSENT. A presence-only check passes a
+   * half-done replacement, which is how a rename has twice been left
+   * part-finished in this codebase. */
+  const writer = read('utils/blog/writePost.js');
+
+  assert.ok(/require\('\.\/keywordCoverage'\)/.test(writer),
+    'writePost no longer reads the rule from keywordCoverage');
+  assert.ok(/contentWords\(slot\.targetQuery\)/.test(writer),
+    'the prompt no longer names the words the checker measures');
+  assert.ok(/EXACTLY ONCE/.test(writer),
+    'the prompt does not state the body rule');
+  assert.ok(!/repeat the phrase mechanically/.test(writer),
+    'the old vague sentence is still in the prompt');
+});
+
+/* ------------------------------------------------------------------ *
+ * The topic set, before anything is written
+ * ------------------------------------------------------------------
+ * checkTopicSet HAD NO TESTS AT ALL until 7 October, and it is the function
+ * whose warnings appear at the top of the campaign form — the only quality
+ * signal an owner reads before spending anything. The one below was found by
+ * Edwin reading it on screen, which is the whole reason it has tests now.
+ * ------------------------------------------------------------------ */
+
+console.log('\nThe topic set\n');
+
+/** Only the title-monotony warnings; the rest of checkTopicSet is not in scope. */
+function templateWarnings(topics, targetPage) {
+  const set = checkTopicSet(
+    topics.map((t, i) => ({ topic: t, targetQuery: `q${i} distinct thing`, linkPhrase: 'a phrase' })),
+    targetPage,
+    { name: 'Hilltop Home Loans' }
+  );
+
+  return set.warnings.filter(w => /reads as a template/.test(w));
+}
+
+/* The twelve Edwin had on screen, verbatim. */
+const BANKRUPTCY_TITLES = [
+  'Bank balances that can weaken a business loan request after bankruptcy',
+  'Recent late payments that weaken a business loan request after bankruptcy',
+  'An IRS payment plan can change a business loan decision',
+  'UCC liens can limit a new business loan',
+  'Factoring contracts that complicate a new business loan request',
+  'Origination fees that reduce the cash a business actually receives',
+  'Refinancing business debt after a bankruptcy filing',
+  'What happens while a business loan stays in underwriting',
+  'A voided business check can delay a business loan deposit',
+  'Debt service coverage can outweigh a past bankruptcy record',
+  'Low personal credit scores can still affect business loan decisions',
+  'Why a business loan application remains pending',
+];
+
+test('AN ARTICLE NO LONGER BREAKS THE SUBJECT EXEMPTION', () => {
+  /* What Edwin read on screen, 7 October:
+   *
+   *     "a business" appears in 7 of 12 titles — it reads as a template
+   *
+   * against a target keyword of "business loan with bankruptcy record". The
+   * phrase is the subject with "a" stuck to the front, and the exemption is a
+   * raw substring match — so the keyword does not contain "a business" and the
+   * check reported the subject as a template. "business loan" alone was exempt
+   * the whole time, which is what makes it a bug rather than a judgement call.
+   *
+   * Reproduced against the old code before the fix: same sentence, same 7 of
+   * 12. */
+  const warnings = templateWarnings(BANKRUPTCY_TITLES,
+    { keyword: 'business loan with bankruptcy record' });
+
+  assert.deepStrictEqual(warnings, [],
+    `the subject is still reported as a template: ${warnings.join(' | ')}`);
+});
+
+test('THE TOWN TEMPLATE IS STILL CAUGHT — the case this check was written for', () => {
+  /* A model told the business is in Leander appends "in Leander" to every
+   * headline. Each title looks fine alone; twelve in a row look generated.
+   *
+   * THIS IS WHY ONLY ARTICLES COME OFF. Stripping leading prepositions too was
+   * the obvious generalisation — and "in leander" minus the "in" is "leander",
+   * which a keyword of "water heater repair" also does not contain, so that
+   * one would have gone quiet along with the real fix. The narrow rule is
+   * narrow on purpose. */
+  const titles = [
+    'What a water heater actually costs in Leander',
+    'How long a tank lasts in Leander',
+    'Hard water and your heater in Leander',
+    'When to replace rather than repair in Leander',
+    'Why pressure drops in Leander',
+    'The noise a failing heater makes in Leander',
+  ];
+
+  const warnings = templateWarnings(titles, { keyword: 'water heater repair' });
+
+  assert.ok(warnings.some(w => /in leander/.test(w)),
+    `the town template went unreported: ${warnings.join(' | ') || '(nothing)'}`);
+});
+
+test('a repeated phrase that is NOT the subject is still a template', () => {
+  /* The exemption must not become a way through for everything. "can delay"
+   * is nobody's subject. */
+  const titles = [
+    'Why an IRS plan can delay a decision',
+    'How a lien can delay a decision',
+    'When a factoring contract can delay a decision',
+    'Where a voided check can delay a decision',
+    'What a late payment can delay a decision',
+    'Who else can delay a decision',
+  ];
+
+  const warnings = templateWarnings(titles, { keyword: 'business loan with bankruptcy record' });
+
+  assert.ok(warnings.length, 'a genuine template went unreported');
+});
+
+test('withoutOuterArticles takes only the OUTER a / an / the', () => {
+  assert.strictEqual(withoutOuterArticles('a business'), 'business');
+  assert.strictEqual(withoutOuterArticles('the business loan'), 'business loan');
+  assert.strictEqual(withoutOuterArticles('business loan a'), 'business loan');
+
+  /* Inside the phrase they stay — "cost of a loan" is not "cost of loan", and
+   * a phrase that is nothing but articles reduces to nothing rather than to
+   * the empty string matching every keyword. */
+  assert.strictEqual(withoutOuterArticles('cost of a loan'), 'cost of a loan');
+  assert.strictEqual(withoutOuterArticles('in leander'), 'in leander');
+  assert.strictEqual(withoutOuterArticles('the a an'), '');
+});
+
+test('AN EMPTY KEYWORD EXEMPTS NOTHING', () => {
+  /* `''.includes('')` is true, so a phrase reducing to nothing would be read
+   * as the subject of every campaign. The guard is the `!!bare` in isSubject.
+   *
+   * REMOVING THAT GUARD SURVIVES THIS SUITE, ON PURPOSE AND DOCUMENTED. Only
+   * two- and three-word phrases are counted, so reaching it needs a repeated
+   * n-gram made entirely of articles — "the a", "an a" — in half the titles of
+   * one campaign. I could write that fixture; it would be a sentence no model
+   * has ever produced, and it would be testing the implementation rather than
+   * the behaviour. The guard stays because it costs one `&&` and because the
+   * day a one-word phrase is counted it becomes reachable in silence.
+   *
+   * What IS asserted is the half that can happen: a campaign whose keyword
+   * never arrived must not have every template waved through. */
+  assert.strictEqual(withoutOuterArticles('a'), '');
+  assert.strictEqual(withoutOuterArticles(''), '');
+
+  const warnings = templateWarnings(BANKRUPTCY_TITLES, { keyword: '' });
+  assert.ok(warnings.length, 'with no keyword at all, nothing should be exempt');
 });
 
 console.log(`\n  ${passed} passed, ${failed} failed\n`);

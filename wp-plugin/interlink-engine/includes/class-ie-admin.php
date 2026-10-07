@@ -1159,8 +1159,8 @@ class IE_Admin {
 			// scripting the column simply stays hidden, which is the sane
 			// state, rather than leaving a button that does nothing.
 			document.addEventListener( 'DOMContentLoaded', function () {
-				var showing = <?php echo wp_json_encode( __( 'Show search terms', 'interlink-engine' ) ); ?>;
-				var hiding  = <?php echo wp_json_encode( __( 'Hide search terms', 'interlink-engine' ) ); ?>;
+				var showing = <?php echo wp_json_encode( __( 'Show main keywords', 'interlink-engine' ) ); ?>;
+				var hiding  = <?php echo wp_json_encode( __( 'Hide main keywords', 'interlink-engine' ) ); ?>;
 
 				document.querySelectorAll( '.ie-terms-toggle' ).forEach( function ( btn ) {
 					btn.hidden = false;
@@ -1518,7 +1518,7 @@ class IE_Admin {
 				<thead>
 					<tr>
 						<th><?php esc_html_e( 'Topic', 'interlink-engine' ); ?></th>
-						<th class="ie-terms" hidden><?php esc_html_e( 'Search term it targets', 'interlink-engine' ); ?></th>
+						<th class="ie-terms" hidden><?php esc_html_e( 'Main keyword of the post', 'interlink-engine' ); ?></th>
 						<th><?php esc_html_e( 'Publishes', 'interlink-engine' ); ?></th>
 						<th><?php esc_html_e( 'State', 'interlink-engine' ); ?></th>
 						<th></th>
@@ -1660,7 +1660,7 @@ class IE_Admin {
 
 			<?php
 			/**
-			 * The search terms, behind a toggle.
+			 * The main keywords, behind a toggle.
 			 *
 			 * They were the widest column on the screen and, in monospace, the
 			 * most eye-catching — for a value that matters when you are working
@@ -1673,7 +1673,7 @@ class IE_Admin {
 			?>
 			<p style="margin:.5rem 0 0">
 				<button type="button" class="button-link ie-terms-toggle" aria-expanded="false" hidden>
-					<?php esc_html_e( 'Show search terms', 'interlink-engine' ); ?>
+					<?php esc_html_e( 'Show main keywords', 'interlink-engine' ); ?>
 				</button>
 			</p>
 			</details>
@@ -2316,7 +2316,26 @@ class IE_Admin {
 							value="<?php echo esc_attr( $value( 'keyword' ) ); ?>"
 							placeholder="<?php esc_attr_e( 'filled in from the page title — edit if it is wrong', 'interlink-engine' ); ?>">
 						<p class="description">
-							<?php esc_html_e( 'What someone types to find that page. No post will be allowed to compete with it. Leave the town and state out — those are added back automatically.', 'interlink-engine' ); ?>
+							<?php
+							/* THE FIRST SENTENCE WENT, and losing it is the point.
+							 *
+							 * It read "What someone types to find that page" — a
+							 * definition of the word "keyword", under a label that
+							 * already says Keyword. A help text that explains its own
+							 * label teaches nothing and costs a line of attention on
+							 * the busiest screen in the plugin.
+							 *
+							 * What is left is the two things the owner cannot work
+							 * out from the label: that this value will be PROTECTED
+							 * from the posts, and that the town must be left off.
+							 *
+							 * "If this is a local business" added, because the town
+							 * instruction is nonsense on a blog — the same
+							 * trade-machinery-on-a-content-site problem that blog
+							 * mode fixed in the anchors and the topic angles. The
+							 * sentence now says who it is for. */
+							?>
+							<?php esc_html_e( 'No post will be allowed to compete with this term. If this is a local business leave the town and state out — those are added back automatically.', 'interlink-engine' ); ?>
 						</p>
 						<script>
 						/**
@@ -2363,9 +2382,37 @@ class IE_Admin {
 					 * and overrides the dropdown when filled. No JavaScript: the two
 					 * inputs are independent and read_form() prefers the text.
 					 */
+					/* THE FIRST OPTION IS EMPTY, AND THAT IS THE WHOLE FIX.
+					 *
+					 * It used to submit the sentence "get in touch about this
+					 * service". The server has carried a better answer since blog
+					 * mode shipped — suggestTopics.js falls back to "read more
+					 * about [the page] on this site" when no intent is given, and
+					 * only when the site is NOT a local business.
+					 *
+					 * THAT FALLBACK HAS NEVER ONCE RUN. A <select> always submits
+					 * something, the first option was never blank, so
+					 * `targetPage.intent` was never empty and the `||` could not
+					 * reach its right-hand side. Dead code that reads as a feature,
+					 * which is the same shape as the cancel flag that could not be
+					 * sent and the keyword that could not travel.
+					 *
+					 * SO EVERY CAMPAIGN ON A BLOG HAS BEEN TOLD its readers must
+					 * end up wanting to "get in touch about this service" — on a
+					 * site with no service and no phone number. The prompt calls
+					 * that line "the hard constraint" and rejects topics against
+					 * it, so it has been steering every topic set Edwin has
+					 * generated on hilltophomeloans.net.
+					 *
+					 * Empty here, and both fallbacks wake up: a trade gets "use the
+					 * business's [page] service", a blog gets "read more about
+					 * [page] on this site". The label already says "no strong
+					 * preference", which is now true rather than a sentence
+					 * pretending to be none.
+					 */
 					$intent_options = array(
-						'get in touch about this service'
-							=> __( 'Just get in touch about this service — no strong preference', 'interlink-engine' ),
+						''
+							=> __( 'No strong preference — let the page decide', 'interlink-engine' ),
 						'hire a professional for this rather than attempting it themselves'
 							=> __( 'Hire a professional rather than attempt it themselves', 'interlink-engine' ),
 						'have what they already own repaired, rather than replaced'
@@ -2381,7 +2428,7 @@ class IE_Admin {
 					$current = (string) $value( 'intent' );
 					$is_listed = isset( $intent_options[ $current ] );
 					?>
-					<th scope="row"><label for="ie_intent_choice"><?php esc_html_e( 'After reading, the visitor should…', 'interlink-engine' ); ?></label></th>
+					<th scope="row"><label for="ie_intent_choice"><?php esc_html_e( 'Only for local business sites, ignore it for general blogs', 'interlink-engine' ); ?></label></th>
 					<td>
 						<select name="intent_choice" id="ie_intent_choice" class="regular-text">
 							<?php foreach ( $intent_options as $sentence => $label ) : ?>
@@ -2391,7 +2438,25 @@ class IE_Admin {
 							<?php endforeach; ?>
 						</select>
 						<p class="description">
-							<?php esc_html_e( 'Most trades sell one of two nearby things — repair or replacement, diagnosing a problem or fixing it. This stops half your posts recommending the one you do not sell. If none of them is obviously right, leave the first option.', 'interlink-engine' ); ?>
+							<?php
+							/* IT SAYS WHO IT IS FOR NOW, which is the whole edit.
+							 *
+							 * It opened "Most trades sell one of two nearby things"
+							 * and explained the MECHANISM — why the setting exists —
+							 * to an owner who only needs to know whether to touch it.
+							 * On a lending blog the first clause is about somebody
+							 * else's business, and the options below it are a trade
+							 * list, so the honest answer there is "leave it alone".
+							 * The text now says that in as many words.
+							 *
+							 * Same root cause as the descriptive anchor bucket and
+							 * the town-in-titles rule: trade machinery running on a
+							 * content blog. Those two were fixed by asking
+							 * siteKind.js what kind of site it is. This one is fixed
+							 * by telling the owner, which is cheaper and does not
+							 * need the answer to be right. */
+						?>
+						<?php esc_html_e( 'This helps the model tell close intentions apart — “Repair” from “Replacement”, “Hire a professional” from “Get it diagnosed first”. On a general blog, leave the first option.', 'interlink-engine' ); ?>
 						</p>
 
 						<p style="margin-top:1rem">
@@ -2403,7 +2468,7 @@ class IE_Admin {
 								placeholder="<?php esc_attr_e( 'e.g. find out where the leak is before anyone breaks concrete', 'interlink-engine' ); ?>">
 						</p>
 						<p class="description">
-							<?php esc_html_e( 'Only if the list misses your case. Anything here wins over the dropdown. It finishes the sentence “After reading, the visitor should…”, so write an action, not a keyword.', 'interlink-engine' ); ?>
+							<?php esc_html_e( 'Only if the list misses your case. Anything here wins over the dropdown. Write what the reader should end up wanting — an action, not a keyword.', 'interlink-engine' ); ?>
 						</p>
 					</td>
 				</tr>
@@ -2492,7 +2557,7 @@ class IE_Admin {
 						 * missing control is worse than no hint. */
 						if (topics) {
 							topics.setAttribute('placeholder', pillar
-								? <?php echo wp_json_encode( __( 'One per line. Four or five hub topics is usual — the Search query column is yours to fill in.', 'interlink-engine' ) ); ?>
+								? <?php echo wp_json_encode( __( 'One per line. Four or five hub topics is usual — the Main keyword column is yours to fill in.', 'interlink-engine' ) ); ?>
 								: hint);
 						}
 					}
@@ -2557,8 +2622,25 @@ class IE_Admin {
 									title="<?php esc_attr_e( 'Tick or untick every topic', 'interlink-engine' ); ?>">
 							</th>
 							<th style="width:36%"><?php esc_html_e( 'Topic', 'interlink-engine' ); ?></th>
-							<th style="width:19%"><?php esc_html_e( 'Search it should win', 'interlink-engine' ); ?></th>
-							<th style="width:22%"><?php esc_html_e( 'How other posts refer to it', 'interlink-engine' ); ?></th>
+							<?php
+							/* NAMED FOR WHAT THEY ARE, not for what they do.
+							 *
+							 * "Search it should win" described the purpose and
+							 * left the owner to work out that the thing in the
+							 * box is a keyword — the same word used on the
+							 * Target Page field two screens away, and on every
+							 * SEO tool they have ever used. Two names for one
+							 * concept is how a form teaches somebody that it
+							 * has more ideas in it than it really does.
+							 *
+							 * "How other posts refer to it" was accurate and
+							 * read as a description rather than an
+							 * instruction. "Will link to this post" says what
+							 * the value becomes: the blue text in a sentence
+							 * somewhere else. */
+							?>
+							<th style="width:19%"><?php esc_html_e( 'Main keyword of this post', 'interlink-engine' ); ?></th>
+							<th style="width:22%"><?php esc_html_e( 'How other posts will link to this post', 'interlink-engine' ); ?></th>
 							<th style="width:21%"><?php esc_html_e( 'Video (optional)', 'interlink-engine' ); ?></th>
 						</tr>
 					</thead>
@@ -2938,7 +3020,7 @@ class IE_Admin {
 	 *    and this page, and an answer given now beats one given months ago.
 	 *
 	 * 2. WHAT THEY TYPED WHEN THEY BUILT THE PILLAR. A pillar campaign asks
-	 *    "Search it should win" for every post and refuses to plan without it.
+	 *    "Main keyword of this post" for every post and refuses to plan without it.
 	 *    That answer is stamped onto the post at publish, and reading it back
 	 *    here is the whole point of stamping it: the owner should not be asked
 	 *    the same question twice.
@@ -3450,7 +3532,7 @@ class IE_Admin {
 		 * this post could win, without competing with the page it feeds?".
 		 * There is no page here, so the question has no subject.
 		 *
-		 * The owner fills the Search query column instead, and is told so.
+		 * The owner fills the Main keyword column instead, and is told so.
 		 * Without this the plan would be refused by the server with a
 		 * `missing` conflict per topic, which is correct and says nothing
 		 * about what to do about it. */
@@ -3459,8 +3541,8 @@ class IE_Admin {
 				'interlink-engine',
 				'error',
 				sprintf(
-					/* translators: %s: the topics with no search query, comma-separated */
-					__( 'Fill in the Search query column for: %s. A pillar campaign has no target page to work it out from.', 'interlink-engine' ),
+					/* translators: %s: the topics with no main keyword, comma-separated */
+					__( 'Fill in the Main keyword column for: %s. A pillar campaign has no target page to work it out from.', 'interlink-engine' ),
 					implode( ', ', wp_list_pluck( $missing, 'topic' ) )
 				),
 				array( 'tab' => 'new' )

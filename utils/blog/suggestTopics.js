@@ -26,7 +26,7 @@
 //    the single highest-liability category and it is banned outright.
 
 const path = require('path');
-const { isLocalBusiness } = require('./siteKind');
+const { isLocalBusiness, readerIntent } = require('./siteKind');
 const { businessBlock } = require('./businessBlock');
 
 const ANGLES = [
@@ -116,12 +116,11 @@ function getClient(opts) {
 function buildPrompt({ business, targetPage, count, avoid = [], isLocal }) {
   const local = 'boolean' === typeof isLocal ? isLocal : isLocalBusiness(business);
 
-  // Falls back to the page title when no intent sentence is given, which is
-  // weaker steering but better than none.
-  const intent = targetPage.intent
-    || (local
-      ? `use the business's ${targetPage.title} service`
-      : `read more about ${targetPage.title} on this site`);
+  /* Falls back to the page's MAIN KEYWORD when no intent sentence is given.
+   * The decision and both sentences now live in siteKind.js: this file and
+   * enrichTopic.js each wrote them out, and the two copies had already drifted
+   * — enrich carried only the local branch for months. */
+  const intent = readerIntent(targetPage, business, local);
 
   /* THE TOWN ANGLE IS REMOVED, NOT LEFT IN WITH AN EMPTY TOWN.
    *

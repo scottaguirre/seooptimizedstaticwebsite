@@ -73,6 +73,7 @@ for suite in \
   test-generators-parse.js \
   test-suggest-prompt.js \
   test-site-kind.js \
+  test-keyword-coverage.js \
   test-business-shape.js \
   test-business-type-picker.js \
   test-page-meta.js \

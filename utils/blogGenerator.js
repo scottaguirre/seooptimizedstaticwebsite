@@ -59,6 +59,8 @@ const { checkPost, crossCheck, worthRewriting } = require('./blog/qualityCheck')
 // applyLinks is NOT used here — the plugin substitutes tokens, so it can
 // esc_html the prose first. See the note on `rendered` below.
 const { buildLinkPlan } = require('./blog/linkPlan');
+// The URL is cut from the headline the model actually wrote. See renderPayload.
+const { slugify } = require('./blog/planCampaign');
 
 // How many times to call the model for one slot within a run. Most write
 // failures are a timeout or a malformed JSON response, and a second attempt
@@ -111,7 +113,33 @@ function renderPayload(post, slot, targets) {
   return {
     title: post.title,
     metaDescription: post.metaDescription,
-    slug: slot.slug || undefined,
+    /* THE SLUG FOLLOWS THE PUBLISHED HEADLINE, NOT THE TOPIC — 7 October.
+     *
+     * It used to be `slot.slug`, cut at PLAN time from the topic the owner
+     * ticked. The title is written at WRITE time, by the model, hours or days
+     * later, and nothing reconciled them. Found on a live post of Edwin's:
+     *
+     *   topic  Conditional Approval Can Still Leave a Business Loan Unfunded
+     *   title  Conditional Approval for a Business Loan: What the Meaning Is
+     *          Before Funding
+     *   url    /conditional-approval-can-still-leave-a-business-loan-unfunded/
+     *
+     * Two different headlines for one post, and the URL — the part a person
+     * reads before clicking and the part that can never be changed afterwards
+     * — recorded the one nobody published. Its neighbour was worse: the slug
+     * dropped "business loan" entirely, so the post's own keyword was absent
+     * from its address.
+     *
+     * THE FORWARD LINKS DO NOT DEPEND ON THIS, which is what makes the move
+     * safe. A post links to siblings that may not exist yet, so a plan-time
+     * slug looks load-bearing — but linkPlan.js already builds every URL from
+     * the one WORDPRESS ASSIGNED, precisely because WordPress appends -2 to a
+     * slug already in use. Nothing downstream ever trusted the requested one.
+     *
+     * FALLS BACK TO THE PLAN SLUG for a post whose title somehow slugifies to
+     * nothing — all punctuation, say. An empty post_name makes WordPress
+     * invent one from the post id, which is the worst URL available. */
+    slug: slugify(post.title) || slot.slug || undefined,
     sections: (post.sections || []).map(section => ({
       heading: section.heading || null,
       paragraphs: (section.paragraphs || []).slice(),

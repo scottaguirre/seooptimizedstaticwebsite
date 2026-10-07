@@ -785,6 +785,61 @@ if (!generator) {
       assert.strictEqual(payload.targets.money.url, TARGET.url);
     });
   });
+
+  test('THE SLUG COMES FROM THE PUBLISHED TITLE, NOT THE TOPIC', () => {
+    /* Found on a live post of Edwin's, 7 October:
+     *
+     *   topic  Conditional Approval Can Still Leave a Business Loan Unfunded
+     *   title  Conditional Approval for a Business Loan: What the Meaning Is
+     *          Before Funding
+     *   url    /conditional-approval-can-still-leave-a-business-loan-unfunded/
+     *
+     * Two headlines for one post, and the URL — the part a reader sees before
+     * clicking, and the part that cannot be changed afterwards — recorded the
+     * one nobody published. The slot's slug is cut at PLAN time from the topic
+     * the owner ticked; the title is written hours later, by the model.
+     *
+     * BOTH HALVES ARE ASSERTED. A check that only looked for the title's words
+     * would also pass on a slug that had merely grown longer.
+     *
+     * THE SLOT IS THE CAMPAIGN'S OWN, NOT buildLinkPlan's. My first version of
+     * this test passed the one buildLinkPlan returns, and that object has no
+     * `slug` AT ALL — it is reshaped down to ten fields for the writer. So the
+     * assertion that the new slug differs from the old one compared against
+     * `undefined` and could never have failed, and the fallback test below
+     * reported the fixture as broken, which is how this was found.
+     *
+     * writeOneSlot({ campaign, slot }) receives the stored slot, which is the
+     * one carrying the plan-time slug — and that is why the live URLs were
+     * topic-shaped rather than empty. */
+    const campaign = pillarCampaign(pillarPlan);
+    const { targets } = buildLinkPlan(campaign, 1);
+    const slot = campaign.slots[1];
+
+    assert.ok(slot.slug, 'the stored slot has no slug — this fixture proves nothing');
+
+    const payload = generator.renderPayload({
+      ...pillarPost,
+      title: 'Conditional Approval for a Business Loan: What the Meaning Is Before Funding',
+    }, slot, targets);
+
+    assert.match(payload.slug, /^conditional-approval-for-a-business-loan-what-the-meaning/);
+    assert.notStrictEqual(payload.slug, slot.slug,
+      'the payload still carries the plan-time slug');
+  });
+
+  test('a title that slugifies to nothing keeps the plan slug', () => {
+    /* An empty post_name makes WordPress invent one from the post id, which is
+     * the worst URL on offer. Unlikely, and the fallback costs one `||`. */
+    const campaign = pillarCampaign(pillarPlan);
+    const { targets } = buildLinkPlan(campaign, 1);
+    const slot = campaign.slots[1];
+
+    const payload = generator.renderPayload({ ...pillarPost, title: '—  ―' }, slot, targets);
+
+    assert.ok(slot.slug, 'the stored slot has no slug — this fixture proves nothing');
+    assert.strictEqual(payload.slug, slot.slug);
+  });
 }
 
 /* ===================================================================== */

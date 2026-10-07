@@ -626,7 +626,7 @@ test( 'the search-term column starts hidden', function () {
 	$GLOBALS['ie_campaigns'] = array( campaign( 'c1', 'x', array( slot( 0, 'scheduled', 3 ) ), true ) );
 	$html = render( 'running' );
 	has( $html, 'class="ie-terms" hidden', 'the terms column is not hidden' );
-	has( $html, 'Show search terms', 'no toggle to bring it back' );
+	has( $html, 'Show main keywords', 'no toggle to bring it back' );
 } );
 
 /* ---------------------------------------------------------------------
@@ -2290,7 +2290,7 @@ test( 'THE APPROVE BUTTON ASKS PERMISSION TO SPEND, and nothing else does', func
 /* ---------------------------------------------------------------------
  * The keyword a pillar was planned to win — 6 October
  *
- * The owner types "Search it should win" for every topic in a pillar campaign,
+ * The owner types "Main keyword of this post" for every topic in a pillar campaign,
  * and the form refuses to plan one without it. Publishing now stamps that
  * answer onto the post, so the campaign that later AIMS at the pillar can read
  * it instead of guessing from the headline.
@@ -2473,6 +2473,181 @@ function ie_draft_topics( $rows ) {
 		'warnings' => array(),
 	);
 }
+
+test( 'THE FIRST INTENT OPTION SUBMITS NOTHING', function () {
+	/* THE WHOLE FIX, and it is one character of real change.
+	 *
+	 * The first option used to carry the sentence "get in touch about this
+	 * service". A <select> always submits something, so targetPage.intent was
+	 * NEVER empty — and both of the server's fallbacks sit behind `||`, so
+	 * neither had ever run. suggestTopics.js has carried a blog-specific
+	 * answer since blog mode shipped and it was unreachable code that read as
+	 * a feature.
+	 *
+	 * Every campaign on a content blog was therefore told its readers must end
+	 * up wanting to "get in touch about this service", on a site with no
+	 * service. The prompt calls that line the hard constraint and rejects
+	 * topics against it.
+	 *
+	 * ASSERTED ON THE VALUE, not the label. A label saying "no preference"
+	 * above an option that submits a sentence is exactly the bug. */
+	$GLOBALS['ie_campaigns'] = array();
+
+	$html = render( 'new' );
+
+	$start = strpos( $html, 'id="ie_intent_choice"' );
+	ok( false !== $start, 'the intent dropdown is gone' );
+
+	$select = substr( $html, $start, strpos( $html, '</select>', $start ) - $start );
+
+	has( $select, 'value=""', 'the first option still submits a sentence' );
+	hasnt( $select, 'value="get in touch about this service"',
+		'the old sentence is still being submitted' );
+
+	// The other options must survive — this is an empty FIRST option, not an
+	// emptied list.
+	has( $select, 'value="have what they already own repaired, rather than replaced"',
+		'the real choices were lost with the default' );
+} );
+
+test( 'THE INTENT HELP TEXT SAYS WHO IT IS FOR', function () {
+	/* It opened "Most trades sell one of two nearby things" and then explained
+	 * the MECHANISM — why the setting exists — to an owner who only needs to
+	 * know whether to touch it.
+	 *
+	 * On a lending blog that first clause is about somebody else's business,
+	 * and the options under it are a trade list (repair / replace / diagnose),
+	 * so the honest answer there is "leave it alone". Edwin read it on
+	 * hilltophomeloans.net and left the first option, correctly, without the
+	 * screen ever telling him that was right.
+	 *
+	 * Same root cause as the descriptive anchor bucket and the town-in-titles
+	 * rule: trade machinery running on a content blog. */
+	$GLOBALS['ie_campaigns'] = array();
+
+	$html = render( 'new' );
+
+	hasnt( $html, 'Most trades sell one of two nearby things',
+		'the help text still opens on somebody else\'s business' );
+	has( $html, 'Only for local business sites, ignore it for general blogs',
+		'the LABEL no longer says who the setting is for' );
+	has( $html, 'tell close intentions apart',
+		'the help text no longer says what the setting does' );
+	has( $html, 'On a general blog, leave the first option',
+		'a blog owner is still not told what to do' );
+
+	/* THE LABEL IS QUOTED BY THE HELP TEXT UNDER THE FREE-TEXT BOX, which used
+	 * to read: It finishes the sentence "After reading, the visitor should…".
+	 * Renaming the label and leaving that behind would point the owner at a
+	 * sentence that is no longer anywhere on the screen — the same failure as
+	 * the refusal naming a renamed column, one screen up. */
+	hasnt( $html, 'After reading, the visitor should',
+		'the free-text help still quotes a label that no longer exists' );
+	has( $html, 'Write what the reader should end up wanting',
+		'the free-text box lost its instruction entirely' );
+} );
+
+test( 'THE KEYWORD HELP TEXT DOES NOT DEFINE ITS OWN LABEL', function () {
+	/* "What someone types to find that page" sat under a label that already
+	 * says Keyword. A help text explaining its own label teaches nothing and
+	 * costs a line of attention on the busiest screen in the plugin.
+	 *
+	 * What is left is the two facts the label cannot carry: the term is
+	 * PROTECTED from the posts, and the town is added back automatically.
+	 *
+	 * "If this is a local business" is in there because the town instruction
+	 * is nonsense on a blog — the trade-machinery-on-a-content-site problem
+	 * blog mode fixed in the anchors and the topic angles, surfacing in the
+	 * help text. The sentence now says who it is for. */
+	$GLOBALS['ie_campaigns'] = array();
+
+	$html = render( 'new' );
+
+	hasnt( $html, 'What someone types to find that page',
+		'the help text still defines the word above it' );
+	has( $html, 'No post will be allowed to compete with this term',
+		'the protection rule is gone — the one thing the label cannot say' );
+	has( $html, 'If this is a local business',
+		'the town instruction no longer says who it applies to' );
+} );
+
+test( 'THE CAMPAIGN CARD CALLS THE KEYWORD BY ITS NAME TOO', function () {
+	/* ONE VALUE, THREE SCREENS, AND THEY HAD THREE NAMES FOR IT.
+	 *
+	 * The campaign card's hidden column rendered $slot['target_query'] under
+	 * the heading "Search term it targets", while the form that CREATED that
+	 * value called it "Search it should win" and the target-page field two
+	 * screens away called it a keyword. Edwin asked whether they were the same
+	 * thing — twice, about two different pairs of these names — which is the
+	 * clearest evidence a screen can give that its vocabulary is the problem.
+	 *
+	 * THE TOGGLE IS RENAMED WITH IT. It is the control that reveals this exact
+	 * column; leaving it saying "Show search terms" above a column headed
+	 * "Main keyword of the post" is the same half-rename the refusal message
+	 * made an hour earlier. */
+	$GLOBALS['ie_campaigns'] = array(
+		campaign( 'c1', 'Water heater repair', array( slot( 0, 'scheduled' ) ), true ),
+	);
+
+	$html = render();
+
+	has( $html, 'Main keyword of the post', 'the card still calls it a search term' );
+	hasnt( $html, 'Search term it targets', 'the old column heading is still there' );
+
+	has( $html, 'Show main keywords', 'the toggle still names the old column' );
+	hasnt( $html, 'Show search terms', 'the old toggle label is still on the screen' );
+} );
+
+test( 'THE TOPIC COLUMNS ARE NAMED FOR WHAT THEY HOLD', function () {
+	/* RENAMED 6 OCTOBER, at Edwin's request, and nothing asserted the old
+	 * names either — which is why this case exists rather than just the edit.
+	 *
+	 * "Search it should win" described the column's PURPOSE and left the owner
+	 * to work out that the thing in the box is a keyword: the same word used
+	 * on the Target Page field two screens away, and the word every SEO tool
+	 * they have ever opened uses. Two names for one concept teaches somebody
+	 * that a form has more ideas in it than it really does.
+	 *
+	 * "How other posts refer to it" read as a description. "Will link to this
+	 * post" says what the value BECOMES — the blue text in somebody else's
+	 * sentence.
+	 *
+	 * THE OLD NAMES ARE ASSERTED ABSENT, not merely the new ones present. A
+	 * rename that adds a column and forgets to remove one passes a
+	 * presence-only check, and this screen has had that exact failure before. */
+	ie_draft_topics( array(
+		array( 'topic' => 'One', 'targetQuery' => 'one query here', 'linkPhrase' => 'one' ),
+	) );
+
+	$html = render( 'new' );
+
+	has( $html, 'Main keyword of this post', 'the keyword column lost its name' );
+	has( $html, 'How other posts will link to this post', 'the link-phrase column lost its name' );
+
+	hasnt( $html, 'Search it should win', 'the old column name is still on the screen' );
+	hasnt( $html, 'How other posts refer to it', 'the old link-phrase name is still on the screen' );
+
+	$GLOBALS['ie_transient'] = false;
+} );
+
+test( 'EVERY SENTENCE THAT POINTS AT THAT COLUMN USES ITS NAME', function () {
+	/* The rename is only done when the things that NAME the column agree with
+	 * it. A pillar campaign planned without a keyword is refused with a
+	 * sentence telling the owner which column to fill in — and that sentence
+	 * said "Search query column", which after the rename names nothing on the
+	 * screen. An instruction pointing at a column that does not exist is worse
+	 * than the old label was.
+	 *
+	 * Read from the source rather than rendered, because the refusal only
+	 * appears on a redirect after a failed plan and the placeholder only when
+	 * the pillar box is ticked. */
+	$admin = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-admin.php' );
+
+	hasnt( $admin, 'Search query column',
+		'a sentence still sends the owner to a column name that no longer exists' );
+	has( $admin, 'Fill in the Main keyword column for:',
+		'the refusal no longer names the column' );
+} );
 
 test( 'THE TOPICS TABLE HAS A TICK-ALL BOX', function () {
 	ie_draft_topics( array(

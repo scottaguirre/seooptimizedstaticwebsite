@@ -135,5 +135,227 @@ test("A SITE WITH A TOWN STILL GETS THE LOCAL ANGLE", () => {
   assert.match(prompt, /spread the 12 topics across at least 4 of them/);
 });
 
+/* ---------------------------------------------------------------------
+ * The intent fallbacks, which had never run — 6 October
+ *
+ * Both prompts fall back to a sentence when no intent is given, and
+ * suggestTopics.js splits that fallback by site kind: a trade is told the
+ * reader should "use the business's X service", a blog "understand X well
+ * enough to decide what to do next".
+ *
+ * NEITHER BRANCH HAD EVER EXECUTED. The plugin's intent dropdown is a
+ * <select>, a <select> always submits something, and its first option carried
+ * the sentence "get in touch about this service" — so targetPage.intent was
+ * never empty and the `||` could not reach its right-hand side.
+ *
+ * Every campaign on a content blog was therefore told its readers must end up
+ * wanting to get in touch about a service that does not exist. The prompt
+ * calls that line "the hard constraint" and rejects topics against it.
+ *
+ * Plugin 0.33.0 made the first option empty. These cases are what makes that
+ * mean something.
+ * ------------------------------------------------------------------ */
+
+const { buildPrompt: enrichPrompt } = require('./utils/blog/enrichTopic');
+const { buildContext } = require('./utils/blog/context');
+
+/* BUILT THROUGH buildContext, not hand-written.
+ *
+ * My first attempt passed a bare { name } and enrichTopic died on
+ * `business.services.join(', ')`. That was the FIXTURE being wrong, not the
+ * code — context.js guarantees services is always an array, and says so in a
+ * comment naming this exact crash. A hand-made fixture that cannot occur in
+ * production proves nothing about production, which is the lesson
+ * seed_campaign() taught in test-ie-pause.js the same week. */
+/* THE TITLE AND THE KEYWORD MUST NOT BE THE SAME WORDS — changed 7 October.
+ *
+ * This fixture read `title: 'Fixed vs Variable Loan Terms'` beside
+ * `keyword: 'fixed vs variable loan terms'` — identical but for capitals. So
+ * every assertion below passed whichever of the two the fallback had actually
+ * read, and the suite could not have told you which. A fixture whose two
+ * fields carry one value cannot test which field is used.
+ *
+ * These are Edwin's real pillar and its real keyword. They share only the
+ * words "business loan". */
+const PAGE = {
+  title: 'How to Qualify for a Business Loan After Bankruptcy',
+  keyword: 'business loan with bankruptcy record',
+  url: 'https://x/',
+};
+
+function ctxFor(business, intent = '', page = PAGE) {
+  return buildContext(business, { ...page, intent });
+}
+
+const BLOG = { name: 'Hilltop Home Loans' };
+const TRADE = { name: 'Hill Country Plumbing', type: 'plumber', location: 'Leander, TX' };
+
+test('A BLOG WITH NO INTENT IS NOT TOLD TO SELL A SERVICE', () => {
+  /* THE BUG, as it reached Edwin. "use the business's X service" on a lending
+   * blog with no service and no phone number. */
+  const prompt = buildPrompt({ ...ctxFor(BLOG), count: 5 });
+
+  assert.match(prompt, /understand business loan with bankruptcy record well enough to decide what to do next/,
+    'the blog fallback still does not fire');
+  assert.doesNotMatch(prompt, /use the business's/,
+    'a blog is still told its readers must use a service');
+});
+
+test('THE FALLBACK IS BUILT FROM THE KEYWORD, NOT THE HEADLINE', () => {
+  /* Edwin, 7 October. It used to read targetPage.title, so the hard
+   * constraint came out as "understand How to Qualify for a Business Loan
+   * After Bankruptcy well enough to…" — fourteen words of headline doing the
+   * work of one instruction.
+   *
+   * The keyword is the same page in a searcher's words, and it is the field
+   * the owner cannot leave vague. Asserting the headline ABSENT is the half
+   * that matters: a check that only looked for the keyword would pass while
+   * the title was still being pasted in beside it. */
+  const prompt = buildPrompt({ ...ctxFor(BLOG), count: 5 });
+  const constraint = prompt.split('THE READER MUST END UP WANTING THIS')[1].slice(0, 200);
+
+  assert.match(constraint, /business loan with bankruptcy record/,
+    'the keyword is not in the constraint');
+  assert.doesNotMatch(constraint, /How to Qualify for a Business Loan After Bankruptcy/,
+    'the constraint is still built from the page headline');
+});
+
+test('a trade with no intent still gets the service sentence', () => {
+  /* The other branch, which must not be lost to the fix for the first. */
+  const prompt = buildPrompt({ ...ctxFor(TRADE), count: 5 });
+
+  assert.match(prompt, /use the business's business loan with bankruptcy record service/,
+    'the trade fallback was traded away for the blog one');
+});
+
+test('NO KEYWORD FALLS BACK TO THE TITLE, for a page stored before the box existed', () => {
+  /* Weaker steering beats none. Every target page planned since 0.31.0 carries
+   * a keyword; the ones planned before it do not, and they must not produce
+   * "understand  well enough to decide…" with a hole where the subject
+   * goes. */
+  const older = { title: 'How to Qualify for a Business Loan After Bankruptcy', url: 'https://x/' };
+  const prompt = buildPrompt({ ...ctxFor(BLOG, '', older), count: 5 });
+
+  assert.match(prompt, /understand How to Qualify for a Business Loan After Bankruptcy well enough to decide/,
+    'a page with no keyword lost its subject entirely');
+});
+
+test('AN EXPLICIT isLocal OVERRIDES THE BUSINESS, in both directions', () => {
+  /* FOUND BY A SURVIVING MUTATION, not by reading. Dropping the override from
+   * readerIntent and always re-deriving from the business passed every test
+   * above, because not one of them passed an isLocal that DISAGREED with the
+   * business it sat beside. A parameter whose whole purpose is to disagree
+   * cannot be tested by callers who agree with it.
+   *
+   * It is checked by TYPE, not for truthiness: a caller that omits it must
+   * fall through to the business, and `undefined` read as `false` would put
+   * every plumber on the blog sentence. Both directions are asserted, because
+   * a one-way test passes on a function that ignores the value and answers
+   * the same thing twice. */
+  const blogAsLocal = buildPrompt({ ...ctxFor(BLOG), count: 5, isLocal: true });
+  const tradeAsBlog = buildPrompt({ ...ctxFor(TRADE), count: 5, isLocal: false });
+
+  assert.match(blogAsLocal, /use the business's business loan with bankruptcy record service/,
+    'isLocal: true was ignored on a site with no trade');
+  assert.match(tradeAsBlog, /understand business loan with bankruptcy record well enough to decide what to do next/,
+    'isLocal: false was ignored on a site with a trade');
+});
+
+test('A TYPED INTENT STILL WINS OVER BOTH', () => {
+  /* The owner's own words are the whole point of the free-text box. A fallback
+   * that overrode them would be worse than the dead one it replaces.
+   *
+   * THE ABSENCE ASSERTION NAMES THE CURRENT SENTENCE, and that is not a
+   * detail. It used to read /read more about/ — the wording the blog fallback
+   * had on 6 October. Changing that sentence on 7 October left this line
+   * looking for a string nothing emits any more, so it would have passed
+   * while the fallback fired straight over a typed intent. An absence
+   * assertion decays the moment the thing it names is renamed, silently, in
+   * the direction of passing. */
+  const prompt = buildPrompt({ ...ctxFor(BLOG, 'book a call with an adviser'), count: 5 });
+
+  assert.match(prompt, /book a call with an adviser/, 'the typed intent was ignored');
+  assert.doesNotMatch(prompt, /well enough to decide what to do next/,
+    'a fallback fired over a real answer');
+});
+
+test('ENRICH BRANCHES THE SAME WAY — it did not until today', () => {
+  /* TWO FUNCTIONS ANSWERING ONE QUESTION, and only one had been corrected.
+   * suggestTopics.js grew the non-local branch when blog mode shipped;
+   * enrichTopic.js kept the trade-only line, and nobody noticed because
+   * neither fallback could run.
+   *
+   * Reached on a silo campaign with TYPED topics, which is exactly how Edwin
+   * plans them. */
+  const blog = enrichPrompt({
+    ...ctxFor(BLOG),
+    topics: ['What a rate change notice tells you'],
+  });
+
+  assert.match(blog, /understand business loan with bankruptcy record well enough to decide what to do next/,
+    'enrich still tells a blog to sell a service');
+
+  const trade = enrichPrompt({
+    ...ctxFor(TRADE),
+    topics: ['What a rate change notice tells you'],
+  });
+
+  assert.match(trade, /use the business's business loan with bankruptcy record service/,
+    'enrich lost the trade branch');
+});
+
+test('ONE FUNCTION, SO THE TWO PROMPTS CANNOT DIFFER BY A WORD', () => {
+  /* The pair drifted once already: enrich carried only the local branch for
+   * months while suggestTopics had both, and nothing could see it because
+   * neither fallback could run.
+   *
+   * ASKED OF THE SENTENCE, NOT OF THE IMPORT. A test that grepped for
+   * `require('./siteKind')` would pass on a file that imported the function
+   * and then went on using its own copy. This asks readerIntent what the
+   * sentence is and then requires BOTH prompts to contain that exact string.
+   *
+   * THE WRAPPERS AROUND IT ARE ALLOWED TO DIFFER, and they do — enrich says
+   * "The reader should end up wanting to: X" while suggestTopics prints X
+   * under a heading. My first version of this test compared the whole line
+   * and went red on that difference, which would have been a test demanding
+   * the two prompts be the same prompt. What has to match is X. */
+  const { readerIntent } = require('./utils/blog/siteKind');
+
+  for (const business of [BLOG, TRADE]) {
+    const expected = readerIntent(PAGE, business);
+
+    const fromSuggest = buildPrompt({ ...ctxFor(business), count: 5 });
+    const fromEnrich = enrichPrompt({
+      ...ctxFor(business),
+      topics: ['What a rate change notice tells you'],
+    });
+
+    assert.ok(expected.includes('bankruptcy record'),
+      'the fixture stopped exercising the keyword path');
+    assert.ok(fromSuggest.includes(expected),
+      `suggestTopics does not carry the shared sentence for ${business.name}`);
+    assert.ok(fromEnrich.includes(expected),
+      `enrichTopic does not carry the shared sentence for ${business.name}`);
+  }
+});
+
+test('AND ENRICH STILL LETS A TYPED INTENT WIN', () => {
+  /* THE MUTATION THAT SURVIVED THE FIRST RUN. Dropping `targetPage.intent ||`
+   * from enrich makes the fallback fire over the owner's own words, and the
+   * three cases above all still passed — because every one of them left the
+   * intent blank, which is exactly the state the fallback is for.
+   *
+   * A test that only exercises the branch it is about cannot see a change that
+   * removes the branching. */
+  const prompt = enrichPrompt({
+    ...ctxFor(BLOG, 'book a call with an adviser'),
+    topics: ['What a rate change notice tells you'],
+  });
+
+  assert.match(prompt, /book a call with an adviser/, 'enrich ignored the typed intent');
+  assert.doesNotMatch(prompt, /well enough to decide what to do next/,
+    'a fallback fired over a real answer');
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

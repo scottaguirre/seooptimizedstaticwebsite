@@ -48,7 +48,7 @@ class IE_Settings {
 	/**
 	 * THE SEARCH PHRASE THIS PILLAR WAS BUILT TO WIN.
 	 *
-	 * The owner already typed it, in "Search it should win", when they planned
+	 * The owner already typed it, in "Main keyword of this post", when they planned
 	 * the pillar campaign — and the form REFUSES to plan one without it. It is
 	 * stored on the campaign slot, used to write the post, and until now was
 	 * dropped on the floor the moment the post published.

@@ -11,6 +11,11 @@
 //
 // Pure: no I/O, no model. Same input, same verdict.
 
+/* The post's own keyword rule, shared with the prompt that asks for it.
+ * keywordCoverage.js requires nothing itself, so this file is still loadable
+ * in a unit test — which is the property that let REWRITE_WORTHY move here. */
+const { keywordCoverage } = require('./keywordCoverage');
+
 /* -------------------------------------------------------------------------
  * Phrases that mark filler
  * -------------------------------------------------------------------------
@@ -160,6 +165,30 @@ const FILLER = [
      * by no test. */
     'no-meta',
     'no-title',
+
+    /* THE KEYWORD RULE IS A DROPPED INSTRUCTION, NOT A DISAGREEMENT — added
+     * 7 October, with the rule itself.
+     *
+     * The line between this set and the faults left out of it is whether a
+     * different roll of the dice plausibly fixes the post. Filler and
+     * vagueness are left out because the model answered the question badly
+     * and will answer it the same way again at twice the cost. This is the
+     * other kind: buildPrompt now NAMES the words and the three places they
+     * must appear, so a post arriving without them ignored a specific
+     * instruction — the same shape as dropping the metaDescription key.
+     *
+     * Edwin's words on the body count, 7 October: "a post that never mentions
+     * it in the body fails and gets rewritten." A retry is what he asked for.
+     *
+     * WHAT MAKES THIS SAFE TO RETRY is that the rule cannot be unsatisfiable.
+     * The anchor phrases are stripped before the body is counted, so two
+     * mandatory links carrying the keyword can no longer collide with a
+     * ceiling of one — which would have been a failure no rewrite could clear,
+     * turning one model call into three for nothing. See stripAnchors(). */
+    'keyword-title',
+    'keyword-meta',
+    'keyword-heading',
+    'keyword-body',
   ]);
 
   function worthRewriting(quality) {
@@ -217,7 +246,42 @@ const FILLER = [
   
     const headings = (post.sections || []).filter(s => s.heading).length;
     if (headings < 2) warnings.push(`only ${headings} subheading(s)`);
-  
+
+    // --- the post's own keyword ---------------------------------------------
+
+    /* Edwin's rule, 6-7 October: the keyword INCLUDED in the title tag, the
+     * meta description, the H1 and at least one H2, and in the body exactly
+     * once. The rule itself lives in keywordCoverage.js, which writePost.js
+     * reads to build the instruction — so what is asked for and what is
+     * enforced cannot drift apart.
+     *
+     * ONLY WHEN A KEYWORD WAS ASKED FOR. buildPrompt omits the whole keyword
+     * block when a slot has no targetQuery, so a post written without one was
+     * never told about any of this and refusing it would be punishing a post
+     * for a question nobody put to it. Every campaign built since 0.31.0
+     * carries one; posts planned before it do not.
+     *
+     * THE BODY IS THE PARAGRAPHS ONLY, NOT textOf(). textOf joins headings
+     * and paragraphs together, and the rule REQUIRES the keyword in a
+     * heading — so counting that text as body would hand every obedient post
+     * a second mention and fail it for complying. The two halves of this rule
+     * pull in opposite directions on the same string, which is precisely why
+     * the split is spelled out here instead of reusing the helper. */
+    const keyword = String(slot.targetQuery || '').trim();
+
+    if (keyword) {
+      const cover = keywordCoverage(keyword, {
+        title: post.title,
+        metaDescription: meta,
+        headings: (post.sections || []).map(s => s.heading).filter(Boolean),
+        body: (post.sections || []).flatMap(s => s.paragraphs || []).join('\n'),
+      });
+
+      cover.failures.forEach((message, i) => {
+        fail(cover.codes[i], `keyword "${keyword}": ${message}`);
+      });
+    }
+
     // --- required links -----------------------------------------------------
   
     if (slot.money && !text.includes(`{{money}}${slot.money.anchor}{{/money}}`)) {
@@ -469,6 +533,20 @@ const FILLER = [
     replacement: /\b(repair\w*|fix\w*|patch\w*)\b/i,
   };
   
+  /* a / an / the, and nothing else. See the subject exemption below for why
+   * the list stops there. */
+  const ARTICLES = new Set(['a', 'an', 'the']);
+
+  /** A repeated phrase with its outer articles removed. */
+  function withoutOuterArticles(phrase) {
+    const words = String(phrase || '').toLowerCase().split(/\s+/).filter(Boolean);
+
+    while (words.length && ARTICLES.has(words[0])) words.shift();
+    while (words.length && ARTICLES.has(words[words.length - 1])) words.pop();
+
+    return words.join(' ');
+  }
+
   function intentKey(targetPage = {}) {
     const hay = `${targetPage.title || ''} ${targetPage.keyword || ''}`.toLowerCase();
     for (const key of Object.keys(INTENT_DRIFT)) {
@@ -554,14 +632,40 @@ const FILLER = [
       }
     }
   
-    // The subject itself is not a template. Every post in a water heater
-    // campaign says "water heater"; flagging that is noise, and noise is how a
-    // check gets ignored. Anything contained in the target keyword is expected.
+    /* The subject itself is not a template. Every post in a water heater
+     * campaign says "water heater"; flagging that is noise, and noise is how a
+     * check gets ignored. Anything contained in the target keyword is expected.
+     *
+     * AN ARTICLE USED TO BREAK THAT EXEMPTION — fixed 7 October, from a live
+     * warning Edwin read on screen:
+     *
+     *     "a business" appears in 7 of 12 titles — it reads as a template
+     *
+     * against a target keyword of "business loan with bankruptcy record". The
+     * phrase flagged was the subject with the word "a" stuck to the front, and
+     * the test is a raw substring match, so `"business loan with bankruptcy
+     * record".includes("a business")` is false and the exemption missed it.
+     * "business loan" on its own was exempt the whole time.
+     *
+     * ONLY THE OUTER ARTICLES COME OFF, and only a/an/the. Stripping leading
+     * PREPOSITIONS as well would have been the obvious generalisation and it
+     * would have broken the case this check was written for: a model told the
+     * business is in Leander appends "in Leander" to every headline, and a
+     * keyword of "water heater repair" does not contain "leander" — but strip
+     * the "in" and it does not contain "leander" either, so that one survives.
+     * It is "for a business" and "of the loan" that the narrow rule leaves
+     * flagged, and those are templates. */
     const subject = String(targetPage.keyword || '').toLowerCase();
-  
+
+    const isSubject = (phrase) => {
+      if (subject.includes(phrase)) return true;
+      const bare = withoutOuterArticles(phrase);
+      return !!bare && subject.includes(bare);
+    };
+
     const limit = Math.max(2, Math.ceil(topics.length / 2));
     const repeated = [...phraseCounts.entries()]
-      .filter(([phrase]) => !subject.includes(phrase))
+      .filter(([phrase]) => !isSubject(phrase))
       .filter(([, n]) => n > limit)
       .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length);
   
@@ -616,3 +720,4 @@ const FILLER = [
   }
   
   module.exports.checkTopicSet = checkTopicSet;
+  module.exports.withoutOuterArticles = withoutOuterArticles;

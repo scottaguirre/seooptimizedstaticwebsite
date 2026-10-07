@@ -1889,6 +1889,26 @@ is not a test, and running it once against a deliberate break is the only way
 to know which kind you have.
 
 
+*~~Watch one new campaign reach `active`.~~* — **CLOSED 6 October. The fix
+works.**
+
+Edwin exported the CSV for a five-post campaign written that day and every row
+read `campaign_status: active`, with `campaign_approved_date` populated. The
+campaign had written and scheduled its posts and published none of them, which
+is exactly the state that used to be recorded as `draft`.
+
+**It took eight days to check because the screen could not answer it.** The
+report's Campaign status filter folds `draft`, `writing` and `active` into one
+bucket labelled "In progress" — a reasonable choice for a customer asking
+"what is still going?", and it happens to hide the one word that settled this.
+Only the CSV carries the raw value. **When a fix can only be confirmed by a
+field no screen displays, say which file to open, not which page to look at.**
+
+The old note is kept below, because the reasoning about why the earlier
+evidence proved nothing is worth more than the conclusion.
+
+---
+
 *Watch one new campaign reach `active`.* **The generator fix has never been
 observed doing the thing it fixes.**
 
@@ -2283,6 +2303,40 @@ page's own layout.
 `${appHeaderAssets()}`. There is a test listing every such page.
 
 ## Deliberately dropped — do not re-propose
+
+**Pluralising the owner's typed keyword.** Ruled on 6 October: *"no to this."*
+
+His pillar keyword "business loan for minorities" produced
+"understanding business loan for minorities" — a singular count noun with no
+article, and all six semantic anchors come out slightly off. Measured: with
+"business loans for minorities" every one is clean, plural verb agreement
+included. `anchorPool.js` already has `pluralise()`, `headNoun()` and
+`takesPluralVerb()`, so the change would have been small.
+
+**Declined, and the reason is sound: the keyword box is the owner's.** They
+typed it, and sometimes the singular IS the search phrase. Overriding a field
+whose entire purpose is "say what you actually want" to fix grammar in a
+generated anchor is the wrong trade — it makes the box lie about what it does,
+which is the same failure the 0.31.0 work was about in the other direction.
+
+The fix stays where it belongs: type it plural if you want plural anchors.
+
+---
+
+**A cannibalisation check between topics in a set.** Ruled on 6 October:
+*"no to these."*
+
+`qualityCheck.js` `checkTopicSet()` warns on phrases repeated across TITLES and
+on each query's shape, but never compares the `targetQuery` values to each
+other. Edwin planned a set with two topics aiming at "business loan denied bank
+statements" and "business loan bank statements" and dropped one by eye.
+
+**Declined.** The topics table is right there on the screen before anything is
+spent, the person planning the campaign is the one who knows whether two
+queries really compete, and a warning that fires on legitimate near-neighbours
+is noise on the one screen that must not be noisy.
+
+---
 
 **No check stops a campaign being pointed at the blog page.** Ruled on
 30 September: *"forget about it."*
@@ -2758,6 +2812,325 @@ bug does not bite — an example chosen from those argues for the wrong thing.
 Checked by running `bucketCounts(9)` rather than by hand, which is how the
 previous version got it wrong.
 
+## An article broke the subject exemption — 7 October 2026 (server)
+
+Edwin, reading the warning banner on the campaign form:
+
+    "a business" appears in 7 of 12 titles — it reads as a template
+
+against a target keyword of `business loan with bankruptcy record`. The flagged
+phrase is **the subject with the word "a" stuck to the front.** The exemption in
+`checkTopicSet` is a raw substring match, and that keyword does not contain the
+string "a business" — while "business loan" on its own was exempt the whole
+time. That is what makes it a bug rather than a judgement call.
+
+Reproduced against the old code before changing anything: same sentence, same
+7 of 12.
+
+**Only the outer articles come off, and only a / an / the.** Stripping leading
+PREPOSITIONS as well was the obvious generalisation and it would have broken
+the case this check exists for: a model told the business is in Leander appends
+"in Leander" to every headline, and a keyword of "water heater repair" does not
+contain "leander" either — so that warning would have gone quiet alongside the
+real fix. "for a business" and "of the loan" stay flagged, and those are
+templates.
+
+### checkTopicSet had no tests at all
+
+Not one, in any file — and it is the function whose warnings sit at the top of
+the campaign form, the only quality signal an owner reads **before spending
+anything**. It now has five, including the live case and the Leander regression
+that the narrow rule is narrow to protect.
+
+Five mutations, four caught. **The survivor is documented rather than patched**:
+removing the `!!bare` guard needs a repeated n-gram made entirely of articles
+("the a") in half of one campaign's titles to bite. The fixture would be a
+sentence no model has produced. The guard stays because it costs one `&&`, and
+because the day a one-word phrase is counted it becomes reachable in silence.
+
+## The URL recorded the headline nobody published — 7 October 2026 (server)
+
+Found by reading Edwin's live posts an hour after the keyword rule shipped.
+
+    topic  Conditional Approval Can Still Leave a Business Loan Unfunded
+    title  Conditional Approval for a Business Loan: What the Meaning Is
+           Before Funding
+    url    /conditional-approval-can-still-leave-a-business-loan-unfunded/
+
+Two headlines for one post. The slug is cut at **plan** time from the topic
+the owner ticks; the title is written at **write** time, by the model, hours or
+days later, and nothing reconciled them. The URL is the part a reader sees
+before clicking and the only part that cannot be changed afterwards, and it was
+recording the sentence that never went live. Its neighbour was worse — the slug
+dropped "business loan" entirely, so the post's own keyword was absent from its
+own address.
+
+`renderPayload` now sends `slugify(post.title)`, falling back to the plan slug
+for a title that slugifies to nothing (an empty `post_name` makes WordPress
+invent one from the post id).
+
+**The blocker I expected was not there.** A post links forward to siblings that
+do not exist yet, so a plan-time slug looks load-bearing. `linkPlan.js` already
+builds every URL from **the one WordPress assigned** — because WordPress
+appends `-2` to a slug already in use — so nothing downstream ever trusted the
+requested one. Checked before changing anything.
+
+### The fixture that could not fail
+
+My first version of the test passed `buildLinkPlan`'s slot. **That object has
+no `slug` at all** — it is reshaped down to ten fields for the writer. So
+`assert.notStrictEqual(payload.slug, slot.slug)` compared against `undefined`
+and could never have gone red, and the fallback test reported the fixture as
+broken, which is how it was found.
+
+`writeOneSlot({ campaign, slot })` receives the **stored** slot, which is the
+one carrying the plan-time slug — and that is why the live URLs were
+topic-shaped rather than empty. A test fixture that does not match what
+production passes proves nothing about production; third time this week.
+
+## Leaving the intent empty is now the right answer — 7 October 2026 (server)
+
+Edwin: *"what would be a way for the user to know what to input? If I copy the
+main keyword there what would it happen?"*
+
+He was looking at a free-text box labelled "Or say it in your own words" under
+a dropdown of repair/replace/diagnose options, on a lending blog, with nothing
+on screen telling him what a blog owner should type.
+
+**What it cost before this was fixed.** I gave him an example sentence —
+`understand how fixed and variable loan terms differ before choosing one` —
+carried over from a different pillar we had discussed. He pasted it against a
+pillar about qualifying for a loan after bankruptcy and suggested topics, and
+got eleven topics about rate structures. The intent is the strongest line in
+the topic prompt:
+
+> THE READER MUST END UP WANTING THIS … **This is the hard constraint.**
+
+So the model obeyed it, against the wrong subject. **An example is an
+instruction when it is the only thing on screen that looks like one.**
+
+### The fallback read the title; it now reads the keyword
+
+    read more about ${targetPage.title} on this site
+
+On his pillar that rendered as *"read more about How to Qualify for a Business
+Loan After Bankruptcy on this site"* — fourteen words of headline doing the work
+of one instruction. The **keyword** is the same page in a searcher's words, and
+it is the one field on that form the owner cannot leave vague; the help text
+under it reads *"No post will be allowed to compete with this term"*.
+
+Reading it there is what makes **leaving the box empty correct on a blog**
+rather than merely tolerated, and lets the dropdown go back to being a
+refinement for trades. Falls back to the title for a target page stored before
+the keyword box existed.
+
+### The blog sentence is an action — Edwin chose option A
+
+The first version of the fallback still said `read more about ${keyword} on
+this site`, and **reading more is not a want.** The topic prompt calls that line
+"the hard constraint" and asks that every reader finish each post CLOSER to it;
+nobody is moved toward reading more, so there was nothing to steer against and
+the clause beside it did the steering instead — *"something a person with that
+problem would plausibly search, WITHOUT being the same subject as that page"*.
+That clause exists to push topics away from the pillar, and with no
+counterweight it pushed them all the way out.
+
+**Measured, not argued.** Eleven suggested topics for a pillar on "business
+loan with bankruptcy record" came back with three mentioning bankruptcy at all;
+the rest — NSF fees, chargebacks, switching bank accounts — would have suited
+any lending pillar on the site. It is now:
+
+    understand ${keyword} well enough to decide what to do next
+
+**The counterweight has its own limit**, and the wording respects it. Tighten
+this far enough and topics start competing with the pillar, which is the one
+failure the whole silo design exists to prevent. "decide what to do next" is
+deliberately about the READER'S decision rather than about the subject: it
+pulls toward the pillar's problem without naming the pillar's own ground.
+
+### An absence assertion decays in the direction of passing
+
+Two tests asserted `doesNotMatch(prompt, /read more about/)` to prove a typed
+intent is not overridden by the fallback. **Changing the fallback's wording left
+both looking for a string nothing emits any more** — so they would have gone on
+passing while the fallback fired straight over the owner's own words.
+
+A presence assertion goes red when the thing it names is renamed. An absence
+assertion goes quiet. Both now name the current sentence, and the reason is
+written beside them.
+
+### Two copies became one, and the excuse for two was wrong
+
+`suggestTopics.js` and `enrichTopic.js` each wrote the fallback out. The pair
+had **already drifted** — enrich carried only the local branch for months, so a
+blog with a blank intent was told its readers must end up wanting to use a
+service that does not exist, and nothing could see it because the plugin's
+dropdown never submitted an empty value.
+
+On 6 October the branch was copied across and the comment justified two copies
+by saying the two prompts word the sentence differently. **The wrappers differ
+and the sentence did not**: enrich says "The reader should end up wanting to: X"
+where suggestTopics prints X under a heading, but X was identical in both,
+character for character. The duplicated part was exactly the part that had
+already drifted. One `readerIntent()` in `siteKind.js` now; the wrappers stay.
+
+The test for this asks `readerIntent` what the sentence is and requires **both
+prompts to contain that string**, rather than comparing the two lines — my
+first version compared whole lines, went red on the wrappers, and would have
+been a test demanding the two prompts be the same prompt.
+
+### Both fixtures were lying
+
+- `PAGE` held `title: 'Fixed vs Variable Loan Terms'` beside
+  `keyword: 'fixed vs variable loan terms'` — identical but for capitals. Every
+  assertion passed whichever field was read. **A fixture whose two fields carry
+  one value cannot test which field is used.** Replaced with Edwin's real
+  pillar and its real keyword, which share only "business loan".
+- Nine mutations, eight caught. **The survivor was the `isLocal` override**
+  being ignored — because not one test passed an `isLocal` that DISAGREED with
+  the business beside it. A parameter whose whole purpose is to disagree cannot
+  be tested by callers who agree with it. Both directions are now asserted, and
+  the truthiness variant (`isLocal ||`, which reads a missing value as `false`
+  and puts every plumber on the blog sentence) is caught too.
+
+### Five tests had been silently skipping
+
+`test-pillar-campaign.js` guards its `renderPayload` block behind a mongoose
+require and **says so out loud** when it skips. It had been skipping in my
+container for weeks: 50 passing, 5 never run, including the only coverage of
+the function this change touches. Installing mongoose took twenty-four seconds.
+The announcement is why this was noticeable at all — a quiet skip would have
+let the slug tests look green without ever executing.
+
+## The keyword in four places — 6–7 October 2026 (server)
+
+Edwin, in his words: *"The keyword must be contained in title tag, meta
+description, h1 and h2. I'm saying included not that in hast to be exactly that
+phrase. You can include the main keyword in the body only once."*
+
+**Scope, by his correction.** Only the blog side — `writePost.js` and
+`qualityCheck.js`. `createPagesPrompt.js` is not touched: *"the site generator
+is already done in terms of title tags, h1, h2, body content?"* It is.
+
+### One file holds the rule
+
+`utils/blog/keywordCoverage.js`. Two things have to agree about it — the prompt
+that ASKS the writer for the keyword and the check that REFUSES a post without
+it — and a prompt whose rule differs by one word from the check enforcing it is
+the failure this project has hit more than any other. Eight SEO filter names
+with one wired wrong. trade/town against type/location. A ring rule right for
+every size but two.
+
+So `writePost.js` builds its instruction by calling `contentWords()`, and
+`qualityCheck.js` verifies with `keywordCoverage()`. The word list in the prompt
+is generated by the function that measures it. There is no second opinion to
+drift.
+
+### Included, not verbatim
+
+Every CONTENT word of the keyword must appear in the element, in any order, in
+any inflection. "mortgage interest rate change notice" is satisfied by *"What
+Your Mortgage Interest Rate Change Notice Must Tell You"* and not by *"What the
+letter actually means"*.
+
+Demanding the exact phrase four times produces copy that reads like 2012, and
+**a checker that rejects good writing gets switched off**. That is the whole
+reason for the looseness, and the reason for each concession in it:
+
+- **Stopwords are dropped.** Nobody searches for "the", and demanding "for"
+  would fail "Business Loans **to** Women" on a point of grammar.
+- **`without`, `no` and `not` are NOT stopwords.** They invert the meaning:
+  treat "without" as glue and "loans with credit check" satisfies "loans
+  WITHOUT credit check", which is the opposite page.
+- **Twelve irregular plurals are listed** (women/woman, lives/life, …) because
+  the suffix rules cannot reach them, and "How a **Woman**-Owned Business Gets
+  a Loan Approved" covers "business loans for **women**" by any honest reading.
+
+### Exactly once in the body, not at most once
+
+Both readings of *"only once"* were open. Edwin closed it on 7 October: **"a
+post that never mentions it in the body fails and gets rewritten."** Zero
+mentions is a failure, not a clean post that stayed under a ceiling.
+
+`bodyMin` is a parameter, so the other reading is still reachable without
+editing the rule for every post.
+
+### The three bugs found building it
+
+**A single stem cannot match both halves of English.** The first design reduced
+each word to one stem. `notices` → `notic` while `notice` → `notice`, so a
+heading saying "notices" would not satisfy a keyword saying "notice" — the
+exact inflection the rule promises to allow. Same crack through every silent-e
+verb: `changing`/`change`, `approved`/`approve`. The cause is that English
+drops the e before *-ing* and *-ed* and keeps it before *-s*, so no single
+truncation lands both on the same string. **`forms()` now returns a SET of
+candidates and two words match when their sets intersect.** Caught by the first
+smoke test.
+
+**`phraseCount` returned 0 for a body plainly using the keyword**, whenever the
+keyword contained a stopword. The window was sized by content words: "business
+loans for women" has three content words but occupies four, and a prose mention
+adds articles of its own — "a business loan for a woman" is six. A three-word
+window could never see all three at once, so the body limit was silently
+unenforceable for every keyword containing a preposition. Window is now
+`words(keyword).length + 2`.
+
+**A mandatory anchor can contain the post's own keyword**, which would have made
+the rule unsatisfiable. `writePost` demands up to three link phrases VERBATIM
+and `anchorPool` builds them out of the target page's words, so a silo campaign
+aiming at "fixed vs variable loan terms" can be handed two mandatory phrases
+each carrying the keyword — and then told to use it once. **A failure no
+rewrite can fix, and `qualityCheck` retries on failures**, so that is one
+wasted model call turned into three. `stripAnchors()` removes the link phrases,
+text and wrappers both, before the body is counted. It is also the honest
+reading: the mention Edwin asked for is the writer's own sentence, and link
+text is chosen by `anchorPool`, not by the model.
+
+### Two traps in the wiring, either of which fails compliant posts
+
+**The body is the paragraphs only — never `textOf()`.** `textOf` joins headings
+and paragraphs into one string, and the rule REQUIRES the keyword in a heading.
+Count that text as body and every obedient post comes back *"appears 2 times in
+the body, limit is 1"* — failed for complying. The two halves of one rule pull
+in opposite directions on the same string, so the split is spelled out at the
+call site instead of reusing the helper.
+
+**No `targetQuery`, no check.** `buildPrompt` omits the whole keyword block for
+a slot without one, so such a post was never told any of this. Refusing it
+would punish it for a question nobody put to it, and would fail every campaign
+planned before 0.31.0.
+
+### The codes live with the rule
+
+`keywordCoverage` returns `codes` alongside `failures`, and `checkPost`
+forwards the pair verbatim. A code invented at the call site would be a second
+copy of a decision made in the rule file — the exact shape `REWRITE_WORTHY` was
+moved out of `blogGenerator.js` to end.
+
+All four are in `REWRITE_WORTHY`, because the prompt now NAMES the words and
+the places, so a post arriving without them ignored a specific instruction —
+the same shape as dropping the `metaDescription` key, not the same shape as
+filler or vagueness, which a retry reproduces at twice the cost.
+
+`test-post-quality.js` already had a test asserting every retried code is one
+`checkPost` can emit. **It went red on the first run after the wiring**, because
+it scanned only `qualityCheck.js` for `fail('<code>'` literals and the keyword
+codes are raised in `keywordCoverage.js`. It now reads both files. That test
+earned its place.
+
+### Covered by
+
+`test-keyword-coverage.js` (26) proves the rule; `test-post-quality.js` (26)
+proves only the WIRING — that `checkPost` runs it, on the right strings, for
+the right posts, and that a failure reaches the retry. The rule was finished
+and tested a full day before anything called it, and **a file nothing calls is
+a file that cannot be wrong.**
+
+Thirteen mutations, all caught. The last one was added after the first twelve:
+swapping two code names leaves both spellings in the source, so the vocabulary
+scan still passes and only the PAIRING is wrong. A behavioural test now checks
+each code against its own message.
+
 ## A ring of two linked one way twice — 6 October 2026 (server)
 
 Edwin planned two pillars and found the second one linking back to the first
@@ -2818,6 +3191,162 @@ something. The cases now assert `'nextAnchor' in slot === false`.
 `test-pillar-campaign.js` 44 → 50. **Server-side, so it needs a deploy, not a
 plugin upload.** Campaigns already planned keep their stored anchors; the ring
 is computed at generation time, so only posts written after the deploy change.
+
+## Two columns named for what they hold — 6 October 2026 (plugin 0.33.0)
+
+**Also in 0.33.0: the keyword help text stopped defining its own label.**
+
+It read *"What someone types to find that page. No post will be allowed to
+compete with it. Leave the town and state out…"* — the first sentence is a
+definition of the word "keyword", sitting under a label that already says
+Keyword. **A help text that explains its own label teaches nothing** and costs
+a line of attention on the busiest screen in the plugin.
+
+Now: *"No post will be allowed to compete with this term. If this is a local
+business leave the town and state out — those are added back automatically."*
+
+What is left is the two facts the label cannot carry: the term is PROTECTED
+from the posts, and the town is re-added downstream.
+
+**"If this is a local business" is new, and it is the same bug as the
+descriptive anchors.** The town instruction is nonsense on a content blog;
+Edwin reads it on a loans site every time he plans a campaign. Blog mode fixed
+trade-machinery-on-a-content-site in the anchor pool and the topic angles, and
+it is still sitting in the help text. The sentence now says who it is for.
+
+Three mutations, all caught: the old sentence returning · the protection rule
+dropped · the local-business qualifier dropped.
+
+**And the intent dropdown's help text, for the same reason.** It opened *"Most
+trades sell one of two nearby things — repair or replacement, diagnosing a
+problem or fixing it"* and then explained the MECHANISM to an owner who only
+needs to know whether to touch the setting. On a lending blog that opening
+clause is about somebody else's business, and the options under it are a trade
+list, so the honest answer there is "leave it alone".
+
+Now: *"For local business sites — it stops half your posts recommending the
+thing you do not sell. On a general blog, leave the first option."*
+
+**Three places in one screen now carry the same scar**: the anchor bucket, the
+town-in-titles rule, and two help texts. The first two were fixed by asking
+`siteKind.js` what kind of site it is. These two are fixed by telling the
+owner — cheaper, and it does not need the detection to be right.
+
+### The dropdown always submitted something, so neither fallback had ever run
+
+**The one that matters.** `suggestTopics.js` has carried this since blog mode
+shipped:
+
+    const intent = targetPage.intent
+      || (local ? `use the business's ${title} service`
+                : `read more about ${title} on this site`);
+
+A `<select>` always submits something, and the first option carried the
+sentence `get in touch about this service`. So `targetPage.intent` was **never
+empty**, the `||` could never reach its right-hand side, and the blog branch
+was unreachable code that read as a feature.
+
+**Every campaign on a content blog has been told its readers must end up
+wanting to "get in touch about this service"** — on a site with no service and
+no phone number. The prompt calls that line *the hard constraint* and rejects
+topics against it, so it has been steering every topic set Edwin generated on
+hilltophomeloans.net.
+
+The fix is the first option's VALUE becoming `''`. One character of real
+change, and both fallbacks wake up.
+
+**Same family as the cancel flag that could not be sent and the keyword that
+could not travel: correct code behind a condition that could not be true.**
+The third this week.
+
+### And enrichTopic.js had never been given the branch at all
+
+    const intent = targetPage.intent || `use the business's ${title} service`;
+
+Trade-only. `suggestTopics.js` grew the non-local branch when blog mode
+shipped; this file did not, and nobody noticed **because neither fallback could
+run**. A dead `||` hid a missing branch behind it. Reached on a silo campaign
+with typed topics, which is exactly how Edwin plans them.
+
+Two functions answering one question, one of them corrected — the shape this
+project keeps hitting.
+
+### The mutation that survived: a test that only exercises its own branch
+
+Removing `targetPage.intent ||` from enrich makes the fallback fire **over the
+owner's typed words**, and all three new enrich cases still passed — every one
+of them left the intent blank, which is the state the fallback is for. A case
+asserting the typed intent wins was needed before the branching itself was
+protected.
+
+Four mutations: first option carrying a sentence again · enrich reverting to
+trade-only · enrich branching the wrong way round · the fallback overriding a
+typed intent. `test-admin-tabs.php` 119 → 120, `test-suggest-prompt.js` 8 → 13.
+
+**A fixture that cannot occur in production proves nothing about production.**
+My first enrich fixture was a bare `{ name }` and died on
+`business.services.join()` — the FIXTURE was wrong, not the code, and
+`context.js` says so in a comment naming that exact crash. The cases build
+their context through `buildContext()` now. Same lesson `seed_campaign()`
+taught in `test-ie-pause.js` three days earlier.
+
+**The options themselves are still a trade list** — repair / replace / diagnose
+/ hire a professional. A blog list would be subscribe · contact an advisor ·
+read the related guide · compare their options. Raised with Edwin, not built.
+
+Three more mutations, all caught: the trade-first sentence returning · the "who
+it is for" opener dropped · the blog instruction dropped.
+`test-admin-tabs.php` 117 → 119.
+
+
+Edwin's call. The topics table on the campaign form:
+
+- *"Search it should win"* → **"Main keyword of this post"**
+- *"How other posts refer to it"* → **"How other posts will link to this post"**
+
+**The first was named for its PURPOSE and left the owner to deduce the noun.**
+The thing in that box is a keyword — the same word on the Target Page field two
+screens away, and the word every SEO tool anybody has ever opened uses. Two
+names for one concept teaches somebody that a form holds more ideas than it
+really does. Edwin asked the question that proves it: *"Isn't the box 'Search it
+should win' the same as the main keyword for that pillar post?"* It was, and the
+label had not told him.
+
+**The second read as a description rather than an instruction.** "Will link to
+this post" says what the value becomes: the blue text in somebody else's
+sentence.
+
+### A rename is not done until the sentences that NAME the column agree
+
+Four other places used the old wording, and two of them were user-facing
+instructions pointing AT the column:
+
+- the placeholder on the pillar topics box — *"the Search query column is yours
+  to fill in"*
+- the refusal when a pillar campaign is planned with a keyword missing —
+  *"Fill in the Search query column for: …"*
+
+Left alone, that refusal would send the owner to a column name that no longer
+exists on the screen. **An instruction naming nothing is worse than the vague
+label it replaced.** Both renamed, plus the comments in `class-ie-admin.php`,
+`class-ie-settings.php` and two test files that quoted the old string — the
+project already has a finding about comments decaying into claims that are no
+longer true.
+
+### The old names are asserted ABSENT, not just the new ones present
+
+Nothing asserted the old labels either, which is why the test was worth writing
+rather than just making the edit. A presence-only check passes a rename that
+adds a column and forgets to remove one — mutation 3 below does exactly that,
+and only `hasnt()` catches it.
+
+The second case reads `class-ie-admin.php` as source, because the refusal only
+appears on a redirect after a failed plan and the placeholder only when the
+pillar box is ticked. Rendering cannot reach either.
+
+Four mutations, all caught: each label reverted (1 test each) · the old name
+added back alongside the new one (1) · the refusal still naming the old column
+(1). `test-admin-tabs.php` 115 → 117.
 
 ## Tick or untick every topic — 6 October 2026 (plugin 0.32.0)
 
@@ -2962,6 +3491,17 @@ asserts the strings match. A source test, because a spelling is the one thing
 only the source can confirm.
 
 ## Nothing asked who was paying — 6 October 2026 (plugin 0.30.0)
+
+**VERIFIED IN PRODUCTION, 6 October.** Edwin left a 3-post campaign planned and
+unapproved overnight with the balance recorded at 5,875. Nine hours and roughly
+ten sweep runs later it read 5,875 and the campaign was still unwritten. Before
+the guard that is 225 credits charged for work nobody approved.
+
+**The balance not moving IS the result.** There was nothing else to look at:
+the report's status filter folds `draft`, `writing` and `active` into "In
+progress", so the screen could not have shown the difference. A test whose only
+honest readout is a number on an unrelated page is still a test — but say so
+when designing it, rather than promising a screen that will show it.
 
 `IE_Campaigns::campaigns_with_work()` returned any campaign with status
 `active` and a `pending` slot. **A campaign is `active` from the moment it is
