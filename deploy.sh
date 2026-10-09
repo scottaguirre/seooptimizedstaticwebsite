@@ -119,7 +119,8 @@ for suite in \
   test-email-health.js \
   test-hours.js \
   test-pages-to-build.js \
-  test-trust-points.js
+  test-trust-points.js \
+  test-job-uploads.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.

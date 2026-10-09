@@ -316,7 +316,20 @@ async function runGeneration(ctx) {
     // Throws rather than returning a validation response: there is no `res`
     // in a background job. The runner catches this, marks the job failed and
     // shows the message on the progress page.
+    //
+    // TWO FAILURES, TWO MESSAGES. "Try uploading it again" was shown for both
+    // for months, and it was the wrong advice for the one that kept
+    // happening: the file had uploaded perfectly, and the job simply started
+    // before it was attached (see the comment on jobId in generateRoute.js).
+    // Re-uploading an innocent file is the one action that cannot help, and
+    // being told to do it hides a bug in the queue behind a bug in the logo.
     if (!uploadedImages.global.logo) {
+      if (!files.length) {
+        throw new Error(
+          'This build started before its logo was attached. Nothing is wrong ' +
+          'with the file — please press Generate again.'
+        );
+      }
       throw new Error('The logo could not be processed. Please try uploading it again.');
     }
 

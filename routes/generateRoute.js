@@ -3,6 +3,9 @@ const requireAuth = require('../middleware/requireAuth');
 const User = require('../models/User');
 const express = require('express');
 const multer = require('multer');
+// For minting a job's id before the job exists, so its uploads can be
+// attached in the same write that makes it claimable. See below.
+const mongoose = require('mongoose');
 const router = express.Router();
 const sharp = require('sharp');
 const path = require('path');
@@ -328,7 +331,36 @@ router.post('/generate', upload.any(), async (req, res) => {
     // picks it up, and /jobs/:id shows progress.
     // =========================================================
 
+    /* THE ID IS MINTED HERE, BEFORE THE JOB EXISTS.
+     *
+     * This used to be Job.create({ status: 'queued' }) followed by moving the
+     * uploads and a second write to attach them. A job is claimable the
+     * instant it is created, so the runner could — and on 9 October did —
+     * start it 48ms before the logo had been attached. It read `uploads` as
+     * the empty default, found no files, and failed with "The logo could not
+     * be processed"; then jobGenerator's cleanup deleted the folder the route
+     * had just filled, leaving a path in the database pointing at nothing.
+     *
+     * Narrowing the window would not have fixed it. The uploads now move
+     * first, into the folder this id names, and the job is created ONCE with
+     * them already on it. There is no moment when a claimable job is missing
+     * its files. */
+    const jobId = new mongoose.Types.ObjectId();
+
+    // Out of multer's temp directory before the response returns — the
+    // finally below deletes whatever is left there, and the job runs long
+    // afterwards.
+    const uploads = await moveUploadsForJob(req.files || [], jobId);
+
+    // The paths belong to the job now, so the cleanup below must not touch
+    // them. Set before Job.create: if that throws, the catch returns 500 and
+    // these files are orphaned, which costs a few KB — deleting them while a
+    // job might still be created would cost the build.
+    movedUploads = true;
+
     const job = await Job.create({
+      _id: jobId,
+      uploads,
       user: req.user._id,
       status: 'queued',
       // The REAL mode. The build itself reads siteMode out of `payload`, so
@@ -350,16 +382,6 @@ router.post('/generate', upload.any(), async (req, res) => {
         stage: 'queued',
       },
     });
-
-    // Uploads must be moved out of multer's temp directory BEFORE this
-    // response returns — the finally below deletes whatever is left there,
-    // and the job runs long afterwards.
-    const uploads = await moveUploadsForJob(req.files || [], job._id);
-    await Job.updateOne({ _id: job._id }, { $set: { uploads } });
-
-    // These paths now belong to the job, so the cleanup below must not
-    // delete them.
-    movedUploads = true;
 
     log.generation('generation.queued', {
       requestId: req.id,
