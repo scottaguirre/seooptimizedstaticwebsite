@@ -337,20 +337,66 @@ test('a claim is never offered unless it was ticked', () => {
   assert.ok(!t.pool.includes('emergency appointments available'), 'an unticked claim leaked in');
 });
 
-test('every shape can fill a balanced grid with nothing ticked', () => {
-  // Except home, whose defaults are all on. The others need four neutral
-  // statements each, or an owner who ticks nothing gets an empty section.
+test('WHAT IS TICKED IS WHAT APPEARS, AND NOTHING ELSE', () => {
+  /* Each shape used to carry an `always` list, added to every page whatever
+   * the form said. A chiropractor ticked two boxes and got six points — four
+   * of them never shown in the wizard, which states in as many words that
+   * "anything left unticked is never written".
+   *
+   * Two ticks now mean two. The grid rule survives as the EVEN rule only: the
+   * odd item out would sit alone in a two-column list, so it is dropped. */
+  const t = trustPoints('Chiropractor', { claims: 'insurance,family' });
+  assert.strictEqual(t.count, 2, 'ticking two produced something other than two');
+
+  const shown = [...t.pinned, ...t.pool].slice(0, t.count);
+  assert.deepStrictEqual(shown, [
+    'most insurance plans accepted',
+    "family and children's care welcome",
+  ]);
+});
+
+test('no shape smuggles in a point that was never offered', () => {
+  /* The `always` lists are gone. If one comes back — or a new shape is added
+   * with one — this is where it is caught, before a customer reads a claim
+   * their business never made. */
   for (const shape of SHAPES) {
-    if (shape === 'home') continue;
-    assert.ok(TRUST_POINTS[shape].always.length >= 4,
-      `${shape} has only ${TRUST_POINTS[shape].always.length} always-safe points`);
+    assert.ok(!TRUST_POINTS[shape].always,
+      `${shape} has an always list again; those points cannot be unticked`);
   }
 
+  for (const label of ['Chiropractor', 'Law Firm', 'Web Design', 'Yoga Studio', 'Plumbing']) {
+    const offered = new Set(
+      TRUST_POINTS[businessShape(label)].optIn.map(c => c.label));
+    const t = trustPoints(label, {});
+    for (const point of [...t.pinned, ...t.pool]) {
+      assert.ok(offered.has(point),
+        `${label}: "${point}" is on the page but not in the wizard`);
+    }
+  }
+});
+
+test('ticking nothing renders nothing, rather than four statements of its own', () => {
   for (const label of ['Dentist', 'Law Firm', 'Web Design', 'Yoga Studio']) {
     const t = trustPoints(label, { claims: NONE_TICKED });
-    assert.strictEqual(t.count % 2, 0, `${label}: odd count breaks the two-column grid`);
-    assert.ok(t.count >= 4, `${label} renders nothing when nothing is ticked`);
+    assert.strictEqual(t.count, 0, `${label} wrote trust points nobody ticked`);
   }
+});
+
+test('an owner who touches nothing gets what they always got', () => {
+  /* The promoted entries are ticked by default, so a regenerated site is
+   * unchanged unless the owner actively unticks something. */
+  for (const label of ['Dentist', 'Law Firm', 'Web Design', 'Yoga Studio']) {
+    const t = trustPoints(label, {});
+    assert.strictEqual(t.count, 4, `${label}: the defaults no longer fill a 2x2 grid`);
+  }
+});
+
+test('the count stays even, so the two-column grid has no lone item', () => {
+  const three = trustPoints('Chiropractor', { claims: 'insurance,family,evenings' });
+  assert.strictEqual(three.count, 2, 'an odd count reached the grid');
+
+  const five = trustPoints('Chiropractor', { claims: 'insurance,family,evenings,parking,licensed' });
+  assert.strictEqual(five.count, 4);
 });
 
 test('"none of them are true" is not confused with "never asked"', () => {
@@ -622,7 +668,18 @@ test('a regulated shape is told to copy the strings verbatim', () => {
   // "Free confidential case review". It invented the word "free", which on an
   // attorney's site is a fee claim nobody ticked a box for.
   for (const label of ['Dentist', 'Lemon Law', 'Web Design', 'Yoga Studio']) {
-    const prompt = aboutPrompt(label, { trustClaims: 'freeConsult,licensed,cards' });
+    /* Ticked ids have to EXIST for the shape under test. This used to pass
+     * 'freeConsult,licensed,cards' to all four — ids that Web Design does not
+     * have — and the prompt still carried a full list, because the shape's
+     * `always` points made up the numbers. With those gone, a fixture that
+     * ticks nothing real produces an empty list and the assertion below has
+     * nothing to find. */
+    const ids = TRUST_POINTS[businessShape(label)].optIn
+      .filter(c => c.id !== 'open24')
+      .slice(0, 4)
+      .map(c => c.id)
+      .join(',');
+    const prompt = aboutPrompt(label, { trustClaims: ids });
     assert.ok(/EXACTLY as written above, word for word/.test(prompt), label);
     assert.ok(/especially not a\s+price or availability word/.test(prompt), label);
     assert.ok(!/Write those as benefits/.test(prompt),
@@ -1519,11 +1576,20 @@ test('the wizard warns about contingency billing where the server says to', () =
   assert.ok(claim && claim.note, 'the costs disclaimer warning is not shown to the owner');
 });
 
-test('home is pre-ticked and nothing else is', () => {
+test('every shape arrives with its neutral statements already ticked', () => {
+  /* It used to be home only, and the other shapes opened with an empty list
+   * while four points they could not see were added to the page regardless.
+   * Those four are now the pre-ticked boxes at the top of each shape — the
+   * same statements, in the same order, but visible and removable. */
   for (const shape of SHAPES) {
-    const anyOn = [...wizard.claims[shape]].some(c => c.default);
-    assert.strictEqual(anyOn, shape === 'home',
-      `${shape}: default-ticked claims should only exist for home services`);
+    const on = [...wizard.claims[shape]].filter(c => c.default);
+    assert.ok(on.length >= 1, `${shape} opens with nothing ticked`);
+
+    const serverOn = TRUST_POINTS[shape].optIn
+      .filter(c => c.default)
+      .map(c => c.label);
+    assert.deepStrictEqual(on.map(c => c.label), serverOn,
+      `${shape}: the wizard and the server disagree on what starts ticked`);
   }
 });
 

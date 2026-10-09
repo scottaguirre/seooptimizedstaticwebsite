@@ -410,6 +410,36 @@ function getPreset(siteMode) {
   return PRESETS[normalizeSiteMode(siteMode)];
 }
 
+/**
+ * How many pages this build will actually write.
+ *
+ * This is the denominator on the progress bar, and it used to be computed in
+ * the route as `services + locations + 1` for every mode. A design sample
+ * writes ONE page — runGeneration iterates `isSample ? {} : pages` — but the
+ * wizard still collects service pages and still posts them, so a sample with
+ * one service entered reported "0 of 2" and finished at "1 of 2". The bar
+ * could never reach the end, on the one mode that exists to be shown to a
+ * prospective client.
+ *
+ * It lives here, beside the modes, because the question "what does this mode
+ * build?" is the same question the presets answer, and because a number the
+ * user watches deserves a test.
+ *
+ * @param {string} siteMode
+ * @param {object|Array} pages          service pages, as posted
+ * @param {number} locationCount        already validated and deduplicated
+ * @returns {number} at least 1 — every mode writes a home page
+ */
+function pagesToBuild(siteMode, pages, locationCount = 0) {
+  // One page, whatever was typed on the steps before it.
+  if (normalizeSiteMode(siteMode) === MODES.SAMPLE) return 1;
+
+  const services = pages && typeof pages === 'object' ? Object.keys(pages).length : 0;
+  const locations = Math.max(0, Number(locationCount) || 0);
+
+  return services + locations + 1;   // + the home page
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -472,6 +502,7 @@ module.exports = {
   PRESETS,
   getPreset,
   normalizeSiteMode,
+  pagesToBuild,
   assetFile,
   assetPath,
   imageAlt,

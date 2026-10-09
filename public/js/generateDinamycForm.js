@@ -693,8 +693,15 @@
   // offered to the model, so an unticked claim cannot appear on the page.
   // "Open 24 hours" is deliberately absent: it is already driven by the Open
   // 24 Hours toggle further down this same step.
+  //
+  // The pre-ticked entries at the top of each shape used to live in an
+  // `always` list on the server and were added to every page whether or not
+  // the owner had seen them — which is how a practice that ticked two boxes
+  // got six points. They are ordinary boxes now. Mirrors TRUST_POINTS in
+  // utils/businessShape.js; test-business-shape.js fails if the two drift.
   var TRUST_CLAIMS_BY_SHAPE = {
     "home": [
+      {"id": "flexScheduling", "label": "flexible scheduling", "default": true},
       {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": true},
       {"id": "licensed", "label": "licensed, insured and bonded", "default": true},
       {"id": "accredited", "label": "accredited by local authorities", "default": true},
@@ -706,6 +713,10 @@
       {"id": "familyOwned", "label": "family owned and operated", "default": true}
     ],
     "medical": [
+      {"id": "newPatients", "label": "new patients welcome", "default": true},
+      {"id": "treatmentPlans", "label": "clear treatment plans before you begin", "default": true},
+      {"id": "flexAppointments", "label": "flexible appointment times", "default": true},
+      {"id": "questions", "label": "questions answered before you decide", "default": true},
       {"id": "insurance", "label": "most insurance plans accepted", "default": false},
       {"id": "evenings", "label": "evening and Saturday appointments", "default": false},
       {"id": "sameWeek", "label": "same-week appointments available", "default": false},
@@ -717,6 +728,10 @@
       {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": false}
     ],
     "professional": [
+      {"id": "confidential", "label": "confidential case review", "default": true},
+      {"id": "feeAgreements", "label": "clear fee agreements in writing", "default": true},
+      {"id": "directAccess", "label": "direct access to your attorney", "default": true},
+      {"id": "plainLanguage", "label": "your options explained in plain language", "default": true},
       {"id": "freeConsult", "label": "free initial consultation", "default": false},
       {"id": "licensed", "label": "licensed to practice in this state", "default": false},
       {"id": "evenings", "label": "evening and weekend consultations", "default": false},
@@ -725,6 +740,10 @@
       {"id": "contingency", "label": "no fee unless we recover", "default": false, "note": "Most states require a costs disclaimer alongside this claim. Check your bar rules before enabling it."}
     ],
     "project": [
+      {"id": "milestones", "label": "clear milestones and delivery dates", "default": true},
+      {"id": "youOwnIt", "label": "you own your code, content and domains", "default": true},
+      {"id": "directBuilder", "label": "work directly with the person building it", "default": true},
+      {"id": "plainUpdates", "label": "plain-English updates, no jargon", "default": true},
       {"id": "freeDiscovery", "label": "free discovery call", "default": false},
       {"id": "fixedPrice", "label": "fixed-price proposals, no hourly surprises", "default": false},
       {"id": "accessible", "label": "mobile-first, accessible builds", "default": false},
@@ -733,6 +752,10 @@
       {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": false}
     ],
     "generic": [
+      {"id": "clearPricing", "label": "clear pricing agreed in advance", "default": true},
+      {"id": "locallyOwned", "label": "locally owned and operated", "default": true},
+      {"id": "flexAppointments", "label": "flexible appointment times", "default": true},
+      {"id": "questions", "label": "questions answered before you commit", "default": true},
       {"id": "freeConsult", "label": "free initial consultation", "default": false},
       {"id": "cards", "label": "Visa, Mastercard and most major cards accepted", "default": false},
       {"id": "evenings", "label": "evening and weekend availability", "default": false}

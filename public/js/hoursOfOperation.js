@@ -40,7 +40,7 @@
       if (!row) return null;
 
       el = document.createElement('div');
-      el.className = 'small text-muted mt-1';
+      el.className = 'small text-white mt-1';
       el.setAttribute('data-hours-preview', day);
       row.appendChild(el);
       return el;
@@ -72,7 +72,7 @@
         return;
       }
 
-      el.className = 'small text-muted mt-1';
+      el.className = 'small text-white mt-1';
       el.textContent =
         'On your site: ' + fmt.describeDay(day, { open, close: shut, closed }, { long: true });
     }
@@ -106,7 +106,9 @@
       if (!container || !container.parentNode) return;
 
       const hint = document.createElement('p');
-      hint.className = 'small text-muted mb-2';
+      // White, not text-muted: this form sits on a dark navy panel, where
+      // Bootstrap's muted grey is all but invisible.
+      hint.className = 'small text-white mb-2';
       hint.setAttribute('data-hours-hint', '');
       hint.textContent =
         'Enter an opening and a closing time for each day, or tick Closed. ' +

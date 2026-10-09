@@ -22,7 +22,7 @@ const { keptOn } = require('./sectionToggle');
 const { copyPageImage, buildContactFormHtml } = require('./pageParts');
 const { getPreset, assetPath, imageAlt } = require('./seoPresets');
 const { canonicalTag } = require('./canonicalUrl');
-const { titleFor, capabilities, imageFolderFor } = require('./businessShape');
+const { titleFor, capabilities, imageFolderFor, displayTrustPoint } = require('./businessShape');
 const { buildCaseStudySection } = require('./generateCaseStudy');
 const { buildReviewsSection, reviewRows } = require('./generateSampleReviews');
 
@@ -34,8 +34,11 @@ const { buildReviewsSection, reviewRows } = require('./generateSampleReviews');
  * when the model gives us nothing, so the page simply shows two paragraphs.
  */
 function buildTrustList(points = []) {
+  // displayTrustPoint capitalises the first letter. The vocabulary in
+  // businessShape.js is lower case because the model also uses those phrases
+  // inside sentences; a ticked list wants them to start like list items.
   const items = (points || [])
-    .map(p => String(p || '').trim())
+    .map(displayTrustPoint)
     .filter(Boolean)
     .slice(0, 8);
 

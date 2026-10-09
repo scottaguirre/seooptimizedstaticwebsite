@@ -7,6 +7,7 @@
 // No HTML is parsed anywhere in this path.
 
 const { phpEscapeSingle } = require('../wpHelpers/phpHelpers');
+const { displayTrustPoint } = require('../../businessShape');
 
 /**
  * CSS classes the generated stylesheets expect, keyed by section.
@@ -104,7 +105,10 @@ function normaliseSection(section) {
   }
 
   if (Array.isArray(section.trustPoints) && section.trustPoints.length) {
-    out.trust_points = section.trustPoints.map(t => String(t || '')).filter(Boolean);
+    // Capitalised here rather than in the PHP renderer: the theme bakes
+    // these strings into post meta at export, so whatever is written now is
+    // what the site shows forever. Same function as the static page uses.
+    out.trust_points = section.trustPoints.map(displayTrustPoint).filter(Boolean);
   }
 
   if (section.badges && (section.badges.award || section.badges.licensed)) {

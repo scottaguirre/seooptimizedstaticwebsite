@@ -114,7 +114,12 @@ for suite in \
   test-ie-pause.js \
   test-batch-cancel.js \
   test-ie-video.js \
-  test-ie-topics.js
+  test-ie-topics.js \
+  test-signup-result.js \
+  test-email-health.js \
+  test-hours.js \
+  test-pages-to-build.js \
+  test-trust-points.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.

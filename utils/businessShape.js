@@ -632,10 +632,8 @@ const wantsPricingTable = t => capabilities(t).pricingTable;
 
 const TRUST_POINTS = {
   home: {
-    always: [
-      'flexible scheduling',
-    ],
     optIn: [
+      { id: 'flexScheduling', label: 'flexible scheduling',                                       default: true },
       { id: 'open24',      label: 'Open 24 hours, 7 days a week',                default: false, pinned: true },
       { id: 'cards',       label: 'Visa, Mastercard and most major cards accepted', default: true, pinned: true },
       { id: 'licensed',    label: 'licensed, insured and bonded',                 default: true },
@@ -655,13 +653,11 @@ const TRUST_POINTS = {
   // nothing containing "painless" or "guaranteed" — several state dental
   // boards prohibit those outright.
   medical: {
-    always: [
-      'new patients welcome',
-      'clear treatment plans before you begin',
-      'flexible appointment times',
-      'questions answered before you decide',
-    ],
     optIn: [
+      { id: 'newPatients',      label: 'new patients welcome',                                      default: true },
+      { id: 'treatmentPlans',   label: 'clear treatment plans before you begin',                    default: true },
+      { id: 'flexAppointments', label: 'flexible appointment times',                                default: true },
+      { id: 'questions',        label: 'questions answered before you decide',                      default: true },
       { id: 'insurance', label: 'most insurance plans accepted',         default: false },
       { id: 'evenings',  label: 'evening and Saturday appointments',     default: false },
       { id: 'sameWeek',  label: 'same-week appointments available',      default: false },
@@ -677,13 +673,11 @@ const TRUST_POINTS = {
   // No cards-accepted default: it reads as a retail counter rather than a
   // firm. No same-day service, no warranty, no estimates.
   professional: {
-    always: [
-      'confidential case review',
-      'clear fee agreements in writing',
-      'direct access to your attorney',
-      'your options explained in plain language',
-    ],
     optIn: [
+      { id: 'confidential',  label: 'confidential case review',                                  default: true },
+      { id: 'feeAgreements', label: 'clear fee agreements in writing',                           default: true },
+      { id: 'directAccess',  label: 'direct access to your attorney',                            default: true },
+      { id: 'plainLanguage', label: 'your options explained in plain language',                  default: true },
       { id: 'freeConsult',  label: 'free initial consultation',           default: false },
       { id: 'licensed',     label: 'licensed to practice in this state',  default: false },
       { id: 'evenings',     label: 'evening and weekend consultations',   default: false },
@@ -702,13 +696,11 @@ const TRUST_POINTS = {
   },
 
   project: {
-    always: [
-      'clear milestones and delivery dates',
-      'you own your code, content and domains',
-      'work directly with the person building it',
-      'plain-English updates, no jargon',
-    ],
     optIn: [
+      { id: 'milestones',    label: 'clear milestones and delivery dates',                       default: true },
+      { id: 'youOwnIt',      label: 'you own your code, content and domains',                    default: true },
+      { id: 'directBuilder', label: 'work directly with the person building it',                 default: true },
+      { id: 'plainUpdates',  label: 'plain-English updates, no jargon',                          default: true },
       { id: 'freeDiscovery', label: 'free discovery call',                     default: false },
       { id: 'fixedPrice',    label: 'fixed-price proposals, no hourly surprises', default: false },
       { id: 'accessible',    label: 'mobile-first, accessible builds',         default: false },
@@ -722,13 +714,11 @@ const TRUST_POINTS = {
   // unrecognised business type gets, and it has to be safe without knowing
   // anything at all about the business.
   generic: {
-    always: [
-      'clear pricing agreed in advance',
-      'locally owned and operated',
-      'flexible appointment times',
-      'questions answered before you commit',
-    ],
     optIn: [
+      { id: 'clearPricing',     label: 'clear pricing agreed in advance',                           default: true },
+      { id: 'locallyOwned',     label: 'locally owned and operated',                                default: true },
+      { id: 'flexAppointments', label: 'flexible appointment times',                                default: true },
+      { id: 'questions',        label: 'questions answered before you commit',                      default: true },
       { id: 'freeConsult', label: 'free initial consultation',                    default: false },
       { id: 'cards',       label: 'Visa, Mastercard and most major cards accepted', default: false },
       { id: 'evenings',    label: 'evening and weekend availability',             default: false },
@@ -800,26 +790,60 @@ function trustPoints(businessType, opts = {}) {
   const chosen = set.optIn.filter(c => ticked.has(c.id));
 
   const pinned = chosen.filter(c => c.pinned).map(c => c.label);
-  const rest = chosen.filter(c => !c.pinned).map(c => c.label);
-
-  const pool = [...set.always, ...rest];
+  const pool = chosen.filter(c => !c.pinned).map(c => c.label);
   const total = pinned.length + pool.length;
 
-  // Even, capped at 8, and nothing at all under 4 — a two-column grid with
-  // three items in it looks like a rendering bug.
-  //
-  // Every shape's `always` list holds at least four entries for this reason:
-  // an owner who ticks nothing still gets a balanced 2x2 grid of statements
-  // that are true of anyone, rather than an empty section.
+  /* WHAT IS TICKED IS WHAT APPEARS.
+   *
+   * Each shape used to carry an `always` list — four statements true of
+   * anyone — added here regardless of the form, so that an owner who ticked
+   * nothing still got a filled 2x2 grid. It also meant a medical practice
+   * that ticked two boxes got six points on its About page, four of which it
+   * had never seen, let alone agreed to. The wizard says in as many words
+   * that "anything left unticked is never written", and that was not true.
+   *
+   * Those four are now ordinary entries, ticked by default, at the top of
+   * each optIn list. An owner who leaves the form alone gets exactly what
+   * they got before; an owner who unticks one no longer sees it on the page.
+   *
+   * The floor of four went with it, because it is the same bug: an owner who
+   * ticks two means two. What remains is the EVEN rule — the list renders as
+   * two columns, and the odd item out would sit alone, so it is dropped.
+   */
   let count = Math.min(8, total);
   if (count % 2) count -= 1;
-  if (count < 4) count = 0;
 
   return { pinned, pool, count };
 }
 
+/**
+ * A trust point as it is PRINTED.
+ *
+ * The vocabulary above is written lower case on purpose: these phrases are
+ * handed to the model as raw material for prose, where "we offer flexible
+ * appointment times" has to read as a sentence. But the About page also sets
+ * them out as a ticked list, and a list of sentence fragments starting
+ * "new patients welcome" reads as an oversight rather than a style.
+ *
+ * So the case is decided where they are DISPLAYED, not where they are
+ * written. Both renderers call this — the static page's buildTrustList() and
+ * the WordPress theme model — because the model also returns points of its
+ * own invention, and a rule applied only to the ones in this file would
+ * capitalise some items in a list and not others.
+ *
+ * Only the first character, and only when it is a lower-case letter:
+ * "5-star rated by local customers" and "24/7 availability" start with a
+ * digit and must be left exactly as they are.
+ */
+function displayTrustPoint(point) {
+  const text = String(point == null ? '' : point).trim();
+  if (!text) return '';
+  return text.replace(/^\p{Ll}/u, c => c.toUpperCase());
+}
+
 module.exports = {
   BUSINESS_TYPES,
+  displayTrustPoint,
   DROPDOWN_TYPES,
   imageFolderFor,
   SHAPES,

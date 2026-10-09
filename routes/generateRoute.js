@@ -42,7 +42,7 @@ const { generationLimiter } = require('../utils/concurrencyLimiter');
 const { fillLegalLinks } = require('../utils/legalLinks');
 const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
-const { MODES, normalizeSiteMode } = require('../utils/seoPresets');
+const { MODES, normalizeSiteMode, pagesToBuild } = require('../utils/seoPresets');
 
 const CM = require('../utils/contentModel');
 
@@ -342,7 +342,10 @@ router.post('/generate', upload.any(), async (req, res) => {
       siteMode,
       payload: req.body,
       progress: {
-        total: Object.keys(pages || {}).length + locationCount + 1,
+        // A design sample writes one page. The wizard still collects
+        // service pages on the step before, and counting them here made the
+        // bar start at "0 of 2" and stop at "1 of 2".
+        total: pagesToBuild(siteMode, pages, locationCount),
         done: 0,
         stage: 'queued',
       },
