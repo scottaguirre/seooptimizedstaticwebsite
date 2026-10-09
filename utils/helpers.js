@@ -178,7 +178,12 @@ function validateGlobalFields(global) {
   if (!global.is24Hours) {
     const hours = global.hours || {};
     const days = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+    const DAY_NAME = {
+      monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday',
+      friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
+    };
     const hourFields = [];
+    const complaints = [];
 
     const truthy = v => v === true || v === 'true' || v === 'on' || v === '1';
 
@@ -188,22 +193,57 @@ function validateGlobalFields(global) {
       const open = (day.open || '').toString().trim();
       const close = (day.close || '').toString().trim();
 
-      if (!isClosed) {
-        if (!open)  hourFields.push({ name: `global[hours][${d}][open]`,  message: 'Required' });
-        if (!close) hourFields.push({ name: `global[hours][${d}][close]`, message: 'Required' });
+      if (isClosed) continue;
 
-        // Optional sanity: open must be before close (both "HH:MM" 24h)
-        if (open && close && open >= close) {
-          hourFields.push({ name: `global[hours][${d}][close]`, message: 'Must be after open' });
-        }
+      if (!open) {
+        hourFields.push({ name: `global[hours][${d}][open]`, message: 'Required' });
+      }
+      if (!close) {
+        hourFields.push({ name: `global[hours][${d}][close]`, message: 'Required' });
+      }
+      if (!open || !close) {
+        complaints.push(`${DAY_NAME[d]} needs an opening and a closing time, or tick Closed`);
+        continue;
+      }
+
+      /* CLOSING EARLIER THAN OPENING IS ALLOWED, and used to be refused.
+       *
+       * The rule was `open >= close`, on the reasoning that a day has to end
+       * after it starts. It does not: a bar open 5pm to 1am, a diner open
+       * 10pm to 6am, and a locksmith open 6pm to 2am all close the next
+       * morning. Every one of them was told its hours were invalid, with no
+       * way to say what it meant and nothing on screen naming the day.
+       *
+       * What cannot be meant is a day that opens and closes at the same
+       * instant — that is either nought hours or twenty-four, and the form
+       * has a switch for twenty-four. So that is the only refusal left, and
+       * the form now previews "(next day)" beside an overnight row so a real
+       * typo is visible before the Generate button is anywhere near.
+       */
+      if (open === close) {
+        hourFields.push({
+          name: `global[hours][${d}][close]`,
+          message: 'Same as opening time',
+        });
+        complaints.push(
+          `${DAY_NAME[d]} opens and closes at the same time — for round-the-clock, ` +
+          `use the "Open 24 Hours" switch`
+        );
       }
     }
 
     if (hourFields.length) {
-      // Everything wrong with the form, in one response. The error line still
-      // names the hours because that is the headline when they are broken.
+      /* THE MESSAGE NAMES THE DAYS, because the per-field markers cannot be
+       * seen. By the time Generate is pressed, the hours inputs are no longer
+       * in the page — only the hidden mirrors that carry their names — so the
+       * red outline lands on an invisible element and the person is left with
+       * a sentence that does not say what to change. */
       fields.push(...hourFields);
-      return { ok: false, error: '❌ Missing/invalid business hours.', fields };
+      return {
+        ok: false,
+        error: `❌ Business hours: ${complaints.join('. ')}.`,
+        fields,
+      };
     }
   }
 

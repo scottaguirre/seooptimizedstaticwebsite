@@ -59,15 +59,15 @@ console.log('\nFrom header\n');
 
 test('a bare address gets the default display name', () => {
   assert.strictEqual(
-    fromWith({ EMAIL_FROM: 'hello@fastwebsitegenerator.com' }),
-    'Fast Website Generator <hello@fastwebsitegenerator.com>'
+    fromWith({ EMAIL_FROM: 'hello@threecomets.com' }),
+    'Three Comets <hello@threecomets.com>'
   );
 });
 
 test('the address itself is never altered', () => {
-  const out = fromWith({ EMAIL_FROM: 'hello@fastwebsitegenerator.com' });
+  const out = fromWith({ EMAIL_FROM: 'hello@threecomets.com' });
   assert.ok(
-    out.endsWith('<hello@fastwebsitegenerator.com>'),
+    out.endsWith('<hello@threecomets.com>'),
     `address changed: ${out}`
   );
 });
@@ -96,8 +96,8 @@ test('whitespace-only EMAIL_FROM_NAME also means a bare address', () => {
 });
 
 test('EMAIL_FROM already written as Name <addr> is left alone', () => {
-  // Wrapping it again gives `Fast Website Generator <Acme <a@b.c>>`, which is
-  // not a valid header.
+  // Wrapping it again gives `Three Comets <Acme <a@b.c>>`, which is not a
+  // valid header.
   assert.strictEqual(
     fromWith({ EMAIL_FROM: 'Acme <hello@x.com>' }),
     'Acme <hello@x.com>'
@@ -123,8 +123,8 @@ test('a name with parentheses is quoted', () => {
 
 test('a plain name is not quoted', () => {
   assert.strictEqual(
-    fromWith({ EMAIL_FROM: 'a@b.c', EMAIL_FROM_NAME: 'Fast Website Generator' }),
-    'Fast Website Generator <a@b.c>'
+    fromWith({ EMAIL_FROM: 'a@b.c', EMAIL_FROM_NAME: 'Three Comets' }),
+    'Three Comets <a@b.c>'
   );
 });
 
@@ -147,12 +147,28 @@ test('a quote in the name cannot break out of the quoting', () => {
   assert.strictEqual(out, '"Evil, Co" <a@b.c>');
 });
 
-test('no EMAIL_FROM at all still falls back to the Resend sandbox address', () => {
-  // Development and a fresh checkout both hit this. It must not throw.
+test('no EMAIL_FROM at all still falls back to a sendable address', () => {
+  // Development and a fresh checkout both hit this. It must not throw. The
+  // fallback used to be Resend's sandbox address, which only ever reached the
+  // account owner's own inbox; a deploy with EMAIL_FROM unset therefore looked
+  // fine to whoever tested it and silently reached nobody else.
   assert.strictEqual(
     fromWith({}),
-    'Fast Website Generator <onboarding@resend.dev>'
+    'Three Comets <hello@threecomets.com>'
   );
+});
+
+test('no fallback mentions the service\'s old names', () => {
+  /* The service was SEO Site Generator, then Fast Website Generator, before it
+   * was Three Comets. The From header is the one place a leftover name reaches
+   * a customer directly, and it is reached by an UNSET variable — so it fails
+   * on a fresh deploy, quietly, in someone else's inbox rather than on screen. */
+  const out = fromWith({});
+  for (const old of ['Fast Website Generator', 'SEO Site Generator',
+                     'fastwebsitegenerator', 'resend.dev']) {
+    assert.ok(!out.toLowerCase().includes(old.toLowerCase()),
+      `the default From header still carries "${old}": ${out}`);
+  }
 });
 
 console.log('');

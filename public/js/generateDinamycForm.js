@@ -1710,6 +1710,7 @@
         const days = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
         let hoursValid = true;
         let firstInvalidHoursControl = null;
+        const sameTimeDays = [];
 
         for (const day of days) {
           const openEl  = container.querySelector(`[name="global[hours][${day}][open]"]`);
@@ -1720,9 +1721,16 @@
           const openVal = (openEl?.value || '').trim();
           const closeVal = (closeEl?.value || '').trim();
 
-          // Rule: for EACH day, either mark Closed OR provide BOTH open & close times.
+          // Rule: for EACH day, either mark Closed OR provide BOTH open & close
+          // times. A closing time EARLIER than the opening one is fine — a bar
+          // open 5pm to 1am closes the next morning, and refusing that was a
+          // bug that produced no website and named no day. The one impossible
+          // pair is two identical times, which the server refuses too;
+          // "Open 24 Hours" is the switch for round-the-clock.
           if (!isClosed) {
-            if (!openVal || !closeVal) {
+            const sameTime = !!openVal && !!closeVal && openVal === closeVal;
+            if (sameTime) sameTimeDays.push(day);
+            if (!openVal || !closeVal || sameTime) {
               hoursValid = false;
               openEl?.classList.add('is-invalid');
               closeEl?.classList.add('is-invalid');
@@ -1739,7 +1747,12 @@
 
         if (!hoursValid) {
           firstInvalidHoursControl?.focus();
-          showAlert(container, 'Please complete Business Hours: for each day, either enter BOTH Open & Close times or check "Closed". Or turn on "Open 24 Hours".');
+          showAlert(container, sameTimeDays.length
+            ? 'Business Hours: '
+              + sameTimeDays.map(d => d[0].toUpperCase() + d.slice(1)).join(', ')
+              + ' opens and closes at the same time. For round-the-clock, use the '
+              + '"Open 24 Hours" switch.'
+            : 'Please complete Business Hours: for each day, either enter BOTH Open & Close times or check "Closed". Or turn on "Open 24 Hours".');
           return;
         }
       }

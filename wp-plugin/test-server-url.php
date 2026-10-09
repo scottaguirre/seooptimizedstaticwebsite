@@ -4,16 +4,20 @@
  *
  *   php wp-plugin/test-server-url.php
  *
- * WHY THIS EXISTS. The service was renamed from fastwebsitegenerator.com to
- * threecomets.com. The default in IE_Settings::server_url() was never updated,
- * and on 24 September the old domain was switched off for real — nginx site
- * deleted, A and CNAME records removed, certificate revoked.
+ * WHY THIS EXISTS. The service was renamed, the default in
+ * IE_Settings::server_url() was never updated, and the old domain was switched
+ * off for real — nginx site deleted, A and CNAME records removed, certificate
+ * revoked.
  *
  * So every install that had not typed a server address by hand was pointing at
  * a domain that does not resolve. NOTHING SAYS SO. Requests fail, the plugin
  * logs it, and the owner sees a blog that simply never publishes.
  *
  * Edwin found it by reading the Connection screen, not from an alert.
+ *
+ * The real entry was removed on 8 October, once every install had migrated.
+ * These tests drive the map through the `ie_moved_hosts` filter instead, so
+ * the machinery that rescues the NEXT rename cannot rot while it sits empty.
  *
  * TWO HALVES, AND THE SECOND IS THE ONE THAT MATTERS. Changing the default
  * fixes new installs only: `self::get()` returns the STORED value whenever
@@ -43,6 +47,19 @@ function untrailingslashit( $s ) {
 	return rtrim( (string) $s, '/\\' );
 }
 
+$GLOBALS['filters'] = array();
+
+function add_filter( $hook, $fn ) {
+	$GLOBALS['filters'][ $hook ][] = $fn;
+}
+
+function apply_filters( $hook, $value ) {
+	foreach ( ( $GLOBALS['filters'][ $hook ] ?? array() ) as $fn ) {
+		$value = $fn( $value );
+	}
+	return $value;
+}
+
 /* The real signature, including the PHP_URL_HOST constant, so a test cannot
  * pass against a stub that is more forgiving than WordPress. */
 function wp_parse_url( $url, $component = -1 ) {
@@ -59,6 +76,7 @@ $failed = 0;
 function test( $name, $fn ) {
 	global $passed, $failed;
 	$GLOBALS['options'] = array();
+	$GLOBALS['filters'] = array();
 	try {
 		$fn();
 		echo "  ok    $name\n";
@@ -88,33 +106,69 @@ function stored( $url ) {
 	IE_Settings::set( array( 'server_url' => $url ) );
 }
 
+/**
+ * Stand a dead host up for the length of one test.
+ *
+ * The real map is empty now, so without this the translation and the
+ * migration would have nothing to act on and would pass by doing nothing —
+ * the exact shape of green that this file exists to prevent.
+ */
+function moved( $host, $to = 'https://threecomets.com' ) {
+	add_filter( 'ie_moved_hosts', function ( $map ) use ( $host, $to ) {
+		$map[ $host ] = $to;
+		return $map;
+	} );
+}
+
 echo "\nThe server address\n";
 
 test( 'A FRESH INSTALL POINTS AT THE LIVE SERVICE', function () {
-	/* Nothing stored, so the default applies. It was
-	 * https://fastwebsitegenerator.com until 1 October, which by then had no
-	 * DNS at all. */
+	/* Nothing stored, so the default applies. It was the retired domain until
+	 * 1 October, which by then had no DNS at all. */
 	same( 'https://threecomets.com', IE_Settings::server_url() );
 } );
 
-test( 'THE DEAD DOMAIN IS TRANSLATED ON READ', function () {
+test( 'A DEAD DOMAIN IS TRANSLATED ON READ', function () {
 	/* The window before the migration runs, and the safety net if it never
 	 * does. A site must not send a single request to a host that is gone. */
-	stored( 'https://fastwebsitegenerator.com' );
+	moved( 'oldname.example' );
+
+	stored( 'https://oldname.example' );
 	same( 'https://threecomets.com', IE_Settings::server_url() );
 
-	stored( 'https://www.fastwebsitegenerator.com' );
-	same( 'https://threecomets.com', IE_Settings::server_url(), 'the www form was missed' );
-
-	stored( 'http://fastwebsitegenerator.com' );
+	stored( 'http://oldname.example' );
 	same( 'https://threecomets.com', IE_Settings::server_url(), 'the http form was missed' );
+
+	stored( 'https://OldName.Example' );
+	same( 'https://threecomets.com', IE_Settings::server_url(), 'the host was matched case-sensitively' );
+} );
+
+test( 'a www form only moves if it is in the map', function () {
+	/* The old entry listed the bare host AND the www one, by hand. Nothing
+	 * derives one from the other, and a reader could easily assume it does —
+	 * so the next person adding an entry needs both lines, and finds out here
+	 * rather than from a site that stopped publishing. */
+	moved( 'oldname.example' );
+
+	stored( 'https://www.oldname.example' );
+	same( 'https://www.oldname.example', IE_Settings::server_url(),
+		'www was translated from a map that does not list it' );
+} );
+
+test( 'an address not in the map is returned untouched', function () {
+	/* With the map empty this is every address there is. A current_server()
+	 * that started rewriting hosts on its own would break every install at
+	 * once, and the empty map would hide it from every other test here. */
+	stored( 'https://someone-elses-host.example/path' );
+	same( 'https://someone-elses-host.example/path', IE_Settings::server_url() );
 } );
 
 test( 'THE MIGRATION PERSISTS IT, SO THE SCREEN STOPS LYING', function () {
 	/* Reading can translate for one request. Only writing makes the
 	 * Connection screen stop showing an address the owner would otherwise
 	 * copy into a support email. */
-	stored( 'https://fastwebsitegenerator.com' );
+	moved( 'oldname.example' );
+	stored( 'https://oldname.example' );
 
 	same( true, IE_Settings::migrate_server_url(), 'the migration reported no change' );
 	same( 'https://threecomets.com', IE_Settings::get( 'server_url' ),

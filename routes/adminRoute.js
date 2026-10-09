@@ -5,6 +5,49 @@ const User = require('../models/User');
 const requireAdmin = require('../middleware/requireAdmin');
 const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets } = require('../utils/appHeader');
 const { pageTitle } = require('../utils/pageTitle');
+const { recentEmailFailures } = require('../utils/emailHealth');
+
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/**
+ * A line on the admin page saying whether email is actually going out.
+ *
+ * sendEmail does not throw, so a total outage is invisible everywhere except
+ * error.log. It stayed invisible for a fortnight, and surfaced only when a
+ * customer said she had not received anything. This is the cheap half of the
+ * fix: a number in front of the one person who can act on it, every time they
+ * log in. The nightly cron is the other half, and it cannot be the only half,
+ * because the way it reports is email.
+ *
+ * The recipient address is printed because it is the fastest way to tell a
+ * provider-wide outage from one bad address.
+ */
+function emailHealthBanner() {
+  let health;
+  try {
+    health = recentEmailFailures();
+  } catch {
+    // A status line must never be the reason the users page 500s.
+    return '';
+  }
+
+  if (!health.count) {
+    return `<p class="small text-white-50 mb-3">Email: no failed sends in the last 24 hours.</p>`;
+  }
+
+  return `
+          <div class="alert alert-danger" role="alert">
+            <strong>${health.count} email${health.count === 1 ? '' : 's'} failed to send in the last 24 hours.</strong>
+            <div class="small mt-1">
+              Latest ${escapeHtml(health.latest.time)} to ${escapeHtml(health.latest.to)}:
+              ${escapeHtml(health.latest.message)}
+            </div>
+            <div class="small mt-1">
+              Accounts are still being created — the people affected never got a link.
+            </div>
+          </div>`;
+}
 
 // GET /admin - list users (with optional filters)
 router.get('/admin', requireAdmin, async (req, res) => {
@@ -145,6 +188,7 @@ ${appSidebar('/admin')}
         <div class="container mt-5 mb-5">
           <h1 class="mb-3">Admin - Users</h1>
           <p class="mb-3">Logged in as: <strong>${req.user.email}</strong> (${req.user.role})</p>
+${emailHealthBanner()}
 
           <div class="mb-3 d-flex gap-2">
             <a href="/" class="btn btn-primary btn-sm">Back to Generator</a>

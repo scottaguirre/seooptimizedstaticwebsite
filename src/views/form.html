@@ -199,6 +199,9 @@
   <!-- Before generateDinamycForm.js, which calls it. Both are deferred, and
        deferred scripts run in the order they appear. -->
   <script src="/js/businessTypePicker.js" defer></script>
+  <!-- The page renderer's own hours formatter, loaded in the browser so the
+       form's preview and the published site cannot word a day differently. -->
+  <script src="/js/hoursFormat.js" defer></script>
   <script src="/js/hoursOfOperation.js" defer></script>
   <!-- load before your dynamic form builder so helpers are ready -->
   <script src="/js/locationPages.js" defer></script>

@@ -536,7 +536,7 @@ add_action( 'plugins_loaded', function () {
 		return;
 	}
 
-	// The 0.15.0 migration: fastwebsitegenerator.com no longer resolves.
+	// The 0.15.0 migration: the retired domain no longer resolves.
 	if ( IE_Settings::migrate_server_url() ) {
 		IE_Publisher::log( 'server_url migrated to ' . IE_Settings::server_url() );
 	}

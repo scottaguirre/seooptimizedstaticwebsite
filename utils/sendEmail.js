@@ -29,14 +29,18 @@ function getResend() {
 /**
  * The name shown in the recipient's inbox.
  *
- * Without it, a From header of `hello@fastwebsitegenerator.com` makes Gmail
- * display the sender as "hello" — the local part, alone, above a password
- * reset link. Overridable with EMAIL_FROM_NAME; the default lives here rather
- * than only in .env so a deploy fixes it without also editing the server's
- * environment.
+ * Without it, a From header of `hello@threecomets.com` makes Gmail display the
+ * sender as "hello" — the local part, alone, above a password reset link.
+ * Overridable with EMAIL_FROM_NAME; the default lives here rather than only in
+ * .env so a deploy fixes it without also editing the server's environment.
+ *
+ * These two defaults are what every email says when the environment is silent,
+ * so they are the brand's last line. They read "Fast Website Generator" and
+ * Resend's sandbox address until 8 October — an unset EMAIL_FROM_NAME on any
+ * deploy would have put the old name in a stranger's inbox.
  */
-const DEFAULT_FROM_NAME = 'Fast Website Generator';
-const DEFAULT_FROM_ADDRESS = 'onboarding@resend.dev';
+const DEFAULT_FROM_NAME = 'Three Comets';
+const DEFAULT_FROM_ADDRESS = 'hello@threecomets.com';
 
 // True for a value already written as `Name <addr>`.
 function hasDisplayName(value) {

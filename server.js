@@ -98,6 +98,18 @@ const PORT = 3000;
 
 
 // ===== STATIC FILES =====
+//
+// The hours formatter is SERVED, not copied. public/js/hoursOfOperation.js
+// shows each day back to the person filling the form, and it has to word that
+// line exactly as the generated page will — a second copy under public/ would
+// drift the first time one of them was edited, and a preview that disagrees
+// with the published site is worse than no preview. The module detects which
+// of module.exports / window it has and attaches itself accordingly.
+app.get('/js/hoursFormat.js', (req, res) => {
+  res.type('application/javascript');
+  res.sendFile(path.join(__dirname, 'utils', 'formatDaysAndHoursForDisplay.js'));
+});
+
 app.use(express.static('public'));
 
 

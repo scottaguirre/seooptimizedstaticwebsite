@@ -116,23 +116,30 @@ class IE_Settings {
 	/**
 	 * Hosts that no longer answer, and where they went.
 	 *
-	 * fastwebsitegenerator.com was the service's first name. It was switched
-	 * OFF on 24 September — nginx site deleted, A and CNAME records removed,
-	 * certificate revoked. It resolves nowhere.
+	 * EMPTY ON PURPOSE, AND KEPT ANYWAY.
 	 *
-	 * The default below was never updated with the rename, so every install
-	 * that had not set the field by hand was pointing at a domain that had
-	 * stopped existing. Nothing says so on screen: requests fail, the plugin
-	 * logs it, and the owner sees a site that simply never publishes.
+	 * It held fastwebsitegenerator.com — the service's first name, switched
+	 * off on 24 September and resolving nowhere since. Every install had
+	 * migrated, so the entries went on 8 October: a retired name still
+	 * surfaces the one time it is not wanted.
 	 *
-	 * A MAP RATHER THAN ONE COMPARISON, because this will happen again. The
-	 * next rename adds a line here and both halves below keep working.
+	 * The MECHANISM stays, because the failure it was written for is the
+	 * quiet kind. The default was not updated at the rename, so every install
+	 * that had never typed an address by hand pointed at a host that had
+	 * stopped existing. Nothing said so on screen — requests failed, the
+	 * plugin logged it, and the owner saw a blog that simply never published.
+	 * The next rename adds one line here and both halves below keep working.
+	 *
+	 * Filterable so that the translation and the migration stay under test
+	 * with the map empty. That is what test-server-url.php uses it for; it is
+	 * not an extension point for anybody else.
 	 */
 	private static function moved_hosts() {
-		return array(
-			'fastwebsitegenerator.com'     => self::SERVER,
-			'www.fastwebsitegenerator.com' => self::SERVER,
-		);
+		$moved = array();
+
+		return function_exists( 'apply_filters' )
+			? (array) apply_filters( 'ie_moved_hosts', $moved )
+			: $moved;
 	}
 
 	/** The live address for a URL, which is the URL itself unless it moved. */

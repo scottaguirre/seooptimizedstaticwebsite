@@ -15,6 +15,7 @@ const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAsse
 const { pageTitle } = require('../utils/pageTitle');
 const { createVerificationToken, hashToken, notExpired } = require('../utils/authTokens');
 const { sendEmail, verificationEmail } = require('../utils/sendEmail');
+const { signupResultPage } = require('../utils/signupResult');
 
 
 // GET /signup – show signup form
@@ -78,15 +79,26 @@ router.post('/signup', async (req, res) => {
     // to Resend in production (or whenever EMAIL_TRANSPORT=resend). This was
     // a console.log, which meant every new email feature would invent its
     // own version and switching provider would mean finding them all.
-    await sendEmail(verificationEmail({ to: user.email, token: verificationRaw }));
+    const delivery = await sendEmail(verificationEmail({ to: user.email, token: verificationRaw }));
+
+    // sendEmail never throws — a failed send must not lose the account that
+    // was just created. But it must not be reported as a success either, which
+    // is what this route used to do. There is no account-enumeration risk in
+    // being honest here: whoever is reading this page just created the account
+    // on it. (The resend-verification page deliberately stays vague, because
+    // there the address is not known to belong to whoever typed it.)
+    const result = signupResultPage(delivery);
+
+    if (!result.sent) {
+      log.error('auth.signup.emailFailed',
+        new Error((delivery && delivery.error) || 'send failed'), {
+          requestId: req.id,
+          userId: String(user._id),
+        });
+    }
 
     // 🔹 Do NOT log them in yet; require verification first
-    res.send(`
-      <h2>Account created</h2>
-      <p>We sent you a verification link. Please check your email and click it to activate your account.</p>
-      <p><strong>Dev only:</strong> If you're on localhost, check the server console for the verification URL.</p>
-      <a href="/login">Go to Login</a>
-    `);
+    res.status(result.status).send(result.html);
   } catch (err) {
     console.error('Signup error:', err);
     res.status(500).send('Error signing up');
