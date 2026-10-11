@@ -3033,6 +3033,31 @@ class IE_Admin {
 
 			<table class="form-table" role="presentation">
 				<tr>
+					<th scope="row"><label for="ie_start_date"><?php esc_html_e( 'First post on', 'interlink-engine' ); ?></label></th>
+					<td>
+						<?php
+						/* EMPTY MEANS "AS SOON AS THE CADENCE ALLOWS", which is what
+						 * every campaign planned before today did and what most people
+						 * want. A date is for the campaign that has to line up with
+						 * something — a launch, a season, the week after the one
+						 * already running.
+						 *
+						 * `min` is a courtesy from the browser and nothing more: it is
+						 * trivially bypassed and absent without JavaScript, so the real
+						 * refusal is in handle_create_campaign(). A past date would not
+						 * merely be ignored — the first posts would already be overdue,
+						 * and the missed-schedule sweep would publish several of them
+						 * within minutes of each other. */
+						?>
+						<input name="start_date" id="ie_start_date" type="date"
+							min="<?php echo esc_attr( wp_date( 'Y-m-d' ) ); ?>"
+							value="<?php echo esc_attr( $value( 'start_date', '' ) ); ?>">
+						<p class="description">
+							<?php esc_html_e( 'Leave empty to start as soon as the cadence allows. The gap below counts from this date.', 'interlink-engine' ); ?>
+						</p>
+					</td>
+				</tr>
+				<tr>
 					<th scope="row"><label for="ie_cadence"><?php esc_html_e( 'One post every', 'interlink-engine' ); ?></label></th>
 					<td>
 						<input name="every_days" id="ie_cadence" type="number" min="1" max="90" class="small-text"
@@ -3530,6 +3555,94 @@ class IE_Admin {
 		return $id;
 	}
 
+	/**
+	 * The first post's date, as the owner typed it, or ''.
+	 *
+	 * 'Y-m-d' AND NOTHING ELSE. An <input type="date"> always posts that shape;
+	 * anything else arrived from a browser without date support, a cached page,
+	 * or somebody poking at the form. Matched rather than coerced — strtotime()
+	 * would cheerfully read "next tuesday" and "0000-00-00", and a campaign
+	 * schedule is not the place to find out what it decided.
+	 *
+	 * NOT checked for being in the future here. read_form() is called by four
+	 * handlers and only one of them plans a campaign; a date that went stale
+	 * while the form sat open should not stop somebody pressing Suggest topics.
+	 */
+	private static function read_start_date() {
+		$raw = isset( $_POST['start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['start_date'] ) ) : '';
+		$raw = trim( $raw );
+
+		if ( ! preg_match( '/^(\d{4})-(\d{2})-(\d{2})$/', $raw, $m ) ) {
+			return '';
+		}
+
+		/* A REAL DATE, not just four-two-two. '2026-02-31' matches the pattern
+		 * above and is not a day. */
+		return checkdate( (int) $m[2], (int) $m[3], (int) $m[1] ) ? $raw : '';
+	}
+
+	/**
+	 * That date as the instant the server counts from, or ''.
+	 *
+	 * NOON, NOT MIDNIGHT, and that is the whole reason this is a function.
+	 *
+	 * The server reads the instant back as a calendar date IN THE SITE'S OWN
+	 * ZONE — see zonedDateParts() in utils/blog/schedule.js. Midnight local sits
+	 * within an hour of the date boundary, so any disagreement about the zone
+	 * moves the entire campaign by a day: a site reporting one zone and storing
+	 * another, or a clock change on that very night. Noon is twelve hours from
+	 * either edge and survives all of it.
+	 *
+	 * Built through wp_timezone() so it carries the site's real offset, rather
+	 * than a bare 'Y-m-d' the server would have to guess at.
+	 */
+	private static function start_date_instant( $date ) {
+		if ( '' === (string) $date ) {
+			return '';
+		}
+
+		$dt = date_create_immutable_from_format( 'Y-m-d H:i', $date . ' 12:00', wp_timezone() );
+
+		return $dt ? $dt->format( 'c' ) : '';
+	}
+
+	/**
+	 * Is this start date one the schedule can honour?
+	 *
+	 * ONLY "NOT IN THE PAST", and that is not fussiness. publishDates() does
+	 * shift a run forward when its first slot has gone by — but by ONE cadence
+	 * gap at a time, giving up after eight. A date three months back at a
+	 * fortnightly cadence therefore still lands in the past, and posts in the
+	 * past are OVERDUE: the missed-schedule sweep publishes them, several
+	 * inside the same minute. A quarter of content appearing in one afternoon
+	 * is the most recognisable sign of an automated blog there is, which is the
+	 * thing this product exists to avoid.
+	 *
+	 * TODAY IS ALLOWED. If the hour has gone, publishDates moves it on by one
+	 * gap — the behaviour every campaign has always had.
+	 *
+	 * Takes today as an argument rather than reading the clock, so the boundary
+	 * can be tested without waiting for midnight.
+	 *
+	 * @param  string $date  'Y-m-d' or ''
+	 * @param  string $today 'Y-m-d' in the site's timezone
+	 * @return string the complaint, or '' if the date is fine
+	 */
+	public static function start_date_problem( $date, $today ) {
+		if ( '' === (string) $date ) {
+			return '';   // empty means "as soon as the cadence allows"
+		}
+
+		/* STRING COMPARISON, which is exact for this format and only this
+		 * format: 'Y-m-d' is fixed-width and ordered the same way lexically as
+		 * it is chronologically. read_start_date() guarantees the shape. */
+		if ( $date < (string) $today ) {
+			return __( 'The first post date has already passed. Choose today or a later date — starting in the past would publish several posts at once.', 'interlink-engine' );
+		}
+
+		return '';
+	}
+
 	/** The shared part of both submit buttons: what the form said about the page. */
 	private static function read_form() {
 		/* A PILLAR CAMPAIGN HAS NO TARGET PAGE, AND IS NOT MISSING ONE.
@@ -3569,6 +3682,7 @@ class IE_Admin {
 				'video_url'      => isset( $_POST['video_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['video_url'] ) ) ) : '',
 				'every_days'     => isset( $_POST['every_days'] ) ? max( 1, min( 90, (int) $_POST['every_days'] ) ) : 14,
 				'publish_time'   => isset( $_POST['publish_time'] ) ? sanitize_text_field( wp_unslash( $_POST['publish_time'] ) ) : '09:00',
+				'start_date'     => self::read_start_date(),
 				'publish_mode'   => ( isset( $_POST['publish_mode'] ) && 'draft' === $_POST['publish_mode'] ) ? 'draft' : 'future',
 			);
 		}
@@ -3628,6 +3742,7 @@ class IE_Admin {
 			'video_url'      => isset( $_POST['video_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['video_url'] ) ) ) : '',
 			'every_days'     => isset( $_POST['every_days'] ) ? max( 1, min( 90, (int) $_POST['every_days'] ) ) : 14,
 			'publish_time'   => isset( $_POST['publish_time'] ) ? sanitize_text_field( wp_unslash( $_POST['publish_time'] ) ) : '09:00',
+			'start_date'     => self::read_start_date(),
 			// Anything that is not an explicit 'draft' means schedule them. The
 			// old value for that was 'publish'; reading it this way round means
 			// a form posted by a cached page still does what the owner meant.
@@ -3953,6 +4068,23 @@ class IE_Admin {
 		$target_page = $is_pillar ? null : self::target_page_payload( $form );
 		$topics      = self::collect_topics();
 
+		/* BEFORE ANYTHING IS SPENT. The next few steps call the server —
+		 * enrich() costs an API call and write() costs real credits — and a
+		 * date in the past is a decision the owner has to change, not something
+		 * the schedule can absorb. wp_date() rather than date(): the comparison
+		 * has to happen in the site's own timezone, or a site in Austin loses a
+		 * day to a server running UTC every evening. */
+		$start_problem = self::start_date_problem(
+			isset( $form['start_date'] ) ? $form['start_date'] : '',
+			wp_date( 'Y-m-d' )
+		);
+
+		if ( '' !== $start_problem ) {
+			self::keep_draft( $form, $topics );
+
+			self::redirect( 'interlink-engine', 'error', $start_problem, array( 'tab' => 'new' ) );
+		}
+
 		if ( empty( $topics ) ) {
 			self::redirect( 'interlink-engine', 'error', __( 'Add some topics, or press Suggest topics.', 'interlink-engine' ), array( 'tab' => 'new' ) );
 		}
@@ -4081,6 +4213,22 @@ class IE_Admin {
 				// instants, and needs the zone to do it — 09:00 has to mean
 				// nine in the morning where the business is.
 				'timezone'    => wp_timezone_string(),
+
+				/* WHEN THE FIRST POST GOES OUT, and the cadence counts from it.
+				 *
+				 * The server has accepted `startAt` since schedule.js was
+				 * written — publishDates() takes it and campaignPlan.js passes
+				 * it straight through. Nothing ever sent one, so every campaign
+				 * ever planned started from the moment it was approved.
+				 *
+				 * EMPTY WHEN THE BOX WAS LEFT ALONE, and empty is enough: the
+				 * server tests `schedule.startAt ? new Date(...) : undefined`,
+				 * and '' is falsy there, so it never becomes an Invalid Date.
+				 * Sent as '' rather than conditionally omitted because one
+				 * shape of payload is easier to reason about than two. */
+				'startAt'     => self::start_date_instant(
+					isset( $form['start_date'] ) ? $form['start_date'] : ''
+				),
 			),
 		);
 

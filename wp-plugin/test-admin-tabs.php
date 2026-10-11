@@ -48,6 +48,7 @@ function _n( $one, $many, $n, $d = null ) { return 1 === (int) $n ? $one : $many
 function admin_url( $p = '' ) { return 'http://site/wp-admin/' . $p; }
 function wp_date( $fmt, $ts = null ) { return date( $fmt, $ts ? $ts : time() ); }
 function wp_timezone_string() { return 'America/Chicago'; }
+function wp_timezone() { return new DateTimeZone( wp_timezone_string() ); }
 function current_time( $t ) { return date( 'Y-m-d H:i:s' ); }
 function wp_nonce_field( $a ) { echo '<input type="hidden" name="_wpnonce" value="n">'; }
 function wp_nonce_url( $u, $a ) { return $u . '&_wpnonce=n'; }
@@ -2885,8 +2886,8 @@ test( 'THE STUB SPELLS THE META KEYS THE WAY THE REAL CLASS DOES', function () {
  * ===================================================================== */
 
 /** Submit a pillar campaign with typed keywords, and return where it went. */
-function ie_plan_pillar( $rows ) {
-	$_POST = array( 'is_pillar' => '1' );
+function ie_plan_pillar( $rows, $extra = array() ) {
+	$_POST = array_merge( array( 'is_pillar' => '1' ), $extra );
 
 	foreach ( array_values( $rows ) as $i => $row ) {
 		$_POST['use'][ $i ]          = '1';
@@ -3313,6 +3314,198 @@ test( 'THE HANDLER STILL VERIFIES THE UPLOAD AND THE NONCE', function () {
 	/* Before the file is opened, or the check is decoration. */
 	ok( strpos( $handler, 'is_uploaded_file(' ) < strpos( $handler, 'parse_topics_csv(' ),
 		'the file is read before it is verified' );
+} );
+
+/* =====================================================================
+ *
+ * WHEN THE FIRST POST GOES OUT
+ *
+ * Asked for on 11 October: *"right now it is just the frequency but not an
+ * option to decide when should the first post start and then the frequency
+ * will follow the starting date."*
+ *
+ * THE SERVER HAS ACCEPTED THIS SINCE schedule.js WAS WRITTEN. publishDates()
+ * takes a `startAt` and campaignPlan.js passes it straight through. Nothing
+ * ever sent one, so every campaign ever planned started from the moment it was
+ * approved. This is a form field and a payload key, not a scheduling change —
+ * which is also why it needs testing at the boundaries rather than in the
+ * middle, where there is nothing new to get wrong.
+ *
+ * ===================================================================== */
+
+/** A date that many days from the harness's "today", in the site's zone. */
+function ie_day( $offset ) {
+	return ( new DateTimeImmutable( 'now', wp_timezone() ) )
+		->modify( ( $offset >= 0 ? '+' : '' ) . $offset . ' days' )
+		->format( 'Y-m-d' );
+}
+
+$DATED_ROWS = array(
+	array( 'Deposits and supplier terms', 'roofing deposits', 'how deposits work' ),
+	array( 'Payment schedules',           'roofing payment schedules', 'when you get paid' ),
+);
+
+test( 'THE DATE REACHES THE SERVER AS AN INSTANT', function () use ( $DATED_ROWS ) {
+	/* The whole feature in one assertion: the box is read, turned into a real
+	 * moment, and put on the payload the server plans from. */
+	$GLOBALS['ie_transient']  = null;
+	$GLOBALS['ie_plan_calls'] = array();
+	unset( $GLOBALS['ie_plan_result'] );
+
+	$when = ie_day( 30 );
+
+	ie_plan_pillar( $DATED_ROWS, array( 'start_date' => $when ) );
+
+	same( 1, count( $GLOBALS['ie_plan_calls'] ), 'the campaign was never planned' );
+
+	$sent = $GLOBALS['ie_plan_calls'][0]['schedule']['startAt'];
+
+	ok( '' !== $sent, 'the date was dropped between the form and the payload' );
+	has( $sent, $when, 'the instant does not fall on the date that was chosen' );
+} );
+
+test( 'IT IS NOON, NOT MIDNIGHT', function () use ( $DATED_ROWS ) {
+	/* THE DETAIL THAT DECIDES WHETHER THIS WORKS AT ALL. The server reads the
+	 * instant back as a calendar date in the SITE'S zone. Midnight local is
+	 * within an hour of the date boundary, so any disagreement about the zone —
+	 * or a clock change that night — moves the whole campaign a day. Noon is
+	 * twelve hours from either edge. */
+	$GLOBALS['ie_transient']  = null;
+	$GLOBALS['ie_plan_calls'] = array();
+	unset( $GLOBALS['ie_plan_result'] );
+
+	ie_plan_pillar( $DATED_ROWS, array( 'start_date' => ie_day( 30 ) ) );
+
+	$sent = $GLOBALS['ie_plan_calls'][0]['schedule']['startAt'];
+
+	has( $sent, 'T12:00:00', 'the instant is not anchored at midday' );
+	ok( preg_match( '/[+-]\d{2}:\d{2}$/', $sent ) === 1,
+		'the instant carries no offset, so the server has to guess the zone' );
+} );
+
+test( 'AN EMPTY BOX STILL MEANS "AS SOON AS THE CADENCE ALLOWS"', function () use ( $DATED_ROWS ) {
+	/* Every campaign planned before today, and what most people want. The
+	 * server tests `schedule.startAt ? … : undefined`, so '' reads as absent —
+	 * but it must not become a string that parses to Invalid Date. */
+	$GLOBALS['ie_transient']  = null;
+	$GLOBALS['ie_plan_calls'] = array();
+	unset( $GLOBALS['ie_plan_result'] );
+
+	ie_plan_pillar( $DATED_ROWS );
+
+	same( '', $GLOBALS['ie_plan_calls'][0]['schedule']['startAt'] );
+} );
+
+test( 'A DATE IN THE PAST IS REFUSED BEFORE ANYTHING IS SPENT', function () use ( $DATED_ROWS ) {
+	/* publishDates() shifts a run forward when its first slot has gone by, but
+	 * by ONE cadence gap at a time and only eight times. A date months back at
+	 * a fortnightly cadence still lands in the past — and posts in the past are
+	 * overdue, so the missed-schedule sweep publishes them, several within the
+	 * same minute. A quarter of content in one afternoon is the clearest sign
+	 * of an automated blog there is.
+	 *
+	 * BEFORE THE SERVER IS CALLED, because the next steps cost an API call and
+	 * then real credits. */
+	$GLOBALS['ie_transient']  = null;
+	$GLOBALS['ie_plan_calls'] = array();
+	unset( $GLOBALS['ie_plan_result'] );
+
+	$out = ie_plan_pillar( $DATED_ROWS, array( 'start_date' => ie_day( -1 ) ) );
+
+	same( 'error', $out['ie_status'] );
+	has( $out['ie_message'], 'already passed' );
+	same( array(), $GLOBALS['ie_plan_calls'], 'the server was asked to plan it anyway' );
+} );
+
+test( 'AND THE FORM COMES BACK WITH EVERYTHING IN IT', function () use ( $DATED_ROWS ) {
+	/* The same rule as every other refusal on this screen: a message that asks
+	 * the owner to change something must not delete what they typed. */
+	$GLOBALS['ie_transient'] = null;
+	unset( $GLOBALS['ie_plan_result'] );
+
+	$yesterday = ie_day( -1 );
+
+	ie_plan_pillar( $DATED_ROWS, array( 'start_date' => $yesterday ) );
+
+	$draft = get_transient( 'x' );
+
+	same( 2, count( $draft['topics'] ), 'the topics were lost with the bad date' );
+	same( 'roofing deposits', $draft['topics'][0]['targetQuery'] );
+	same( $yesterday, $draft['form']['start_date'],
+		'the rejected date was not put back, so there is nothing to correct' );
+} );
+
+test( 'TODAY IS ALLOWED', function () use ( $DATED_ROWS ) {
+	/* If the hour has gone, publishDates moves it on by one gap — which is
+	 * what every campaign has always done. Refusing today would make "start
+	 * now" impossible to express. */
+	$GLOBALS['ie_transient']  = null;
+	$GLOBALS['ie_plan_calls'] = array();
+	unset( $GLOBALS['ie_plan_result'] );
+
+	$out = ie_plan_pillar( $DATED_ROWS, array( 'start_date' => ie_day( 0 ) ) );
+
+	ok( 'error' !== $out['ie_status'], 'today was refused: ' . $out['ie_message'] );
+	same( 1, count( $GLOBALS['ie_plan_calls'] ) );
+} );
+
+test( 'A DATE THAT IS NOT A DATE IS IGNORED, NOT GUESSED AT', function () use ( $DATED_ROWS ) {
+	/* strtotime() would read "next tuesday" and "0000-00-00" and 31 February,
+	 * and a campaign schedule is not the place to find out what it decided.
+	 * Anything malformed falls back to the old behaviour — start now. */
+	foreach ( array( 'next tuesday', '0000-00-00', '2026-02-31', '11/12/2026', '2026-2-3', 'x' ) as $junk ) {
+		$GLOBALS['ie_transient']  = null;
+		$GLOBALS['ie_plan_calls'] = array();
+		unset( $GLOBALS['ie_plan_result'] );
+
+		$out = ie_plan_pillar( $DATED_ROWS, array( 'start_date' => $junk ) );
+
+		ok( 'error' !== $out['ie_status'], "'$junk' produced an error rather than being ignored" );
+		same( '', $GLOBALS['ie_plan_calls'][0]['schedule']['startAt'], "'$junk' reached the server" );
+	}
+} );
+
+test( 'THE RULE ITSELF, AT ITS EDGES', function () {
+	/* Driven directly so the boundary can be checked without waiting for
+	 * midnight. A string comparison is exact for 'Y-m-d' and only for 'Y-m-d',
+	 * which is what read_start_date() guarantees. */
+	same( '', IE_Admin::start_date_problem( '', '2026-10-11' ), 'an empty date was refused' );
+	same( '', IE_Admin::start_date_problem( '2026-10-11', '2026-10-11' ), 'today was refused' );
+	same( '', IE_Admin::start_date_problem( '2026-10-12', '2026-10-11' ) );
+	same( '', IE_Admin::start_date_problem( '2027-01-01', '2026-12-31' ), 'the year boundary was refused' );
+
+	ok( '' !== IE_Admin::start_date_problem( '2026-10-10', '2026-10-11' ), 'yesterday was allowed' );
+	ok( '' !== IE_Admin::start_date_problem( '2026-12-31', '2027-01-01' ), 'last year was allowed' );
+} );
+
+test( 'THE BOX IS ON THE FORM, ABOVE THE CADENCE IT ANCHORS', function () {
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = null;
+
+	$html = render( 'new' );
+
+	has( $html, 'name="start_date"', 'there is no date box on the form' );
+	has( $html, 'type="date"' );
+	has( $html, 'First post on' );
+
+	ok( strpos( $html, 'name="start_date"' ) < strpos( $html, 'name="every_days"' ),
+		'the cadence is above the date it counts from, which reads backwards' );
+
+	/* A browser courtesy, not the guard — it is bypassed trivially and absent
+	 * without JavaScript, which is why start_date_problem() exists. */
+	has( $html, 'min="' . wp_date( 'Y-m-d' ) . '"' );
+} );
+
+test( 'THE CHOSEN DATE IS STILL IN THE BOX AFTER A REFUSAL', function () {
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = array(
+		'form'   => array( 'is_pillar' => true, 'start_date' => '2027-03-01' ),
+		'topics' => array( array( 'topic' => 'A', 'targetQuery' => 'a', 'linkPhrase' => 'b' ) ),
+	);
+
+	has( render( 'new' ), 'value="2027-03-01"', 'the date was not prefilled from the draft' );
+
+	$GLOBALS['ie_transient'] = null;
 } );
 
 echo "\n$passed passed, $failed failed\n";

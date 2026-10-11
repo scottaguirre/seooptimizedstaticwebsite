@@ -151,7 +151,7 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
-    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, refused plans, CSV upload, 151
+    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, refused plans, CSV upload, start date, 161
     php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, SEO titles, removal queue, 70
     php wp-plugin/test-writing-progress.php # "4 of 11 written": stored every poll, cleared on stop and on pause, 17
     php wp-plugin/test-business-source.php # when a site may answer for its own blank fields, 11
@@ -2866,6 +2866,115 @@ A fixture sitting on a threshold cannot test what the threshold is applied to.
 
 Five mutations, all caught once those were fixed. `test-post-quality.js`
 37 → 42.
+
+## When the first post goes out — 11 October 2026 (plugin 0.39.0)
+
+Edwin: *"right now it is just the frequency but not an option to decide when
+should the first post start and then the frequency will follow the starting
+date."*
+
+**The server has accepted this since schedule.js was written.** `publishDates()`
+takes a `startAt`, and `campaignPlan.js` passes `schedule.startAt` straight
+through. Nothing ever sent one, so every campaign ever planned started from the
+moment it was approved. This is a form field and a payload key — not a
+scheduling change, which is why the tests sit at the boundaries rather than in
+the middle, where there was nothing new to get wrong.
+
+### Noon, not midnight
+
+The instant is built as **12:00 in the site's own timezone**, and that is the
+detail the feature stands on. The server reads it back as a calendar date in
+that zone (`zonedDateParts`). Midnight local sits within an hour of the date
+boundary, so any disagreement about the zone — a site reporting one and storing
+another, or a clock change that very night — moves the entire campaign by a
+day. Noon is twelve hours from either edge.
+
+Sent through `wp_timezone()` so it carries a real offset, rather than a bare
+`Y-m-d` the server would have to guess at.
+
+### A past date is refused, and that is not fussiness
+
+`publishDates()` does shift a run forward when its first slot has gone by — but
+by **one cadence gap at a time, giving up after eight**. A date three months
+back at a fortnightly cadence still lands in the past, and posts in the past
+are *overdue*: the missed-schedule sweep publishes them, several inside the
+same minute. A quarter of content appearing in one afternoon is the clearest
+sign of an automated blog there is, which is the thing this product exists to
+avoid.
+
+Checked **before** `enrich()` (an API call) and `write()` (real credits), and
+through `keep_draft()` so the refusal does not delete the date it is objecting
+to. Today is allowed — if the hour has gone, publishDates moves it on by one
+gap, which is what every campaign has always done.
+
+The comparison uses `wp_date()`, not `date()`: it has to happen in the site's
+timezone, or a site in Austin loses a day to a UTC server every evening.
+
+### Parsing
+
+`Y-m-d` matched, then `checkdate()`. `strtotime()` would read "next tuesday"
+and "0000-00-00" and 31 February, and a campaign schedule is not the place to
+discover what it decided. Anything malformed falls back to the old behaviour —
+start now — rather than refusing. The `min` on the input is a browser courtesy
+and nothing more.
+
+`test-admin-tabs.php` 151 → 161, 11 mutations all caught.
+
+One of those was worth the trouble twice. The first version of "the box moved
+below the cadence" only renamed a label, so it passed and looked like a gap in
+the test. Rewritten to actually swap the two table rows, it bit. **A mutation
+that does not do what its name says is a false alarm, not a finding.**
+
+## WordPress is not always at the root — 11 October 2026
+
+Edwin's staging site is `hyi.xlr.temporary.site/website_3ef45ace`. Its posts
+never arrived on their own; the count on the card sat at "0 of 39" until he
+pressed Check now, which worked every time.
+
+`pingSite()` built the request from **`safe.url.origin`** — scheme, host and
+port and nothing else. So the knock went to the ROOT of that shared preview
+host, where some other WordPress answered, with a different secret:
+
+    HTTP 401: {"code":"ie_bad_signature","message":"Signature did not match."}
+
+Which reads as a broken secret and is nothing of the kind.
+
+**Not a staging-only problem.** `example.com/blog` is an ordinary way to run a
+marketing blog under a main site, and every one of those installs has been
+silently uncollectable since the scheduler was written — posts written, charged
+for, and arriving only if the owner finds the Check now button. Nothing on any
+screen would ever have said why.
+
+**Only the inbound direction breaks.** The plugin's own calls carry its full
+address, so planning, writing, charging and Check now all work. It is the one
+place where WE build the url.
+
+### The asymmetry that makes the fix safe
+
+The request gains the subfolder. **The signature does not.**
+
+The plugin verifies against `'/wp-json/' . $request->get_route()`, and
+WordPress reports a route without the subfolder — `/interlink/v1/run` whether
+the install is at the root or ten directories down. So the signed string stays
+the bare route. Signing the prefixed url instead would fix Edwin's site and
+break every site that works today, with the same "Signature did not match"
+that sent us looking at secrets in the first place.
+
+Trailing slashes are stripped: `/blog//wp-json/…` is a 404 on some servers and
+a **redirect** on others, and pingSite refuses redirects, correctly, as an SSRF
+risk — so it would fail in a way that reads as an attack.
+
+### How it was found
+
+`lastPingError` carried the site's actual reply, which it had done for about
+six hours. Before this morning the record would have read `HTTP 401` and
+nothing else, and 401 on a scheduler ping looks exactly like a secret problem —
+which is where an evening would have gone.
+
+`pingTarget()` is exported only so a test can call it: the whole fault was one
+string concatenation, and reaching it through `pingSite()` needs working DNS.
+
+`test-ping-detail.js` 14 → 20, 5 mutations all caught. Server only.
 
 ## Topics from a CSV — 11 October 2026 (plugin 0.38.0)
 
