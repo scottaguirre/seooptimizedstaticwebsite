@@ -372,7 +372,26 @@ class IE_Settings {
  * already stubbed above. */
 require_once __DIR__ . '/interlink-engine/includes/class-ie-campaigns.php';
 
-class IE_Api {}
+/* NOT AN EMPTY CLASS ANY MORE, and that it was is why none of this was tested.
+ * handle_create_campaign() calls IE_Api::plan(), so driving it would have
+ * fatalled here — and the refusal path is precisely where the owner's typed
+ * keywords and link phrases went missing. The untestable handler was the one
+ * with the bug in it. */
+class IE_Api {
+	public static function plan( $payload ) {
+		$GLOBALS['ie_plan_calls'][] = $payload;
+
+		return isset( $GLOBALS['ie_plan_result'] )
+			? $GLOBALS['ie_plan_result']
+			: array( 'campaignId' => 'c-new', 'slots' => array() );
+	}
+
+	public static function enrich( $page, $topics, $existing = array() ) {
+		return isset( $GLOBALS['ie_enrich_result'] )
+			? $GLOBALS['ie_enrich_result']
+			: array( 'topics' => array() );
+	}
+}
 class IE_Publisher {
 	public static function get_log() { return array(); }
 	public static function log( $m ) {}
@@ -2837,6 +2856,463 @@ test( 'THE STUB SPELLS THE META KEYS THE WAY THE REAL CLASS DOES', function () {
 		ok( false !== strpos( $real, "const $name = '$value';" ),
 			"the stub's $name ('$value') is not what class-ie-settings.php declares" );
 	}
+} );
+
+/* =====================================================================
+ *
+ * A REFUSED PLAN KEEPS THE FORM, AND SAYS WHICH ROWS
+ *
+ * Edwin, 11 October: he typed a pillar campaign's main keywords and link
+ * phrases, pressed Plan this campaign, and got
+ *
+ *     "That did not work. Two or more topics are chasing the same search
+ *      as each other."
+ *
+ * Both columns came back empty, and nothing said which two topics. The screen
+ * asked him to fix something it had just deleted, and would not say where.
+ *
+ * TWO SEPARATE FAULTS, and each was a thing being thrown away:
+ *
+ *   1. The draft transient was written when topics were SUGGESTED and never
+ *      again, so a refusal restored the form as the suggest button had left
+ *      it — before any keyword or link phrase was typed.
+ *
+ *   2. /api/blog/plan answers a refusal with `conflicts: [{kind, a, b,
+ *      detail}]`. The note above conflictMessage() in planCampaign.js says
+ *      plainly that "the full list travels alongside and the plugin renders
+ *      it". The plugin took the one-line message and dropped the array.
+ *
+ * ===================================================================== */
+
+/** Submit a pillar campaign with typed keywords, and return where it went. */
+function ie_plan_pillar( $rows ) {
+	$_POST = array( 'is_pillar' => '1' );
+
+	foreach ( array_values( $rows ) as $i => $row ) {
+		$_POST['use'][ $i ]          = '1';
+		$_POST['topic'][ $i ]        = $row[0];
+		$_POST['target_query'][ $i ] = isset( $row[1] ) ? $row[1] : '';
+		$_POST['link_phrase'][ $i ]  = isset( $row[2] ) ? $row[2] : '';
+	}
+
+	$out = ie_run_handler( array( 'IE_Admin', 'handle_create_campaign' ) );
+	$_POST = array();
+	return $out;
+}
+
+/** The server's answer when two topics collide, exactly as it is sent. */
+function ie_refuse_duplicate( $a = 'topic-1', $b = 'topic-2' ) {
+	$GLOBALS['ie_plan_result'] = new WP_Error(
+		'ie_api',
+		'Two or more topics are chasing the same search as each other.',
+		array(
+			'status' => 400,
+			'data'   => array(
+				'error'     => 'Two or more topics are chasing the same search as each other.',
+				'conflicts' => array(
+					array( 'kind' => 'duplicate', 'a' => $a, 'b' => $b,
+					       'detail' => '"deposits" vs "deposit terms" (overlap 0.80)' ),
+				),
+			),
+		)
+	);
+}
+
+$ROWS = array(
+	array( 'Deposits and supplier terms', 'roofing deposits', 'how deposits work' ),
+	array( 'Payment schedules',           'roofing deposit terms', 'when you get paid' ),
+	array( 'Cash flow in winter',         'roofing winter cash flow', 'the quiet months' ),
+);
+
+test( 'A REFUSED PLAN KEEPS THE TYPED KEYWORDS AND LINK PHRASES', function () use ( $ROWS ) {
+	/* The complaint, in one assertion. These two columns are filled in by
+	 * hand, one row at a time, after the suggest button has run — so they are
+	 * exactly the work a reset to the suggestion loses. */
+	$GLOBALS['ie_transient'] = null;
+	ie_refuse_duplicate();
+
+	ie_plan_pillar( $ROWS );
+
+	$draft = get_transient( 'x' );
+	ok( is_array( $draft ), 'nothing was stored, so the form comes back empty' );
+
+	$topics = isset( $draft['topics'] ) ? $draft['topics'] : array();
+	same( 3, count( $topics ), 'the rows were not all kept' );
+
+	same( 'roofing deposits', isset( $topics[0]['targetQuery'] ) ? $topics[0]['targetQuery'] : '',
+		'the main keyword was thrown away by the refusal' );
+	same( 'how deposits work', isset( $topics[0]['linkPhrase'] ) ? $topics[0]['linkPhrase'] : '',
+		'the link phrase was thrown away by the refusal' );
+	same( 'Payment schedules', isset( $topics[1]['topic'] ) ? $topics[1]['topic'] : '' );
+} );
+
+test( 'THE REFUSAL NAMES THE TWO TOPICS THAT CLASH', function () use ( $ROWS ) {
+	/* "Two or more topics are chasing the same search" over a list of twenty
+	 * is a puzzle, not a message. The server has always said which. */
+	$GLOBALS['ie_transient'] = null;
+	ie_refuse_duplicate( 'topic-1', 'topic-2' );
+
+	ie_plan_pillar( $ROWS );
+
+	$draft = get_transient( 'x' );
+	$lines = isset( $draft['conflicts'] ) ? $draft['conflicts'] : array();
+
+	same( 1, count( $lines ), 'the conflict list was dropped again' );
+	has( $lines[0], 'Deposits and supplier terms' );
+	has( $lines[0], 'Payment schedules' );
+} );
+
+test( 'AND IT QUOTES THE TWO KEYWORDS THAT HAVE TO CHANGE', function () use ( $ROWS ) {
+	/* Naming the topics says where to look; naming the keywords says what to
+	 * edit. Taken from this side's own copy rather than parsed out of the
+	 * server's `detail` string. */
+	$GLOBALS['ie_transient'] = null;
+	ie_refuse_duplicate();
+
+	ie_plan_pillar( $ROWS );
+
+	$lines = get_transient( 'x' )['conflicts'];
+
+	has( $lines[0], 'roofing deposits' );
+	has( $lines[0], 'roofing deposit terms' );
+} );
+
+test( 'topic-1 IS THE FIRST ROW, NOT THE ZEROTH', function () use ( $ROWS ) {
+	/* Off by one here names the neighbour of the row at fault, which is worse
+	 * than naming none: the owner edits a topic that was fine and the refusal
+	 * does not move. Asserted on the LAST row, where an off-by-one runs off
+	 * the end and produces nothing rather than the wrong name. */
+	$GLOBALS['ie_transient'] = null;
+	ie_refuse_duplicate( 'topic-2', 'topic-3' );
+
+	ie_plan_pillar( $ROWS );
+
+	$lines = get_transient( 'x' )['conflicts'];
+
+	has( $lines[0], 'Payment schedules' );
+	has( $lines[0], 'Cash flow in winter' );
+	ok( false === strpos( $lines[0], 'Deposits and supplier terms' ),
+		'the first row was named for a conflict between the second and third' );
+} );
+
+test( 'A CANNIBALISING TOPIC IS NAMED TOO', function () use ( $ROWS ) {
+	$GLOBALS['ie_transient'] = null;
+	$GLOBALS['ie_plan_result'] = new WP_Error( 'ie_api', 'Some topics would compete with the target page.', array(
+		'status' => 400,
+		'data'   => array( 'conflicts' => array(
+			array( 'kind' => 'cannibalises', 'a' => 'topic-3', 'detail' => 'whatever' ),
+		) ),
+	) );
+
+	ie_plan_pillar( $ROWS );
+
+	$lines = get_transient( 'x' )['conflicts'];
+
+	has( $lines[0], 'Cash flow in winter' );
+	has( $lines[0], 'compete with the page' );
+} );
+
+test( 'AN UNKNOWN KIND FALLS BACK TO WHAT THE SERVER SAID', function () use ( $ROWS ) {
+	/* A newer server against an older plugin. Without this the panel is empty
+	 * under a red error, which is the state this whole change exists to end. */
+	$GLOBALS['ie_transient'] = null;
+	$GLOBALS['ie_plan_result'] = new WP_Error( 'ie_api', 'Some topics could not be planned.', array(
+		'status' => 400,
+		'data'   => array( 'conflicts' => array(
+			array( 'kind' => 'something-new', 'a' => 'topic-1', 'detail' => 'the server explains itself here' ),
+		) ),
+	) );
+
+	ie_plan_pillar( $ROWS );
+
+	same( array( 'the server explains itself here' ), get_transient( 'x' )['conflicts'] );
+} );
+
+test( 'A REFUSAL WITH NO CONFLICTS STILL KEEPS THE FORM', function () use ( $ROWS ) {
+	/* Out of credits, server down, anything. The typed work is no less worth
+	 * keeping because the reason was not a conflict. */
+	$GLOBALS['ie_transient'] = null;
+	$GLOBALS['ie_plan_result'] = new WP_Error( 'ie_api', 'Something else went wrong.', array( 'status' => 500, 'data' => array() ) );
+
+	ie_plan_pillar( $ROWS );
+
+	$draft = get_transient( 'x' );
+
+	same( 3, count( $draft['topics'] ), 'the rows went missing on a non-conflict failure' );
+	same( array(), $draft['conflicts'], 'conflicts were invented where the server sent none' );
+} );
+
+test( 'A PILLAR MISSING ITS KEYWORDS KEEPS THE FORM TOO', function () {
+	/* THE WORST ONE. This refusal asks the owner to fill in the Main keyword
+	 * column — and before this it emptied that column on its way to saying so. */
+	$GLOBALS['ie_transient'] = null;
+	unset( $GLOBALS['ie_plan_result'] );
+
+	$out = ie_plan_pillar( array(
+		array( 'Deposits and supplier terms', '', 'how deposits work' ),
+		array( 'Payment schedules',           'roofing deposit terms', 'when you get paid' ),
+	) );
+
+	has( $out['ie_message'], 'Main keyword' );
+
+	$draft = get_transient( 'x' );
+
+	same( 'how deposits work', $draft['topics'][0]['linkPhrase'],
+		'the link phrase was lost by the message telling him to type a keyword' );
+	same( 'roofing deposit terms', $draft['topics'][1]['targetQuery'] );
+} );
+
+test( 'THE PANEL IS ON THE FORM, AND SAYS NOTHING WAS LOST', function () {
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = array(
+		'form'      => array( 'is_pillar' => true ),
+		'topics'    => array( array( 'topic' => 'Deposits', 'targetQuery' => 'roofing deposits', 'linkPhrase' => 'x' ) ),
+		'conflicts' => array( '"A" and "B" are chasing the same search.' ),
+	);
+
+	$html = render( 'new' );
+
+	has( $html, 'notice-error', 'the refusal is drawn as advice rather than as a stop' );
+	has( $html, 'chasing the same search' );
+	has( $html, 'still below' );
+
+	/* And the typed values are actually back in the boxes, which is the only
+	 * thing the owner will check. */
+	has( $html, 'value="roofing deposits"' );
+
+	$GLOBALS['ie_transient'] = null;
+} );
+
+test( 'NO PANEL WHEN THERE IS NOTHING TO SAY', function () {
+	/* A red box with an empty list under it is worse than no box. */
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = null;
+
+	hasnt( render( 'new' ), 'notice-error', 'an empty refusal panel is drawn on a clean form' );
+} );
+
+/* =====================================================================
+ *
+ * TOPICS FROM A FILE
+ *
+ * Asked for on 11 October, with a forty-row CSV attached: topic, main
+ * keyword, link phrase. That is a hundred and twenty boxes typed one at a
+ * time into a form that — until the same day — threw the lot away if the plan
+ * was refused.
+ *
+ * THE FILE REPLACES THE TABLE, which is the opposite of the suggest button
+ * and was asked for explicitly. A file is the whole campaign, not a
+ * contribution to one: appending a corrected version would leave you holding
+ * both, interleaved, with the duplicates silently dropped.
+ *
+ * is_uploaded_file() CANNOT BE TRUE HERE. It answers false for anything that
+ * did not arrive over HTTP POST, so handle_upload_topics() cannot be driven
+ * end to end in a test. The parsing and the four refusals with sentences in
+ * them were split into functions that can be; the remaining check is read
+ * from the source, and that is said plainly rather than dressed up.
+ *
+ * ===================================================================== */
+
+/** Write a CSV and give back its path. */
+function ie_csv( $text ) {
+	$path = tempnam( sys_get_temp_dir(), 'ie-csv' );
+	file_put_contents( $path, $text );
+	return $path;
+}
+
+test( 'THREE COLUMNS BECOME THE THREE THINGS THE TABLE HOLDS', function () {
+	$out = IE_Admin::parse_topics_csv( ie_csv(
+		"Paying off a loan early,loan prepayment penalty,whether paying early costs you\n"
+		. "What lenders check,DSCR business loan requirements,how lenders size a loan\n"
+	) );
+
+	same( 2, count( $out['rows'] ) );
+	same( 'Paying off a loan early', $out['rows'][0]['topic'] );
+	same( 'loan prepayment penalty', $out['rows'][0]['targetQuery'] );
+	same( 'whether paying early costs you', $out['rows'][0]['linkPhrase'] );
+} );
+
+test( 'A QUOTED FIELD WITH COMMAS IN IT SURVIVES', function () {
+	/* Six of the forty rows in Edwin's file are this shape, and a split on
+	 * commas would cut every one of them in half — turning the back of a
+	 * headline into somebody's main keyword. fgetcsv is used for exactly this
+	 * reason and the test exists to stop anyone replacing it with explode(). */
+	$out = IE_Admin::parse_topics_csv( ie_csv(
+		'"Alternative Credit Scoring: Can Rent, Utilities, and Cash Flow Help Borrowers Qualify?",alternative credit scoring,alternative credit scoring' . "\n"
+	) );
+
+	same( 1, count( $out['rows'] ) );
+	has( $out['rows'][0]['topic'], 'Rent, Utilities, and Cash Flow' );
+	same( 'alternative credit scoring', $out['rows'][0]['targetQuery'] );
+} );
+
+test( 'A BYTE ORDER MARK DOES NOT RIDE ALONG IN THE FIRST TOPIC', function () {
+	/* Excel writes it and nothing displays it. Left in place, the first post
+	 * of the campaign gets a title and a slug subtly unlike every other one
+	 * and nobody can see why. */
+	$out = IE_Admin::parse_topics_csv( ie_csv( "\xEF\xBB\xBFPaying off a loan early,prepayment,how\n" ) );
+
+	same( 'Paying off a loan early', $out['rows'][0]['topic'] );
+} );
+
+test( 'MISSING COLUMNS ARE EMPTY, AND SILENT', function () {
+	/* A topic with no keyword is a legitimate half-filled file: for a silo
+	 * campaign the server works the keyword out, and for a pillar one the form
+	 * already says to fill the column in. Refusing the whole file over it
+	 * would send somebody back to a spreadsheet to add forty blanks.
+	 *
+	 * SILENT IS THE HALF THAT NEEDED A TEST OF ITS OWN. Dropping the isset()
+	 * guards changes nothing about the RESULT — PHP hands back null and ''
+	 * comes out the other end — so the obvious assertions all still pass while
+	 * every short row emits "Undefined array key" and, on 8.1 and later,
+	 * "Passing null to trim()". On a site with display_errors on, that output
+	 * lands before the redirect header and the admin screen goes white.
+	 *
+	 * Found by mutation: deleting the guards was the one change the suite did
+	 * not notice. */
+	$noisy = array();
+
+	set_error_handler( function ( $no, $msg ) use ( &$noisy ) {
+		$noisy[] = $msg;
+		return true;
+	} );
+
+	$out = IE_Admin::parse_topics_csv( ie_csv( "Paying off a loan early\nWhat lenders check,DSCR\n" ) );
+
+	restore_error_handler();
+
+	same( array(), $noisy, 'a short row emitted PHP notices, which can break the redirect' );
+
+	same( 2, count( $out['rows'] ) );
+	same( '', $out['rows'][0]['targetQuery'] );
+	same( '', $out['rows'][0]['linkPhrase'] );
+	same( 'DSCR', $out['rows'][1]['targetQuery'] );
+} );
+
+test( 'BLANK LINES ARE SKIPPED, INCLUDING THE ONE AT THE END', function () {
+	/* Every file ends with a newline, and fgetcsv hands that back as a row.
+	 * Without this the campaign gains a topic with no name. */
+	$out = IE_Admin::parse_topics_csv( ie_csv( "One,a,b\n\n   \nTwo,c,d\n" ) );
+
+	same( 2, count( $out['rows'] ) );
+	same( 'Two', $out['rows'][1]['topic'] );
+} );
+
+test( 'A DUPLICATE TOPIC IS DROPPED AND COUNTED', function () {
+	/* A paste accident. Planning would give the pair near-identical slugs and
+	 * then refuse the campaign for chasing the same search, which is a
+	 * confusing way to find out you pasted twice. */
+	$out = IE_Admin::parse_topics_csv( ie_csv( "One,a,b\nONE,c,d\nTwo,e,f\n" ) );
+
+	same( 2, count( $out['rows'] ) );
+	same( 1, $out['skipped'] );
+	same( 'a', $out['rows'][0]['targetQuery'], 'the later copy won, so the first row\'s keyword was lost' );
+} );
+
+test( 'A FILE THAT IS NOT THERE IS AN ERROR, NOT A FATAL', function () {
+	ok( is_wp_error( IE_Admin::parse_topics_csv( '/no/such/file.csv' ) ),
+		'an unreadable path threw instead of being reported' );
+} );
+
+test( 'READING IS BOUNDED, WHATEVER THE FILE CLAIMS TO BE', function () {
+	/* MAX_TOPICS limits what is KEPT — by the time it applies the whole file
+	 * has been read. This is the bound that protects a shared host's memory
+	 * limit from a 500 MB file named .csv. */
+	$lines = '';
+	for ( $i = 0; $i < 2500; $i++ ) {
+		$lines .= "Topic number $i,keyword $i,phrase $i\n";
+	}
+
+	$out = IE_Admin::parse_topics_csv( ie_csv( $lines ) );
+
+	ok( count( $out['rows'] ) <= 2000,
+		'the whole file was read: ' . count( $out['rows'] ) . ' rows' );
+} );
+
+/* ---------------- the upload itself ---------------- */
+
+test( 'NO FILE CHOSEN SAYS SO', function () {
+	has( IE_Admin::csv_upload_problem( null ), 'Choose a CSV' );
+	has( IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_NO_FILE ) ), 'Choose a CSV' );
+} );
+
+test( 'A FILE OVER THE SERVER LIMIT NAMES THE REASON', function () {
+	/* "upload error 1" is what PHP gives and it tells nobody anything. */
+	has( IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_INI_SIZE ) ), 'larger than this site allows' );
+	has( IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_FORM_SIZE ) ), 'larger than this site allows' );
+} );
+
+test( 'A BROKEN UPLOAD IS DISTINGUISHED FROM A BIG ONE', function () {
+	has( IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_PARTIAL ) ), 'did not finish' );
+	has( IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_NO_TMP_DIR ) ), 'did not finish' );
+} );
+
+test( 'A FILE TOO BIG TO BE TOPICS IS REFUSED BEFORE IT IS OPENED', function () {
+	has(
+		IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_OK, 'size' => 1048577 ) ),
+		'too big to be a list of topics'
+	);
+} );
+
+test( 'A GOOD UPLOAD HAS NOTHING WRONG WITH IT', function () {
+	same( '', IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_OK, 'size' => 4096 ) ) );
+	same( '', IE_Admin::csv_upload_problem( array( 'error' => UPLOAD_ERR_OK ) ),
+		'a file with no size reported was refused' );
+} );
+
+test( 'THE UPLOAD IS WIRED UP, AND THE FORM CAN CARRY A FILE', function () {
+	/* The parts no unit test above can see: the action exists, the form can
+	 * actually send a file, and the control is not hidden behind a target
+	 * page — a pillar campaign cannot use the suggest button at all, so the
+	 * file is its only way to avoid typing. */
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = null;
+
+	$html = render( 'new' );
+
+	has( $html, 'enctype="multipart/form-data"', 'the form cannot carry a file, so $_FILES arrives empty' );
+	has( $html, 'name="topics_csv"', 'there is no file box on the form' );
+	has( $html, 'value="ie_upload_topics"', 'there is no button to read the file' );
+
+	$box = strpos( $html, 'name="topics_csv"' );
+	$needs = strpos( $html, 'ie-needs-target' );
+	ok( false === $needs || $box < $needs || strpos( $html, 'ie-needs-target', $box ) !== $needs,
+		'the file box may be inside a block hidden for pillar campaigns' );
+} );
+
+test( 'THE HANDLER STILL VERIFIES THE UPLOAD AND THE NONCE', function () {
+	/* Source-read, and this is the honest description of why: is_uploaded_file()
+	 * is false for every file a test can make. Without it a crafted request
+	 * can name any path on the server and have it read back into the topic
+	 * table.
+	 *
+	 * Comments stripped first — the note beside that line explains the attack
+	 * and names the function while doing it. */
+	$src = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-admin.php' );
+
+	$code = '';
+	foreach ( token_get_all( $src ) as $token ) {
+		if ( is_array( $token ) && in_array( $token[0], array( T_COMMENT, T_DOC_COMMENT ), true ) ) {
+			$code .= "\n";
+			continue;
+		}
+		$code .= is_array( $token ) ? $token[1] : $token;
+	}
+
+	$start = strpos( $code, 'function handle_upload_topics' );
+	$end   = strpos( $code, 'function handle_create_campaign' );
+
+	ok( false !== $start && false !== $end && $start < $end, 'the upload handler is gone' );
+
+	$handler = substr( $code, $start, $end - $start );
+
+	has( $handler, "check_admin_referer( 'ie_campaign_form' )", 'the upload takes no nonce' );
+	has( $handler, 'require_caps()', 'any logged-in user can upload topics' );
+	has( $handler, 'is_uploaded_file(', 'any path on the server can be read into the topic table' );
+
+	/* Before the file is opened, or the check is decoration. */
+	ok( strpos( $handler, 'is_uploaded_file(' ) < strpos( $handler, 'parse_topics_csv(' ),
+		'the file is read before it is verified' );
 } );
 
 echo "\n$passed passed, $failed failed\n";

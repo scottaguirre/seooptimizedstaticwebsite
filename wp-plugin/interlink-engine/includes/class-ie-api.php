@@ -232,8 +232,15 @@ class IE_Api {
 			 * This block used to be the only correct translation in the file,
 			 * and being correct here is what hid the other two being wrong:
 			 * activation set a plausible business on the server, so nothing
-			 * downstream ever looked empty. See IE_Settings::business_payload(). */
-			'business'    => IE_Settings::business_payload(),
+			 * downstream ever looked empty. See IE_Settings::business_payload().
+			 *
+			 * businessFields SAYS WHICH OF THOSE BLANKS ARE REAL, and it earns
+			 * its place on this call more than on the other two: activation is
+			 * the moment a rebuilt site would otherwise inherit the previous
+			 * occupant's trade and town from the record its licence belongs to.
+			 * See IE_Settings::business_fields(). */
+			'business'       => IE_Settings::business_payload(),
+			'businessFields' => IE_Settings::business_fields(),
 		) );
 
 		$result = self::send(
@@ -335,6 +342,15 @@ class IE_Api {
 		 * hilltophomeloans.net months later, for exactly this reason. */
 		if ( ! isset( $payload['business'] ) ) {
 			$payload['business'] = IE_Settings::business_payload();
+		}
+
+		/* SET WHENEVER THE BUSINESS IS, including when a caller supplied the
+		 * business itself. The two travel together or the server cannot tell a
+		 * deliberate blank from a silence — and a caller that builds its own
+		 * business block has no more claim to answer for this site's empty
+		 * fields than this function does. */
+		if ( ! isset( $payload['businessFields'] ) ) {
+			$payload['businessFields'] = IE_Settings::business_fields();
 		}
 
 		return self::post( '/api/blog/plan', $payload, 60 );
@@ -712,9 +728,10 @@ class IE_Api {
 		 * as it was connected and the server discarded it every time. See
 		 * IE_Settings::business_payload(). */
 		$result = self::post( '/api/blog/campaigns-present', array(
-			'campaignIds' => $ids,
-			'campaigns'   => $payload,
-			'business'    => IE_Settings::business_payload(),
+			'campaignIds'    => $ids,
+			'campaigns'      => $payload,
+			'business'       => IE_Settings::business_payload(),
+			'businessFields' => IE_Settings::business_fields(),
 		) );
 
 		if ( is_wp_error( $result ) ) {

@@ -77,12 +77,27 @@ class IE_Admin {
 	 */
 	const MAX_TOPICS = 52;
 
+	/**
+	 * Bounds on an uploaded topic file.
+	 *
+	 * It arrives from outside and is opened on a customer's shared hosting, so
+	 * the size is checked before the file is opened and the row count while it
+	 * is read. MAX_TOPICS alone is not a bound: it limits what is KEPT, and a
+	 * 500 MB file named .csv would already have been read by then.
+	 *
+	 * A megabyte is about ten thousand rows of this shape — two hundred times
+	 * the largest campaign anyone can plan.
+	 */
+	const CSV_MAX_BYTES = 1048576;
+	const CSV_MAX_ROWS  = 2000;
+
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_post_ie_connect', array( __CLASS__, 'handle_connect' ) );
 		add_action( 'admin_post_ie_hygiene', array( __CLASS__, 'handle_hygiene' ) );
 		add_action( 'admin_post_ie_suggest', array( __CLASS__, 'handle_suggest' ) );
 		add_action( 'admin_post_ie_review_topics', array( __CLASS__, 'handle_review_topics' ) );
+		add_action( 'admin_post_ie_upload_topics', array( __CLASS__, 'handle_upload_topics' ) );
 		add_action( 'admin_post_ie_create_campaign', array( __CLASS__, 'handle_create_campaign' ) );
 		add_action( 'admin_post_ie_run_now', array( __CLASS__, 'handle_run_now' ) );
 		add_action( 'admin_post_ie_publish_now', array( __CLASS__, 'handle_publish_now' ) );
@@ -1807,9 +1822,43 @@ class IE_Admin {
 			?>
 
 			<?php if ( $watching ) : ?>
+				<?php
+				/* HOW MANY, which the server has been sending all along.
+				 *
+				 * Edwin remembered this screen filling in post by post and
+				 * asked what had changed. Nothing about the screen: posts used
+				 * to be written one per publication day and are now written as
+				 * a batch, so there is nothing to collect until the batch ends
+				 * and the card had nothing to show for about eight minutes.
+				 *
+				 * The progress was never missing — IE_Publisher::run_campaign()
+				 * received done and total on every poll and discarded both. It
+				 * stores them now; the rule about whether they are fit to
+				 * print lives in IE_Campaigns::writing_progress().
+				 *
+				 * THE NUMBER STEPS RATHER THAN TICKS, and that is not a bug to
+				 * chase. This page reloads every fifteen seconds, but the
+				 * figure behind it is only refreshed when the server pings the
+				 * site, which is every two minutes while a batch runs. So it
+				 * moves in jumps of two or three posts. Reloading faster would
+				 * not help; polling the server from a browser timer would, and
+				 * costs a request per open tab per tick to tell the owner
+				 * something they will know anyway in under two minutes. */
+				$progress = IE_Campaigns::writing_progress( $campaign );
+				?>
 				<p class="description" style="display:flex;align-items:center;gap:.5rem">
 					<span class="spinner is-active" style="float:none;margin:0"></span>
-					<?php esc_html_e( 'Writing your posts. They arrive on their own — you can leave this page. This view refreshes itself.', 'interlink-engine' ); ?>
+					<span>
+						<?php if ( $progress['show'] ) : ?>
+							<strong><?php echo esc_html( sprintf(
+								/* translators: 1: posts written so far, 2: posts in this batch */
+								__( '%1$s of %2$s written.', 'interlink-engine' ),
+								number_format_i18n( $progress['done'] ),
+								number_format_i18n( $progress['total'] )
+							) ); ?></strong>
+						<?php endif; ?>
+						<?php esc_html_e( 'Writing your posts. They arrive on their own — you can leave this page. This view refreshes itself.', 'interlink-engine' ); ?>
+					</span>
 				</p>
 				<?php
 				// A plain reload, not a re-submitted action. The page is
@@ -2099,6 +2148,186 @@ class IE_Admin {
 		return is_array( $draft ) ? $draft : null;
 	}
 
+	/**
+	 * Put the half-finished campaign back on the screen after a refusal.
+	 *
+	 * WHAT THIS REPLACES. The draft was written when topics were SUGGESTED and
+	 * never again. So every refusal between there and a planned campaign threw
+	 * the form back to whatever the suggestion button had left — and the Main
+	 * keyword and "How other posts will link to this post" columns are
+	 * precisely the ones the owner fills in afterwards, by hand, one row at a
+	 * time.
+	 *
+	 * Edwin typed a pillar campaign's keywords and link phrases, pressed Plan
+	 * this campaign, was told two topics were chasing the same search, and
+	 * found both columns empty again. The screen asked him to fix something it
+	 * had just deleted.
+	 *
+	 * FROM THE FORM, NOT FROM THE STORED DRAFT, for the same reason the
+	 * suggest button reads the form: what is on screen is what the owner
+	 * believes they have. collect_topics() drops unticked rows, which is
+	 * deliberate there and correct here too.
+	 *
+	 * The video column is read straight from the POST rather than through
+	 * collect_topics(), because that array is the payload sent to the server
+	 * and a video is not the server's business.
+	 *
+	 * @param array $form      read_form()'s output
+	 * @param array $topics    collect_topics()'s output
+	 * @param array $conflicts human sentences from conflict_lines(), if any
+	 */
+	private static function keep_draft( $form, $topics, $conflicts = array() ) {
+		$videos = isset( $_POST['video'] ) && is_array( $_POST['video'] ) ? $_POST['video'] : array();
+
+		$rows = array();
+		foreach ( (array) $topics as $i => $topic ) {
+			$topic['video'] = isset( $videos[ $i ] )
+				? esc_url_raw( wp_unslash( $videos[ $i ] ) )
+				: '';
+			$rows[] = $topic;
+		}
+
+		$existing = self::draft();
+
+		set_transient(
+			self::DRAFT_TRANSIENT . get_current_user_id(),
+			array(
+				'form'   => $form,
+				'topics' => $rows,
+				// Carried rather than regenerated: they came from the suggest
+				// call and are still as true as they were a moment ago.
+				'warnings'  => ( $existing && ! empty( $existing['warnings'] ) ) ? $existing['warnings'] : array(),
+				'conflicts' => array_values( (array) $conflicts ),
+			),
+			DAY_IN_SECONDS
+		);
+	}
+
+	/**
+	 * Which topics the server refused, by name.
+	 *
+	 * THE SERVER HAS ALWAYS SENT THIS. /api/blog/plan answers a refusal with
+	 * `conflicts: [{ kind, a, b, detail }]`, and the note above
+	 * conflictMessage() in planCampaign.js says plainly that "the full list
+	 * travels alongside and the plugin renders it". The plugin did not. It took
+	 * the one-line message and dropped the array, so the owner was told two
+	 * topics were chasing the same search and left to work out which two by
+	 * reading their own list.
+	 *
+	 * `a` and `b` are slot ids of the form `topic-1`, ONE-BASED INDEXES into
+	 * the topics this side sent — so they can be turned back into the words the
+	 * owner typed. That is worth doing rather than quoting the server's
+	 * `detail`: the detail names the QUERIES, and a column of similar-looking
+	 * queries is the thing they are already struggling to tell apart.
+	 *
+	 * The queries are appended anyway, from our own copy, because they are what
+	 * has to be edited to get past this.
+	 *
+	 * UNKNOWN KINDS FALL BACK TO THE SERVER'S SENTENCE. A kind added there and
+	 * not here must still say something, or a newer server plus an older plugin
+	 * is a blank panel under a red error.
+	 */
+	private static function conflict_lines( $error, $topics ) {
+		$data = is_wp_error( $error ) ? $error->get_error_data() : array();
+
+		$conflicts = ( is_array( $data ) && isset( $data['data']['conflicts'] ) && is_array( $data['data']['conflicts'] ) )
+			? $data['data']['conflicts']
+			: array();
+
+		$lines = array();
+
+		foreach ( $conflicts as $conflict ) {
+			if ( ! is_array( $conflict ) ) {
+				continue;
+			}
+
+			$kind = isset( $conflict['kind'] ) ? (string) $conflict['kind'] : '';
+			$a    = self::topic_named( isset( $conflict['a'] ) ? $conflict['a'] : '', $topics );
+			$b    = self::topic_named( isset( $conflict['b'] ) ? $conflict['b'] : '', $topics );
+
+			if ( 'duplicate' === $kind && '' !== $a && '' !== $b ) {
+				$lines[] = sprintf(
+					/* translators: 1: a topic, 2: another topic, 3: the two keywords */
+					__( '"%1$s" and "%2$s" are chasing the same search%3$s. Give one of them a different main keyword.', 'interlink-engine' ),
+					$a,
+					$b,
+					self::both_queries( $conflict, $topics )
+				);
+				continue;
+			}
+
+			if ( 'cannibalises' === $kind && '' !== $a ) {
+				$lines[] = sprintf(
+					/* translators: %s: a topic */
+					__( '"%s" is chasing the target page\'s own search, so it would compete with the page it is meant to feed.', 'interlink-engine' ),
+					$a
+				);
+				continue;
+			}
+
+			if ( 'missing' === $kind && '' !== $a ) {
+				$lines[] = sprintf(
+					/* translators: %s: a topic */
+					__( '"%s" has no main keyword.', 'interlink-engine' ),
+					$a
+				);
+				continue;
+			}
+
+			if ( ! empty( $conflict['detail'] ) ) {
+				$lines[] = (string) $conflict['detail'];
+			}
+		}
+
+		return $lines;
+	}
+
+	/** " — "water heater noise" vs "noisy water heater"", or nothing. */
+	private static function both_queries( $conflict, $topics ) {
+		$qa = self::topic_query( isset( $conflict['a'] ) ? $conflict['a'] : '', $topics );
+		$qb = self::topic_query( isset( $conflict['b'] ) ? $conflict['b'] : '', $topics );
+
+		if ( '' === $qa || '' === $qb ) {
+			return '';
+		}
+
+		return sprintf(
+			/* translators: 1: one topic's keyword, 2: the other topic's keyword */
+			__( ' — "%1$s" against "%2$s"', 'interlink-engine' ),
+			$qa,
+			$qb
+		);
+	}
+
+	/**
+	 * The slot id the server used, back to the row it came from.
+	 *
+	 * `topic-1` is the FIRST topic, not the zeroth. Getting that wrong names
+	 * the neighbour of the row at fault, which is worse than naming none: the
+	 * owner edits a topic that was fine and the refusal does not move.
+	 */
+	private static function topic_at( $id, $topics ) {
+		if ( ! preg_match( '/^topic-(\d+)$/', (string) $id, $m ) ) {
+			return null;
+		}
+
+		$index = (int) $m[1] - 1;
+
+		return isset( $topics[ $index ] ) && is_array( $topics[ $index ] )
+			? $topics[ $index ]
+			: null;
+	}
+
+	private static function topic_named( $id, $topics ) {
+		$topic = self::topic_at( $id, $topics );
+		return ( $topic && ! empty( $topic['topic'] ) ) ? (string) $topic['topic'] : '';
+	}
+
+	private static function topic_query( $id, $topics ) {
+		$topic = self::topic_at( $id, $topics );
+		return ( $topic && ! empty( $topic['targetQuery'] ) ) ? (string) $topic['targetQuery'] : '';
+	}
+
 	private static function render_new_campaign_form() {
 		$pages    = IE_Settings::target_pages();
 		$draft    = self::draft();
@@ -2106,10 +2335,36 @@ class IE_Admin {
 		$topics   = $draft ? $draft['topics'] : array();
 		$warnings = $draft && ! empty( $draft['warnings'] ) ? $draft['warnings'] : array();
 
+		/* WHY THE REFUSAL IS A SEPARATE PANEL from the warnings below it.
+		 *
+		 * A warning is "worth a look before you plan this" — the plan would go
+		 * ahead. These are the reasons it did NOT, so they belong in a notice
+		 * the eye reads as a stop rather than a suggestion, and above the one
+		 * that can be ignored.
+		 *
+		 * They are also the only place the owner can learn WHICH rows were at
+		 * fault: the red bar at the top of the screen carries one sentence
+		 * about the kind of problem, and nothing about where it is. */
+		$conflicts = $draft && ! empty( $draft['conflicts'] ) ? $draft['conflicts'] : array();
+
 		$value = function ( $key, $default = '' ) use ( $prefill ) {
 			return isset( $prefill[ $key ] ) ? $prefill[ $key ] : $default;
 		};
 		?>
+
+		<?php if ( $conflicts ) : ?>
+			<div class="notice notice-error inline">
+				<p><strong><?php esc_html_e( 'This campaign was not planned. Fix these and press the button again:', 'interlink-engine' ); ?></strong></p>
+				<ul style="list-style:disc;margin-left:1.5rem">
+					<?php foreach ( $conflicts as $conflict ) : ?>
+						<li><?php echo esc_html( $conflict ); ?></li>
+					<?php endforeach; ?>
+				</ul>
+				<p class="description">
+					<?php esc_html_e( 'Everything you typed is still below — nothing was lost.', 'interlink-engine' ); ?>
+				</p>
+			</div>
+		<?php endif; ?>
 
 		<?php if ( $warnings ) : ?>
 			<div class="notice notice-warning inline">
@@ -2122,7 +2377,12 @@ class IE_Admin {
 			</div>
 		<?php endif; ?>
 
-		<form id="ie-campaign-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+		<?php /* enctype FOR THE TOPIC FILE. Harmless to every other button on
+		       * this form — a multipart submit carries ordinary fields exactly
+		       * the same way — and without it $_FILES arrives empty with no
+		       * error, which reads as "no file chosen" however carefully one
+		       * was. */ ?>
+		<form id="ie-campaign-form" method="post" enctype="multipart/form-data" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 			<?php wp_nonce_field( 'ie_campaign_form' ); ?>
 
 			<table class="form-table" role="presentation">
@@ -2801,6 +3061,38 @@ class IE_Admin {
 					</td>
 				</tr>
 			</table>
+
+			<?php
+			/* THE FILE ROUTE, ABOVE THE BUTTONS THAT ASK THE SERVER.
+			 *
+			 * Forty topics with a keyword and a link phrase each is a hundred
+			 * and twenty boxes typed one at a time. Anyone planning a campaign
+			 * that size has it in a spreadsheet already.
+			 *
+			 * NOT INSIDE .ie-needs-target, unlike the suggest button beside it.
+			 * Suggesting needs a page to suggest FROM; a file needs nothing, so
+			 * this is the only way a pillar campaign can be filled in without
+			 * typing — and a pillar campaign is the one that cannot use the
+			 * suggest button at all. */
+			?>
+			<p style="margin:1rem 0 .5rem">
+				<label>
+					<strong><?php esc_html_e( 'Or upload a CSV of topics', 'interlink-engine' ); ?></strong><br>
+					<input type="file" name="topics_csv" accept=".csv,text/csv,text/plain">
+				</label>
+				<button type="submit" name="action" value="ie_upload_topics" class="button"
+					data-busy="<?php esc_attr_e( 'Reading the file…', 'interlink-engine' ); ?>">
+					<?php esc_html_e( 'Load topics from file', 'interlink-engine' ); ?>
+				</button>
+			</p>
+			<p class="description" style="margin:0 0 1rem">
+				<?php
+				esc_html_e(
+					'Three columns, no header row: the topic, its main keyword, then how other posts will link to it. The file replaces whatever is in the table — nothing is charged and you can upload again.',
+					'interlink-engine'
+				);
+				?>
+			</p>
 
 			<p class="submit">
 				<?php
@@ -3528,6 +3820,116 @@ class IE_Admin {
 		), array( 'tab' => 'new' ) );
 	}
 
+	/**
+	 * A CSV of topics, straight into the table.
+	 *
+	 * IT REPLACES, AND THAT IS THE ONE THING WORTH ARGUING ABOUT. The suggest
+	 * button adds, because adding is how a campaign is built up a dozen topics
+	 * at a time and because it once replaced and silently destroyed six.
+	 *
+	 * This is a different act. A file is the whole campaign — somebody wrote
+	 * forty rows in a spreadsheet and the file IS the answer, not a
+	 * contribution to one. Appending it would mean uploading a corrected
+	 * version gives you both versions, interleaved, with the duplicates
+	 * quietly dropped and no sign of which copy survived. Asked and answered
+	 * by Edwin: replace.
+	 *
+	 * What makes that safe is that nothing here is charged and nothing is
+	 * written: "Start over" and a second upload are both one press away.
+	 *
+	 * NO TARGET PAGE IS REQUIRED. read_form() returns null for a silo campaign
+	 * whose page is not chosen yet, and refusing forty topics over a dropdown
+	 * nobody has reached is the wrong trade — the page is checked again, and
+	 * properly, when the campaign is planned.
+	 */
+	public static function handle_upload_topics() {
+		check_admin_referer( 'ie_campaign_form' );
+		self::require_caps();
+
+		$file = isset( $_FILES['topics_csv'] ) ? $_FILES['topics_csv'] : null;
+
+		$problem = self::csv_upload_problem( $file );
+
+		if ( '' !== $problem ) {
+			self::redirect( 'interlink-engine', 'error', $problem, array( 'tab' => 'new' ) );
+		}
+
+		$tmp = isset( $file['tmp_name'] ) ? $file['tmp_name'] : '';
+
+		/* THE ONE CHECK THAT CANNOT LIVE IN csv_upload_problem(), and the one
+		 * that matters most. Without it a crafted request can name any path on
+		 * the server and have its contents read back into the topic table —
+		 * the standard way a file-upload handler becomes a file-disclosure one.
+		 *
+		 * It is here rather than beside the others because is_uploaded_file()
+		 * answers false for everything that did not arrive over HTTP POST,
+		 * which includes every file a test could make. Separating the two put
+		 * the four branches with sentences in them where they can be driven;
+		 * this one is asserted by reading the source, which is the honest
+		 * description of what that assertion is worth. */
+		if ( ! $tmp || ! is_uploaded_file( $tmp ) ) {
+			self::redirect( 'interlink-engine', 'error',
+				__( 'That upload could not be verified. Please try again.', 'interlink-engine' ), array( 'tab' => 'new' ) );
+		}
+
+		$parsed = self::parse_topics_csv( $tmp );
+
+		if ( is_wp_error( $parsed ) ) {
+			self::redirect( 'interlink-engine', 'error', $parsed->get_error_message(), array( 'tab' => 'new' ) );
+		}
+
+		if ( empty( $parsed['rows'] ) ) {
+			/* NOT "invalid file". The likeliest cause by far is the right file
+			 * with the columns the wrong way round, and a sentence naming the
+			 * order is the one that gets them to the fix. */
+			self::redirect( 'interlink-engine', 'error',
+				__( 'No topics found in that file. Each row should be: the topic, its main keyword, then how other posts link to it — and no header row.', 'interlink-engine' ),
+				array( 'tab' => 'new' ) );
+		}
+
+		/* The form as it stands, so ticking Pillar campaign and choosing a
+		 * cadence before uploading is not undone by the upload. A silo
+		 * campaign with no page yet falls back to whatever the draft held. */
+		$form = self::read_form();
+
+		if ( ! $form ) {
+			$draft = self::draft();
+			$form  = ( $draft && ! empty( $draft['form'] ) ) ? $draft['form'] : array();
+		}
+
+		$rows   = $parsed['rows'];
+		$capped = count( $rows ) > self::MAX_TOPICS;
+		$kept   = $capped ? array_slice( $rows, 0, self::MAX_TOPICS ) : $rows;
+
+		/* Through keep_draft(), so an upload lands in exactly the shape a
+		 * refused plan does — one definition of "what the form holds". */
+		self::keep_draft( $form, $kept );
+
+		$message = sprintf(
+			/* translators: %d: how many topics were read from the file */
+			_n( '%d topic loaded from your file.', '%d topics loaded from your file.', count( $kept ), 'interlink-engine' ),
+			count( $kept )
+		);
+
+		if ( $parsed['skipped'] ) {
+			$message .= ' ' . sprintf(
+				/* translators: %d: how many duplicate rows were dropped */
+				_n( '%d duplicate row was skipped.', '%d duplicate rows were skipped.', $parsed['skipped'], 'interlink-engine' ),
+				$parsed['skipped']
+			);
+		}
+
+		if ( $capped ) {
+			$message .= ' ' . sprintf(
+				/* translators: %d: the most topics one campaign takes */
+				__( 'Only the first %d were kept — that is as many as one campaign takes.', 'interlink-engine' ),
+				self::MAX_TOPICS
+			);
+		}
+
+		self::redirect( 'interlink-engine', 'suggested', $message, array( 'tab' => 'new' ) );
+	}
+
 	public static function handle_create_campaign() {
 		check_admin_referer( 'ie_campaign_form' );
 		self::require_caps();
@@ -3565,6 +3967,8 @@ class IE_Admin {
 		 * Said here as well, because here is where the owner finds out, in a
 		 * sentence that explains itself rather than as a bare 400. */
 		if ( $is_pillar && count( $topics ) < 2 ) {
+			self::keep_draft( $form, $topics );
+
 			self::redirect(
 				'interlink-engine',
 				'error',
@@ -3592,6 +3996,11 @@ class IE_Admin {
 		 * `missing` conflict per topic, which is correct and says nothing
 		 * about what to do about it. */
 		if ( $missing && $is_pillar ) {
+			/* THE WORST ONE TO LOSE THE FORM ON. This sentence asks the owner
+			 * to fill in a column, and without this line the screen empties
+			 * that column on its way to saying so. */
+			self::keep_draft( $form, $topics );
+
 			self::redirect(
 				'interlink-engine',
 				'error',
@@ -3614,6 +4023,8 @@ class IE_Admin {
 			);
 
 			if ( is_wp_error( $enriched ) ) {
+				self::keep_draft( $form, $topics );
+
 				self::redirect( 'interlink-engine', 'error', $enriched->get_error_message(), array( 'tab' => 'new' ) );
 			}
 
@@ -3695,6 +4106,16 @@ class IE_Admin {
 		$plan = IE_Api::plan( $payload );
 
 		if ( is_wp_error( $plan ) ) {
+			/* THE FORM GOES BACK ON THE SCREEN, and the refusal names the rows.
+			 *
+			 * Neither happened before. The redirect carried one sentence, the
+			 * draft still held whatever the suggest button had left, and the
+			 * Main keyword and link-phrase columns — the two the owner fills in
+			 * by hand, afterwards, one row at a time — came back empty. So the
+			 * page said "two topics are chasing the same search" over a table
+			 * that no longer had any searches in it. */
+			self::keep_draft( $form, $topics, self::conflict_lines( $plan, $topics ) );
+
 			self::redirect( 'interlink-engine', 'error', $plan->get_error_message(), array( 'tab' => 'new' ) );
 		}
 
@@ -3804,6 +4225,136 @@ class IE_Admin {
 	 *
 	 * @return array{topics: array, added: array, capped: bool}
 	 */
+	/**
+	 * A spreadsheet of topics, read into the same rows the table renders.
+	 *
+	 * THREE COLUMNS, IN THE ORDER THE TABLE SHOWS THEM: the topic, its main
+	 * keyword, and how other posts will link to it. No header row — the first
+	 * line is a topic, because that is what people's files look like when they
+	 * have been writing them in a spreadsheet rather than exporting them from
+	 * something.
+	 *
+	 * WHY THIS EXISTS. Forty topics, each with a keyword and a link phrase, is
+	 * a hundred and twenty boxes typed one at a time into a web form that
+	 * — until today — threw the lot away if the plan was refused. Edwin had the
+	 * whole campaign in a CSV already.
+	 *
+	 * BOUNDED IN THREE DIRECTIONS, because this is a file from outside:
+	 * MAX_TOPICS on what is kept, CSV_MAX_ROWS on what is read at all, and
+	 * CSV_MAX_BYTES before the file is opened. A 500 MB file named .csv must
+	 * not be able to exhaust a shared host's memory limit from the New
+	 * campaign screen.
+	 *
+	 * DUPLICATES WITHIN THE FILE ARE DROPPED, case-insensitively. Two rows with
+	 * the same topic are a copy-paste accident, and planning would give them
+	 * near-identical slugs and then refuse the campaign for chasing the same
+	 * search — a confusing way to learn you pasted twice.
+	 *
+	 * @param  string $path
+	 * @return array|WP_Error { rows, skipped }
+	 */
+	/**
+	 * What is wrong with this upload, in a sentence, or '' if nothing is.
+	 *
+	 * Separated from handle_upload_topics() so these four answers can be
+	 * driven by a test. The fifth check — is_uploaded_file() — stays in the
+	 * handler, because it returns false for every file that did not arrive
+	 * over HTTP POST and so cannot be true in a test at all.
+	 *
+	 * SIZE IS CHECKED BEFORE THE FILE IS OPENED. MAX_TOPICS bounds what is
+	 * KEPT; by the time it applies the file has already been read.
+	 *
+	 * @param  array|null $file one entry from $_FILES
+	 * @return string
+	 */
+	public static function csv_upload_problem( $file ) {
+		$error = ( is_array( $file ) && isset( $file['error'] ) ) ? (int) $file['error'] : UPLOAD_ERR_NO_FILE;
+
+		if ( ! is_array( $file ) || UPLOAD_ERR_NO_FILE === $error ) {
+			return __( 'Choose a CSV file first.', 'interlink-engine' );
+		}
+
+		/* INI_SIZE and FORM_SIZE are the two people actually hit, and "upload
+		 * error 1" tells them nothing about what to do about it. */
+		if ( UPLOAD_ERR_INI_SIZE === $error || UPLOAD_ERR_FORM_SIZE === $error ) {
+			return __( 'That file is larger than this site allows uploads to be.', 'interlink-engine' );
+		}
+
+		if ( UPLOAD_ERR_OK !== $error ) {
+			return __( 'That file did not finish uploading. Please try again.', 'interlink-engine' );
+		}
+
+		if ( isset( $file['size'] ) && (int) $file['size'] > self::CSV_MAX_BYTES ) {
+			return __( 'That file is too big to be a list of topics. Export just the three columns.', 'interlink-engine' );
+		}
+
+		return '';
+	}
+
+	public static function parse_topics_csv( $path ) {
+		$handle = @fopen( $path, 'r' );
+
+		if ( ! $handle ) {
+			return new WP_Error( 'ie_csv_unreadable', __( 'That file could not be read.', 'interlink-engine' ) );
+		}
+
+		$rows    = array();
+		$seen    = array();
+		$skipped = 0;
+		$read    = 0;
+		$first   = true;
+
+		/* ALL FIVE ARGUMENTS. PHP 8.4 deprecates relying on the default escape
+		 * character, and a deprecation notice printed into a redirect is a
+		 * blank admin screen. The values passed are the historic defaults, so
+		 * nothing about the parsing changes. */
+		while ( false !== ( $cells = fgetcsv( $handle, 0, ',', '"', '\\' ) ) ) {
+			if ( ++$read > self::CSV_MAX_ROWS ) {
+				break;
+			}
+
+			if ( ! is_array( $cells ) ) {
+				continue;
+			}
+
+			$topic = isset( $cells[0] ) ? (string) $cells[0] : '';
+
+			/* A UTF-8 byte order mark, which Excel writes and nothing shows.
+			 * Left in place it rides along inside the first topic, so the first
+			 * post of the campaign gets a title and a slug subtly unlike every
+			 * other one and nobody can see why. */
+			if ( $first ) {
+				$topic = preg_replace( '/^\xEF\xBB\xBF/', '', $topic );
+				$first = false;
+			}
+
+			$topic = sanitize_text_field( trim( $topic ) );
+
+			if ( '' === $topic ) {
+				continue;   // a blank line, or a trailing newline
+			}
+
+			$key = strtolower( $topic );
+
+			if ( isset( $seen[ $key ] ) ) {
+				$skipped++;
+				continue;
+			}
+
+			$seen[ $key ] = true;
+
+			$rows[] = array(
+				'topic'       => $topic,
+				'targetQuery' => isset( $cells[1] ) ? sanitize_text_field( trim( $cells[1] ) ) : '',
+				'linkPhrase'  => isset( $cells[2] ) ? sanitize_text_field( trim( $cells[2] ) ) : '',
+			);
+		}
+
+		fclose( $handle );
+
+		return array( 'rows' => $rows, 'skipped' => $skipped );
+	}
+
 	public static function merge_topics( $existing, $fresh ) {
 		$existing = is_array( $existing ) ? array_values( $existing ) : array();
 		$fresh    = is_array( $fresh ) ? $fresh : array();

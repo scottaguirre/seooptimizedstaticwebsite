@@ -151,8 +151,10 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
-    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, 64
+    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, refused plans, CSV upload, 151
     php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, SEO titles, removal queue, 70
+    php wp-plugin/test-writing-progress.php # "4 of 11 written": stored every poll, cleared on stop and on pause, 17
+    php wp-plugin/test-business-source.php # when a site may answer for its own blank fields, 11
 
 177 assertions in all; last run green on 30 September under PHP 8.4.
 
@@ -2864,6 +2866,332 @@ A fixture sitting on a threshold cannot test what the threshold is applied to.
 
 Five mutations, all caught once those were fixed. `test-post-quality.js`
 37 → 42.
+
+## Topics from a CSV — 11 October 2026 (plugin 0.38.0)
+
+Edwin, with a forty-row file attached: *"could you create a feature to upload
+this file so i don't have to enter all the topics and keywords, etc manually
+one by one?"* Three columns, no header: the topic, its main keyword, and how
+other posts will link to it — the three the table already holds.
+
+A hundred and twenty boxes, typed one at a time, into a form that until the
+same morning threw the lot away if the plan was refused.
+
+**It REPLACES the table**, which is the opposite of the suggest button and was
+asked for explicitly. A file is the whole campaign, not a contribution to one:
+appending a corrected version leaves you holding both, interleaved, with the
+duplicates silently dropped and no sign which copy survived. What makes that
+safe is that nothing is charged and nothing is written — "Start over" and a
+second upload are each one press away.
+
+**Not behind `.ie-needs-target`**, unlike the suggest button beside it.
+Suggesting needs a page to suggest FROM; a file needs nothing. So this is also
+the only way a pillar campaign — which cannot use the suggest button at all —
+gets filled in without typing.
+
+### What the parsing has to survive
+
+- **Quoted fields with commas.** Six of Edwin's forty rows are this shape. A
+  split on commas cuts every one in half and turns the back of a headline into
+  somebody's main keyword. There is a test whose only job is to stop someone
+  replacing `fgetcsv` with `explode`.
+- **A UTF-8 BOM.** Excel writes it, nothing displays it, and left in place the
+  first post of the campaign gets a title and a slug subtly unlike every other
+  one.
+- **The trailing newline**, which `fgetcsv` hands back as a row.
+- **Short rows**, and silently — see below.
+- **Duplicate topics**, dropped and counted. Planning would otherwise give the
+  pair near-identical slugs and then refuse the campaign for chasing the same
+  search, which is a confusing way to learn you pasted twice.
+- All five arguments to `fgetcsv`: PHP 8.4 deprecates relying on the default
+  escape character, and a deprecation printed into a redirect is a white screen.
+
+### Bounded in three directions
+
+`CSV_MAX_BYTES` before the file is opened, `CSV_MAX_ROWS` while it is read,
+`MAX_TOPICS` on what is kept. **MAX_TOPICS alone is not a bound** — it limits
+what is KEPT, and by the time it applies a 500 MB file named .csv has already
+been read into a shared host's memory.
+
+### What could not be tested, and what was done about it
+
+`is_uploaded_file()` returns false for every file that did not arrive over HTTP
+POST, so `handle_upload_topics()` cannot be driven end to end. Rather than
+assert the whole thing by reading source, the four refusals that carry a
+sentence were split into `csv_upload_problem()`, which takes a `$_FILES` entry
+and returns a string. That check itself stays in the handler and is read from
+source — and the test says plainly that this is what that assertion is worth.
+
+### The mutation that got through
+
+Deleting the `isset()` guards on columns 2 and 3. Nothing about the RESULT
+changes — PHP hands back null, `''` comes out the other end — so every obvious
+assertion still passed while each short row emitted "Undefined array key" and,
+on 8.1+, "Passing null to trim()". On a site with `display_errors` on, that
+output lands before the redirect header and the admin screen goes white. The
+test now installs an error handler and fails on any notice at all.
+
+`test-admin-tabs.php` 136 → 151, 13 mutations all caught. Verified against
+Edwin's real file: 40 rows, 0 skipped, every quoted field intact.
+
+## A refused plan deleted the work it asked you to fix — 11 October 2026 (plugin 0.37.0)
+
+Edwin planned a pillar campaign, typed a main keyword and a link phrase into
+every row, pressed **Plan this campaign**, and got:
+
+    That did not work. Two or more topics are chasing the same search as each other.
+
+Both columns came back **empty**, and nothing said which two topics. The screen
+asked him to fix something it had just deleted, and would not say where.
+
+Two faults, and each was a thing being thrown away.
+
+### 1. The form was not kept
+
+The draft transient is written when topics are SUGGESTED and was written
+nowhere else. So every refusal between there and a planned campaign restored
+the form **as the suggest button had left it** — and Main keyword and "How
+other posts will link to this post" are precisely the columns the owner fills
+in afterwards, by hand, one row at a time.
+
+`keep_draft()` now runs on every failure path in `handle_create_campaign()`,
+reading the FORM rather than the stored draft, the same way the suggest button
+does. The worst of those paths is the one that says *"Fill in the Main keyword
+column for: …"* — it emptied that column on its way to saying so.
+
+### 2. The server had already said which topics
+
+`/api/blog/plan` answers a refusal with `conflicts: [{kind, a, b, detail}]`.
+The note above `conflictMessage()` in planCampaign.js says plainly that "the
+full list travels alongside and the plugin renders it". **The plugin dropped
+the array** and showed only the one-line message — the same shape as the
+writing progress earlier the same day: the server sending, the plugin
+discarding.
+
+- `a` and `b` are slot ids `topic-N`, **one-based** indexes into the topics this
+  side sent, so they map back to the owner's own words. Off by one names the
+  neighbour of the row at fault, which is worse than naming none.
+- The queries are appended from THIS side's copy rather than parsed out of the
+  server's `detail`: naming topics says where to look, naming keywords says
+  what to edit.
+- An unknown kind falls back to the server's sentence, or a newer server plus
+  an older plugin is a blank panel under a red error.
+- Its own `notice-error` panel, above the warnings: a warning means the plan
+  would go ahead, and these are the reasons it did not.
+
+### Why it was never caught
+
+`class IE_Api {}` — an empty stub in test-admin-tabs.php. Any handler that
+talks to the server would have fatalled, so `handle_create_campaign()` was
+untestable there and untested. **The untestable handler was the one with the
+bug in it.** The stub now has `plan()` and `enrich()` driven by globals.
+
+`test-admin-tabs.php` 126 → 136, 10 mutations all caught.
+
+## The move guard had never run — 11 October 2026
+
+Found while adding a second guard beside it. One line, in
+`/api/blog/activate`:
+
+    if (movingFrom && site.lastSeenAt && !body.moveSite) {
+
+**`body` was never declared in that handler.** The request is `req.body`. So
+the moment the first two conditions held — which is exactly when the guard
+matters — that line threw a ReferenceError, the handler's catch turned it into
+`"Activation failed. Please try again."`, and the customer was left with a
+sentence that says nothing and a tick-box that does nothing.
+
+**It was tested.** `test-licence-binding.js` asserted `/body\.moveSite/`
+against the route's source. The phrase was there. **The phrase was the bug.**
+
+Reading a line is not running it — and a guard that throws cannot be told apart
+from one that refuses, because the request fails either way. Trying it by hand
+would have shown a refusal. The only thing that could have caught this was
+calling the rule.
+
+**This is very likely how roofingamerica.xyz ended up with two licence keys**:
+Edwin tried to reuse a key, got "Activation failed. Please try again.", ticked
+the box, got it again, and made a second key instead.
+
+### The second guard, which is what was actually asked for
+
+`refuseMove()` looks from the KEY's side — "where is this key registered?".
+Nothing looked from the DOMAIN's side, so two separate keys could both be
+activated against one WordPress and neither would notice. The symptom is not an
+error: it is a stale record holding the domain's previous business, and a
+scheduler politely pinging it with a secret that matches nothing.
+
+`refuseOccupiedDomain()` refuses a second non-revoked record on the same url.
+
+- **Revoked records do not block.** Revoking is one click, it pauses campaigns
+  rather than destroying them, and it is the escape hatch — so the refusal has
+  somewhere to send people instead of being a dead end. It is also the answer
+  to "I lost my key and want to start fresh".
+- **Two messages.** Same account: name the fix, because the owner can carry it
+  out. Different account: say nothing specific. This endpoint is reachable by
+  anyone holding any valid licence key, and confirming "yes, that domain is
+  registered here" would make it a way to ask which customer owns which site.
+- A record is never its own occupant, or every reinstall would be locked out.
+
+### Why they are in utils/blog/activationGuards.js
+
+Plain functions over plain values, so a test can **call** them. An undeclared
+name is then a red line rather than a sentence a customer cannot act on. The
+source checks that remain assert only what a unit test cannot see: that the
+route still calls both, before the secret is minted — after that the other
+install is already dead.
+
+One of the eleven mutations got through at first: replacing the occupant lookup
+with `false ? await BlogSite.findOne(...)` left the query present, never run,
+and handed the guard `undefined`, which it approves. The assertion now pins the
+condition, not just the call.
+
+`test-licence-binding.js` 12 → 20, 11 mutations all caught. Server only — the
+plugin already sends `moveSite`, and this is the first day that flag has ever
+been read.
+
+## A rebuilt site inherited the last business that used its licence — 11 October 2026 (plugin 0.36.0)
+
+Edwin, on a roofing blog: *"why some of the generated topics mentioned Austin,
+TX?"* Twice, because the first answer — "it comes from your theme's Location
+field" — was true and not the whole story.
+
+The server's record for roofingamerica.xyz said:
+
+    {"name":"roofingamerica.xyz","type":"Plumbing","location":"Austin, TX"}
+
+A roofing site, stored as an Austin plumber. **Ninety-five articles had been
+written against it.** The topic prompt is handed the town and allows it in at
+most two titles per batch, so it leaked as "Austin storm debris", "Austin
+wind", "Central Texas heat" — visible, plausible, and wrong.
+
+### How it got there
+
+`readBusiness()` ignored any field that arrived blank. That guard is old and
+right: a settings page caught half-loaded would otherwise wipe a name the
+customer typed months ago.
+
+**It had no opposite.** A blank meant "I am not telling you". Nothing could say
+"I am telling you: there is nothing here". So a value could be CHANGED and
+never REMOVED.
+
+Edwin wiped the site and its database, rebuilt it as a roofing company, and
+reconnected with the same licence key. His theme settings were empty, the
+plugin reported blanks, and `mergeBusiness()` kept what the record held from
+the domain's previous life. Nothing on any screen said so.
+
+The file's own header had already named this site as the worked example of
+stale business data, one generation earlier. The fix then — update the business
+on every call, not only at activation — fixed *changing* it and left *clearing*
+it impossible.
+
+### The fix
+
+`businessFields`: the list of fields a site is ANSWERING FOR. A blank in that
+list is deliberate and clears the stored value; a blank outside it behaves
+exactly as before, so every existing test passed untouched.
+
+**The dangerous half is when the plugin sends the list, not what is in it.**
+`IE_Settings::business_is_known()` answers one question — is there a source at
+all? A stored business with a name, or a theme settings row that exists. If
+there is, the blanks inside it are this site's own answer. If the theme is gone
+and the options row with it, the plugin has learned nothing and says nothing,
+which is the case the original guard was written for.
+
+- It is **not** "are the fields filled in". A settings page saved with the
+  location box empty is a site that HAS no location, and saying so is the point.
+- `business()` and `business_is_known()` are a pair doing the same two lookups
+  in the same order; nothing in PHP makes them agree, so a test asserts they
+  never disagree, using the name fallback as the tell.
+- All four fields or none — `business()` reads them from one source, so a
+  partial claim would mean the pair had come apart.
+- An unknown key is dropped silently by both sides, so an old plugin against a
+  new server, and a new plugin against an old one, both behave as they did.
+
+### Also found, not fixed
+
+**Two site records for one domain.** Two separate licence keys, both activated
+against roofingamerica.xyz. The move guard asks "is this KEY registered to
+another domain?" and nobody asks "does this DOMAIN already have a key?". The
+scheduler pings both; the abandoned one's secret no longer matches, so its
+pings fail and count against the site. Offered and not taken up yet.
+
+`test-business-refresh.js` 9 → 17, `wp-plugin/test-business-source.php` 11 new,
+10 mutations all caught.
+
+## The dashboard stopped filling in — 10 October 2026 (plugin 0.35.0)
+
+Edwin: *"a few versions ago the plugin retrieve the articles from the server
+and updated the admin dashboard with the already written articles. So the
+plugin every few minutes or seconds was pulling the articles, now it waits
+until all the articles are written to pull them."*
+
+**His memory was right, and it is not a regression.** Posts used to be written
+one per publication day, so collecting and progress were the same event. They
+are now written as one batch at approval. Two independent gates hold collection
+until the batch ends, either sufficient on its own:
+
+    routes/blogApiRoute.js:706          posts: [] for the whole batch while 'writing'
+    class-ie-publisher.php:544          returns before it reaches IE_Api::collect()
+
+The per-slot machinery for incremental hand-over already exists on both sides —
+`markSlotReady`, `uncollectedSlots()`, and a `slotIndex` argument the plugin
+never sends. Only the campaign-level flag is in the way.
+
+### What it would actually cost to open the gate
+
+Worth writing down, because the comments overstate it. `crossCheck()` sounds
+like the blocker and is not: it **writes a report and logs it**, rewrites
+nothing, and is rendered nowhere. The one real cost is
+`repairAroundFailures()`, which strips internal links pointing at slots that
+failed — a post handed over before a later slot fails arrives holding a link to
+a post that never gets written. That link renders as ordinary prose, and the
+plugin's hourly deleted-post sweep unwraps it. **And nothing publishes sooner
+either way**: posts are inserted future-dated.
+
+So the honest answer is "very little", and it was still not done, because the
+thing Edwin actually lost was the *sight* of progress, not the posts.
+
+### What was done instead
+
+The progress was never missing. `/api/blog/collect` answers a writing campaign
+with `done` and `total`, `run_campaign()` received both on every poll, returned
+them, and the caller logged and dropped them. They are stored now, and the card
+says **"4 of 11 written."** beside the spinner.
+
+- `writing_done` / `writing_total` are written on **every** poll. The obvious
+  place is beside `writing_since`, inside its `! $was_writing` guard — and then
+  the card reads "0 of 11" from the first post to the last, which is worse than
+  no count because it looks stalled.
+- `writing_since` must still be stamped **once**. It caps how long the page
+  reloads itself; re-stamped every poll, a job that dies silently leaves a tab
+  spinning overnight. The two fields genuinely need different rules.
+- Both are cleared when writing stops, and again in `pause()` — which clears
+  the spinner early on purpose. "3 of 11 written" beside a paused campaign is a
+  promise that the other eight are coming. The 825-credit incident is the price
+  of the screen and the batch disagreeing.
+- `IE_Campaigns::writing_progress()` is the only thing that rules on whether a
+  fraction is fit to print. `total 0` and `done > total` are both reachable from
+  a version skew, and "7 of 4" beside a charge costs more trust than the bare
+  spinner it replaced.
+
+**The number steps, it does not tick.** The page reloads every 15s, but the
+figure behind it refreshes only when the server pings the site — every 2
+minutes while a batch runs. Polling from a browser timer would cost a request
+per open tab to say something the owner learns anyway within two minutes.
+
+### Collection after writing, which was also worth checking
+
+All posts do arrive, in fives: `MAX_INSERTS_PER_RUN = 5`, one campaign per
+ping, and `blogScheduler` marks a campaign with `ready` slots **urgent**, so
+the gap is 2 minutes rather than 10. Eleven posts is three pings, four to six
+minutes, and a post is re-offered until WordPress confirms it. Collection is
+free; only writing charges.
+
+`test-writing-progress.php`, 17 assertions, 9 mutations all caught. It drives
+`run_campaign()` against a stubbed `IE_Api` rather than reading source where it
+can, and strips comments with `token_get_all()` where it cannot — these files
+quote both the field names and the bad outputs verbatim.
 
 ## The card named a post nobody could find — 7 October 2026 (plugin 0.34.0)
 

@@ -62,6 +62,7 @@ const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { parseReportedRemoval } = require('../utils/blog/removalTime');
 const { readBusiness, businessChanged, mergeBusiness } = require('../utils/blog/businessShape');
+const { refuseMove, refuseOccupiedDomain } = require('../utils/blog/activationGuards');
 
 // How many written posts one /collect hands over. The plugin inserts them one
 // at a time anyway, and a 52-post campaign returned in a single response is
@@ -150,9 +151,26 @@ router.post('/api/blog/activate', blogActivateLimiter, async (req, res) => {
      * never filled in, or a site that has never once called home, has nothing
      * to protect. */
     const reportedUrl = BlogSite.normaliseSiteUrl(siteUrl);
-    const movingFrom = site.siteUrl && reportedUrl && site.siteUrl !== reportedUrl;
 
-    if (movingFrom && site.lastSeenAt && !body.moveSite) {
+    /* THE WORDING AND THE REASONING MOVED TO utils/blog/activationGuards.js,
+     * and that is not tidying. The test here read this line for the phrase
+     * `body.moveSite` and found it — in
+     *
+     *     if (movingFrom && site.lastSeenAt && !body.moveSite) {
+     *
+     * where `body` was never declared. The request is `req.body`. So the
+     * moment the first two conditions held, this threw a ReferenceError, the
+     * catch below turned it into "Activation failed. Please try again.", and
+     * the guard had never run once. Reading a line is not running it, and a
+     * guard that throws is indistinguishable from one that refuses: the
+     * request fails either way.
+     *
+     * As plain functions over plain values they can be CALLED by a test, and
+     * an undeclared name is a red line rather than a sentence nobody can act
+     * on. */
+    const refusal = refuseMove({ site, reportedUrl, moveSite: req.body.moveSite });
+
+    if (refusal) {
       log.security('blog.activate.wouldDisconnect', {
         requestId: req.id,
         siteId: String(site._id),
@@ -160,14 +178,41 @@ router.post('/api/blog/activate', blogActivateLimiter, async (req, res) => {
         reported: reportedUrl,
       });
 
-      return res.status(409).json({
-        error: `This licence key is already connected to ${site.siteUrl}. `
-             + 'Connecting it here will disconnect that site, and its posts will stop publishing. '
-             + 'If you are moving the licence, tick "this licence is moving from another site" and save again. '
-             + 'If both sites should keep working, create a second key on your account page.',
-        reason: 'licence-in-use',
-        registeredTo: site.siteUrl,
+      return res.status(409).json(refusal);
+    }
+
+    /* AND THE SAME QUESTION FROM THE DOMAIN'S SIDE, which nothing had ever
+     * asked. The guard above looks from the key's side — "where is this key
+     * registered?" — so two different keys could both be activated against one
+     * WordPress and neither would notice the other.
+     *
+     * Edwin's roofingamerica.xyz had exactly that: two records, the abandoned
+     * one still carrying the business of the domain's previous life, and the
+     * scheduler pinging it with a secret that matched nothing.
+     *
+     * NOT revoked ones. Revoking is how a licence is retired, it is one click,
+     * and it pauses campaigns rather than destroying them — so the refusal has
+     * somewhere to send people. */
+    const occupant = reportedUrl
+      ? await BlogSite.findOne({
+          _id: { $ne: site._id },
+          siteUrl: reportedUrl,
+          status: { $ne: 'revoked' },
+        }).select('user siteUrl').lean()
+      : null;
+
+    const taken = refuseOccupiedDomain({ site, occupant });
+
+    if (taken) {
+      log.security('blog.activate.domainTaken', {
+        requestId: req.id,
+        siteId: String(site._id),
+        occupantId: String(occupant._id),
+        siteUrl: reportedUrl,
+        sameOwner: String(occupant.user) === String(site.user),
       });
+
+      return res.status(409).json(taken);
     }
 
     // A NEW secret on every activation, which is what makes "deactivate and
@@ -182,8 +227,16 @@ router.post('/api/blog/activate', blogActivateLimiter, async (req, res) => {
 
     /* Through the shared reader now. This was the ONLY place site.business
      * was ever written, which is the whole reason the planner spent months
-     * choosing anchor text from a name the customer had since changed. */
-    const activating = readBusiness(business);
+     * choosing anchor text from a name the customer had since changed.
+     *
+     * `businessFields` NAMES THE FIELDS THE SITE IS ANSWERING FOR, and a blank
+     * in that list is a deliberate clear rather than a silence — see
+     * readBusiness(). It matters most HERE, because activation is exactly when
+     * a rebuilt site would otherwise inherit the previous occupant's trade and
+     * town from the record its licence belongs to.
+     *
+     * Absent from an older plugin, which then behaves as it always did. */
+    const activating = readBusiness(business, req.body.businessFields);
     if (activating) site.business = mergeBusiness(site.business, activating);
 
     await site.save();
@@ -297,7 +350,7 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
      * Persisted rather than merely used, so the report and any later plan
      * see the same name, and so a site that renames once does not have to
      * keep re-sending before anything is right. */
-    const reportedBusiness = readBusiness(req.body.business);
+    const reportedBusiness = readBusiness(req.body.business, req.body.businessFields);
 
     if (businessChanged(req.site.business, reportedBusiness)) {
       req.site.business = mergeBusiness(req.site.business, reportedBusiness);
@@ -1210,7 +1263,7 @@ router.post('/api/blog/campaigns-present', blogApiLimiter, requireSite, async (r
      * that site. Putting this after it would mean the rename did not reach
      * the server until the customer planned a campaign — which is the moment
      * the stale name would be used. */
-    const sweptBusiness = readBusiness(body.business);
+    const sweptBusiness = readBusiness(body.business, body.businessFields);
 
     if (businessChanged(req.site.business, sweptBusiness)) {
       const merged = mergeBusiness(req.site.business, sweptBusiness);

@@ -43,7 +43,7 @@ const Module = require('module');
 
 let passed = 0;
 let failed = 0;
-const DECLARED = 12;
+const DECLARED = 20;
 
 async function atest(name, fn) {
   try {
@@ -277,30 +277,163 @@ await atest('a mismatch is logged with both domains', async () => {
 
 /* ---------------- activate ---------------- */
 
+/* THIS USED TO BE ONE TEST, AND IT READ THE ROUTE'S SOURCE FOR PHRASES.
+ *
+ * It asserted /body\.moveSite/ against routes/blogApiRoute.js. The phrase was
+ * there, in this line:
+ *
+ *     if (movingFrom && site.lastSeenAt && !body.moveSite) {
+ *
+ * `body` was never declared in that handler — the request is `req.body`. So
+ * the moment the first two conditions held, that line threw a ReferenceError,
+ * the handler's catch turned it into "Activation failed. Please try again.",
+ * and the guard had never run once in its life. This test was green
+ * throughout, because the phrase it looked for was the bug.
+ *
+ * READING A LINE IS NOT RUNNING IT — and a guard that throws cannot be told
+ * apart from one that refuses, because the request fails either way. Even
+ * trying it by hand would have shown a refusal. The only thing that could have
+ * caught it was calling the rule.
+ *
+ * So the rules now live in utils/blog/activationGuards.js as plain functions
+ * over plain values, and these tests call them. The source checks that remain
+ * assert only that the ROUTE still calls them, in the right place — which is
+ * the one property a unit test genuinely cannot see.
+ */
+
+const { refuseMove, refuseOccupiedDomain } = require('./utils/blog/activationGuards');
+
+const SEEN = new Date('2026-10-01T00:00:00Z');
+const OWNER = 'ffffffffffffffffffffffff';
+const OTHER_OWNER = 'eeeeeeeeeeeeeeeeeeeeeeee';
+const OTHER_SITE = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+
+const LIVE = { _id: SITE_ID, user: OWNER, siteUrl: 'roofingamerica.xyz', lastSeenAt: SEEN };
+
 await atest('ACTIVATION REFUSES TO STEAL A LICENCE FROM A LIVE SITE', () => {
-  /* The guard that stops it happening at all, rather than reporting it
-   * afterwards. Read from the source because exercising the route needs the
-   * whole express and mongoose stack; the behaviour it guards is covered by
-   * the requireSite cases above. */
+  /* The case the ReferenceError hid for as long as it existed. */
+  const out = refuseMove({ site: LIVE, reportedUrl: 'hilltophomeloans.net', moveSite: false });
+
+  assert.ok(out, 'a licence was moved off a live site without a word');
+  assert.strictEqual(out.reason, 'licence-in-use');
+  assert.match(out.error, /roofingamerica\.xyz/, 'the refusal does not name the site at risk');
+});
+
+await atest('ticking the box lets the move through', () => {
+  /* The refusal is a speed bump, not a wall. If this stops passing, somebody
+   * legitimately moving a licence has no way forward at all. */
+  assert.strictEqual(
+    refuseMove({ site: LIVE, reportedUrl: 'hilltophomeloans.net', moveSite: true }),
+    null,
+  );
+});
+
+await atest('reconnecting the same site is not a move', () => {
+  assert.strictEqual(
+    refuseMove({ site: LIVE, reportedUrl: 'roofingamerica.xyz', moveSite: false }),
+    null,
+    'reinstalling the plugin on your own site is refused',
+  );
+});
+
+await atest('a licence that has never connected has nothing to protect', () => {
+  assert.strictEqual(
+    refuseMove({ site: { ...LIVE, lastSeenAt: null }, reportedUrl: 'hilltophomeloans.net', moveSite: false }),
+    null,
+  );
+});
+
+await atest('A SECOND KEY ON ONE DOMAIN IS REFUSED', () => {
+  /* The question nobody asked. refuseMove looks from the KEY's side — "where
+   * is this key registered?" — so two different keys could both be activated
+   * against one WordPress and neither would notice the other.
+   *
+   * roofingamerica.xyz had exactly that: two records, the abandoned one still
+   * carrying the business of the domain's previous life, and the scheduler
+   * pinging it with a secret that matched nothing. */
+  const out = refuseOccupiedDomain({
+    site: { _id: OTHER_SITE, user: OWNER },
+    occupant: { _id: SITE_ID, user: OWNER, siteUrl: 'roofingamerica.xyz' },
+  });
+
+  assert.ok(out, 'a second licence key was allowed onto a site that already has one');
+  assert.strictEqual(out.reason, 'domain-taken');
+  assert.match(out.error, /[Rr]evoke/, 'the refusal does not say how to get past it');
+});
+
+await atest('ANOTHER ACCOUNT\'S SITE IS REFUSED WITHOUT SAYING WHOSE', () => {
+  /* This endpoint is reachable by anyone holding any valid licence key. A
+   * reply confirming "yes, that domain is registered here" would turn it into
+   * a way to ask which of our customers owns which site — and the helpful
+   * message names a page the caller could not act on anyway. */
+  const out = refuseOccupiedDomain({
+    site: { _id: OTHER_SITE, user: OWNER },
+    occupant: { _id: SITE_ID, user: OTHER_OWNER, siteUrl: 'roofingamerica.xyz' },
+  });
+
+  assert.ok(out, 'a licence was activated onto another account\'s site');
+  assert.ok(!out.error.includes('roofingamerica'),
+    'the refusal confirms which domain another account holds');
+  assert.ok(!('registeredTo' in out), 'the domain leaked in a field instead of the sentence');
+});
+
+await atest('the same record is not its own occupant', () => {
+  /* Reconnecting an existing site finds ITSELF on that url. Refusing would
+   * lock every customer out of their own reinstall. */
+  assert.strictEqual(
+    refuseOccupiedDomain({
+      site: { _id: SITE_ID, user: OWNER },
+      occupant: { _id: SITE_ID, user: OWNER, siteUrl: 'roofingamerica.xyz' },
+    }),
+    null,
+  );
+});
+
+await atest('an empty domain is nobody\'s, so nothing is refused', () => {
+  assert.strictEqual(refuseOccupiedDomain({ site: LIVE, occupant: null }), null);
+  assert.strictEqual(refuseMove({ site: LIVE, reportedUrl: '', moveSite: false }), null);
+});
+
+await atest('THE ROUTE STILL CALLS BOTH GUARDS, BEFORE THE SECRET IS MINTED', () => {
+  /* The one property the tests above cannot see. After the secret is
+   * regenerated the damage is already done — the other install is dead
+   * whatever happens next — so this is about position, not presence.
+   *
+   * Comments are stripped first. The notes in that route quote both guard
+   * names while explaining this bug, and a raw search would find the
+   * explanation and report the fix as present. */
   const fs = require('fs');
   const path = require('path');
-  const src = fs.readFileSync(path.join(__dirname, 'routes/blogApiRoute.js'), 'utf8');
+
+  const src = fs.readFileSync(path.join(__dirname, 'routes/blogApiRoute.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^[ \t]*\/\/.*$/gm, ' ');
 
   const activate = src.slice(
     src.indexOf("'/api/blog/activate'"),
-    src.indexOf("site.secret = BlogSite.generateSecret()"),
+    src.indexOf('site.secret = BlogSite.generateSecret()'),
   );
 
-  assert.match(activate, /movingFrom/,
-    'activation no longer notices that the licence lives somewhere else');
-  assert.match(activate, /body\.moveSite/,
-    'activation no longer requires the move to be deliberate');
-  assert.match(activate, /site\.lastSeenAt/,
-    'activation would refuse a site that has never connected, which has nothing to protect');
-  assert.ok(
-    activate.indexOf('movingFrom') < activate.length,
-    'the guard must come BEFORE the secret is regenerated — after it, the damage is done',
-  );
+  assert.ok(activate.length > 0, 'the secret is minted before the handler, or not at all');
+
+  assert.match(activate, /refuseMove\(/,
+    'nothing stops a licence being moved off a live site any more');
+  assert.match(activate, /refuseOccupiedDomain\(/,
+    'nothing stops a second key landing on a site that already has one');
+  assert.match(activate, /req\.body\.moveSite/,
+    'the move flag is read from somewhere other than the request again');
+
+  /* The occupant has to be LOOKED UP, or the guard is handed undefined on
+   * every call and politely approves everything. */
+  /* The CONDITION as well as the call. Asserting only that findOne appears
+   * passes against `const occupant = false ? await BlogSite.findOne(...)`,
+   * where the query is present, never runs, and hands the guard undefined —
+   * which it politely approves. Found by mutation; the looser version of this
+   * line was the one mutation that got through. */
+  assert.match(activate, /const occupant\s*=\s*reportedUrl\s*\?\s*await BlogSite\.findOne\(/,
+    'the occupant lookup is no longer reached, so the guard approves everything');
+  assert.match(activate, /status:\s*\{\s*\$ne:\s*'revoked'\s*\}/,
+    'a revoked licence would block its own replacement, with no way out');
 });
 
 console.log(`\n  ${passed} passed, ${failed} failed\n`);

@@ -526,17 +526,58 @@ class IE_Publisher {
 		 * reloading itself overnight rather than spinning for ever. */
 		$was_writing = ! empty( $campaign['writing_since'] );
 
-		if ( 'writing' === $status && ! $was_writing ) {
-			IE_Campaigns::save( array_merge( $campaign, array(
-				'writing_since' => current_time( 'mysql' ),
-			) ) );
+		if ( 'writing' === $status ) {
+			/* THE COUNT, WHICH HAS BEEN ARRIVING ALL ALONG AND WAS THROWN AWAY.
+			 *
+			 * $state already carries done and total — the early return twenty
+			 * lines below hands them straight back to the caller, which logs
+			 * them and drops them. So the owner watched a bare spinner for the
+			 * whole batch, about eight minutes, while being charged per post,
+			 * and minute one looked exactly like minute eight.
+			 *
+			 * Edwin noticed this from the other end: he remembered the
+			 * dashboard filling in as posts were written and asked what had
+			 * changed. What changed is that posts are now written as a batch
+			 * and collected after it, so there is nothing to SHOW until the
+			 * end — unless the progress the server is already sending is kept.
+			 *
+			 * WRITTEN ON EVERY POLL, unlike writing_since. The timestamp is
+			 * stamped once because it marks the start of a window; the count
+			 * is the part that moves, and a count refreshed only on the
+			 * transition would read "0 of 11" from first post to last — worse
+			 * than no count at all, because it looks like a stalled batch.
+			 *
+			 * total FALLS BACK TO THE SLOTS THIS SITE HOLDS rather than 0.
+			 * A zero total would make the screen decide between "no numbers
+			 * yet" and "nothing to do" from one value, and the slots are the
+			 * same plan the server is working through. */
+			$progress = array(
+				'writing_done'  => isset( $state['done'] ) ? max( 0, (int) $state['done'] ) : 0,
+				'writing_total' => isset( $state['total'] ) && (int) $state['total'] > 0
+					? (int) $state['total']
+					: count( (array) ( isset( $campaign['slots'] ) ? $campaign['slots'] : array() ) ),
+			);
+
+			if ( ! $was_writing ) {
+				$progress['writing_since'] = current_time( 'mysql' );
+			}
+
+			IE_Campaigns::save( array_merge( $campaign, $progress ) );
 			$campaign = IE_Campaigns::get( $campaign_id );
-		} elseif ( 'writing' !== $status && $was_writing ) {
+
+		} elseif ( $was_writing ) {
 			/* CLEARED THE MOMENT IT STOPS, however it stopped — finished,
 			 * failed, or cancelled by a pause. A spinner that outlives the
-			 * batch is the bug this replaces, in a smaller window. */
-			$campaign = IE_Campaigns::save( array_merge( $campaign, array(
+			 * batch is the bug this replaces, in a smaller window.
+			 *
+			 * The counts go with it, and "11 of 11" is exactly why. It would
+			 * be true and still wrong: the card already reports what was
+			 * written, and a progress line that never clears reads as a batch
+			 * still running. */
+			IE_Campaigns::save( array_merge( $campaign, array(
 				'writing_since' => '',
+				'writing_done'  => 0,
+				'writing_total' => 0,
 			) ) );
 			$campaign = IE_Campaigns::get( $campaign_id );
 		}
@@ -2037,8 +2078,16 @@ class IE_Publisher {
 			 * The server may still be finishing the post already in flight.
 			 * That is fine: the batch is stopping, and a spinner that says
 			 * "writing" for the last thirty seconds of a batch nobody can add
-			 * to is more misleading than one that stops a moment early. */
+			 * to is more misleading than one that stops a moment early.
+			 *
+			 * THE COUNTS TOO, for the same reason and with a sharper edge.
+			 * "3 of 11 written" beside a paused campaign reads as a promise
+			 * that the other eight are coming. They are not — that is what
+			 * Pause means — and the 825-credit incident is what happens when
+			 * the screen and the batch disagree about whether it is running. */
 			'writing_since' => '',
+			'writing_done'  => 0,
+			'writing_total' => 0,
 		) );
 
 		/* TELL THE SERVER NOW, because the thing most worth stopping is the

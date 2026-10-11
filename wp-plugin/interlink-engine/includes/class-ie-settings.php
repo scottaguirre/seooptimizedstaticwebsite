@@ -359,6 +359,70 @@ class IE_Settings {
 	}
 
 	/**
+	 * Did this site actually READ its business anywhere?
+	 *
+	 * THE DIFFERENCE BETWEEN "NOTHING IS SET" AND "I COULD NOT LOOK", which
+	 * business() above cannot express: both come back as empty strings.
+	 *
+	 * The server needs them apart. Until 11 October a blank field was always
+	 * ignored on arrival — a guard against a half-loaded settings page wiping a
+	 * good business name — and the cost of that guard was that a value could be
+	 * changed and never removed. roofingamerica.xyz was wiped, rebuilt as a
+	 * roofing company, and reconnected on its old licence. Its theme settings
+	 * were empty, so the plugin sent blanks, so the server kept the domain's
+	 * previous trade and town: "Plumbing", "Austin, TX". Ninety-five articles
+	 * were written for an Austin plumber and nothing on any screen said why.
+	 *
+	 * SO THIS ANSWERS ONE QUESTION ONLY: is there a source at all? A stored
+	 * business with a name, or a theme settings row that exists. If there is,
+	 * the blanks inside it are this site's own answer and the server may act on
+	 * them. If there is not — theme deleted, options row gone — this site knows
+	 * nothing, says nothing, and the server keeps what it holds. That second
+	 * case is what the original guard was written for and must not break.
+	 *
+	 * NOT "are the fields filled in". A settings page saved with the location
+	 * box empty is a site that HAS no location, and being able to say so is
+	 * the entire point.
+	 *
+	 * DELIBERATELY THE SAME TWO LOOKUPS as business(), in the same order. They
+	 * have to agree about where the answer came from, and the honest way to
+	 * guarantee that would be one function returning both — which would change
+	 * a signature three call sites and two test files depend on. Kept as a pair
+	 * instead, with test-business-source.php asserting they never disagree.
+	 */
+	public static function business_is_known() {
+		$stored = self::get( 'business', array() );
+		if ( is_array( $stored ) && ! empty( $stored['name'] ) ) {
+			return true;
+		}
+
+		foreach ( self::theme_prefixes() as $prefix ) {
+			$candidate = get_option( $prefix . 'global_settings', array() );
+			if ( is_array( $candidate ) && ! empty( $candidate ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * The fields this site is ANSWERING FOR, for the server's readBusiness().
+	 *
+	 * Every field, or none at all. There is no middle case: business() reads
+	 * all four from one source, so either that source was found and all four
+	 * answers are real, or it was not and none of them are.
+	 *
+	 * Sent alongside `business` rather than inside it, so an older server that
+	 * does not know the key simply drops it and behaves exactly as before.
+	 */
+	public static function business_fields() {
+		return self::business_is_known()
+			? array( 'name', 'type', 'location', 'phone' )
+			: array();
+	}
+
+	/**
 	 * The same details under the names the SERVER uses.
 	 *
 	 * TWO VOCABULARIES FOR ONE THING, and that is the whole reason this

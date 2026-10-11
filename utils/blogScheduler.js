@@ -99,9 +99,58 @@ const MAX_PING_FAILURES = Number(process.env.BLOG_MAX_PING_FAILURES) || 12;
 // waiting for the whole errand would hold the loop open for a minute a site.
 const PING_TIMEOUT_MS = Number(process.env.BLOG_PING_TIMEOUT_MS) || 10000;
 
+// How much of a refusing site's reply to keep.
+//
+// Enough for a WordPress REST error — {"code":"…","message":"…"} — or the
+// first line of a PHP fatal, and not so much that one broken site fills the
+// log with its own HTML error page.
+const PING_DETAIL_CHARS = 300;
+
 let timer = null;
 let running = false;
 let ticking = false;
+
+/**
+ * What a site said when it refused, in one short line.
+ *
+ * WHY THIS EXISTS, WHICH IS NOT "MORE LOGGING IS NICE"
+ *
+ * `HTTP 500` was the whole of what we recorded, and it is almost no
+ * information: it says the site answered and the answer was bad. Edwin's site
+ * returned 500 to every ping for most of a day while collection by hand worked
+ * perfectly, and six rounds of screenshots could not narrow it down — because
+ * the reason was in the reply body every time, and we read the status line and
+ * threw the rest away.
+ *
+ * THE SITE IS NOT TRUSTED. This string is written to our log and shown on our
+ * admin screen, so it is treated as hostile input: bounded hard, tags removed,
+ * control characters and runs of whitespace collapsed to single spaces.
+ *
+ * NEVER THROWS. It runs inside the failure path of a ping; a site that sends
+ * a malformed body or hangs up mid-read must not turn a recorded failure into
+ * an unrecorded one. The read is also already covered by the caller's abort
+ * signal, so a site that dribbles bytes cannot hold the loop open.
+ */
+async function whatItSaid(response) {
+  try {
+    const text = await response.text();
+
+    const flat = String(text)
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!flat) return 'empty response';
+
+    return flat.length > PING_DETAIL_CHARS
+      ? `${flat.slice(0, PING_DETAIL_CHARS)}…`
+      : flat;
+
+  } catch (err) {
+    return `unreadable response (${err.message})`;
+  }
+}
 
 /**
  * Sign and send one wake-up.
@@ -164,7 +213,7 @@ async function pingSite(site, campaignIds) {
     }
 
     if (!response.ok) {
-      return { ok: false, reason: `HTTP ${response.status}` };
+      return { ok: false, reason: `HTTP ${response.status}: ${await whatItSaid(response)}` };
     }
 
     return { ok: true };
@@ -312,7 +361,11 @@ async function tick() {
           { _id: site._id },
           {
             $inc: { pingFailures: 1 },
-            $set: { lastPingError: String(result.reason).slice(0, 300) },
+            /* 400, not 300, and the extra hundred is not slack. The reason now
+             * carries the site's own words after an "HTTP 500: " prefix, and
+             * whatItSaid() already bounds those at 300 — cutting the pair at
+             * 300 would throw away the end of every message that mattered. */
+            $set: { lastPingError: String(result.reason).slice(0, 400) },
           },
           { new: true }
         );
@@ -359,4 +412,11 @@ function stop() {
   timer = null;
 }
 
-module.exports = { start, stop, tick, findWork, pingSite };
+/* whatItSaid is exported for its tests, and that is worth a line rather than a
+ * shrug. The honest test would drive pingSite() with a stubbed fetch — but
+ * pingSite resolves the site's hostname through the SSRF guard before it gets
+ * anywhere near a reply, so that test needs working DNS and cannot run in a
+ * sandbox or on a laptop in a hotel. The sanitising is the part with the rules
+ * in it; test-ping-detail.js checks it directly, and checks separately that
+ * the failure branch still calls it. */
+module.exports = { start, stop, tick, findWork, pingSite, whatItSaid };

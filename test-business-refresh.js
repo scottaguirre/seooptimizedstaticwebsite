@@ -121,5 +121,126 @@ test('whitespace is trimmed, so " Austin " does not read as a change', () => {
     'a stray space would rewrite the record every hour');
 });
 
+/* =====================================================================
+ *
+ * A SITE CAN NOW SAY "THERE IS NOTHING HERE"
+ *
+ * Every test above is about refusing to write, because erasure was the only
+ * dangerous direction anyone had been bitten by. The cost of that was a rule
+ * with no opposite: a blank meant "I am not telling you", and there was no way
+ * at all to say "I am telling you: it is empty". A value could be changed and
+ * never removed.
+ *
+ * 11 October, roofingamerica.xyz. The site was wiped, rebuilt as a roofing
+ * company and reconnected with its old licence. Its theme settings were empty,
+ * so the plugin reported blanks, so the server kept what the record held from
+ * the domain's previous life: type "Plumbing", location "Austin, TX". Topics
+ * for a roofing blog came back about Austin wind and Central Texas heat, and
+ * ninety-five articles were written before anyone asked why.
+ *
+ * So a report may now name the fields it ANSWERS FOR. The plugin sends that
+ * list only when it actually found a settings source — see
+ * IE_Settings::business_is_known(). Nothing else changes: an unlisted blank
+ * behaves exactly as it did above, which is why those nine tests still pass
+ * untouched.
+ *
+ * ===================================================================== */
+
+const ALL = ['name', 'type', 'location', 'phone'];
+
+console.log('\nA site that answers for its own blanks\n');
+
+test('A LISTED BLANK CLEARS THE STORED VALUE', () => {
+  /* The whole point. A rebuilt site reports an empty trade and town, says it
+   * is answering for them, and stops being the previous occupant. */
+  const reported = readBusiness(
+    { name: 'Roofing America', type: '', location: '', phone: '' },
+    ALL
+  );
+
+  assert.strictEqual(reported.location, '', 'the blank was dropped, so Austin survives');
+  assert.strictEqual(reported.type, '');
+
+  const merged = mergeBusiness(OLD, reported);
+
+  assert.strictEqual(merged.location, '',
+    'the rebuilt site still inherits the previous business\'s town');
+  assert.strictEqual(merged.type, '');
+  assert.strictEqual(merged.name, 'Roofing America');
+});
+
+test('A DELIBERATE CLEAR COUNTS AS A CHANGE, OR IT IS NEVER WRITTEN', () => {
+  /* businessChanged() is the gate in front of every write. If a clear does
+   * not read as a change, readBusiness can be as correct as it likes and the
+   * database never hears about it. */
+  const reported = readBusiness({ location: '' }, ['location']);
+
+  assert.strictEqual(businessChanged(OLD, reported), true,
+    'clearing the town is not seen as a change, so no write would happen');
+});
+
+test('AN UNLISTED BLANK IS STILL IGNORED', () => {
+  /* The original guard, unchanged and still load-bearing. A site answering
+   * only for its name must not take its own town down with it. */
+  const reported = readBusiness({ name: 'Roofing America', location: '' }, ['name']);
+
+  assert.ok(!('location' in reported),
+    'a blank outside the list was treated as deliberate');
+  assert.strictEqual(mergeBusiness(OLD, reported).location, 'Leander, TX');
+});
+
+test('A FIELD THAT IS LISTED BUT NOT SENT IS NOT A CLEAR', () => {
+  /* A client that claims to answer for `location` and then omits the key has
+   * not answered for anything. That is a bug in the client, and reading it as
+   * "erase the location" would turn a bug into data loss. */
+  const reported = readBusiness({ name: 'Roofing America' }, ALL);
+
+  assert.ok(!('location' in reported),
+    'a missing key was read as a deliberate blank');
+  assert.strictEqual(mergeBusiness(OLD, reported).location, 'Leander, TX');
+});
+
+test('AN OLDER PLUGIN SENDS NO LIST AND NOTHING IS CLEARED', () => {
+  /* Every install in the field today. The list arrives in 0.36.0; until a
+   * site updates, its blanks must go on meaning silence. */
+  const reported = readBusiness({ name: 'Roofing America', location: '', type: '' });
+
+  assert.deepStrictEqual(reported, { name: 'Roofing America' });
+  assert.strictEqual(mergeBusiness(OLD, reported).location, 'Leander, TX',
+    'an old plugin just wiped a town it never meant to mention');
+});
+
+test('A LIST THAT IS NOT A LIST IS IGNORED RATHER THAN TRUSTED', () => {
+  /* It arrives over the wire. Anything that is not an array of field names
+   * must fail closed — to the old, safe behaviour. */
+  for (const junk of ['location', { location: true }, 7, null]) {
+    const reported = readBusiness({ name: 'Roofing America', location: '' }, junk);
+
+    assert.ok(!('location' in reported),
+      `a ${typeof junk} was accepted as the authoritative list`);
+  }
+});
+
+test('A NAME IS STILL NEVER CLEARED BY ACCIDENT', () => {
+  /* Not a rule in the code — a consequence of the plugin's own fallback,
+   * which uses the WordPress site title when no business name is set, so the
+   * name it reports is never blank. Recorded here because the day that
+   * fallback goes, this test is the thing that notices. */
+  const reported = readBusiness({ name: '', location: 'Austin, TX' }, ALL);
+
+  assert.strictEqual(reported.name, '',
+    'the server refuses an explicit empty name — that belongs in the plugin, not here');
+});
+
+test('EVERYTHING BLANK AND EVERYTHING LISTED IS STILL A REPORT', () => {
+  /* Not null. A site saying "I have none of these" is telling us something,
+   * and returning null would make the caller skip the write — which is the
+   * old behaviour wearing a new coat. */
+  const reported = readBusiness({ name: '', type: '', location: '', phone: '' }, ALL);
+
+  assert.deepStrictEqual(reported, { name: '', type: '', location: '', phone: '' },
+    'a site that answers "nothing" is read as a site that said nothing');
+});
+
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

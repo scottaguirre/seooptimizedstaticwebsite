@@ -285,6 +285,44 @@ class IE_Campaigns {
 	}
 
 	/**
+	 * How far through writing a batch is — and whether to say so at all.
+	 *
+	 * HERE RATHER THAN IN THE TEMPLATE, because a fraction on screen has to be
+	 * defensible and a template is the worst place to decide that. done and
+	 * total come from the server through IE_Publisher::run_campaign(), which
+	 * stores whatever arrived; this is the only thing that rules on it.
+	 *
+	 * 'show' IS FALSE MORE OFTEN THAN IT LOOKS, deliberately:
+	 *
+	 *   total 0      nothing has been heard yet. "0 of 0" is not a progress
+	 *                report, it is a division by zero left to the reader.
+	 *   done > total "7 of 4" tells the owner the two sides disagree about a
+	 *                campaign they are being charged for. An impossible
+	 *                fraction costs more confidence than a bare spinner — and
+	 *                the bare spinner is still true.
+	 *
+	 * A FINISHED BATCH NEVER REACHES HERE. run_campaign() zeroes both fields
+	 * the moment the server stops saying 'writing', so "11 of 11" is not a
+	 * state this can be asked about. The caller must not read show === false
+	 * as "finished" either: it also means "not started yet" and "nonsense".
+	 *
+	 * @param  array $campaign
+	 * @return array{done:int,total:int,show:bool}
+	 */
+	public static function writing_progress( $campaign ) {
+		$done  = ( is_array( $campaign ) && isset( $campaign['writing_done'] ) )
+			? (int) $campaign['writing_done'] : 0;
+		$total = ( is_array( $campaign ) && isset( $campaign['writing_total'] ) )
+			? (int) $campaign['writing_total'] : 0;
+
+		return array(
+			'done'  => $done,
+			'total' => $total,
+			'show'  => $total > 0 && $done >= 0 && $done <= $total,
+		);
+	}
+
+	/**
 	 * Has this campaign finished? Nothing left to publish, ever.
 	 *
 	 * ONE DEFINITION, and it was two. The Campaigns screen decided which tab a
