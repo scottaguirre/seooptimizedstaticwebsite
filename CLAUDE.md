@@ -148,13 +148,15 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-campaign-reconcile.js # markMissingRemoved: the grace window and the site scope
     node test-blog-sites-delete.js # removing a revoked licence; revoked + no campaigns only
     node test-licence-binding.js   # one licence one site; the URL check and old-plugin safety
+    node test-ping-health.js       # why a site is not being reached, in words you can forward to its host; 21
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
-    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, refused plans, CSV upload, start date, 161
+    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, refused plans, CSV upload, start date, watch window, outbound poll, blocked-host notice, 183
     php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, SEO titles, removal queue, 70
     php wp-plugin/test-writing-progress.php # "4 of 11 written": stored every poll, cleared on stop and on pause, 17
     php wp-plugin/test-business-source.php # when a site may answer for its own blank fields, 11
+    php wp-plugin/test-host-blocked.php   # when the card may say the host is blocking us, and the five ways it must not, 15
 
 177 assertions in all; last run green on 30 September under PHP 8.4.
 
@@ -2866,6 +2868,329 @@ A fixture sitting on a threshold cannot test what the threshold is applied to.
 
 Five mutations, all caught once those were fixed. `test-post-quality.js`
 37 → 42.
+
+## The site works out for itself that nobody is calling — 12 October 2026 (plugin 0.43.0)
+
+The operator view answers Edwin's question. It does not answer his customer's,
+because the customer is standing somewhere else: the symptom appears in
+**wp-admin**, on a campaign card stuck at "0 of 22", and the explanation lived
+on a different website they would have to think to log into. In practice they
+do not. They email, or they leave.
+
+**The site can work it out alone.** It knows when it was last rung, because it
+is the thing being rung. `IE_Reach` records every inbound `/run` and `/ping`,
+and the card says so when posts are waiting and the doorbell has been silent.
+No server involvement, no extra request.
+
+**The rule is five conditions, and the reason is that one would be a liar.**
+"Nobody has rung in thirty minutes" is true of a new install, a finished
+campaign, a paused one, an unapproved plan — and, most dangerously, **of every
+site in the world on the morning it upgrades**, because the stamps the rule
+reads do not exist until this version creates them. Ship the naive version and
+every customer is told their host is broken by a plugin update. A warning
+nobody trusts is worse than none: the one time it is real they ignore that too.
+
+So the clock runs from whichever is later, the last real ring or the moment the
+site first noticed it was waiting. On upgrade day the second is "now" — silence
+for thirty minutes, then speech, which by then is honest.
+
+**`EXPECTING_OPTION` is not a duplicate of the ring stamp.** It is what lets a
+site that has NEVER been reachable speak at all. Edwin's has not had one
+successful ping in its life; a rule requiring a previous ring could never fire
+for exactly the sites that need it.
+
+**Outside the `$watching` block, deliberately.** The spinner gives up after
+`watch_window()`. A batch stranded by a firewall does not — those posts sat
+written and paid for for hours with the card showing nothing whatsoever, which
+is precisely when this has something to say.
+
+**No IP address in the ticket text.** The plugin does not know the server's
+address and must not pretend to: a hard-coded one goes stale the day the server
+moves, and a stale IP in a support ticket is worse than none — the host
+whitelists it, nothing improves, and everyone concludes the software is at
+fault. The path is the durable part. It goes in a `<textarea>`, because the
+whole point is that it gets pasted into somebody else's support form and a
+tooltip cannot be pasted.
+
+**Found by mutation, and it is the sharpest line in the change.** Deleting
+`IE_Reach::note_expecting()` from `poll_now()` broke nothing any existing case
+could see — fixtures that warn set both stamps by hand, and fixtures that stay
+quiet stay quiet either way. That one line is both the upgrade-day guard and
+the only reason a never-reachable site has a clock at all. It has its own test
+now.
+
+**And one guard is honestly belt-and-braces.** The zero check in `unreachable()`
+cannot be reached from the card, because `poll_now()` always stamps first. The
+comment says so, rather than letting the next reader think it is load-bearing.
+
+`test-host-blocked.php` 15 cases, `test-admin-tabs.php` 177 → **183**.
+**Ten mutations, all caught.**
+
+## The field that lies, and the screen that was never built — 12 October 2026
+
+Edwin, once the outbound poll was working: *"if an user experience the same
+problem and reaches out to me, how am i going to be able to diagnose the
+problem?"*
+
+The honest answer was: he couldn't. Diagnosing his own site that morning took
+an SSH session, a `grep` over `~/app/logs/app.log`, a `dig` and a `curl`. That
+is fine for the person who wrote the server and impossible for a customer.
+
+**Every fact needed was already in the database and displayed nowhere.**
+`BlogSite` has carried `lastPingAt`, `pingFailures` and `lastPingError` for
+weeks. `whatItSaid()` had been capturing the refusing site's own reply body
+since 11 October — which is why `Just a moment...` was sitting in
+`lastPingError`, in full, the whole time. Nothing rendered any of it.
+
+**`pingFailures` cannot be the signal, and that is the finding.**
+`requireSite.js` resets it to 0 on every authenticated inbound request —
+deliberately, and the comment there says why: a site that is talking to us is
+reachable, so the scheduler should not give up on it because our outbound
+pings are blocked. The consequence is that on any site in use the counter is a
+**sawtooth**. Edwin's log shows it climbing 1, 2, 3 and dropping back to 1 all
+morning, because every *Check now* press reset it. It never approached
+`MAX_PING_FAILURES`, the server never gave up, and no `givingUp` line was ever
+logged. **A health screen keyed on that counter would have called a blocked
+site healthy** — worse than no screen, because somebody would trust it.
+
+`lastPingError` is the honest field: cleared by the scheduler on success,
+written on failure, untouched by `requireSite`. Non-empty means *the last ping
+attempt failed*, however many times the plugin has phoned in since.
+
+`lastPingAt` is not honest either, for a different reason — it is stamped
+*before* the request goes out so a hanging ping cannot be re-sent. A screen
+printing it as "last contacted" shows a timestamp from a minute ago for a site
+that has refused every ping for a week. **`lastPingOkAt` is new**, written only
+by the success branch.
+
+`utils/blog/pingHealth.js` turns the stored reason into a state, a sentence,
+and the specific thing to ask the host for. The causes are not invented — each
+one cost a day of this project:
+
+- **403 + `Just a moment`** → a bot challenge. Ask the host to allow the server
+  through; it can be absent from cPanel and from DNS, because the host runs it.
+- **401/403/406 + `mod_security`** → a firewall rule. Whitelist by path, and
+  give them the timestamp, which is why the row prints a time and not a date.
+- **`ie_bad_signature`** → *not* a key problem. The action names the subfolder
+  case, because that is what it actually was: pings going to the root of a
+  shared host where another WordPress answered with a different secret.
+- **5xx** → try Settings → Permalinks → Save first. That is what fixed it.
+- Anything else is **admitted, not guessed at**. Sending somebody to their host
+  about the wrong thing costs a round trip and their patience.
+
+Rendered on `/blog-sites` as a new **Our pings** column, beside — not merged
+with — the licence status. They are different questions: one is whether we will
+*accept* a site, the other whether we can *reach* it, and the morning went on a
+site whose licence was perfectly active.
+
+**A self-inflicted break worth recording.** Removing the helpers from the route
+after moving them into `pingHealth.js`, I cut from one docblock to
+`router.get(` and took `setupSteps()` and the download button with them.
+`node --check` passed, because a missing function is a runtime error. Caught by
+grepping for `setupSteps` afterwards, and fixed by re-staging the file from
+Edwin's Mac and reapplying five precise edits instead of one blind deletion.
+**A syntax check is not a reference check.**
+
+The two rendering helpers live beside the rule they render rather than in the
+route — not tidiness. Inside a route handler they could not be called by a test
+without stubbing Express, a session, two models and the CSRF field, so the only
+guard left would be a source grep, and source searches have missed seven real
+bugs here. As plain functions they are tested directly: escaping, the colspan,
+the absence of a row for a healthy site.
+
+`test-ping-health.js`, **21 cases, 14 mutations, all caught.**
+
+## The doorbell nobody would answer — 12 October 2026 (plugin 0.42.0)
+
+Edwin: *"the counter is not working."* The card said **0 of 22** through a
+whole batch. Pressing **Check now** once moved it to **9 of 22**, which ruled
+out the server in one click: the count was real, the server was reporting it,
+and nothing was asking for it.
+
+**The count was only ever refreshed by an INBOUND request.** The server rings
+`/wp-json/interlink-engine/v1/run` every two minutes while a batch runs; the
+plugin polls, stores `writing_done`, and the card draws it. The fifteen-second
+reload redraws stored values and asks nobody anything — a comment in
+`class-ie-admin.php` said so plainly, and reasoned that browser-timer polling
+"costs a request per open tab per tick to tell the owner something they will
+know anyway in under two minutes." That reasoning was correct and rested on
+one assumption: that the ping arrives.
+
+The log:
+
+    external.wordpress.pingFailed  hilltophomeloans.net
+    HTTP 403: Just a moment... *{box-sizing:border-box…
+
+**A Cloudflare challenge page.** Not one successful ping in twenty entries.
+And the ping is not only the counter — *collection rides on it too*, so the
+posts were written, charged for, and stranded on the server.
+
+Then the part that settles the design question. `dig` returned HostGator's own
+nameservers and `66.235.200.171`, an address in **Newfold Digital's** range,
+not Cloudflare's — yet `server: cloudflare` and a `cf-ray` came back. There is
+**no Cloudflare app in his cPanel**. The host runs Cloudflare in front of its
+own shared hosting; the customer has no switch, and the only fix is a support
+ticket. That is the second host-level block in a week — mod_security returning
+500 on roofingamerica.xyz was the first.
+
+**So the direction was the bug.** Inbound access to a customer's WordPress is
+a thing hosts sell products to prevent. Outbound is unremarkable: it is what
+Check now already does, and Check now worked through both blocks.
+
+`IE_Admin::poll_now()` runs at the top of `render_campaigns()`, before
+`IE_Campaigns::all()`, and calls `run_campaign( $id )` for one campaign with
+work. Rate-limited to one request per ten seconds by a transient — shorter
+than the reload so an unattended page polls every time, long enough that three
+tabs are not three requests.
+
+Three decisions worth keeping:
+
+- **Before the read, not after.** Polling after `all()` would store numbers
+  this render cannot see, leaving every figure one reload behind. That is the
+  original complaint, reintroduced at the last line. There is a test, and it
+  is the only thing that can tell the two orderings apart: the stub mutates
+  the stored campaign, and the test reads the rendered HTML for the new count.
+- **Never `$may_start`.** A page load is not consent. Tabs get restored and
+  pages get refreshed; `run_campaign( $id, true )` is the one call allowed to
+  spend money and it belongs to a button with a price on it.
+- **No watch window.** `watch_window()` answers *how long should the spinner
+  keep reloading*. The poll answers *is there anything to fetch*. Edwin's
+  posts had been stranded for hours with `writing_since` long cleared —
+  precisely the case a window would refuse, and precisely the one that needs
+  collecting.
+
+**The call exposed a latent warning.** `campaigns_with_work()` read
+`$campaign['status']` and `$slot['status']` unguarded. Reached only from the
+REST ping and the hourly cron, a missing key went to a log nobody reads; on
+every admin page load it would have printed *Undefined array key* across the
+top of the owner's wp-admin. The fixtures found it within a minute of the call
+being added.
+
+**And an eleventh stub narrower than the thing it stood for.** One global
+served every transient in `test-admin-tabs.php`. Survivable with one
+transient; not with two — a test setting up a topic draft would have told the
+screen it had just polled. Keyed now, and thirteen tests that read the draft
+as `get_transient( 'x' )` say `ie_draft()` instead. The stub also records the
+expiry it cannot honour, because `set_transient( $k, $v, 0 )` means *forever*
+in WordPress: a gate written that way closes on a site's first page load and
+never reopens, which is indistinguishable from the feature not existing.
+
+Ten new cases, **nine mutations, all caught**. `test-admin-tabs.php`
+167 → **177**.
+
+Still outstanding, and said plainly to Edwin: this works **while the page is
+open**. A closed tab on a blocked site still needs either the ping or WP-Cron,
+and WP-Cron does not fire on a site with no visitors. The standing
+recommendation is a real cron job in cPanel hitting `wp-cron.php`.
+
+## The card promised a trickle — 12 October 2026 (plugin 0.41.0)
+
+    Writing your posts. They arrive on their own — you can leave this page.
+
+True, and not the whole truth. **Nothing is handed over mid-batch**: the final
+quality pass compares the posts against each other and cannot run until there
+is a whole batch to compare. So the line promised a trickle and delivered
+nothing until the end.
+
+Edwin reported it as a fault **three times in two days** — twice while the
+batch was running perfectly. Three reports about one sentence is the sentence's
+fault, not the reader's.
+
+Now: *"They all arrive together once the last one is finished."*
+
+### The alternative, and why it was not taken
+
+Opening the gate — handing over `ready` slots as they are written — was costed
+on 10 October and the cost is small: `crossCheck()` only writes a report, and
+the one real loss (`repairAroundFailures` stripping links to a slot that
+failed) renders as plain prose and self-heals within the hour. Offered twice.
+Edwin chose the sentence both times, and **the sentence was wrong either way**.
+
+### A test over a sentence
+
+Usually noise. Not here — the sentence was the bug. Pinned on the CLAIM, not
+the wording: that the posts arrive together, and that the old half-promise is
+gone. Rephrasing stays free; implying a trickle again does not.
+
+`test-admin-tabs.php` 166 → 167, both mutations caught.
+
+### Also, twice today: a save that reported success and did not happen
+
+`blogScheduler.js` and `test-ping-detail.js` — the whole subfolder fix — never
+reached Edwin's Mac. The write returned `written` and the bridge dropped
+immediately after. He deployed, the fix was not in it, and he asked **"Why was
+not this update deployed?"** — a fair question with an embarrassing answer.
+
+`CLAUDE.md` was lost the same way earlier the same evening and found by
+accident, which should have prompted a check of the rest of that batch. It did
+not.
+
+**A commit that reports success is not evidence the file is on disk.** After a
+commit that matters, stage the file again and read it back. The same mistake
+cost a second edit minutes later: staging a file with unsaved changes in the
+container overwrites them.
+
+Edwin also had to ask twice for the deployed state to be CHECKED rather than
+assumed — `grep -c pingTarget` on the server answered in one line both times.
+
+## A deploy could strand a batch, and the spinner lied about it — 12 October 2026 (plugin 0.40.0)
+
+Edwin: *"There are 11 still planned but not written and the spinner already
+stopped."* Then, before deploying: *"if I deployed now while writing the
+articles will it stop?"*
+
+Both turned out to be real, and the second is the serious one. **He was also
+right to make me check whether the subfolder fix was deployed rather than
+assume it — I had asserted it twice.** `grep -c pingTarget` on the server
+answered in one line.
+
+### The spinner was lying
+
+`$watching` was capped at a flat **ten minutes**, written when a big campaign
+was twelve posts. The server writes a post about every twenty-five seconds, so
+a thirty-post batch runs thirteen minutes and a thirty-nine-post one
+seventeen — the cap expired with a third still to write, the card went quiet,
+and "the spinner stopped" read as "the batch stopped". The log showed posts
+still being written minutes afterwards.
+
+`watch_window()` now scales: **90 seconds a post, floored at ten minutes and
+capped at an hour.** Ninety is about three times what writing one costs, and
+the margin is the point — being generous costs a page that reloads a few times
+too often; being tight costs the owner believing a paid-for campaign has died.
+The ceiling is what the cap is actually FOR: a job that dies in its first
+minute must not leave a tab reloading for an hour and a half.
+
+### The serious one: a deploy could strand a batch
+
+`requeueStaleJobs()` finds jobs marked `running` whose heartbeat has gone
+quiet and puts them back on the queue. Resuming is safe — `completedPages`
+means a resumed job skips what it already wrote and charged for.
+
+**It ran only at startup, which is the one moment it cannot help.**
+
+1. A deploy restarts the process mid-batch.
+2. At startup the sweep runs — but the job's heartbeat is seconds old, so it is
+   not stale and is not touched.
+3. Nothing looked again. The sweep was not on the polling loop.
+4. The job stayed `running` with nobody running it, the campaign stayed
+   `writing`, and the card kept spinning over a batch that had died.
+
+Until the NEXT restart, whenever that happened to be — by which time the
+heartbeat was finally old enough to qualify. **The recovery existed and could
+not reach itself.** Deploying during his 30-post batch would have stranded 23
+written posts and 7 never written.
+
+The sweep now runs on the loop too, throttled to every 30 seconds — a job must
+go 90 seconds without a heartbeat to qualify at all, so checking every two
+would be an `updateMany` for a condition that cannot have changed. It runs
+**before** `claimNextJob()`, so a job rescued on one pass is picked up on the
+same pass rather than waiting another poll.
+
+`tick()` is exported for this: the thing worth testing is WHEN the sweep runs,
+and once it is inside `setInterval` a test can only watch the clock and hope.
+
+`test-job-requeue.js` 7 new, `test-admin-tabs.php` 161 → 166, 10 mutations all
+caught.
 
 ## When the first post goes out — 11 October 2026 (plugin 0.39.0)
 

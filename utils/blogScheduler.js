@@ -153,6 +153,33 @@ async function whatItSaid(response) {
 }
 
 /**
+ * Where to knock, given the site's verified url and the REST route.
+ *
+ * ONE STRING CONCATENATION, and it was wrong for every WordPress that is not
+ * at the root of its domain — see the note inside pingSite() for what that
+ * cost. Pulled out here only so a test can call it: reaching it through
+ * pingSite() means resolving a hostname first.
+ *
+ * `url` is the URL object checkSiteUrl() returned, so it has already been
+ * through the SSRF guard. This does not re-check anything and must not be
+ * called with a url that has not.
+ *
+ * @param {URL} url     the verified site url, which may carry a subfolder
+ * @param {string} path the REST route, rooted: '/wp-json/interlink/v1/run'
+ */
+function pingTarget(url, path) {
+  /* Trailing slashes go, so '/blog/' and '/blog' cannot produce
+   * '/blog//wp-json/…' — which some servers 404 and others redirect, and a
+   * redirect is refused by the caller, correctly, as an SSRF risk.
+   *
+   * A url with no path at all has pathname '/', which this reduces to '' —
+   * the behaviour every site working today depends on. */
+  const base = String( ( url && url.pathname ) || '' ).replace(/\/+$/, '');
+
+  return `${url.origin}${base}${path}`;
+}
+
+/**
  * Sign and send one wake-up.
  *
  * The signature is over the same canonical string the plugin verifies, using
@@ -176,6 +203,37 @@ async function pingSite(site, campaignIds) {
   }
 
   const path = '/wp-json/interlink/v1/run';
+
+  /* WORDPRESS IS NOT ALWAYS AT THE ROOT, and until 11 October this assumed it
+   * was. The request was built from `safe.url.origin`, which is scheme, host
+   * and port and NOTHING ELSE — so a site living in a subfolder was knocked on
+   * at the wrong address, every time.
+   *
+   * Edwin's staging site is hyi.xlr.temporary.site/website_3ef45ace. The pings
+   * went to hyi.xlr.temporary.site/wp-json/… — the ROOT of a shared preview
+   * host, where some other WordPress answered, with a different secret. The
+   * recorded failure was:
+   *
+   *     HTTP 401: {"code":"ie_bad_signature","message":"Signature did not match."}
+   *
+   * which reads as a broken secret and is nothing of the kind. It is also not
+   * a staging-only problem: example.com/blog is an ordinary way to run a
+   * marketing blog under a main site, and every one of those installs has been
+   * silently uncollectable — posts written, charged for, and arriving only if
+   * the owner finds the Check now button.
+   *
+   * THE SIGNATURE DOES NOT GET THE PREFIX, and that asymmetry is the whole
+   * subtlety. The plugin verifies against '/wp-json/' . $request->get_route(),
+   * and WordPress reports a route WITHOUT the subfolder — '/interlink/v1/run'
+   * whether the install is at the root or ten directories down. So the string
+   * being signed stays `path`, exactly as it was, and every site working today
+   * goes on working. Adding `base` to the signature would break all of them.
+   *
+   * Built by pingTarget() rather than inline, so a test can call it: the whole
+   * fault was one string concatenation, and reaching it through pingSite()
+   * needs working DNS. */
+  const endpoint = pingTarget(safe.url, path);
+
   const body = JSON.stringify({ campaigns: campaignIds });
   const timestamp = String(Math.floor(Date.now() / 1000));
 
@@ -190,7 +248,7 @@ async function pingSite(site, campaignIds) {
   const timeout = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${safe.url.origin}${path}`, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -344,9 +402,15 @@ async function tick() {
       const result = await pingSite(site, campaignIds);
 
       if (result.ok) {
+        /* lastPingOkAt IS THE ONLY STAMP THAT MEANS "IT WORKED".
+         *
+         * lastPingAt is written before the request goes out, by design, so it
+         * cannot answer the question support actually asks — when did we last
+         * get through? Without this, a site refusing every ping for a week
+         * still showed a lastPingAt from one minute ago. */
         await BlogSite.updateOne(
           { _id: site._id },
-          { $set: { pingFailures: 0, lastPingError: '' } }
+          { $set: { pingFailures: 0, lastPingError: '', lastPingOkAt: new Date() } }
         );
 
         log.info('blog.scheduler.pinged', {
@@ -419,4 +483,4 @@ function stop() {
  * sandbox or on a laptop in a hotel. The sanitising is the part with the rules
  * in it; test-ping-detail.js checks it directly, and checks separately that
  * the failure branch still calls it. */
-module.exports = { start, stop, tick, findWork, pingSite, whatItSaid };
+module.exports = { start, stop, tick, findWork, pingSite, whatItSaid, pingTarget };

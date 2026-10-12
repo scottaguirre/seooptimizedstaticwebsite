@@ -82,6 +82,11 @@ class IE_Rest {
 	}
 
 	public static function handle_ping() {
+		/* COUNTS AS A RING, like /run does. They travel the same road: a
+		 * firewall that eats one eats the other, and a /ping arriving is
+		 * proof the road is open whatever /run happened to be doing. */
+		IE_Reach::note_ring();
+
 		return rest_ensure_response( array(
 			'ok'        => true,
 			'version'   => IE_VERSION,
@@ -118,6 +123,15 @@ class IE_Rest {
 	 * of posts appearing in the same minute, looking exactly like what it is.
 	 */
 	public static function handle_run( $request ) {
+		/* RECORDED BEFORE ANY WORK, and before anything that can fail.
+		 *
+		 * The fact being recorded is 'the doorbell reached us', which is true
+		 * the moment this runs. A campaign that then errors, a batch still
+		 * writing, a 500 from publish_missed() — none of them change it, and
+		 * stamping at the end would turn an unrelated failure into a false
+		 * claim that the host is blocking us. */
+		IE_Reach::note_ring();
+
 		$body = $request->get_json_params();
 
 		$campaign_ids = isset( $body['campaigns'] ) && is_array( $body['campaigns'] )

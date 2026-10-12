@@ -50,7 +50,7 @@ async function test(name, fn) {
 }
 function section(name) { console.log(`\n${name}\n`); }
 
-const { whatItSaid } = require('./utils/blogScheduler');
+const { whatItSaid, pingTarget } = require('./utils/blogScheduler');
 
 /** A reply like the one fetch hands back, with only what is read. */
 function reply(body) {
@@ -223,6 +223,109 @@ function reply(body) {
 
     assert.strictEqual(calls, 1,
       'whatItSaid is called more than once before success — the body is being read on healthy pings');
+  });
+
+  /* ===================================================================== */
+
+  section('Knocking on a site that is not at the root');
+
+  const ROUTE = '/wp-json/interlink/v1/run';
+
+  await test('A SUBFOLDER INSTALL IS KNOCKED ON WHERE IT ACTUALLY LIVES', async () => {
+    /* THE BUG, 11 October. The request was built from `safe.url.origin` —
+     * scheme, host and port and nothing else — so every WordPress not at the
+     * root of its domain was knocked on at the wrong address.
+     *
+     * Edwin's staging site is hyi.xlr.temporary.site/website_3ef45ace. The
+     * pings went to the ROOT of that shared preview host, where some other
+     * WordPress answered with a different secret, and the log recorded
+     *
+     *     HTTP 401: {"code":"ie_bad_signature","message":"Signature did not match."}
+     *
+     * which reads as a broken secret and is nothing of the kind. */
+    assert.strictEqual(
+      pingTarget(new URL('https://hyi.xlr.temporary.site/website_3ef45ace'), ROUTE),
+      'https://hyi.xlr.temporary.site/website_3ef45ace/wp-json/interlink/v1/run',
+      'the subfolder was dropped, so the knock lands on whatever is at the root'
+    );
+  });
+
+  await test('A SITE AT THE ROOT IS UNCHANGED', async () => {
+    /* Every customer working today. A fix that moved them is worse than the
+     * bug — this one is quiet for them, and that has to be provable. */
+    assert.strictEqual(
+      pingTarget(new URL('https://hilltophomeloans.net'), ROUTE),
+      'https://hilltophomeloans.net/wp-json/interlink/v1/run'
+    );
+    assert.strictEqual(
+      pingTarget(new URL('https://hilltophomeloans.net/'), ROUTE),
+      'https://hilltophomeloans.net/wp-json/interlink/v1/run',
+      'a bare domain has pathname "/" and that slash leaked into the url'
+    );
+  });
+
+  await test('a trailing slash does not become a double slash', async () => {
+    /* '/blog//wp-json/…' is a 404 on some servers and a redirect on others —
+     * and a redirect is refused by pingSite, correctly, as an SSRF risk. So
+     * this would fail in a way that reads as an attack. */
+    assert.strictEqual(
+      pingTarget(new URL('https://example.com/blog/'), ROUTE),
+      'https://example.com/blog/wp-json/interlink/v1/run'
+    );
+    assert.strictEqual(
+      pingTarget(new URL('https://example.com/blog///'), ROUTE),
+      'https://example.com/blog/wp-json/interlink/v1/run'
+    );
+  });
+
+  await test('a port and a nested folder both survive', async () => {
+    assert.strictEqual(
+      pingTarget(new URL('https://example.com:8443/a/b'), ROUTE),
+      'https://example.com:8443/a/b/wp-json/interlink/v1/run'
+    );
+  });
+
+  await test('THE SIGNATURE IS STILL OVER THE BARE ROUTE', async () => {
+    /* THE SUBTLETY THAT MAKES THIS FIX SAFE, and the one way to get it wrong.
+     *
+     * The plugin verifies against '/wp-json/' . $request->get_route(), and
+     * WordPress reports a route WITHOUT the subfolder — '/interlink/v1/run'
+     * whether the install is at the root or ten directories down. So the
+     * string being signed must stay the bare route while the REQUEST gains
+     * the prefix.
+     *
+     * Signing the prefixed url instead would fix Edwin's site and break every
+     * site that works today, with the same "Signature did not match" that sent
+     * us looking at secrets for an evening.
+     *
+     * Read from source because signing happens inside pingSite(), which
+     * resolves a hostname before it gets there. Comments stripped first: the
+     * note beside that call names both variables while explaining this. */
+    const src = fs.readFileSync(path.join(__dirname, 'utils', 'blogScheduler.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/^[ \t]*\/\/.*$/gm, ' ');
+
+    const at = src.indexOf('const signature = sign(');
+    assert.ok(at > -1, 'nothing signs the ping any more');
+
+    const call = src.slice(at, at + 220);
+
+    assert.match(call, /\bpath,/,
+      'the signature no longer uses the bare route — every root site breaks');
+    assert.ok(!/endpoint|pingTarget/.test(call),
+      'the prefixed url is being signed, which breaks every site at a domain root');
+  });
+
+  await test('THE REQUEST USES THE BUILT URL, NOT THE ORIGIN', async () => {
+    /* The other half: pingTarget can be perfect and unused. */
+    const src = fs.readFileSync(path.join(__dirname, 'utils', 'blogScheduler.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/^[ \t]*\/\/.*$/gm, ' ');
+
+    assert.match(src, /await fetch\(endpoint,/,
+      'the ping is not sent to the url pingTarget built');
+    assert.ok(!/fetch\(`\$\{safe\.url\.origin\}/.test(src),
+      'the origin-only url is back, so subfolder installs are unreachable again');
   });
 
   console.log(`\n${passed} passed, ${failed} failed\n`);

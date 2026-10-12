@@ -75,9 +75,49 @@ function get_edit_post_link( $id ) {
 
 	return 'http://site/wp-admin/post.php?post=' . $id . '&action=edit';
 }
-function get_transient( $k ) { return $GLOBALS['ie_transient']; }
-function set_transient( $k, $v, $t = 0 ) { $GLOBALS['ie_transient'] = $v; return true; }
-function delete_transient( $k ) { $GLOBALS['ie_transient'] = false; return true; }
+/* KEYED, BECAUSE WORDPRESS IS KEYED and this stub was not.
+ *
+ * One global stood for every transient in the plugin. That was survivable
+ * while there was exactly one — the half-finished topic draft — and stopped
+ * being survivable the moment the Campaigns screen gained a poll lock: a
+ * test that set up a draft would have made the screen believe it had just
+ * polled, and a test that polled would have wiped the draft. Neither failure
+ * is about the code under test, and both would have read like one.
+ *
+ * Eleventh stub in this project found to be narrower than the thing it
+ * stands for. The draft keeps its own global so the thirty-odd tests written
+ * against it keep working and keep saying what they meant.
+ */
+function ie_is_draft_key( $k ) { return 0 === strpos( (string) $k, 'ie_draft_topics_' ); }
+function get_transient( $k ) {
+	if ( ie_is_draft_key( $k ) ) { return $GLOBALS['ie_transient']; }
+	return isset( $GLOBALS['ie_transients'][ $k ] ) ? $GLOBALS['ie_transients'][ $k ] : false;
+}
+function set_transient( $k, $v, $t = 0 ) {
+	/* THE EXPIRY IS RECORDED, BECAUSE THIS STUB CANNOT HONOUR IT.
+	 *
+	 * Nothing here ages a value out, so a lock written with no expiry looks
+	 * exactly like one written with a ten-second expiry — and in WordPress
+	 * those are opposites: 0 means FOREVER. A poll gate set to 0 would close
+	 * on the first page load of the site's life and never reopen, which is
+	 * indistinguishable from the feature not existing. The value is kept so
+	 * a test can insist on it. */
+	$GLOBALS['ie_transient_ttl'][ $k ] = (int) $t;
+
+	if ( ie_is_draft_key( $k ) ) { $GLOBALS['ie_transient'] = $v; return true; }
+	$GLOBALS['ie_transients'][ $k ] = $v;
+	return true;
+}
+function delete_transient( $k ) {
+	if ( ie_is_draft_key( $k ) ) { $GLOBALS['ie_transient'] = false; return true; }
+	unset( $GLOBALS['ie_transients'][ $k ] );
+	return true;
+}
+/* The draft, under the key the plugin really uses. Thirteen tests asked for
+ * it as get_transient( 'x' ), which worked only while every key was the same
+ * box — and would have gone on "working" against a plugin that had stopped
+ * storing a draft at all. */
+function ie_draft() { return get_transient( 'ie_draft_topics_' . get_current_user_id() ); }
 function get_current_user_id() { return 1; }
 function current_user_can( $c ) { return true; }
 /* $b DEFAULTS TO true, exactly as WordPress declares it.
@@ -162,6 +202,16 @@ function update_option( $k, $v, $autoload = null ) {
 		return true;
 	}
 	$GLOBALS['ie_options'][ $k ] = $v;
+	return true;
+}
+
+/* MISSING UNTIL 0.43.0, and nothing noticed because nothing deleted an option.
+ * IE_Reach::note_ring() clears the "waiting since" stamp when a real ring
+ * arrives — without that clear the warning would appear thirty minutes into
+ * every campaign and never go away, however well the ringing was going. A
+ * stub that cannot express the clear cannot test it. */
+function delete_option( $k ) {
+	unset( $GLOBALS['ie_options'][ $k ] );
 	return true;
 }
 
@@ -319,8 +369,9 @@ function paginate_links( $args ) {
  * Stubbed plugin classes
  * ------------------------------------------------------------------ */
 
-$GLOBALS['ie_transient'] = false;
-$GLOBALS['ie_campaigns'] = array();
+$GLOBALS['ie_transient']  = false;
+$GLOBALS['ie_transients'] = array();
+$GLOBALS['ie_campaigns']  = array();
 $GLOBALS['ie_options'] = array();
 $GLOBALS['ie_existing_posts'] = null;   // null = every post still exists
 
@@ -373,6 +424,12 @@ class IE_Settings {
  * already stubbed above. */
 require_once __DIR__ . '/interlink-engine/includes/class-ie-campaigns.php';
 
+/* THE REAL IE_Reach, for the same reason as IE_Campaigns above: a stub of a
+ * class you own is a copy that must be maintained, and it will be forgotten.
+ * This one needs nothing but the option functions, which are stubbed already,
+ * and its whole value is the five conditions it refuses on. */
+require_once __DIR__ . '/interlink-engine/includes/class-ie-reach.php';
+
 /* NOT AN EMPTY CLASS ANY MORE, and that it was is why none of this was tested.
  * handle_create_campaign() calls IE_Api::plan(), so driving it would have
  * fatalled here — and the refusal path is precisely where the owner's typed
@@ -412,6 +469,17 @@ class IE_Publisher {
 	 * recorded now, so a case can assert them rather than hope. */
 	public static function run_campaign( $id, $may_start = false ) {
 		$GLOBALS['ie_run_calls'][] = array( 'id' => $id, 'may_start' => (bool) $may_start );
+
+		/* AND IT CAN CHANGE THE STORED CAMPAIGN, because the real one does.
+		 *
+		 * A poll's whole purpose is the write it performs on the way back:
+		 * writing_done, writing_total, collected posts. A stub that only
+		 * records the call cannot tell whether the screen polls BEFORE it
+		 * reads the campaigns or after — and the difference between those two
+		 * orderings is the entire feature. */
+		if ( ! empty( $GLOBALS['ie_run_side_effect'] ) && is_callable( $GLOBALS['ie_run_side_effect'] ) ) {
+			call_user_func( $GLOBALS['ie_run_side_effect'], $id );
+		}
 
 		return isset( $GLOBALS['ie_run_result'] ) ? $GLOBALS['ie_run_result'] : array();
 	}
@@ -2103,7 +2171,7 @@ test( 'THE TYPED URL BEATS THE DROPDOWN', function () {
 
 	same( 'reviewing', $out['ie_status'] );
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 	same( 42, (int) $draft['form']['target_page_id'], 'the dropdown won over the typed URL' );
 	same( 'The one they typed', $draft['form']['title'] );
 } );
@@ -2115,7 +2183,7 @@ test( 'an empty box leaves the dropdown in charge', function () {
 	$out = ie_submit_campaign( array( 'target_page_id' => '7', 'target_url' => '  ' ) );
 
 	same( 'reviewing', $out['ie_status'] );
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 	same( 7, (int) $draft['form']['target_page_id'] );
 } );
 
@@ -2179,7 +2247,7 @@ test( 'THE RESOLVED URL IS KEPT SO THE SECOND STEP STILL HAS IT', function () {
 
 	ie_submit_campaign( array( 'target_url' => 'http://site/post-42/' ) );
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 	same( 'http://site/post-42/', isset( $draft['form']['target_url'] ) ? $draft['form']['target_url'] : '',
 		'the typed URL was dropped from the stored form' );
 } );
@@ -2255,7 +2323,7 @@ test( 'THE NUMBER NEVER REACHES THE STORED TITLE', function () {
 	ie_run_handler( array( 'IE_Admin', 'handle_review_topics' ) );
 	$_POST = array();
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 	same( 'Refinancing', $draft['form']['title'], 'the list number was stored with the title' );
 
 	$GLOBALS['ie_target_pages'] = null;
@@ -2934,7 +3002,7 @@ test( 'A REFUSED PLAN KEEPS THE TYPED KEYWORDS AND LINK PHRASES', function () us
 
 	ie_plan_pillar( $ROWS );
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 	ok( is_array( $draft ), 'nothing was stored, so the form comes back empty' );
 
 	$topics = isset( $draft['topics'] ) ? $draft['topics'] : array();
@@ -2955,7 +3023,7 @@ test( 'THE REFUSAL NAMES THE TWO TOPICS THAT CLASH', function () use ( $ROWS ) {
 
 	ie_plan_pillar( $ROWS );
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 	$lines = isset( $draft['conflicts'] ) ? $draft['conflicts'] : array();
 
 	same( 1, count( $lines ), 'the conflict list was dropped again' );
@@ -2972,7 +3040,7 @@ test( 'AND IT QUOTES THE TWO KEYWORDS THAT HAVE TO CHANGE', function () use ( $R
 
 	ie_plan_pillar( $ROWS );
 
-	$lines = get_transient( 'x' )['conflicts'];
+	$lines = ie_draft()['conflicts'];
 
 	has( $lines[0], 'roofing deposits' );
 	has( $lines[0], 'roofing deposit terms' );
@@ -2988,7 +3056,7 @@ test( 'topic-1 IS THE FIRST ROW, NOT THE ZEROTH', function () use ( $ROWS ) {
 
 	ie_plan_pillar( $ROWS );
 
-	$lines = get_transient( 'x' )['conflicts'];
+	$lines = ie_draft()['conflicts'];
 
 	has( $lines[0], 'Payment schedules' );
 	has( $lines[0], 'Cash flow in winter' );
@@ -3007,7 +3075,7 @@ test( 'A CANNIBALISING TOPIC IS NAMED TOO', function () use ( $ROWS ) {
 
 	ie_plan_pillar( $ROWS );
 
-	$lines = get_transient( 'x' )['conflicts'];
+	$lines = ie_draft()['conflicts'];
 
 	has( $lines[0], 'Cash flow in winter' );
 	has( $lines[0], 'compete with the page' );
@@ -3026,7 +3094,7 @@ test( 'AN UNKNOWN KIND FALLS BACK TO WHAT THE SERVER SAID', function () use ( $R
 
 	ie_plan_pillar( $ROWS );
 
-	same( array( 'the server explains itself here' ), get_transient( 'x' )['conflicts'] );
+	same( array( 'the server explains itself here' ), ie_draft()['conflicts'] );
 } );
 
 test( 'A REFUSAL WITH NO CONFLICTS STILL KEEPS THE FORM', function () use ( $ROWS ) {
@@ -3037,7 +3105,7 @@ test( 'A REFUSAL WITH NO CONFLICTS STILL KEEPS THE FORM', function () use ( $ROW
 
 	ie_plan_pillar( $ROWS );
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 
 	same( 3, count( $draft['topics'] ), 'the rows went missing on a non-conflict failure' );
 	same( array(), $draft['conflicts'], 'conflicts were invented where the server sent none' );
@@ -3056,7 +3124,7 @@ test( 'A PILLAR MISSING ITS KEYWORDS KEEPS THE FORM TOO', function () {
 
 	has( $out['ie_message'], 'Main keyword' );
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 
 	same( 'how deposits work', $draft['topics'][0]['linkPhrase'],
 		'the link phrase was lost by the message telling him to type a keyword' );
@@ -3427,7 +3495,7 @@ test( 'AND THE FORM COMES BACK WITH EVERYTHING IN IT', function () use ( $DATED_
 
 	ie_plan_pillar( $DATED_ROWS, array( 'start_date' => $yesterday ) );
 
-	$draft = get_transient( 'x' );
+	$draft = ie_draft();
 
 	same( 2, count( $draft['topics'] ), 'the topics were lost with the bad date' );
 	same( 'roofing deposits', $draft['topics'][0]['targetQuery'] );
@@ -3506,6 +3574,452 @@ test( 'THE CHOSEN DATE IS STILL IN THE BOX AFTER A REFUSAL', function () {
 	has( render( 'new' ), 'value="2027-03-01"', 'the date was not prefilled from the draft' );
 
 	$GLOBALS['ie_transient'] = null;
+} );
+
+/* =====================================================================
+ *
+ * HOW LONG THE CARD KEEPS WATCHING
+ *
+ * 12 October. Edwin: *"There are 11 still planned but not written and the
+ * spinner already stopped."* The log showed posts still being written for that
+ * campaign minutes after the card had gone quiet.
+ *
+ * $watching was capped at a flat ten minutes, written when a big campaign was
+ * twelve posts. At the twenty-five seconds a post the server actually takes, a
+ * thirty-post batch runs about thirteen minutes — so the cap expired with a
+ * third still to write, and "the spinner stopped" read as "the batch stopped".
+ *
+ * IT IS A CAP, NOT AN ESTIMATE. The spinner clears for real when the server
+ * stops saying 'writing'; this only stops a page left open overnight from
+ * reloading itself for ever when a job dies silently. Which is why being
+ * generous is the cheap mistake and being tight is the expensive one.
+ *
+ * ===================================================================== */
+
+test( 'A SMALL CAMPAIGN KEEPS THE OLD TEN MINUTES', function () {
+	/* Every campaign that worked before this change. */
+	same( 600, IE_Admin::watch_window( 1 ) );
+	same( 600, IE_Admin::watch_window( 6 ) );
+	same( 600, IE_Admin::watch_window( 0 ), 'a zero-post batch lost its floor' );
+} );
+
+test( 'A LONG CAMPAIGN IS WATCHED LONG ENOUGH TO FINISH', function () {
+	/* The complaint, in numbers. Thirty posts at twenty-five seconds is about
+	 * thirteen minutes of writing; the window has to outlast that with room
+	 * for a slow day. */
+	ok( IE_Admin::watch_window( 30 ) > 13 * 60,
+		'a thirty-post batch still outlives the spinner' );
+	ok( IE_Admin::watch_window( 39 ) > 17 * 60,
+		'a thirty-nine-post batch still outlives the spinner' );
+
+	same( 2700, IE_Admin::watch_window( 30 ) );
+} );
+
+test( 'IT IS STILL CAPPED, WHICH IS THE POINT OF HAVING ONE', function () {
+	/* Without a ceiling, a 52-post campaign whose job died in its first minute
+	 * leaves a tab reloading itself every fifteen seconds for an hour and a
+	 * half. The cap exists for the job that dies silently, not the one that
+	 * runs long. */
+	same( 3600, IE_Admin::watch_window( 52 ) );
+	same( 3600, IE_Admin::watch_window( 1000 ), 'a nonsense count removed the ceiling' );
+} );
+
+test( 'A NEGATIVE OR JUNK COUNT FALLS BACK TO THE FLOOR', function () {
+	same( 600, IE_Admin::watch_window( -5 ) );
+	same( 600, IE_Admin::watch_window( 'x' ) );
+	same( 600, IE_Admin::watch_window( null ) );
+} );
+
+test( 'THE CARD ACTUALLY USES IT', function () {
+	/* The window can be perfect and unused. Read from source because
+	 * $watching is computed inside the card render, mid-template, with a dozen
+	 * other things it would need to be given.
+	 *
+	 * Comments stripped first: the note beside that line explains the bug and
+	 * names both the old number and the new function while doing it. */
+	$src = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-admin.php' );
+
+	$code = '';
+	foreach ( token_get_all( $src ) as $token ) {
+		if ( is_array( $token ) && in_array( $token[0], array( T_COMMENT, T_DOC_COMMENT ), true ) ) {
+			$code .= "\n";
+			continue;
+		}
+		$code .= is_array( $token ) ? $token[1] : $token;
+	}
+
+	$at = strpos( $code, '$watching = $pending' );
+	ok( false !== $at, 'the $watching test is gone or renamed' );
+
+	$test = substr( $code, $at, 200 );
+
+	has( $test, 'self::watch_window(', 'the card is back on a fixed window' );
+	ok( false === strpos( $test, '600' ),
+		'a hard-coded ten minutes is back in the card' );
+} );
+
+test( 'THE CARD SAYS POSTS ARRIVE TOGETHER, NOT AS THEY ARE WRITTEN', function () {
+	/* A TEST OVER A SENTENCE, which is usually noise — and is not here,
+	 * because the sentence WAS the bug.
+	 *
+	 * "Writing your posts. They arrive on their own" was true and not the
+	 * whole truth. Nothing is handed over mid-batch: the final quality pass
+	 * compares the posts against each other and cannot run until there is a
+	 * whole batch to compare. So the line promised a trickle and delivered
+	 * nothing until the end, and Edwin reported it as a fault three times in
+	 * two days — twice while the batch was running perfectly.
+	 *
+	 * Pinned on the CLAIM rather than the wording: that the posts arrive
+	 * together, and that the old half-promise is gone. Rephrasing is free;
+	 * going back to implying a trickle is not.
+	 *
+	 * batch_started and writing_since both recent, or $watching is false and
+	 * the sentence this test is about is never drawn at all. */
+	$c = campaign( 'c-words', 'small business loans for women',
+		array( slot( 0, 'pending', 4 ), slot( 1, 'pending', 18 ) ), true );
+	$c['batch_started'] = gmdate( 'c', time() - 30 );
+	$c['writing_since'] = current_time( 'mysql' );
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+	$GLOBALS['ie_transient'] = null;
+
+	$html = render( 'running' );
+
+	has( $html, 'Writing your posts', 'the spinner line is not on the page at all' );
+	has( $html, 'arrive together', 'the card no longer says when the posts turn up' );
+
+	ok( false === strpos( $html, 'They arrive on their own —' ),
+		'the old half-promise is back: it implies posts appear as they are written' );
+} );
+
+/* =====================================================================
+ * The screen polls the server itself
+ *
+ * Everything the card shows used to be refreshed only when the SERVER rang
+ * this site. Two of Edwin's hosts block that in the same week — mod_security
+ * on one, a host-run Cloudflare challenge on the other — and both times the
+ * count froze at zero and the posts never arrived. The screen asks for
+ * itself now, outbound, which is the direction nobody blocks.
+ * ================================================================== */
+
+echo "\nThe screen polls outbound\n";
+
+/** A campaign the poll should care about: active, approved, posts to come. */
+function polling_fixture( $id = 'c-poll' ) {
+	$c = campaign( $id, 'consumer lending license requirements',
+		array( slot( 0, 'pending', 2 ), slot( 1, 'pending', 4 ) ), true );
+	$c['status']      = 'active';
+	$c['approved_at'] = '2026-09-05 09:00:00';
+	return $c;
+}
+
+/** Start each case from no polls made and an open gate. */
+function poll_reset() {
+	$GLOBALS['ie_run_calls']     = array();
+	$GLOBALS['ie_transients']    = array();
+	$GLOBALS['ie_transient_ttl'] = array();
+	$GLOBALS['ie_transient']     = null;
+	$GLOBALS['ie_run_result']    = array();
+}
+
+test( 'THE SCREEN ASKS THE SERVER, RATHER THAN WAITING TO BE ASKED', function () {
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array( polling_fixture() );
+
+	render( 'running' );
+
+	same( 1, count( $GLOBALS['ie_run_calls'] ), 'the page rendered without contacting the server at all' );
+	same( 'c-poll', $GLOBALS['ie_run_calls'][0]['id'] );
+} );
+
+test( 'AND NEVER ASKS IT TO START WRITING', function () {
+	/* THE ONE THING THIS MUST NOT DO. run_campaign( $id, true ) is the call
+	 * permitted to spend money, and it belongs to a button with a price on
+	 * it that a person pressed. A page load is not consent: tabs get
+	 * restored, pages get refreshed, and a browser reopening yesterday's
+	 * session would approve a campaign nobody agreed to pay for. */
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array( polling_fixture() );
+
+	render( 'running' );
+
+	same( 1, count( $GLOBALS['ie_run_calls'] ), 'no call was made, so this proves nothing' );
+	same( false, $GLOBALS['ie_run_calls'][0]['may_start'], 'a page load just approved a campaign' );
+} );
+
+test( 'A SECOND RENDER INSIDE THE GAP DOES NOT POLL AGAIN', function () {
+	/* Three open tabs and a reload must not be three requests. */
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array( polling_fixture() );
+
+	render( 'running' );
+	render( 'running' );
+	render( 'running' );
+
+	same( 1, count( $GLOBALS['ie_run_calls'] ), 'the rate limit is not holding' );
+} );
+
+test( 'ONCE THE GAP HAS PASSED IT POLLS AGAIN', function () {
+	/* The other half of the rate limit, and the half that matters: a gate
+	 * that never reopens is indistinguishable from no polling at all. */
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array( polling_fixture() );
+
+	render( 'running' );
+	$GLOBALS['ie_transients'] = array();   // the lock expired
+	render( 'running' );
+
+	same( 2, count( $GLOBALS['ie_run_calls'] ), 'the gate never reopened' );
+} );
+
+test( 'THE GATE EXPIRES ON ITS OWN, AND SOON', function () {
+	/* In WordPress, set_transient( $k, $v, 0 ) means FOREVER. A gate written
+	 * that way would close on the first page load this site ever serves and
+	 * never reopen — the feature would ship, pass every other case here, and
+	 * do nothing on a customer's site. The window has to be shorter than the
+	 * fifteen-second reload too, or an unattended page polls every other
+	 * reload and the count moves at half speed. */
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array( polling_fixture() );
+
+	render( 'running' );
+
+	$ttl = $GLOBALS['ie_transient_ttl'];
+	ok( ! empty( $ttl ), 'nothing was locked at all' );
+
+	$seconds = array_values( $ttl )[0];
+	ok( $seconds > 0, 'the poll gate never expires — it will close once and stay closed' );
+	ok( $seconds < 15, "the gate outlives the reload, so the count moves at half speed — got {$seconds}s" );
+} );
+
+test( 'A PAUSED CAMPAIGN IS LEFT ALONE', function () {
+	poll_reset();
+	$c           = polling_fixture();
+	$c['status'] = 'paused';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	render( 'running' );
+
+	same( 0, count( $GLOBALS['ie_run_calls'] ), 'the screen polled a campaign the owner had stopped' );
+} );
+
+test( 'A CAMPAIGN NOBODY APPROVED IS LEFT ALONE', function () {
+	/* A planned campaign has every slot pending and has cost nothing. The
+	 * hourly cron used to write and charge for exactly these; the poll must
+	 * not even mention them. */
+	poll_reset();
+	$c                  = polling_fixture();
+	$c['batch_started'] = '';
+	$c['approved_at']   = '';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	render( 'running' );
+
+	same( 0, count( $GLOBALS['ie_run_calls'] ), 'the screen polled a campaign nobody had paid for' );
+} );
+
+test( 'A CAMPAIGN WITH NOTHING LEFT TO FETCH IS LEFT ALONE', function () {
+	poll_reset();
+	$c          = polling_fixture();
+	$c['slots'] = array( slot( 0, 'published', -3 ), slot( 1, 'scheduled', 2 ) );
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	render( 'running' );
+
+	same( 0, count( $GLOBALS['ie_run_calls'] ), 'every page load is now a wasted request' );
+} );
+
+test( 'POSTS STRANDED LONG AFTER THE SPINNER GAVE UP ARE STILL FETCHED', function () {
+	/* THE CASE THE WHOLE CHANGE EXISTS FOR, and the one a watch window would
+	 * have refused.
+	 *
+	 * Edwin's site was behind a Cloudflare challenge run by his host. The
+	 * batch wrote and was charged for; every attempt to hand the posts over
+	 * was bounced at the edge for an hour. By the time he opened the page the
+	 * spinner had long since given up and writing_since was cleared — which
+	 * is exactly when the posts most need collecting.
+	 *
+	 * watch_window() answers "how long should the spinner keep reloading".
+	 * This answers "is there anything to fetch". Tying the second to the
+	 * first would have left those posts on the server for ever. */
+	poll_reset();
+	$c                  = polling_fixture();
+	$c['batch_started'] = date( 'Y-m-d H:i:s', time() - 6 * 3600 );
+	$c['writing_since'] = '';
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	render( 'running' );
+
+	same( 1, count( $GLOBALS['ie_run_calls'] ), 'a paid-for batch was abandoned because the spinner had timed out' );
+} );
+
+test( 'THE POLL HAPPENS BEFORE THE PAGE IS READ, NOT AFTER', function () {
+	/* ORDER, WHICH IS THE WHOLE POINT AND IS INVISIBLE IN A DIFF.
+	 *
+	 * Polling after IE_Campaigns::all() would store the fresh numbers where
+	 * this render cannot see them, so every figure on screen would be one
+	 * reload — fifteen seconds — behind the server. The card would still
+	 * crawl, which is the complaint that started this.
+	 *
+	 * So the stub writes the count a real poll would have written, and the
+	 * test reads the rendered page for it. Nothing else can tell the two
+	 * orderings apart. */
+	poll_reset();
+	$c                  = polling_fixture();
+	$c['batch_started'] = date( 'Y-m-d H:i:s', time() - 60 );
+	$c['writing_since'] = current_time( 'mysql' );
+	$c['writing_done']  = 0;
+	$c['writing_total'] = 2;
+
+	$GLOBALS['ie_campaigns'] = array( $c );
+
+	// What IE_Publisher::run_campaign() does on a real poll: store what the
+	// server just said. Registered as the stub's side effect.
+	$GLOBALS['ie_run_side_effect'] = function () {
+		$all = $GLOBALS['ie_campaigns'];
+		$all[0]['writing_done'] = 2;
+		$GLOBALS['ie_campaigns'] = $all;
+	};
+
+	$html = render( 'running' );
+	$GLOBALS['ie_run_side_effect'] = null;
+
+	has( $html, '2 of 2 written', 'the page showed the count from before the poll — it is reading before it asks' );
+} );
+
+/* =====================================================================
+ * The card tells the owner when nobody is answering the doorbell
+ *
+ * IE_Reach decides WHETHER to say it and test-host-blocked.php covers that
+ * exhaustively. These cases cover the other half, which no amount of unit
+ * testing reaches: whether the card prints it, and whether a customer could
+ * do anything with what it prints.
+ * ================================================================== */
+
+echo "\nThe card says when the host is blocking\n";
+
+/** Approved, posts still to come, nothing collected. */
+function blocked_fixture() {
+	$c = campaign( 'c-deaf', 'personal loan interest rate limits',
+		array( slot( 0, 'pending', 3 ), slot( 1, 'pending', 10 ) ), true );
+	$c['status']      = 'active';
+	$c['approved_at'] = '2026-10-12 09:00:00';
+	return $c;
+}
+
+test( 'A BLOCKED SITE SAYS SO, IN THE PLACE THE OWNER IS ALREADY LOOKING', function () {
+	poll_reset();
+	/* BOTH STAMPS, because the render itself sets the second one.
+	 *
+	 * poll_now() calls IE_Reach::note_expecting() on every load that has
+	 * work, and the silence is measured from whichever stamp is LATER. So
+	 * a fixture that sets only the ring would have the render quietly
+	 * restart the clock and prove nothing. This is a site that has been
+	 * waiting a long time AND knows it. */
+	$GLOBALS['ie_options']['ie_last_rung']       = time() - 4000;
+	$GLOBALS['ie_options']['ie_expecting_since'] = time() - 4000;
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+
+	$html = render( 'running' );
+
+	has( $html, 'Your host appears to be blocking us', 'the warning is nowhere on the card' );
+	has( $html, 'written and paid for', 'the owner is not told their money is safe' );
+	has( $html, 'wp-json/interlink/v1/', 'nothing on the page says what to ask the host for' );
+} );
+
+test( 'AND IT SURVIVES THE SPINNER GIVING UP', function () {
+	/* THE WHOLE POINT, and the reason this is not inside the $watching block.
+	 *
+	 * The spinner stops after watch_window(). A batch stranded by a firewall
+	 * does not stop — Edwin's posts sat written and paid for on the server for
+	 * hours with the card showing nothing whatsoever. That silence is exactly
+	 * the moment this has something to say. */
+	poll_reset();
+	/* BOTH STAMPS, because the render itself sets the second one.
+	 *
+	 * poll_now() calls IE_Reach::note_expecting() on every load that has
+	 * work, and the silence is measured from whichever stamp is LATER. So
+	 * a fixture that sets only the ring would have the render quietly
+	 * restart the clock and prove nothing. This is a site that has been
+	 * waiting a long time AND knows it. */
+	$GLOBALS['ie_options']['ie_last_rung']       = time() - 4000;
+	$GLOBALS['ie_options']['ie_expecting_since'] = time() - 4000;
+
+	$cold = blocked_fixture();
+	$cold['batch_started'] = date( 'Y-m-d H:i:s', time() - 30 * 3600 );
+	$cold['writing_since'] = '';
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Writing your posts', 'the fixture is still inside the watch window, so this proves nothing' );
+	has( $html, 'Your host appears to be blocking us', 'a long-stranded batch says nothing at all' );
+} );
+
+test( 'the text can be copied, not just read', function () {
+	/* It gets pasted into somebody else's support form. A tooltip or a title
+	 * attribute cannot be pasted, and a customer retyping four lines of
+	 * instructions will retype them wrong. */
+	poll_reset();
+	/* BOTH STAMPS, because the render itself sets the second one.
+	 *
+	 * poll_now() calls IE_Reach::note_expecting() on every load that has
+	 * work, and the silence is measured from whichever stamp is LATER. So
+	 * a fixture that sets only the ring would have the render quietly
+	 * restart the clock and prove nothing. This is a site that has been
+	 * waiting a long time AND knows it. */
+	$GLOBALS['ie_options']['ie_last_rung']       = time() - 4000;
+	$GLOBALS['ie_options']['ie_expecting_since'] = time() - 4000;
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+
+	$html = render( 'running' );
+
+	has( $html, '<textarea readonly', 'the ticket text is not in anything selectable' );
+} );
+
+test( 'A HEALTHY CAMPAIGN SAYS NOTHING OF THE KIND', function () {
+	poll_reset();
+	$GLOBALS['ie_options']['ie_last_rung'] = time() - 30;
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Your host appears to be blocking us',
+		'a site rung thirty seconds ago is accusing its host' );
+} );
+
+test( 'THE PAGE STARTS THE CLOCK WHEN IT FINDS WORK WAITING', function () {
+	/* FOUND BY MUTATION. Removing IE_Reach::note_expecting() from poll_now()
+	 * broke nothing any other case could see: the fixtures that warn set both
+	 * stamps by hand, and the ones that stay quiet stay quiet either way.
+	 *
+	 * It is the single line that makes upgrade day safe AND makes a
+	 * never-reachable site able to speak at all. Without it a site that has
+	 * never once been rung has no clock, so it waits for ever in silence —
+	 * which is the exact situation this whole feature exists for. */
+	poll_reset();
+	$GLOBALS['ie_options'] = array();
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+
+	render( 'running' );
+
+	ok( ! empty( $GLOBALS['ie_options']['ie_expecting_since'] ),
+		'the page found posts waiting and never noted that it was waiting for them' );
+} );
+
+test( 'AND NEITHER DOES A SITE ON THE MORNING IT UPGRADES', function () {
+	/* Rendered with no stamps at all, which is every site in the world on the
+	 * first page load after this version installs. */
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Your host appears to be blocking us',
+		'upgrade day tells every customer their host is broken' );
 } );
 
 echo "\n$passed passed, $failed failed\n";

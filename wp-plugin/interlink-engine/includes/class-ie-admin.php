@@ -91,6 +91,16 @@ class IE_Admin {
 	const CSV_MAX_BYTES = 1048576;
 	const CSV_MAX_ROWS  = 2000;
 
+	/**
+	 * The gap between two outbound polls from this screen, in seconds.
+	 *
+	 * Shorter than the fifteen-second reload, so a page left watching polls
+	 * on every reload. Long enough that three open tabs and a stray refresh
+	 * do not become three requests in the same second. See poll_now().
+	 */
+	const POLL_LOCK = 'ie_admin_polled';
+	const POLL_GAP  = 10;
+
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_post_ie_connect', array( __CLASS__, 'handle_connect' ) );
@@ -637,6 +647,20 @@ class IE_Admin {
 	}
 
 	public static function render_campaigns() {
+		/* ASK FIRST, READ SECOND, and the order is the whole point.
+		 *
+		 * Polling after IE_Campaigns::all() would store fresh numbers that
+		 * this render cannot see, so every figure on the page would be one
+		 * reload — fifteen seconds — behind what the server said. That is the
+		 * bug this change exists to fix, reintroduced at the last line.
+		 *
+		 * Gated on being connected because an unconnected site has no licence
+		 * key to sign with: the call would fail on every single page load,
+		 * slowly, for someone who has not finished setting the plugin up. */
+		if ( IE_Settings::is_connected() ) {
+			self::poll_now();
+		}
+
 		$campaigns = IE_Campaigns::all();
 		?>
 		<div class="wrap">
@@ -1817,8 +1841,19 @@ class IE_Admin {
 			 * A progress indicator that is wrong about whether anything is
 			 * happening is not a smaller bug than the thing it was reporting
 			 * on. It is the only part the owner can see. */
+			/* TEN MINUTES WAS SIZED FOR A TWELVE-POST CAMPAIGN, and it was
+			 * written when that was the big one.
+			 *
+			 * Edwin now plans thirty and forty. At the twenty-five seconds a
+			 * post the server actually takes, a thirty-post batch runs about
+			 * thirteen minutes — so the spinner gave up with a third still to
+			 * write, and he reasonably read "the spinner stopped" as "the batch
+			 * stopped". It had not: the log showed posts still being written
+			 * minutes after the card went quiet.
+			 *
+			 * So the window is sized by the batch. See watch_window(). */
 			$watching = $pending && $approved && $started && ! $paused
-				&& ( time() - $started ) < 600;
+				&& ( time() - $started ) < self::watch_window( $pending );
 			?>
 
 			<?php if ( $watching ) : ?>
@@ -1857,7 +1892,25 @@ class IE_Admin {
 								number_format_i18n( $progress['total'] )
 							) ); ?></strong>
 						<?php endif; ?>
-						<?php esc_html_e( 'Writing your posts. They arrive on their own — you can leave this page. This view refreshes itself.', 'interlink-engine' ); ?>
+						<?php
+						/* "THEY ARRIVE ON THEIR OWN" WAS TRUE AND NOT THE WHOLE
+						 * TRUTH, and the gap cost Edwin three separate reports
+						 * in two days: posts six and seven written, nothing on
+						 * the site, and a sentence promising they were coming.
+						 *
+						 * They do come on their own — ALL AT ONCE, when the last
+						 * one is finished. Nothing is handed over mid-batch,
+						 * because the final quality pass compares the posts
+						 * against each other and cannot run until there is a
+						 * whole batch to compare. Every time he read this line
+						 * he reasonably expected a trickle.
+						 *
+						 * The alternative was opening that gate. The cost turned
+						 * out to be small — the cross-batch check only writes a
+						 * report — but he chose the sentence, and the sentence
+						 * was wrong either way. */
+						esc_html_e( 'Writing your posts. They all arrive together once the last one is finished — you can leave this page. This view refreshes itself.', 'interlink-engine' );
+						?>
 					</span>
 				</p>
 				<?php
@@ -1877,6 +1930,69 @@ class IE_Admin {
 					echo '<script>setTimeout(function () { window.location.reload(); }, 15000);</script>';
 				}
 				?>
+			<?php endif; ?>
+
+			<?php
+			/* NOBODY IS ANSWERING THE DOORBELL, SAID WHERE THE OWNER IS
+			 * ALREADY STANDING.
+			 *
+			 * Posts are handed over on an INBOUND request to this site, and a
+			 * large part of what hosting companies sell is machinery for
+			 * stopping those. In one week: mod_security answering 500 on one
+			 * site, a host-run Cloudflare challenge answering 403 on another.
+			 * Both times the card said "0 of 22" and nothing else, and finding
+			 * out why needed an SSH session against the server's logs.
+			 *
+			 * A customer cannot do that. They will email, or they will leave.
+			 *
+			 * OUTSIDE THE $watching BLOCK ON PURPOSE. The spinner gives up
+			 * after a while; a batch stranded by a firewall does not. Edwin's
+			 * posts sat written and paid for on the server for hours with the
+			 * card showing nothing at all — which is exactly the moment this
+			 * has something to say.
+			 *
+			 * THE RULE IS IN IE_Reach, not here, because it is five conditions
+			 * and each one is a different way to frighten somebody whose site
+			 * is working perfectly. See the note at the top of that file. */
+			if ( IE_Reach::unreachable( $campaign ) ) :
+				$silent = IE_Reach::silent_minutes();
+				?>
+				<div class="notice notice-warning inline" style="margin:1rem 0">
+					<p style="margin-top:.5rem">
+						<strong><?php esc_html_e( 'Your host appears to be blocking us.', 'interlink-engine' ); ?></strong>
+						<?php
+						/* THE REASSURANCE COMES FIRST, and it is not padding.
+						 * The owner is looking at a campaign they have paid
+						 * for and a count that is not moving; the first thing
+						 * they need to know is that the money is not gone. */
+						esc_html_e( 'Your posts are written and paid for — nothing is lost.', 'interlink-engine' );
+						?>
+						<?php
+						echo esc_html( sprintf(
+							/* translators: %d: whole minutes */
+							_n(
+								'Our server has not been able to reach this site for %d minute.',
+								'Our server has not been able to reach this site for %d minutes.',
+								$silent,
+								'interlink-engine'
+							),
+							$silent
+						) );
+						?>
+					</p>
+					<p>
+						<?php esc_html_e( 'They will still arrive while this page is open. To have them arrive on their own, send your hosting company this:', 'interlink-engine' ); ?>
+					</p>
+					<p>
+						<?php
+						/* SELECTABLE, because the whole point is that it gets
+						 * copied into somebody else's support form. A tooltip
+						 * or a title attribute cannot be copied. */
+						?>
+						<textarea readonly rows="4" style="width:100%;max-width:46rem;font-family:monospace"
+								  onclick="this.select()"><?php echo esc_textarea( IE_Reach::ticket_text() ); ?></textarea>
+					</p>
+				</div>
 			<?php endif; ?>
 
 			<p style="margin-bottom:0;display:flex;gap:1rem;align-items:center;flex-wrap:wrap">
@@ -2146,6 +2262,136 @@ class IE_Admin {
 	private static function draft() {
 		$draft = get_transient( self::DRAFT_TRANSIENT . get_current_user_id() );
 		return is_array( $draft ) ? $draft : null;
+	}
+
+	/**
+	 * How long the card keeps saying a batch is running, in seconds.
+	 *
+	 * IT IS A CAP, NOT AN ESTIMATE. The spinner clears for real the moment the
+	 * server stops saying 'writing' — this only stops a page left open
+	 * overnight from reloading itself for ever when a job dies silently.
+	 *
+	 * A FLAT TEN MINUTES until 12 October, sized when a big campaign was twelve
+	 * posts. At the twenty-five seconds a post the server actually takes, a
+	 * thirty-post batch runs about thirteen minutes and a forty-post one about
+	 * seventeen — so the cap expired first, the card went quiet, and the owner
+	 * read "the spinner stopped" as "the batch stopped". It had not.
+	 *
+	 * NINETY SECONDS A POST, which is roughly three times what writing one
+	 * costs. The margin is deliberate: being generous costs a page that
+	 * reloads a few times too often, and being tight costs the owner believing
+	 * a paid-for campaign has died. Those are not the same mistake.
+	 *
+	 * The floor keeps the old behaviour for small campaigns. The ceiling is
+	 * what the cap is FOR — without one, a 52-post campaign whose job died in
+	 * its first minute would leave a tab reloading for an hour and a half.
+	 *
+	 * @param int $posts how many are still to arrive
+	 */
+	public static function watch_window( $posts ) {
+		$posts = max( 0, (int) $posts );
+
+		return max( 600, min( 3600, $posts * 90 ) );
+	}
+
+	/**
+	 * Ask the server what it knows, from this page, going outwards.
+	 *
+	 * WHY THIS EXISTS AT ALL. Everything on the card — the count, and the
+	 * posts themselves — was refreshed only when the SERVER rang this site:
+	 * an inbound POST to /wp-json/interlink-engine/v1/run every two minutes.
+	 * The fifteen-second reload redrew stored values and asked nobody
+	 * anything, which is why the card could sit at "0 of 22" for a whole
+	 * batch and why the posts never arrived on their own.
+	 *
+	 * THE INBOUND DIRECTION IS THE PROBLEM, and it is not fixable from here.
+	 * Edwin's hosts keep selling products whose entire job is to stop
+	 * strangers' servers reaching into a WordPress install. In one week:
+	 * mod_security returning 500 on one site, and a Cloudflare challenge
+	 * returning 403 on another — the second one run by the host themselves,
+	 * on their own IP range, with no switch in cPanel and nothing the site
+	 * owner can turn off. Both times the only fix was a support ticket, and
+	 * both times the symptom was a frozen number and posts that never came.
+	 *
+	 * OUTBOUND IS NOT BLOCKED, because it is not remarkable: it is WordPress
+	 * making an HTTP request, which is what "Check now" has always done and
+	 * what kept working through both of those blocks. So the page stops
+	 * waiting to be rung and rings instead.
+	 *
+	 * ONE CAMPAIGN PER LOAD, exactly like the ping handler it replaces. The
+	 * screen is rendered after this returns, so a slow server delays the
+	 * page; taking the whole backlog at once would delay it by minutes.
+	 *
+	 * NO WINDOW, DELIBERATELY. watch_window() answers a question about the
+	 * SPINNER — how long to keep reloading before concluding a job died. This
+	 * answers a different one: is there anything to fetch? A campaign whose
+	 * posts were written an hour ago and never collected, because the ping
+	 * was being blocked the whole time, is precisely the case that needs a
+	 * poll and precisely the one a window would refuse. If there is work, we
+	 * ask; the rate limit is what stops that being expensive.
+	 *
+	 * @return string[] campaign ids worth polling, best first
+	 */
+	public static function poll_targets() {
+		/* THE SAME LIST THE SERVER'S PING USES. campaigns_with_work() means
+		 * active, approved by somebody, and still holding a pending slot —
+		 * which covers both halves of the job: a batch mid-write whose count
+		 * is moving, and a finished batch whose posts have not come over. A
+		 * paused campaign is not 'active' and so is already excluded. */
+		return IE_Campaigns::campaigns_with_work();
+	}
+
+	/**
+	 * Poll, unless we just did.
+	 *
+	 * THE LOCK IS SET BEFORE THE CALL, not after. A request that hangs for
+	 * the full HTTP timeout would otherwise leave the gate open, and the
+	 * reload arriving fifteen seconds later would start a second one while
+	 * the first is still in flight — the same mistake the scheduler made with
+	 * lastPingAt and the same fix.
+	 *
+	 * FAILURE IS SWALLOWED ON PURPOSE. This runs before the page renders. A
+	 * server that is down, slow or refusing must leave the owner looking at
+	 * their campaigns, not at a WordPress error — they can still read every
+	 * number on the screen, which is the whole point of storing them.
+	 *
+	 * @return bool whether a poll was made
+	 */
+	public static function poll_now() {
+		$targets = self::poll_targets();
+
+		if ( empty( $targets ) ) {
+			return false;
+		}
+
+		/* THE MOMENT THIS SITE STARTED WAITING, stamped here because here is
+		 * where we know it is true: there is approved work with posts still to
+		 * come. IE_Reach measures silence from this or from the last real
+		 * ring, whichever is later.
+		 *
+		 * BEFORE THE RATE LIMIT, not after. The lock stops us polling more
+		 * than once every ten seconds; it must not stop us noticing that we
+		 * are waiting, or a site reloading steadily would set the stamp once
+		 * and then — no. It is set once either way, by note_expecting()
+		 * itself. It is above the lock so that the FIRST page load after an
+		 * upgrade records it even if a poll has just happened. */
+		IE_Reach::note_expecting();
+
+		if ( get_transient( self::POLL_LOCK ) ) {
+			return false;
+		}
+
+		set_transient( self::POLL_LOCK, 1, self::POLL_GAP );
+
+		/* NEVER WITH $may_start. This is a page load — it can be triggered by
+		 * anyone opening the screen, by a browser restoring tabs, by a reload
+		 * nobody asked for. run_campaign( $id, true ) is the one call in the
+		 * plugin permitted to spend money, and it belongs to a button a
+		 * person pressed with a price written on it. The argument is omitted
+		 * rather than passed as false so that nobody adds a variable here. */
+		IE_Publisher::run_campaign( $targets[0] );
+
+		return true;
 	}
 
 	/**

@@ -44,6 +44,7 @@ const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
 const { pageTitle } = require('../utils/pageTitle');
+const { pingHealth, healthBadge, healthDetail } = require('../utils/blog/pingHealth');
 
 /** The same shell billingRoute and creditsRoute use, so this does not look bolted on. */
 function page({ title, body, status = 200 }) {
@@ -219,7 +220,10 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
     ]);
     const bySite = new Map(counts.map(c => [String(c._id), c.campaigns]));
 
-    const rows = sites.map(s => `
+    const rows = sites.map(s => {
+      const health = pingHealth(s);
+
+      return `
       <tr>
         <td>
           ${s.siteUrl
@@ -230,6 +234,7 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
             : ''}
         </td>
         <td>${statusBadge(s.status)}</td>
+        <td>${healthBadge(health)}</td>
         <td>${bySite.get(String(s._id)) || 0}</td>
         <td class="small">${when(s.lastSeenAt)}</td>
         <td class="text-end">
@@ -252,7 +257,8 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
             <button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
           </form>`}
         </td>
-      </tr>`).join('');
+      </tr>${healthDetail(health, 6)}`;
+    }).join('');
 
     send(res, page({
       title: 'Blog Automation — Sites',
@@ -275,7 +281,14 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th>Site</th><th>Status</th><th>Campaigns</th><th>Last seen</th><th></th>
+                <th>Site</th><th>Licence</th>
+                <!-- Two questions that used to look like one. The licence is
+                     whether we will ACCEPT this site; this is whether we can
+                     REACH it. A morning went on a site whose licence was
+                     perfectly active and which nothing here could get a
+                     packet to. -->
+                <th title="Whether our server can reach the site to hand over posts">Our pings</th>
+                <th>Campaigns</th><th>Last seen</th><th></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>

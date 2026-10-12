@@ -128,7 +128,17 @@ const blogSiteSchema = new mongoose.Schema({
 
   // Written BEFORE each ping, not after, so a request that hangs for its whole
   // timeout still blocks the next tick from pinging the same site again.
+  //
+  // WHICH MEANS IT RECORDS THE ATTEMPT, NOT THE OUTCOME. A screen printing it
+  // as "last contacted" would show a reassuring timestamp from sixty seconds
+  // ago for a site that has refused every ping for a week. It is a scheduling
+  // stamp; lastPingOkAt below is the one for people.
   lastPingAt: { type: Date },
+
+  // When a ping last actually worked. Written only by the scheduler's success
+  // branch, so "we have never got through" and "we got through an hour ago"
+  // are finally distinguishable. See utils/blog/pingHealth.js.
+  lastPingOkAt: { type: Date },
 
   // Consecutive failures. Cleared by any successful ping, and by any
   // authenticated request the site makes of its own accord — a site that can

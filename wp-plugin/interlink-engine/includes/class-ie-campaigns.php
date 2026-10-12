@@ -423,7 +423,16 @@ class IE_Campaigns {
 		$ids = array();
 
 		foreach ( self::all() as $campaign ) {
-			if ( 'active' !== $campaign['status'] ) {
+			/* isset(), BECAUSE THIS IS NOW ON EVERY ADMIN PAGE LOAD.
+			 *
+			 * It used to be reached only from the REST ping and the hourly
+			 * cron, where a PHP warning goes to a log nobody reads. The
+			 * Campaigns screen polls through it now, so a campaign record
+			 * missing 'status' — one written before the field existed, or a
+			 * half-saved option — would print "Undefined array key" across
+			 * the top of the owner's wp-admin on every single load. The test
+			 * fixtures found it within a minute of the call being added. */
+			if ( ! isset( $campaign['status'] ) || 'active' !== $campaign['status'] ) {
 				continue;
 			}
 
@@ -460,8 +469,10 @@ class IE_Campaigns {
 				continue;
 			}
 
-			foreach ( $campaign['slots'] as $slot ) {
-				if ( 'pending' === $slot['status'] ) {
+			// Same reasoning as the status check above: a slot without a
+			// status is malformed data, not a reason to warn on screen.
+			foreach ( (array) ( isset( $campaign['slots'] ) ? $campaign['slots'] : array() ) as $slot ) {
+				if ( isset( $slot['status'] ) && 'pending' === $slot['status'] ) {
 					$ids[] = $campaign['id'];
 					break;
 				}

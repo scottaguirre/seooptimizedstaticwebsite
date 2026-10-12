@@ -35,8 +35,26 @@ const HEARTBEAT_MS = Number(process.env.JOB_HEARTBEAT_MS) || 15000;
 // No heartbeat for this long means the process that owned it died.
 const STALE_AFTER_MS = Number(process.env.JOB_STALE_MS) || 90000;
 
+/**
+ * How often to look for jobs whose owner died.
+ *
+ * NOT EVERY TICK. The loop polls every two seconds; the sweep is an updateMany
+ * over an indexed status, which is cheap but not free — and nothing can become
+ * findable in two seconds that was not findable thirty seconds ago, because a
+ * job has to go STALE_AFTER_MS without a heartbeat before it qualifies at all.
+ *
+ * Thirty seconds means a stranded batch resumes within two minutes of the
+ * restart that stranded it.
+ */
+const REQUEUE_EVERY_MS = Number(process.env.JOB_REQUEUE_MS) || 30000;
+
 let running = false;
 let timer = null;
+
+/* When the stale sweep last ran. Module scope rather than an interval of its
+ * own, so stop() leaves nothing behind — a second timer is a second thing to
+ * forget, and a test that calls start() and stop() would leak it. */
+let lastRequeueAt = 0;
 
 /**
  * The functions that do the work, keyed by job kind. Injected rather than
@@ -240,6 +258,34 @@ async function runJob(job) {
 
 async function tick() {
   try {
+    /* THE STALE SWEEP RUNS HERE AS WELL AS AT STARTUP, and until 12 October it
+     * ran ONLY at startup — which is the one moment it cannot help.
+     *
+     * A deploy restarts this process mid-batch. The job it was running has a
+     * heartbeat a few seconds old, so the sweep at startup does not touch it:
+     * STALE_AFTER_MS has not passed. Nothing looked again. The job stayed
+     * `running` with nobody running it, the campaign stayed `writing`, and the
+     * owner watched a spinner over a batch that had died — until the NEXT
+     * restart, whenever that happened to be, by which time the heartbeat was
+     * old enough to qualify.
+     *
+     * The recovery existed and could not reach itself. Edwin found it by
+     * asking whether deploying mid-batch would stop his campaign; it would
+     * have stranded twenty-three written posts and seven never written.
+     *
+     * BEFORE claiming new work, deliberately: a job rescued this tick is
+     * queued, and claimNextJob() just below can pick it up in the same pass
+     * rather than waiting another two seconds.
+     *
+     * NOT AWAITED FOR ITS RESULT — awaited for ordering only. A slow sweep
+     * delays this tick, which is correct: claiming work while the sweep is
+     * half-done would be claiming against a view of the queue that is about to
+     * change. */
+    if (Date.now() - lastRequeueAt >= REQUEUE_EVERY_MS) {
+      lastRequeueAt = Date.now();
+      await requeueStaleJobs();
+    }
+
     // Respect the same global cap as everything else, so a queue of jobs
     // cannot start ten generations at once.
     if (generationLimiter.stats.running >= generationLimiter.stats.limit) {
@@ -268,6 +314,8 @@ function start() {
 
   running = true;
 
+  /* Stamped so the first tick does not immediately repeat this sweep. */
+  lastRequeueAt = Date.now();
   requeueStaleJobs().catch(err => log.error('jobs.requeueFailed', err));
 
   timer = setInterval(tick, POLL_INTERVAL_MS);
@@ -282,6 +330,11 @@ function stop() {
   running = false;
   if (timer) clearInterval(timer);
   timer = null;
+
+  /* So a restart within the sweep interval still sweeps. Without this, a test
+   * — or a process that stops and starts quickly — carries the old stamp and
+   * skips the first check. */
+  lastRequeueAt = 0;
 }
 
 module.exports = {
@@ -291,4 +344,10 @@ module.exports = {
   registeredKinds,
   requeueStaleJobs,
   claimNextJob,
+
+  /* Exported for test-job-requeue.js. The thing worth testing is WHEN the
+   * stale sweep runs, and the only honest way to check that is to call the
+   * loop body — start() hands it to setInterval, where a test can only watch
+   * the clock and hope. */
+  tick,
 };
