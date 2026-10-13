@@ -14,31 +14,49 @@
  * @param {string} options.authorUri - Author homepage URL
  * @returns {string} - Complete CSS content with WordPress header
  */
+/* THE NAME COMES FROM ONE PLACE. Three copies of this string existed — here,
+ * in buildFromModel.js and in exportWpThemeRoute.js — and all three said a
+ * brand the product had stopped using. See utils/pageTitle.js, whose comment
+ * asks for exactly this and was ignored by three files. */
+const { APP_NAME } = require('../../pageTitle');
+
 function generateStyleCss(options = {}) {
     const {
       themeName = 'Local Business Theme',
       themeSlug = 'local-business-theme',
-      themeAuthor = 'Static Website Generator',
+      themeAuthor = APP_NAME,
       themeVersion = '1.0.0',
       themeDescription = 'A custom WordPress theme generated from a static HTML website. Built with Bootstrap and optimized for local businesses.',
-      themeUri = 'https://example.com/',
-      authorUri = 'https://example.com/',
+      /* EMPTY, AND THE LINE IS OMITTED RATHER THAN FILLED WITH example.com.
+       *
+       * A generated theme has no homepage of its own — it exists for one
+       * customer's site — so Theme URI has no honest value and WordPress is
+       * perfectly happy without the line. What it had instead was
+       * https://example.com/, in both fields, shipped inside every theme this
+       * product has ever exported: a dead link under the author's name, in
+       * the panel a customer opens to find out who built their site. */
+      themeUri = '',
+      authorUri = '',
     } = options;
+
+    const headerLines = [
+      `Theme Name: ${themeName}`,
+      themeUri ? `Theme URI: ${themeUri}` : null,
+      `Author: ${themeAuthor}`,
+      authorUri ? `Author URI: ${authorUri}` : null,
+      `Description: ${themeDescription}`,
+      `Version: ${themeVersion}`,
+      'Requires at least: 5.0',
+      'Tested up to: 6.4',
+      'Requires PHP: 7.4',
+      'License: GNU General Public License v2 or later',
+      'License URI: https://www.gnu.org/licenses/gpl-2.0.html',
+      `Text Domain: ${themeSlug}`,
+      'Tags: business, local, bootstrap, custom-colors, custom-logo, custom-menu, featured-images, threaded-comments, translation-ready',
+    ].filter(Boolean).map(line => `  ${line}`).join('\n');
   
     return `/*
-  Theme Name: ${themeName}
-  Theme URI: ${themeUri}
-  Author: ${themeAuthor}
-  Author URI: ${authorUri}
-  Description: ${themeDescription}
-  Version: ${themeVersion}
-  Requires at least: 5.0
-  Tested up to: 6.4
-  Requires PHP: 7.4
-  License: GNU General Public License v2 or later
-  License URI: https://www.gnu.org/licenses/gpl-2.0.html
-  Text Domain: ${themeSlug}
-  Tags: business, local, bootstrap, custom-colors, custom-logo, custom-menu, featured-images, threaded-comments, translation-ready
+${headerLines}
   
   This theme, like WordPress, is licensed under the GPL.
   Use it to make something cool, have fun, and share what you've learned.

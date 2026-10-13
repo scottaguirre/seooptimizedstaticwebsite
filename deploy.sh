@@ -123,7 +123,8 @@ for suite in \
   test-job-uploads.js \
   test-ping-detail.js \
   test-job-requeue.js \
-  test-ping-health.js
+  test-ping-health.js \
+  test-theme-header.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.

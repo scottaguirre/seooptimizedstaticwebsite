@@ -18,6 +18,7 @@ process.env.BASE_URL = 'https://fastwebsitegenerator.com';
 
 const { verificationEmail, passwordResetEmail } = require('./utils/sendEmail');
 const { emailLayout, safeUrl } = require('./utils/emailLayout');
+const { APP_NAME } = require('./utils/pageTitle');
 
 let passed = 0;
 let failed = 0;
@@ -194,6 +195,95 @@ test('the after-paragraphs are escaped', () => {
     after: ['<b>not bold</b>'],
   });
   assert.ok(html.includes('&lt;b&gt;not bold&lt;/b&gt;'), 'after-paragraph was not escaped');
+});
+
+/* ---------------------------------------------------------------------------
+ * The brand, which drifted for weeks without a single test noticing
+ * ------------------------------------------------------------------------ */
+
+/* WHAT HAPPENED. pageTitle.js holds APP_NAME and says in its own comment that
+ * renaming the product "should be one edit, not a grep". emailLayout.js
+ * hard-coded the name twice anyway. So the rename to Three Comets reached the
+ * tab titles, the logo and the From header — and every transactional email
+ * went on saying "Fast Website Generator" at the top and the bottom.
+ *
+ * This whole suite passed throughout. It checked links, escaping and Outlook
+ * quirks, and never once asked what the email CALLED the product.
+ *
+ * Edwin found it by disbelieving me: I told him the emails carried the old
+ * name, he said he had been sending emails and had not seen it, and he was
+ * right about the part that was visible to him — the sender name was already
+ * correct. The two stale strings sit where nobody reading a password reset
+ * looks. */
+
+const OLD_NAMES = ['Fast Website Generator', 'SEO Site Generator', 'Static Website Generator'];
+
+for (const [name, msg] of Object.entries(messages)) {
+  test(`${name}: the email says who it is from, in the body`, () => {
+    /* TWICE, AND THE COUNT IS THE POINT — found by mutation.
+     *
+     * Deleting the wordmark from the top of the email left this passing,
+     * because the copyright line at the bottom still carried the name. The
+     * two do different jobs: the header says who this is from before the
+     * recipient reads a word, and the footer is small grey legal text nobody
+     * reads at all. An email that has lost the first one looks like a
+     * phishing attempt, which is the single worst thing a password reset can
+     * look like. */
+    const hits = msg.html.split(APP_NAME).length - 1;
+
+    assert.ok(
+      hits >= 2,
+      `the ${name} email names the product ${hits} time(s) — expected the header wordmark AND the footer`
+    );
+  });
+
+  test(`${name}: AND CARRIES NO NAME THE PRODUCT USED TO HAVE`, () => {
+    for (const old of OLD_NAMES) {
+      assert.ok(
+        !msg.html.includes(old),
+        `the ${name} email still says "${old}"`
+      );
+      assert.ok(
+        !msg.text.includes(old),
+        `the ${name} plain-text part still says "${old}"`
+      );
+    }
+  });
+}
+
+test('the name is READ from pageTitle, not copied beside it', () => {
+  /* The two assertions above would both pass against a second hard-coded
+   * 'Three Comets' in emailLayout.js — which is the same bug again, waiting
+   * for the next rename. This is the one that insists on the wiring: change
+   * APP_NAME and the email has to change with it. */
+  const layout = require('./utils/emailLayout');
+  const pageTitle = require('./utils/pageTitle');
+
+  const before = pageTitle.APP_NAME;
+  const html = layout.emailLayout({
+    heading: 'x', preheader: 'x', intro: 'x',
+    buttonLabel: 'x', url: 'https://example.com/',
+  });
+
+  assert.ok(html.includes(before), 'the current name is not in the rendered email');
+
+  /* A source read, deliberately and as a second witness: APP_NAME is a const
+   * so it cannot be reassigned at runtime to prove the wiring behaviourally.
+   * Comments are stripped first — this file and that one both quote the old
+   * names while explaining the bug, and a naive search would match those. */
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('./utils/emailLayout'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  assert.ok(
+    /require\(\s*['"]\.\/pageTitle['"]\s*\)/.test(src),
+    'emailLayout.js no longer imports the name from pageTitle.js'
+  );
+  assert.ok(
+    !src.includes(`'${before}'`) && !src.includes(`"${before}"`),
+    'the name is hard-coded in emailLayout.js again, beside the import'
+  );
 });
 
 console.log('');

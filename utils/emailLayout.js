@@ -26,6 +26,23 @@
 //   * Padding goes on <td>, never on <a>. Word ignores padding on inline
 //     elements, which silently collapses a button to bare text in Outlook.
 
+/* THE NAME COMES FROM ONE PLACE, and until 13 October 2026 it did not.
+ *
+ * pageTitle.js says, in its own comment, that renaming the product "should be
+ * one edit, not a grep" — and this file hard-coded the name twice anyway. So
+ * the rename to Three Comets reached the tab titles, the logo and the From
+ * header, and left "Fast Website Generator" at the top and bottom of every
+ * transactional email that went out for weeks.
+ *
+ * Nobody noticed because of where it sits: the sender name in the inbox was
+ * already right, and the two stale strings are a small bold line above the
+ * content and a grey copyright line under it — exactly the two places a
+ * person reading a password-reset email does not look.
+ *
+ * A single source of truth that one file is allowed to ignore is not a single
+ * source of truth. */
+const { APP_NAME } = require('./pageTitle');
+
 // Matches the app's own pages: src/views/login.html sets this background.
 const NAVY = '#082d5b';
 const INK = '#1c2530';
@@ -119,7 +136,7 @@ function emailLayout({ heading, preheader, intro, buttonLabel, url, after = [] }
 
           <tr>
             <td align="left" style="padding:0 8px 16px 8px; font-family:${FONT}; font-size:15px; font-weight:600; letter-spacing:0.2px; color:${NAVY};">
-              Fast Website Generator
+              ${escapeHtml(APP_NAME)}
             </td>
           </tr>
 
@@ -159,7 +176,7 @@ ${after.map(text => paragraph(escapeHtml(text), { muted: true, small: true })).j
 
           <tr>
             <td align="left" style="padding:20px 8px 0 8px; font-family:${FONT}; font-size:12px; line-height:1.5; color:${MUTED};">
-              &copy; ${year} Fast Website Generator. This is an automated message about your account.
+              &copy; ${year} ${escapeHtml(APP_NAME)}. This is an automated message about your account.
             </td>
           </tr>
 

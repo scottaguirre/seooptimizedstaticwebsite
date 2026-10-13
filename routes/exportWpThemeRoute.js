@@ -12,7 +12,8 @@ const BlogSite = require('../models/BlogSite');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
-const { pageTitle } = require('../utils/pageTitle');
+const { pageTitle, APP_NAME } = require('../utils/pageTitle');
+const { baseUrl } = require('../utils/baseUrl');
 
 const projectRoot = path.join(__dirname, '..');
 const baseDistDir = path.join(projectRoot, 'dist');
@@ -240,7 +241,12 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
     const { themeDir, summary } = await buildWordPressThemeFromModel(distDir, {
       themeSlug: THEME_SLUG,
       themeName: businessName ? `${businessName} Theme` : 'Local Business Theme',
-      themeAuthor: 'Static Website Generator',
+      /* WHO BUILT THIS, as the customer reads it under Appearance → Themes,
+       * beside the Three Comets tile. It said 'Static Website Generator' — a
+       * brand two renames out of date — in three separate files, none of
+       * which knew about the others. */
+      themeAuthor: APP_NAME,
+      authorUri: baseUrl(req),
       themeVersion: '1.0.0',
       outputRoot: workDir,
     });

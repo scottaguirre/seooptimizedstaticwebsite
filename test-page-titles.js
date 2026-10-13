@@ -41,6 +41,25 @@ function test(name, fn) {
 
 const read = p => fs.readFileSync(path.join(__dirname, p), 'utf8');
 
+/**
+ * The same file with its comments gone.
+ *
+ * SOURCE-READING TESTS MUST STRIP COMMENTS, and this suite is the fourth
+ * place in this project to learn it. On 13 October exportWpThemeRoute.js
+ * gained a comment explaining that the theme's Author field had said a brand
+ * two renames out of date — a comment whose whole subject is the product
+ * name, so it necessarily contains it. The assertion below went off, named
+ * the route as hard-coding the name, and stopped a deploy. The code was
+ * correct; the test could not tell an explanation from an offence.
+ *
+ * The files in this codebase quote old names, bad outputs and the exact
+ * strings they are warning about, because that is what a useful comment does.
+ * A test that reads source has to read the CODE.
+ */
+const code = p => read(p)
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+
 /** Every file in the app that renders a <title>. */
 const ROUTES = [
   'routes/adminRoute.js', 'routes/authRoute.js', 'routes/billingRoute.js',
@@ -188,7 +207,7 @@ test('THE PRODUCT NAME IS NOT REPEATED IN THE ROUTE FILES', () => {
    * every other test in this file and quietly survives the next rename —
    * which is the failure mode that produced this work in the first place. */
   for (const file of ROUTES) {
-    assert.ok(!read(file).includes(APP_NAME),
+    assert.ok(!code(file).includes(APP_NAME),
       `${file} hardcodes "${APP_NAME}" instead of using APP_NAME`);
   }
 });
@@ -201,7 +220,7 @@ test('the name the header SHOWS is the same constant, not a copy of it', () => {
   assert.match(appHeader(''), new RegExp(`alt="${APP_NAME}"`),
     'the rendered logo alt text and APP_NAME disagree');
 
-  assert.ok(!/alt="Three Comets"/.test(read('utils/appHeader.js')),
+  assert.ok(!new RegExp(`alt="${APP_NAME}"`).test(code('utils/appHeader.js')),
     'appHeader spells the product name out instead of reading APP_NAME');
 });
 

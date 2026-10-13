@@ -140,7 +140,7 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-home-anchors.js      # the generated SITE's home-page anchors; needs no php
     node test-blog-states.js
     node test-email-from.js        # the From header, incl. RFC 5322 quoting
-    node test-email-html.js        # the HTML email body and its escaping
+    node test-email-html.js        # the HTML email body, its escaping, and the brand it carries; 27
     node test-blog-report.js       # /blog-report, its two tabs, row numbers, dates and CSV; 103
     node test-removal-time.js      # the removal time a site reports, and its bounds; needs nothing
     node test-business-refresh.js  # the business a site reports, and what may overwrite what; 9
@@ -149,6 +149,7 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-blog-sites-delete.js # removing a revoked licence; revoked + no campaigns only
     node test-licence-binding.js   # one licence one site; the URL check and old-plugin safety
     node test-ping-health.js       # why a site is not being reached, in words you can forward to its host; 21
+    node test-theme-header.js      # the WordPress theme header: who built it, and no placeholder links; 10
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
@@ -2868,6 +2869,114 @@ A fixture sitting on a threshold cannot test what the threshold is applied to.
 
 Five mutations, all caught once those were fixed. `test-post-quality.js`
 37 → 42.
+
+## The same bug, three files over — 13 October 2026
+**And it stopped a deploy an hour later.** `test-page-titles.js` already had a
+guard — *"THE PRODUCT NAME IS NOT REPEATED IN THE ROUTE FILES"* — reading each
+route's source for the literal brand. The comment added above, whose entire
+subject is that the Author field named an out-of-date brand, necessarily
+contains the current one. The test fired, named the route as hard-coding the
+name, and `deploy.sh` refused to ship.
+
+The code was right; the test could not tell an explanation from an offence.
+**Fourth place in this project to learn that a source-reading test must strip
+comments first** — these files quote old names, bad outputs and the exact
+strings they warn about, because that is what a useful comment does. It reads
+`code()` now, not `read()`.
+
+One more thing fell out of it: that same test asserted
+`!/alt="Three Comets"/.test(...)` — the product name, typed into the test that
+polices typing the product name. It uses `APP_NAME` now too.
+
+
+
+The theme header shipped inside every exported WordPress theme said:
+
+    Author: Static Website Generator
+    Author URI: https://example.com/
+    Theme URI: https://example.com/
+
+A brand two renames out of date, and a dead placeholder link under it, in the
+panel a customer opens to find out who built their site — beside the Three
+Comets tile replaced an hour earlier.
+
+**Three files hard-coded that author string** — `exportWpThemeRoute.js`, the
+builder, and the generator — none aware of the others, while `pageTitle.js`
+held `APP_NAME` and asked, in its own comment, for exactly this not to happen.
+That is the SECOND instance in two days: `emailLayout.js` did the same with
+the same constant and reached customers' inboxes for weeks. A single source of
+truth that callers may ignore is not one.
+
+The URI lines are **omitted rather than filled**. A generated theme has no
+homepage of its own, so Theme URI has no honest value and WordPress is happy
+without the line; an empty `Author URI:` is no better than `example.com`,
+because WordPress renders it as an empty link. `authorUri` now comes from
+`baseUrl(req)`.
+
+**Two mutations survived the first draft, and both taught the same lesson.**
+Putting the old brand back in the ROUTE passed everything, and so did putting
+`example.com` back there — because every case tested `generateStyleCss()`
+directly, and **the route overrides its defaults**. The generator's default
+was never reached in production at all. *Testing the function the caller
+bypasses is testing the wrong thing.* The source check now covers all three
+files for old brands and for placeholder links.
+
+`test-theme-header.js`, 10 cases, **nine mutations, all caught**.
+
+## The one place the name lived, and the one file that ignored it — 13 October 2026
+
+Edwin sent the new Three Comets logo to replace the theme screenshot, and
+while finding where that file lived I told him the old name was also still in
+`utils/pageTitle.js`, `utils/sendEmail.js` and `utils/emailLayout.js`.
+
+He pushed back: *"are you sure about the emails because I've been sending
+emails and it's not showing that. could you double check?"*
+
+**He was right and I was wrong, from a grep I never followed up by opening a
+file.** Two of the three hits were COMMENTS recording the rename I was
+claiming had not happened:
+
+- `pageTitle.js` — `APP_NAME = 'Three Comets'`, with a comment naming the two
+  previous brands
+- `sendEmail.js` — `DEFAULT_FROM_NAME = 'Three Comets'`, same shape
+
+**The third was real.** `emailLayout.js` hard-coded `Fast Website Generator`
+twice — the wordmark above the content and the copyright line below it. The
+sender name in the inbox was already correct, which is why he had never seen
+it: the two stale strings sit exactly where nobody reading a password reset
+looks.
+
+`pageTitle.js` says, in its own comment, that renaming the product *"should be
+one edit, not a grep"*. One file ignored that and the whole guarantee was
+worth nothing. It reads `APP_NAME` now.
+
+**The suite passed throughout.** 22 cases on links, escaping and Outlook
+quirks, and not one asked what the email CALLED the product. Four new cases:
+the name is present, no previous name survives in either MIME part, and the
+wiring itself is asserted — because two hard-coded `'Three Comets'` strings
+would satisfy the first two and be the same bug waiting for the next rename.
+
+**Found by mutation, and worth keeping.** Deleting the header wordmark
+survived the first draft: the footer still carried the name, so
+`html.includes(APP_NAME)` passed. The two do different jobs — the header says
+who sent this before the recipient reads a word, and an email that has lost it
+looks like phishing, which is the worst thing a password reset can look like.
+The assertion counts occurrences now.
+
+`test-email-html.js` 22 → **27**. **Four mutations, all caught.**
+
+**Also today:** the WordPress theme's `screenshot.png` is the Three Comets
+mark, 1200×900. The first attempt had a visible seam, because the canvas was
+built in the OLD screenshot's navy and the new logo's own navy is three points
+different; rebuilt against the logo's background. And the comment above that
+copy described a *"wireframe of the layout, carrying no text"* — it had been a
+logo with a product name across the middle for months. A comment nobody checks
+against the file it describes is worse than none.
+
+**Still unchanged, and raised with Edwin:** the theme's Author field is
+`Static Website Generator`, in `routes/exportWpThemeRoute.js` and the defaults
+in `buildFromModel.js` and `generators/styleCss.js`. It is what a customer
+reads under Appearance → Themes, beside the new logo.
 
 ## The site works out for itself that nobody is calling — 12 October 2026 (plugin 0.43.0)
 

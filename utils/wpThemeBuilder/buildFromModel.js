@@ -30,6 +30,7 @@ const { generateTemplateHelpersPhp } = require('./generators/templateHelpersPhp'
 const { generateContactFormHandlerPhp } = require('./generators/contactFormHandlerPhp');
 const { generateContactFormJs } = require('./generators/contactFormJs');
 const { generateStyleCss } = require('./generators/styleCss');
+const { APP_NAME } = require('../pageTitle');
 
 // NOTE: blog automation used to be generated here (blog-automation-settings /
 // -engine / -scheduler). It has been removed. Scheduled posting now lives in
@@ -59,14 +60,17 @@ const { getHoursTimeText } = require('../formatDaysAndHoursForDisplay');
  * Build a theme from the generator's semantic model.
  *
  * @param {string} distDir  dist/user_<id>
- * @param {object} options  themeSlug, themeName, themeAuthor, themeVersion
+ * @param {object} options  themeSlug, themeName, themeAuthor, authorUri, themeVersion
  * @returns {Promise<object>} { themeSlug, themeDir, summary }
  */
 async function buildWordPressThemeFromModel(distDir, options = {}) {
   const {
     themeSlug = 'local-business-theme',
     themeName = 'Local Business Theme',
-    themeAuthor = 'Static Website Generator',
+    themeAuthor = APP_NAME,
+    /* Empty by default: see generators/styleCss.js for why the line is
+     * omitted rather than filled with example.com. */
+    authorUri = '',
     themeVersion = '1.0.0',
     // Where the theme folder is created. Defaults to inside distDir for
     // backwards compatibility, but callers should pass a path OUTSIDE dist/
@@ -215,7 +219,7 @@ async function buildWordPressThemeFromModel(distDir, options = {}) {
   // 7. style.css (theme header)
   await writeFile(
     path.join(wpThemeRoot, 'style.css'),
-    generateStyleCss({ themeName, themeSlug, themeAuthor, themeVersion })
+    generateStyleCss({ themeName, themeSlug, themeAuthor, themeVersion, authorUri })
   );
 
   // 7b. screenshot.png — the tile in Appearance → Themes.
@@ -224,12 +228,25 @@ async function buildWordPressThemeFromModel(distDir, options = {}) {
   // picker shows a grey placeholder, which reads as a broken or half-finished
   // theme sitting next to whatever else the customer has installed.
   //
-  // One fixed image for every theme, deliberately. It is a wireframe of the
-  // layout this builder produces — nav, hero, three service cards, footer —
-  // rather than a photograph, because a photograph has to claim a trade and a
-  // plumbing picture on a dentist's theme is worse than no picture at all. It
-  // carries no text either, so nothing here depends on which fonts happen to
-  // be installed on the server.
+  // One fixed image for every theme, deliberately. Not a photograph: a
+  // photograph has to claim a trade, and a plumbing picture on a dentist's
+  // theme is worse than no picture at all.
+  //
+  // IT IS THE THREE COMETS MARK, which is a choice and not a default. The
+  // tile sits in the customer's own Appearance → Themes beside whatever else
+  // they have installed, so it says who built the theme.
+  //
+  // The lettering is part of the image, so nothing here depends on which
+  // fonts happen to be installed on the server.
+  //
+  // 1200×900, which is what WordPress asks for and what it scales down to the
+  // 387×290 tile. Any other shape gets letterboxed and reads as a mistake.
+  //
+  // THIS COMMENT WAS WRONG UNTIL 13 October 2026. It described a wireframe
+  // "carrying no text", and the file beside it had been a logo with a product
+  // name across the middle for months — the PREVIOUS product name, at that.
+  // A comment nobody checks against the file it describes is worse than none,
+  // because the next person trusts it instead of opening the image.
   //
   // Missing file is not fatal. A theme without a screenshot is untidy; an
   // export that threw is a customer with nothing.
