@@ -2424,11 +2424,20 @@ class IE_Admin {
 	 */
 	private static function keep_draft( $form, $topics, $conflicts = array() ) {
 		$videos = isset( $_POST['video'] ) && is_array( $_POST['video'] ) ? $_POST['video'] : array();
+		$images = isset( $_POST['image'] ) && is_array( $_POST['image'] ) ? $_POST['image'] : array();
 
 		$rows = array();
 		foreach ( (array) $topics as $i => $topic ) {
 			$topic['video'] = isset( $videos[ $i ] )
 				? esc_url_raw( wp_unslash( $videos[ $i ] ) )
+				: '';
+			/* THE SAME RESCUE AS THE VIDEO, and for the same reason this
+			 * function exists at all: a refused plan threw away everything
+			 * the owner had typed into the columns, and they had to type it
+			 * all again to find out whether the second attempt was refused
+			 * too. */
+			$topic['image'] = isset( $images[ $i ] )
+				? esc_url_raw( wp_unslash( $images[ $i ] ) )
 				: '';
 			$rows[] = $topic;
 		}
@@ -3000,6 +3009,25 @@ class IE_Admin {
 						</p>
 					</td>
 				</tr>
+				<tr>
+					<th scope="row"><label for="ie_image_url"><?php esc_html_e( 'Image above the title (optional)', 'interlink-engine' ); ?></label></th>
+					<td>
+						<input name="image_url" id="ie_image_url" type="url" class="large-text"
+							value="<?php echo esc_attr( $value( 'image_url' ) ); ?>"
+							placeholder="https://example.com/photo.jpg">
+						<p class="description">
+							<?php
+							/* "FEATURED IMAGE" IS NOT SAID HERE, and the omission
+							 * is deliberate. It is WordPress's word for this,
+							 * and the owner asked for "an image above the title
+							 * of the article" — which is what they will be
+							 * looking for on the page. The place it appears is
+							 * more useful than the name of the slot it fills. */
+							esc_html_e( 'One picture, used above the title of every post in this campaign. It is copied into your Media Library once and shared by all of them. Set a different one per article in the Image column below. Leave both empty for none.', 'interlink-engine' );
+							?>
+						</p>
+					</td>
+				</tr>
 			</table>
 
 			<script>
@@ -3158,7 +3186,8 @@ class IE_Admin {
 							?>
 							<th style="width:19%"><?php esc_html_e( 'Main keyword of this post', 'interlink-engine' ); ?></th>
 							<th style="width:22%"><?php esc_html_e( 'How other posts will link to this post', 'interlink-engine' ); ?></th>
-							<th style="width:21%"><?php esc_html_e( 'Video (optional)', 'interlink-engine' ); ?></th>
+							<th style="width:14%"><?php esc_html_e( 'Video (optional)', 'interlink-engine' ); ?></th>
+							<th style="width:14%"><?php esc_html_e( 'Image (optional)', 'interlink-engine' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -3177,6 +3206,9 @@ class IE_Admin {
 							<td><input type="url" style="width:100%" name="video[<?php echo (int) $i; ?>]"
 								placeholder="<?php esc_attr_e( 'leave empty to use the campaign video', 'interlink-engine' ); ?>"
 								value="<?php echo esc_attr( isset( $topic['video'] ) ? $topic['video'] : '' ); ?>"></td>
+							<td><input type="url" style="width:100%" name="image[<?php echo (int) $i; ?>]"
+								placeholder="<?php esc_attr_e( 'leave empty to use the campaign image', 'interlink-engine' ); ?>"
+								value="<?php echo esc_attr( isset( $topic['image'] ) ? $topic['image'] : '' ); ?>"></td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>
@@ -3926,6 +3958,7 @@ class IE_Admin {
 				'home_page'      => isset( $_POST['home_page'] ) && '1' === (string) wp_unslash( $_POST['home_page'] ),
 
 				'video_url'      => isset( $_POST['video_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['video_url'] ) ) ) : '',
+				'image_url'      => isset( $_POST['image_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['image_url'] ) ) ) : '',
 				'every_days'     => isset( $_POST['every_days'] ) ? max( 1, min( 90, (int) $_POST['every_days'] ) ) : 14,
 				'publish_time'   => isset( $_POST['publish_time'] ) ? sanitize_text_field( wp_unslash( $_POST['publish_time'] ) ) : '09:00',
 				'start_date'     => self::read_start_date(),
@@ -3986,6 +4019,7 @@ class IE_Admin {
 			// reach a post. The publisher checks for http(s) again before using
 			// it — this value is stored, and storage outlives validation.
 			'video_url'      => isset( $_POST['video_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['video_url'] ) ) ) : '',
+			'image_url'      => isset( $_POST['image_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['image_url'] ) ) ) : '',
 			'every_days'     => isset( $_POST['every_days'] ) ? max( 1, min( 90, (int) $_POST['every_days'] ) ) : 14,
 			'publish_time'   => isset( $_POST['publish_time'] ) ? sanitize_text_field( wp_unslash( $_POST['publish_time'] ) ) : '09:00',
 			'start_date'     => self::read_start_date(),
@@ -4057,9 +4091,11 @@ class IE_Admin {
 		// Carry the videos back onto the rows, or pressing this twice would
 		// clear every URL already typed.
 		$videos = self::collect_topic_videos();
+		$images = self::collect_topic_images();
 		foreach ( $topics as $i => $topic ) {
 			$key = strtolower( $topic['topic'] );
 			$topics[ $i ]['video'] = isset( $videos[ $key ] ) ? $videos[ $key ] : '';
+			$topics[ $i ]['image'] = isset( $images[ $key ] ) ? $images[ $key ] : '';
 		}
 
 		$draft = self::draft();
@@ -4526,6 +4562,12 @@ class IE_Admin {
 			'video_url'    => $form['video_url'],
 			'slot_videos'  => self::collect_topic_videos(),
 
+			// The picture, on the same terms. This side downloads it into the
+			// media library at publish time; the server neither sees it nor
+			// needs to.
+			'image_url'    => $form['image_url'],
+			'slot_images'  => self::collect_topic_images(),
+
 			/* Also never sent to the server, for the same reason as the video:
 			 * which post type WordPress uses and which page sits at the root
 			 * are facts about THIS SITE, not about the campaign the server
@@ -4845,13 +4887,41 @@ class IE_Admin {
 	 * @return array lowercased topic text => url
 	 */
 	private static function collect_topic_videos() {
+		return self::collect_topic_urls( 'video' );
+	}
+
+	/** The same, for the per-article picture. */
+	private static function collect_topic_images() {
+		return self::collect_topic_urls( 'image' );
+	}
+
+	/**
+	 * One column of URLs from the topics table, keyed by topic text.
+	 *
+	 * ONE FUNCTION RATHER THAN TWO COPIES. The video version was written
+	 * first; adding the image column by duplicating it would have produced
+	 * two identical twenty-line bodies that must be kept in step for ever,
+	 * and this project has paid for that pattern three times in two days with
+	 * the product's own name.
+	 *
+	 * KEYED BY TOPIC TEXT, NOT ROW NUMBER, and the note above the matching
+	 * code in class-ie-campaigns.php says why: the owner typed these against
+	 * rows on a form and the slots come back from the server. Matching on
+	 * position looks correct and is wrong the first time the server drops or
+	 * reorders a topic — every value lands on its neighbour's article,
+	 * silently.
+	 *
+	 * @param string $field the POST array to read: 'video' or 'image'
+	 */
+	private static function collect_topic_urls( $field ) {
 		$map = array();
 
 		if ( empty( $_POST['topic'] ) || ! is_array( $_POST['topic'] ) ) {
 			return $map;
 		}
 
-		$use = isset( $_POST['use'] ) && is_array( $_POST['use'] ) ? $_POST['use'] : array();
+		$use    = isset( $_POST['use'] ) && is_array( $_POST['use'] ) ? $_POST['use'] : array();
+		$column = isset( $_POST[ $field ] ) && is_array( $_POST[ $field ] ) ? $_POST[ $field ] : array();
 
 		foreach ( $_POST['topic'] as $i => $raw ) {
 			if ( ! isset( $use[ $i ] ) ) {
@@ -4859,8 +4929,8 @@ class IE_Admin {
 			}
 
 			$topic = sanitize_text_field( wp_unslash( $raw ) );
-			$url   = isset( $_POST['video'][ $i ] )
-				? esc_url_raw( trim( wp_unslash( $_POST['video'][ $i ] ) ) )
+			$url   = isset( $column[ $i ] )
+				? esc_url_raw( trim( wp_unslash( $column[ $i ] ) ) )
 				: '';
 
 			if ( '' !== $topic && '' !== $url ) {

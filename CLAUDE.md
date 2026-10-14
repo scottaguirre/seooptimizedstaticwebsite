@@ -150,14 +150,17 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-licence-binding.js   # one licence one site; the URL check and old-plugin safety
     node test-ping-health.js       # why a site is not being reached, in words you can forward to its host; 21
     node test-theme-header.js      # the WordPress theme header: who built it, and no placeholder links; 10
+    node test-brand-name.js        # where the product's name may be typed out, and nowhere else; 7
+    node test-dashboard-card.js    # the dashboard card while a build is still running; 15
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
-    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, refused plans, CSV upload, start date, watch window, outbound poll, blocked-host notice, 183
+    php wp-plugin/test-admin-tabs.php     # RENDERS class-ie-admin.php: folds, filter, dialogs, refused plans, CSV upload, start date, watch window, outbound poll, blocked-host notice, image option, 188
     php wp-plugin/test-orphan-links.php   # placeholder repair, ring close, pause guards, SEO titles, removal queue, 70
     php wp-plugin/test-writing-progress.php # "4 of 11 written": stored every poll, cleared on stop and on pause, 17
     php wp-plugin/test-business-source.php # when a site may answer for its own blank fields, 11
     php wp-plugin/test-host-blocked.php   # when the card may say the host is blocking us, and the five ways it must not, 15
+    php wp-plugin/test-blog-image.php     # one picture above the title: fetched once, described per post, never fatal, 40
 
 177 assertions in all; last run green on 30 September under PHP 8.4.
 
@@ -2869,6 +2872,207 @@ A fixture sitting on a threshold cannot test what the threshold is applied to.
 
 Five mutations, all caught once those were fixed. `test-post-quality.js`
 37 → 42.
+
+## "Generated 2 minutes ago", about a site that was half written — 14 October 2026
+
+Edwin submitted a sixty-page build, closed the tab, came back to the dashboard
+and read:
+
+    Your current website
+    22 pages · generated 2 minutes ago   [Preview] [Download] [Convert]
+
+Preview gave him `Cannot GET /dist/user_6a85…/`. **His first question was
+whether closing the tab had crashed the server.**
+
+Nothing was broken. `getCurrentSite()` counts the `.html` files on disk and
+twenty-two existed — but `index.html` is written near the END of a build, by
+`buildAboutUsPage.js`, and `express.static` has nothing to serve for a
+directory without one.
+
+**The count was honest and the verb was not.** "Generated 2 minutes ago"
+describes a finished thing. A file count cannot tell finished from half way;
+the job queue can. So the STATE now comes from the job and the count stays
+underneath it as detail.
+
+The card has three states, and the middle one is new. A build in flight gets
+one link — to the progress page that actually knows how far along it is — and
+**the three buttons are absent, not disabled.** A greyed-out button invites a
+click and explains nothing.
+
+**The rule lives in `utils/dashboardSite.js`, not in the template.** A
+template literal inside a route handler cannot be called by a test without
+stubbing Express, a session, Mongo and the CSRF field — and what cannot be
+tested directly ends up guarded by a source grep, which this project has now
+been bitten by four times.
+
+**`ACTIVE` is exported and the dashboard query uses it.** Two separate lists
+of "statuses that mean in flight" would disagree the first time one was added:
+the card would describe a build the query never found, or the query would find
+one the card calls finished.
+
+**And the back button.** Edwin pressed Back on the progress page and saw "40%
+— Writing location pages", the figure from the moment he left, on a build that
+had moved on. Browsers keep a frozen snapshot — markup AND paused JavaScript —
+so the polling does not save it: the timers are frozen too, and the page never
+resumes to correct itself. `Cache-Control: no-store` is what disables that
+cache, and a progress page is the one kind where a stale number is worse than
+a slow one.
+
+**Two mutations named real gaps.** Reading "is there a job" rather than "is
+there a RUNNING job" would have left the card saying "still generating" for
+ever after the first successful build. And deleting the branch that SELECTS
+the building card passed the first draft, because the card was still defined
+above and the source slice still found its markup — a card nothing renders is
+dead code that reads as a feature.
+
+**Also confirmed while reading:** a second generation for the same user is
+already refused. `generateRoute.js` checks the job collection for `queued` or
+`running` and answers 409 with a link to the job in flight. Two builds writing
+into one `dist/user_…` would have corrupted both.
+
+`test-dashboard-card.js`, 15 cases, **seven mutations, all caught.**
+
+## One picture, above the title — 13 October 2026 (plugin 0.44.0)
+
+Edwin asked for an image option "like the YouTube Video option", placed "above
+the title of the article". Those two halves of the sentence are in conflict
+and the second one wins.
+
+**The video is a `[embed]` shortcode in post_content, and nothing in
+post_content can sit above a title** — WordPress renders the content below it,
+in every theme there is. The only thing that appears above the title is the
+FEATURED IMAGE, and even that is the theme's decision. So this could not copy
+the video, and the whole difference in difficulty is that a featured image is
+an attachment id rather than a URL: the address has to be downloaded into the
+customer's media library before it can be used at all.
+
+**Three consequences, each a way to get it wrong.**
+
+**One download per URL.** Twenty-two articles sharing a picture must not put
+twenty-two copies in a media library, nor pull the same bytes twenty-two times
+through a shared host. The attachment id is kept against a normalised hash of
+the address. The cache also checks the attachment is STILL THERE — a customer
+who tidies their library otherwise leaves every post in the campaign with a
+broken thumbnail, silently, because nothing errors. A dead id is forgotten, so
+the next post fetches a fresh copy instead of the cache poisoning itself
+permanently over one deletion.
+
+**A shared attachment has one alt text**, because in WordPress alt text belongs
+to the library item and not to the post using it. Twenty-two articles on
+twenty-two subjects describing their picture identically is the opposite of
+what alt text is for, on a product sold for search visibility. So each post
+stores its own and a filter swaps it in. Edwin chose this knowing the trade:
+exact while the plugin is installed, and if it is ever removed the images and
+posts stay and the alt quietly falls back to the shared one. It gets less
+good; nothing breaks.
+
+**The alt text is the MAIN KEYWORD, not the headline** — Edwin's correction,
+and he was right. A headline is written to be clicked ("Seven Signs Your Roof
+Is About To Fail") and describes the article rather than the picture. The main
+keyword is the plain phrase the post is about. The headline is the fallback
+when that column is blank.
+
+**A failed download is not a failed post.** The article is written and charged
+for before any of this runs. Every failure returns 0 and the post publishes
+without a picture.
+
+**Four mutations survived first drafts, and each named a real gap:**
+
+- Deleting the ownership check passed, because the only fixture using someone
+  else's attachment had it somewhere that was not the thumbnail — a different
+  guard caught it. The real case is ordinary: the customer swaps our article's
+  featured image for a photo of their own. Without the check we would describe
+  THEIR photograph with OUR keyword, to a screen reader, as though it were
+  true.
+- Deleting the `usable()` guard passed, because the fixture made the download
+  fail anyway — so "refused before trying" and "tried and failed" looked
+  identical, and only one of them is the behaviour that matters. A PDF must
+  never be REQUESTED.
+- The temp-file cleanup could not be tested at all until the `download_url`
+  stub actually wrote a file. A stub returning a path to nothing cannot
+  exercise a branch guarded by `file_exists()`, and the test would have passed
+  against code that never cleans up — on shared hosting, that is the account's
+  whole disk quota over a month of nightly failures.
+- `collect_topic_videos()` was generalised rather than copied. Two identical
+  twenty-line bodies kept in step for ever is the pattern this project paid
+  for three times in two days with its own name.
+
+**And `test-pillar-plugin.php` went red the moment the publisher was wired** —
+"Class IE_Image not found" on every case driving `insert_post()`. That is the
+suite working: it exercises the real publisher, so a new dependency of the
+publisher is a new dependency of the suite.
+
+`test-blog-image.php` 40 cases, `test-admin-tabs.php` 183 → **188**,
+`test-pillar-plugin.php` 62 → **67**. **Twenty-five mutations, all caught.**
+
+## A list of where the name may be typed — 13 October 2026
+**It refused a deploy within the hour, over a file that is not the app.**
+Edwin ran `./deploy.sh --dry-run` and got five brand strings in
+`Claude outputs/email-preview-reset.html` — mockups from an old session, in a
+folder `.rsync-exclude` has blocked from deploys for months.
+
+**I built a whole-tree scanner and validated it against a partial tree.** This
+container holds a staged subset of the repo; two other suites had already
+failed here today on files that were never copied over, so the limitation was
+in front of me and I shipped anyway.
+
+The fix is not a longer skip list. **The honest definition of "the app" is
+"what gets deployed", and that already exists** in `.rsync-exclude` —
+maintained carefully, because getting it wrong takes production down. The
+walker reads it now and understands its three shapes: a directory
+(`node_modules/`), a bare name (`.env`), and a glob (`*.zip`). A scratch
+folder cannot break a deploy, and a new one needs no edit here.
+
+Reproduced the failure locally first — `Claude outputs/` and `tools/` recreated
+with brand strings in them — rather than trusting that the fix worked on a tree
+that does not have the problem.
+
+Two more cases, and three more mutations including today's bug verbatim.
+`test-brand-name.js` 5 → **7**.
+
+**The lesson, which is not about brands.** A guard that fails on things the
+product does not ship is not protecting the product; it is training its owner
+to ignore it.
+
+
+
+After the second instance in two days, the question was whether there was a
+third. A sweep of every code file, comments stripped, for all four brands this
+product has traded under plus both domains.
+
+**There was.** `scripts/check-email-health.js` — the nightly alert — had
+`[Three Comets]` in its subject and `threecomets.com` in its body. It reads
+`APP_NAME` now, and the host comes from `baseUrl()`.
+
+`utils/sendEmail.js` held a second copy as `DEFAULT_FROM_NAME`, beside a
+comment calling it "the brand's last line". Two last lines are one too many;
+it reads `APP_NAME`.
+
+**Ten occurrences survive, each with a reason:**
+
+- `utils/pageTitle.js` — the source of truth itself.
+- `src/views/*.html` ×4 — static files served to a browser, which cannot
+  import a constant. `test-page-titles.js` already asserts each `<title>`
+  MATCHES `APP_NAME`, so they are checked rather than wired, which is the most
+  that is available.
+- `utils/sendEmail.js` `DEFAULT_FROM_ADDRESS` — an email address is a DNS
+  fact, not a display string. Renaming the product does not move the mailbox,
+  and a From address built from a display name breaks the moment the name has
+  a space in it.
+- The WordPress plugin ×4 — a second codebase in another language that cannot
+  `require()` a JavaScript constant, and whose occurrences are translatable
+  strings where WordPress convention keeps a brand literal so the extractor
+  can see it. Out of scope, deliberately.
+
+`test-brand-name.js` is **an allow-list, not a search**. Every legitimate
+holder is named with its reason AND its exact count — allowing a file without
+bounding it means the next five copies land somewhere already permitted and
+nothing notices. The list is itself checked: every entry must point at a file
+that exists and carry a reason, and the walker must still be finding the app,
+because a bad skip rule would make every case pass by examining nothing.
+
+5 cases, **five mutations, all caught** — including an extra copy inside an
+already-allowed file, and a walker that stops seeing `utils/`.
 
 ## The same bug, three files over — 13 October 2026
 **And it stopped a deploy an hour later.** `test-page-titles.js` already had a

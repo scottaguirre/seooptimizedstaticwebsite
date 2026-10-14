@@ -48,7 +48,21 @@ const buildLocationPages = async function (
     // the whole site rather than within one page.
     //
     // Defaults to an empty Map so this builder still runs standalone.
-    usedFaqQuestions = new Map()
+    usedFaqQuestions = new Map(),
+    // Called once per location page, AFTER that page is on disk.
+    //
+    // WHY THIS PARAMETER EXISTS. Edwin watched a sixty-page build sit at
+    // "40% — Writing location pages" while the folder filled up to
+    // fifty-seven files, and asked whether it was stuck. It was not: this
+    // builder is a BATCH. runGeneration reported `done` once before calling
+    // it and once after it returned, so the longest phase of the build —
+    // one model call per town — moved the bar not at all.
+    //
+    // Only this loop knows when a town has finished, so the progress report
+    // has to come from in here.
+    //
+    // Optional, and last, so every existing caller is untouched.
+    onPageWritten = null
 ) {
 
   if (!(globalValues.wantsLocationPages && globalValues.locationPages.length)) return [];
@@ -384,6 +398,30 @@ const buildLocationPages = async function (
       cssName: `location-${locationSlug}`,
       styleKey: globalValues.styleKey
     });
+
+    /* ONE TOWN DONE — say so, now, not when the batch returns.
+     *
+     * Here rather than straight after writeFileSync because a page without
+     * its stylesheet stub is not finished; and before the model pass below
+     * because that is bookkeeping for the exporter, not work the owner is
+     * waiting on.
+     *
+     * IN A TRY/CATCH, AND THE CATCH IS THE POINT. The callback writes to
+     * Mongo. A progress update that cannot be saved — a dropped connection,
+     * a replica-set election — must not throw away a town that has already
+     * been written to disk and abandon the remaining ones. The bar stalling
+     * is a cosmetic failure; losing the build is not. */
+    if ('function' === typeof onPageWritten) {
+      try {
+        await onPageWritten({
+          slug: `location-${locationSlug}`,
+          display: locationPage.display || locationSlug,
+          index: Number(index),
+        });
+      } catch (err) {
+        console.warn(`   ⚠️ could not report progress for ${locationSlug}: ${err.message}`);
+      }
+    }
 
     // === Semantic model for this location page ===
     //

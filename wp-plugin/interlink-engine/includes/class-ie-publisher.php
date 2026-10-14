@@ -781,6 +781,21 @@ class IE_Publisher {
 			return $post_id;
 		}
 
+		/* THE PICTURE ABOVE THE TITLE.
+		 *
+		 * After the post exists, because a featured image is an attachment id
+		 * attached to a post id, and before anything else that could fail —
+		 * so a campaign whose images are all broken still gets its SEO meta,
+		 * its links and its schedule.
+		 *
+		 * NOT GUARDED, AND NOT CHECKED. apply_to() returns 0 for every
+		 * failure there is: no picture configured, an address we will not
+		 * fetch, a 404, a timeout, a disk with no room. None of them is a
+		 * reason to stop — the article is already written and already
+		 * charged for, and a post without a picture is worth incomparably
+		 * more than no post. The reason goes in the plugin log. */
+		IE_Image::apply_to( $post_id, $campaign, $slot );
+
 		/* THE SEO TITLE, WHICH WAS NEVER WRITTEN AT ALL.
 		 *
 		 * The generated theme filters `pre_get_document_title` and returns

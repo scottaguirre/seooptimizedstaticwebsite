@@ -12,6 +12,7 @@
 // no route or template needs to change.
 
 const { log } = require('./logger');
+const { APP_NAME } = require('./pageTitle');
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -39,7 +40,10 @@ function getResend() {
  * Resend's sandbox address until 8 October — an unset EMAIL_FROM_NAME on any
  * deploy would have put the old name in a stranger's inbox.
  */
-const DEFAULT_FROM_NAME = 'Three Comets';
+/* READ, NOT TYPED. This was a second copy of the brand sitting beside the
+ * one in pageTitle.js — which the comment above already calls "the brand's
+ * last line". Two last lines are one too many. */
+const DEFAULT_FROM_NAME = APP_NAME;
 const DEFAULT_FROM_ADDRESS = 'hello@threecomets.com';
 
 // True for a value already written as `Name <addr>`.

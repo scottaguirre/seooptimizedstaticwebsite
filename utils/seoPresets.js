@@ -411,6 +411,28 @@ function getPreset(siteMode) {
 }
 
 /**
+ * The pages every full site gets, whatever the owner chose in the wizard.
+ *
+ * Not billed per page — the website base charge covers these, along with the
+ * About Us content, the FAQ answers and the sitemap. They are counted here
+ * anyway, because this number answers "how far through is my build", not
+ * "what did I pay for". They really are written, and a total that leaves
+ * them out ends a sixty-page build with sixty-four files in the folder:
+ * Edwin watched his dashboard climb past the total and asked which number
+ * was wrong.
+ *
+ * EXPORTED, because runGeneration has to count the same four. The total and
+ * the counter are computed in two different files — the route sets the total
+ * when the job is created, the generator advances the counter as it works —
+ * and if they ever disagree by one, the bar stops short of 100% on every
+ * build, or claims to be finished while pages are still being written.
+ *
+ * A named list rather than a bare 4, so a fifth page is counted by being
+ * added to it.
+ */
+const FIXED_PAGES = ['contact', 'privacy-policy', 'terms-of-use', 'accessibility'];
+
+/**
  * How many pages this build will actually write.
  *
  * This is the denominator on the progress bar, and it used to be computed in
@@ -437,7 +459,12 @@ function pagesToBuild(siteMode, pages, locationCount = 0) {
   const services = pages && typeof pages === 'object' ? Object.keys(pages).length : 0;
   const locations = Math.max(0, Number(locationCount) || 0);
 
-  return services + locations + 1;   // + the home page
+  // + the home page, + contact and the three legal pages.
+  //
+  // The fixed four are only in the non-sample branch: a design sample writes
+  // one page and no contact or legal pages at all, which is why the early
+  // return above is not `1 + FIXED_PAGES.length`.
+  return services + locations + 1 + FIXED_PAGES.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +530,7 @@ module.exports = {
   getPreset,
   normalizeSiteMode,
   pagesToBuild,
+  FIXED_PAGES,
   assetFile,
   assetPath,
   imageAlt,

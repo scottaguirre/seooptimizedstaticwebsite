@@ -8,6 +8,8 @@ const User = require('../models/User');
 const BlogSite = require('../models/BlogSite');
 const requireAuth = require('../middleware/requireAuth');
 const { getCurrentSite } = require('../utils/currentSite');
+const { siteCardState, ACTIVE } = require('../utils/dashboardSite');
+const Job = require('../models/Job');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { renderAuthPage } = require('../utils/renderAuthPage');
@@ -269,6 +271,30 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     // only way back would be to regenerate and spend credits again.
     const site = getCurrentSite(req.session.userId);
 
+    /* IS ONE BEING BUILT RIGHT NOW?
+     *
+     * getCurrentSite() counts .html files, which cannot tell a finished site
+     * from a half-written one — index.html is written near the END of a
+     * build, so a directory with thirty-seven pages in it can still have
+     * nothing for Preview to serve. The job queue knows; the filesystem does
+     * not. See utils/dashboardSite.js.
+     *
+     * Swallowed like the blog count below: the dashboard is the page people
+     * land on after logging in, and it must not fail to render because one
+     * optional lookup could not be made. A missed job shows the old card,
+     * which is what shipped for months. */
+    let activeJob = null;
+    try {
+      activeJob = await Job.findOne({
+        user: req.session.userId,
+        status: { $in: ACTIVE },
+      }).sort({ createdAt: -1 }).lean();
+    } catch (err) {
+      log.error('dashboard.activeJob.failed', err, { requestId: req.id });
+    }
+
+    const cardState = siteCardState(site, activeJob);
+
     // Blog Automation had no entry point anywhere in the app. /blog-sites was
     // reachable only by typing the URL, which means the feature effectively
     // did not exist for anyone who had not been told about it — including
@@ -327,17 +353,36 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         </div>
       </div>`;
 
-    const siteCard = site ? `
+    /* THREE STATES, AND THE MIDDLE ONE IS NEW.
+     *
+     * A build in flight gets a card that says so and ONE link, to the page
+     * that actually knows how far along it is. The three buttons are not
+     * disabled — they are absent. A greyed-out button invites a click and
+     * explains nothing; one live link that goes somewhere useful is worth
+     * more than three dead ones. */
+    const buildingCard = `
+      <div class="card bg-secondary-subtle text-dark mb-4">
+        <div class="card-body">
+          <h5 class="card-title mb-1">Your current website</h5>
+          <p class="card-subtitle text-muted mb-0">${cardState.subtitle}</p>
+
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <a href="/jobs/${cardState.jobId}" class="btn btn-primary">See progress</a>
+          </div>
+
+          <p class="text-muted small mb-0 mt-3">
+            Closing this page will not stop it — the work carries on either way.
+          </p>
+        </div>
+      </div>`;
+
+    const siteCard = 'building' === cardState.state ? buildingCard : site ? `
       <div class="card bg-secondary-subtle text-dark mb-4">
         <div class="card-body">
           <h5 class="card-title mb-1">
             ${site.businessName ? site.businessName : 'Your current website'}
           </h5>
-          <p class="card-subtitle text-muted mb-0">
-            ${site.location ? site.location + ' &middot; ' : ''}
-            ${site.pageCount} page${site.pageCount === 1 ? '' : 's'}
-            &middot; generated ${site.generatedAgo}
-          </p>
+          <p class="card-subtitle text-muted mb-0">${cardState.subtitle}</p>
 
           <div class="d-flex flex-wrap gap-2 mt-3">
             <a href="${site.previewUrl}/" target="_blank" rel="noopener"

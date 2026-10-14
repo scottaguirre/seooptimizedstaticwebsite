@@ -375,6 +375,27 @@ $PLUGIN = __DIR__ . '/interlink-engine';
 
 require_once $PLUGIN . '/includes/class-ie-settings.php';
 require_once $PLUGIN . '/includes/class-ie-campaigns.php';
+/* THE REAL IE_Image, because insert_post() now calls it.
+ *
+ * This suite went red the moment the picture was wired in — "Class IE_Image
+ * not found" on every case that drives insert_post(). That is the suite doing
+ * its job: it exercises the real publisher, so a new dependency of the
+ * publisher is a new dependency of the suite.
+ *
+ * The real class rather than a stub, for the reason stated everywhere else in
+ * this project: a stub of a class you own is a copy that must be maintained,
+ * and it will be forgotten. What it needs from WordPress is stubbed below,
+ * and what it DOES with a picture is covered exhaustively in
+ * test-blog-image.php. Here it only has to not explode. */
+function get_post_type( $id ) { return isset( $GLOBALS['ie_attachments'][ $id ] ) ? 'attachment' : false; }
+function get_the_ID() { return false; }
+function get_post_thumbnail_id( $id = null ) { return 0; }
+function set_post_thumbnail( $post_id, $id ) { $GLOBALS['ie_thumbs'][ $post_id ] = (int) $id; return true; }
+
+$GLOBALS['ie_attachments'] = array();
+$GLOBALS['ie_thumbs']      = array();
+
+require_once $PLUGIN . '/includes/class-ie-image.php';
 require_once $PLUGIN . '/includes/class-ie-publisher.php';
 require_once $PLUGIN . '/includes/class-ie-seo.php';
 require_once $PLUGIN . '/includes/class-ie-hygiene.php';

@@ -124,7 +124,10 @@ for suite in \
   test-ping-detail.js \
   test-job-requeue.js \
   test-ping-health.js \
-  test-theme-header.js
+  test-theme-header.js \
+  test-brand-name.js \
+  test-dashboard-card.js \
+  test-build-progress.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.
@@ -159,6 +162,7 @@ if command -v php > /dev/null 2>&1; then
     wp-plugin/test-api-body.php \
     wp-plugin/test-writing-progress.php \
     wp-plugin/test-host-blocked.php \
+    wp-plugin/test-blog-image.php \
     wp-plugin/test-business-source.php
   do
     if ! php "$suite" > /dev/null; then

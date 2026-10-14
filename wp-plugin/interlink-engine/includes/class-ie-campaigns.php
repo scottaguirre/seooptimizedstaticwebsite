@@ -94,6 +94,12 @@ class IE_Campaigns {
 			? $settings['slot_videos']
 			: array();
 
+		/* Per-article pictures, matched the same way and for the same reason.
+		 * See the note above: row number is not an identity. */
+		$slot_images = isset( $settings['slot_images'] ) && is_array( $settings['slot_images'] )
+			? $settings['slot_images']
+			: array();
+
 		$slots = array();
 		foreach ( (array) ( isset( $plan['slots'] ) ? $plan['slots'] : array() ) as $i => $s ) {
 			$index = isset( $s['index'] ) ? (int) $s['index'] : $i;
@@ -105,6 +111,8 @@ class IE_Campaigns {
 				'topic'        => $topic,
 				// '' means "use the campaign's video", not "no video".
 				'video_url'    => isset( $slot_videos[ $key ] ) ? $slot_videos[ $key ] : '',
+				// '' means "use the campaign's picture", not "no picture".
+				'image_url'    => isset( $slot_images[ $key ] ) ? $slot_images[ $key ] : '',
 				'target_query' => isset( $s['targetQuery'] ) ? $s['targetQuery'] : '',
 				'publish_at'   => isset( $s['publishAt'] ) ? $s['publishAt'] : '',
 
@@ -206,6 +214,17 @@ class IE_Campaigns {
 			 * to fill in twelve times is a field that ends up empty.
 			 */
 			'video_url'          => isset( $settings['video_url'] ) ? $settings['video_url'] : '',
+			/**
+			 * One optional picture, used as the featured image of every post
+			 * in this campaign.
+			 *
+			 * NOT IN THE CONTENT, which is where the video goes. A featured
+			 * image is the only thing that appears ABOVE the title, and it is
+			 * an attachment id rather than a URL — so this address is
+			 * downloaded into the media library once and shared. See
+			 * class-ie-image.php.
+			 */
+			'image_url'          => isset( $settings['image_url'] ) ? $settings['image_url'] : '',
 			'slots'              => $slots,
 			// Shown on the campaign card so the owner sees what a campaign will
 			// cost before its first post is written, not after.

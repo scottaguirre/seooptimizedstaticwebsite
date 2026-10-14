@@ -3,7 +3,7 @@
  * Plugin Name:       Three Comets Blog Generator
  * Plugin URI:        https://threecomets.com
  * Description:       Plans a quarter of blog posts, writes them all at once, schedules them across the weeks, and wires every one into the service page you want to rank.
- * Version:           0.43.0
+ * Version:           0.44.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Three Comets
@@ -441,7 +441,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'IE_VERSION', '0.43.0' );
+define( 'IE_VERSION', '0.44.0' );
 define( 'IE_FILE', __FILE__ );
 define( 'IE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IE_URL', plugin_dir_url( __FILE__ ) );
@@ -451,6 +451,7 @@ require_once IE_DIR . 'includes/class-ie-settings.php';
 require_once IE_DIR . 'includes/class-ie-api.php';
 require_once IE_DIR . 'includes/class-ie-campaigns.php';
 require_once IE_DIR . 'includes/class-ie-reach.php';
+require_once IE_DIR . 'includes/class-ie-image.php';
 require_once IE_DIR . 'includes/class-ie-links.php';
 require_once IE_DIR . 'includes/class-ie-publisher.php';
 require_once IE_DIR . 'includes/class-ie-rest.php';
@@ -513,6 +514,14 @@ IE_Publisher::init();
  * plumber's blog has no visitors. A site relying on this alone would publish
  * nothing. That is exactly why the schedule lives on the server.
  */
+/* THE ALT-TEXT FILTER, registered on every request and not only in wp-admin.
+ *
+ * It runs when a featured image is DRAWN, which happens on the public site —
+ * archives, single posts, related-post blocks — and almost never in the
+ * admin. Registering it inside an is_admin() branch would mean the one place
+ * it matters is the one place it is absent. */
+IE_Image::init();
+
 add_action( 'ie_catch_up', array( 'IE_Publisher', 'run_catch_up' ) );
 
 /**

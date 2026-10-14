@@ -59,7 +59,7 @@ const { generationLimiter } = require('./concurrencyLimiter');
 const { fillLegalLinks } = require('./legalLinks');
 const { buildContactPage } = require('./buildContactPage');
 const { buildContactFormHtml } = require('./pageParts');
-const { MODES, getPreset, normalizeSiteMode, assetFile, assetPath, imageAlt } = require('./seoPresets');
+const { MODES, getPreset, normalizeSiteMode, assetFile, assetPath, imageAlt, FIXED_PAGES } = require('./seoPresets');
 const { buildRankFastInterlinksMap, interlinkSlugs } = require('./buildRankFastLinks');
 const { canonicalTag } = require('./canonicalUrl');
 const { siteBaseUrl } = require('./buildSitemap');
@@ -1022,6 +1022,33 @@ async function runGeneration(ctx) {
     );
 
 
+    /* CONTACT AND THE THREE LEGAL PAGES COUNT TOWARD THE TOTAL.
+     *
+     * pagesToBuild() adds FIXED_PAGES to the denominator, so all four have
+     * to be counted here. Miss them and the bar stops four pages short of
+     * 100% on every build — a failure that is invisible until the end of a
+     * twenty-minute run, and that nothing else would report.
+     *
+     * ONE REPORT RATHER THAN FOUR. The three legal pages are template fills
+     * that finish in milliseconds, and contact is a single model call, so
+     * all four land within a second or two of each other. Splitting them
+     * would mean splitting FIXED_PAGES.length into a 3 and a 1 — two magic
+     * numbers that have to add back up to a list defined in another file.
+     *
+     * COUNTED WITHOUT LOOKING AT THE RETURN VALUES, deliberately. Each
+     * builder returns undefined when its file already exists, which is the
+     * normal case for a RESUMED build picking up a dist folder that already
+     * has privacy-policy.html in it. Counting only what was freshly written
+     * would leave every resumed build permanently short.
+     *
+     * Not for a sample: it writes one page and no contact or legal pages,
+     * and pagesToBuild returns 1 for it. */
+    if (!isSample) {
+      pagesDone += FIXED_PAGES.length;
+      await report({ done: pagesDone, current: 'Contact and legal pages' });
+    }
+
+
     // Create location pages
     await report({ stage: 'Writing location pages', current: '', done: pagesDone });
 
@@ -1032,7 +1059,30 @@ async function runGeneration(ctx) {
             pages,           // ⬅️ pass pages so Services dropdown can be built
             uploadedImages,
             interlinkMap,
-            usedFaqQuestions // ⬅️ mutated per town; no question repeats a page
+            usedFaqQuestions, // ⬅️ mutated per town; no question repeats a page
+
+            /* THE BAR MOVES THROUGH THE LONGEST PHASE OF THE BUILD.
+             *
+             * This used to be two reports — one above, one after the batch
+             * returned — with twenty minutes and up to forty towns in
+             * between. Edwin had fifty-seven files on disk and a bar reading
+             * 40%, and asked whether it was stuck.
+             *
+             * The town's name goes in `current` so the line underneath says
+             * which one, the way the service-page loop does.
+             *
+             * `pagesDone` is incremented HERE and nowhere else for
+             * locations — the `+= builtLocations.length` that used to follow
+             * this call is gone. Leaving both would have counted every town
+             * twice and taken the bar past 100%. */
+            async function (written) {
+              pagesDone += 1;
+              await report({
+                stage: 'Writing location pages',
+                current: written.display,
+                done: pagesDone,
+              });
+            }
     );
 
 
@@ -1056,14 +1106,25 @@ async function runGeneration(ctx) {
     // === Assemble and persist the semantic model ===
     // Order matters: front page first, then services, then locations, then legal.
     contentModel.pages.unshift(...(aboutPage ? [aboutPage] : []));
-    // Location pages are built in a batch, so they are counted together
-    // once buildLocationPages returns rather than one at a time.
-    //
     // `|| []` because buildLocationPages returns undefined when there are no
     // locations to build — reading .length on that threw and killed the job
     // right at the end, after every page had already been written.
     const builtLocations = locationModelPages || [];
-    pagesDone += builtLocations.length;
+
+    /* NOTHING IS ADDED TO `pagesDone` HERE ANY MORE.
+     *
+     * There used to be a line here that added the whole batch to the counter
+     * in one go — which is why the bar stood still for twenty minutes and
+     * then jumped. The callback passed to buildLocationPages above now
+     * counts each town as it lands, and the two together would count every
+     * town twice.
+     *
+     * (The old statement is not quoted, deliberately. A source check that
+     * forbids it would match the quotation and refuse a deploy on correct
+     * code — which this project has already had happen twice.)
+     *
+     * The report stays: it is the one that clears `current` so the stage
+     * line stops naming a town that has finished. */
     await report({ done: pagesDone, stage: 'Location pages written', current: '' });
 
     CM.addPages(contentModel, builtLocations);

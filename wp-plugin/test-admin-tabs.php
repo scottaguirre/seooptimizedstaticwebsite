@@ -4022,5 +4022,90 @@ test( 'AND NEITHER DOES A SITE ON THE MORNING IT UPGRADES', function () {
 		'upgrade day tells every customer their host is broken' );
 } );
 
+/* =====================================================================
+ * The picture above the title
+ *
+ * class-ie-image.php decides what happens to it and test-blog-image.php
+ * covers that exhaustively. These cases cover the half no unit test reaches:
+ * whether the owner can actually type an address in, and whether what they
+ * typed survives the journey.
+ * ================================================================== */
+
+echo "\nThe image option\n";
+
+test( 'THE CAMPAIGN FORM HAS A BOX FOR IT', function () {
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array();
+
+	$html = render( 'new' );
+
+	has( $html, 'name="image_url"', 'there is nowhere to type the address' );
+	has( $html, 'above the title', 'the field does not say where the picture goes' );
+} );
+
+test( 'and it says "above the title" rather than "featured image"', function () {
+	/* WordPress's word for this slot is "featured image". Edwin asked for
+	 * "an image above the title of the article", and that is what somebody
+	 * scanning the form is looking for. The place it appears is more useful
+	 * than the name of the slot it fills. */
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array();
+
+	$html = render( 'new' );
+
+	hasnt( $html, 'Featured image (optional)', 'the field is labelled with WordPress jargon' );
+} );
+
+test( 'the topics table has an Image column', function () {
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = array(
+		'form'   => array( 'label' => 'x' ),
+		'topics' => array( array( 'topic' => 'Roof flashing', 'targetQuery' => 'roof flashing repair' ) ),
+	);
+
+	$html = render( 'new' );
+
+	has( $html, 'name="image[0]"', 'no per-article image box was rendered' );
+	has( $html, 'Image (optional)', 'the column has no header' );
+} );
+
+test( 'A PER-ARTICLE IMAGE ALREADY TYPED COMES BACK', function () {
+	/* The failure this mirrors cost Edwin a form full of typing: a refused
+	 * plan threw away the Main keyword and link phrase columns, and he had to
+	 * retype them to find out whether the second attempt was refused too. A
+	 * new column that does not survive a refusal is that bug, reintroduced. */
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = array(
+		'form'   => array( 'label' => 'x', 'image_url' => 'https://cdn.example.com/hero.jpg' ),
+		'topics' => array( array(
+			'topic' => 'Roof flashing',
+			'image' => 'https://cdn.example.com/flashing.png',
+		) ),
+	);
+
+	$html = render( 'new' );
+
+	has( $html, 'https://cdn.example.com/flashing.png', "the row's own picture was dropped" );
+	has( $html, 'https://cdn.example.com/hero.jpg', "the campaign's picture was dropped" );
+} );
+
+test( 'the boxes are url inputs, so a browser catches a typo first', function () {
+	poll_reset();
+	$GLOBALS['ie_campaigns'] = array();
+	$GLOBALS['ie_transient'] = array(
+		'form'   => array( 'label' => 'x' ),
+		'topics' => array( array( 'topic' => 'Roof flashing' ) ),
+	);
+
+	$html = render( 'new' );
+
+	ok( preg_match( '/<input name="image_url"[^>]*type="url"/', $html ),
+		'the campaign image box is not a url input' );
+	ok( preg_match( '/<input type="url"[^>]*name="image\[0\]"/', $html ),
+		'the per-article image box is not a url input' );
+} );
+
 echo "\n$passed passed, $failed failed\n";
 exit( $failed ? 1 : 0 );

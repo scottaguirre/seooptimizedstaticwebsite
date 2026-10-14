@@ -32,6 +32,8 @@ require('dotenv').config();
 
 const { recentEmailFailures } = require('../utils/emailHealth');
 const { sendEmail } = require('../utils/sendEmail');
+const { APP_NAME } = require('../utils/pageTitle');
+const { baseUrl } = require('../utils/baseUrl');
 
 // Who hears about it. ALERT_EMAIL_TO, else the from-address, which is at least
 // a mailbox we control.
@@ -49,9 +51,21 @@ function stamp(msg) {
     process.exit(0);
   }
 
+  /* THE NAME AND THE HOST, BOTH READ RATHER THAN TYPED.
+ *
+ * This file said "Three Comets" in the subject and "threecomets.com" in the
+ * body. Harmless-looking, and the third place in two days found to be holding
+ * its own copy of the brand — after utils/emailLayout.js, which reached
+ * customers' inboxes, and three theme-header files. The pattern is always the
+ * same: a file that needs the name once, types it once, and is invisible to
+ * the rename. */
+  const host = (() => {
+    try { return new URL(baseUrl()).host; } catch { return baseUrl(); }
+  })();
+
   const summary =
     `${health.count} email${health.count === 1 ? '' : 's'} failed to send ` +
-    `in the last 24 hours on threecomets.com.\n\n` +
+    `in the last 24 hours on ${host}.\n\n` +
     `Latest: ${health.latest.time}\n` +
     `To:     ${health.latest.to}\n` +
     `Error:  ${health.latest.message}\n\n` +
@@ -69,7 +83,7 @@ function stamp(msg) {
 
   const result = await sendEmail({
     to,
-    subject: `[Three Comets] ${health.count} email${health.count === 1 ? '' : 's'} failed to send`,
+    subject: `[${APP_NAME}] ${health.count} email${health.count === 1 ? '' : 's'} failed to send`,
     text: summary,
   });
 

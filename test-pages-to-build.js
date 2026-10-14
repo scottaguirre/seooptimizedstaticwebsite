@@ -24,7 +24,7 @@
 //   node test-pages-to-build.js
 
 const assert = require('assert');
-const { pagesToBuild, MODES } = require('./utils/seoPresets');
+const { pagesToBuild, MODES, FIXED_PAGES } = require('./utils/seoPresets');
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -36,6 +36,12 @@ function section(name) { console.log(`\n${name}\n`); }
 /* ===================================================================== */
 
 section('A design sample is one page');
+
+/* AND STILL ONE PAGE NOW THAT FULL SITES COUNT FOUR MORE. A sample writes
+ * no contact page and no legal pages — runGeneration guards all four behind
+ * `!isSample` — so the fixed four belong in the other branch only. Adding
+ * them to the early return would put a sample's bar at 20% when it
+ * finished. */
 
 test('a sample with service pages entered still counts one', () => {
   /* The bug exactly. The wizard does not hide the Service Pages step for a
@@ -56,8 +62,35 @@ test('a sample with nothing entered counts one', () => {
 
 section('Every other mode counts what it writes');
 
-test('a full site counts services, locations and the home page', () => {
-  assert.strictEqual(pagesToBuild('lead', { 0: {}, 1: {}, 2: {} }, 2), 6);
+test('a full site counts services, locations, home AND the fixed pages', () => {
+  /* 3 services + 2 towns + home + contact + privacy + terms + accessibility.
+   *
+   * The fixed four were left out at first, on the reasoning that the total
+   * should match what the customer is billed per page. It does not match
+   * what gets WRITTEN, which is what a progress bar is about: Edwin's
+   * dashboard climbed to 63 files against a total of 60 and he asked which
+   * number was wrong. */
+  assert.strictEqual(pagesToBuild('lead', { 0: {}, 1: {}, 2: {} }, 2), 3 + 2 + 1 + 4);
+});
+
+test('and the fixed pages are counted from the list, not from a 4', () => {
+  /* The generator adds FIXED_PAGES.length to its counter. If this sum used
+   * a literal instead, adding a fifth fixed page would move the counter and
+   * not the total, and the bar would finish at 98%. */
+  assert.strictEqual(
+    pagesToBuild('lead', { 0: {}, 1: {}, 2: {} }, 2),
+    3 + 2 + 1 + FIXED_PAGES.length
+  );
+});
+
+test('the fixed list is the four pages every site gets', () => {
+  /* Spelled out because two files count these: the route sets the total
+   * from this list and runGeneration advances the counter by its length. A
+   * page added here without a builder would leave every bar one short. */
+  assert.deepStrictEqual(
+    [...FIXED_PAGES].sort(),
+    ['accessibility', 'contact', 'privacy-policy', 'terms-of-use']
+  );
 });
 
 test('rank fast counts the same way as lead', () => {
@@ -68,9 +101,9 @@ test('rank fast counts the same way as lead', () => {
   assert.strictEqual(pagesToBuild('rankfast', pages, 1), pagesToBuild('lead', pages, 1));
 });
 
-test('a site with no service pages still counts the home page', () => {
+test('a site with no service pages still counts home and the fixed pages', () => {
   /* Zero would leave the bar dividing by zero and reading NaN. */
-  assert.strictEqual(pagesToBuild('lead', {}, 0), 1);
+  assert.strictEqual(pagesToBuild('lead', {}, 0), 1 + FIXED_PAGES.length);
 });
 
 /* ===================================================================== */
@@ -79,7 +112,7 @@ section('Nothing posted is still a number');
 
 test('missing pages are treated as none, not as a crash', () => {
   for (const nothing of [undefined, null, {}, []]) {
-    assert.strictEqual(pagesToBuild('lead', nothing, 0), 1,
+    assert.strictEqual(pagesToBuild('lead', nothing, 0), 1 + FIXED_PAGES.length,
       `${JSON.stringify(nothing)} did not count as zero service pages`);
   }
 });
@@ -97,7 +130,7 @@ test('an unknown mode is counted like a full site, not like a sample', () => {
   /* normalizeSiteMode falls back to the full build. Falling back to a sample
    * would under-count a real site, and the bar would claim it was finished
    * while pages were still being written. */
-  assert.strictEqual(pagesToBuild('something-else', { 0: {}, 1: {} }, 0), 3);
+  assert.strictEqual(pagesToBuild('something-else', { 0: {}, 1: {} }, 0), 2 + 1 + FIXED_PAGES.length);
 });
 
 /* ===================================================================== */

@@ -116,6 +116,24 @@ ${appHeaderScripts()}
   };
   const copy = COPY[kind] || COPY.site;
 
+  /* NEVER SERVE THIS PAGE FROM THE BACK BUTTON'S FROZEN COPY.
+   *
+   * Browsers keep a snapshot of a page you navigate away from — markup, and
+   * the JavaScript paused mid-flight — so pressing Back brings it straight
+   * back without asking the server anything. For almost every page that is a
+   * feature. For this one it is a lie: Edwin pressed Back and saw "40% —
+   * Writing location pages", the figure from the moment he left, on a build
+   * that had moved on. He asked whether it was stuck.
+   *
+   * A progress page is the one kind where a stale number is worse than a
+   * slow one. no-store is what disables that cache in Chrome and Firefox;
+   * it costs a round trip on a page that is already polling every second.
+   *
+   * The POLLING WOULD NOT HAVE SAVED IT, which is the part that is easy to
+   * get wrong: the snapshot's timers are frozen too, so the page does not
+   * resume and quietly correct itself. It simply sits there, wrong. */
+  res.set('Cache-Control', 'no-store, must-revalidate');
+
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -213,9 +231,19 @@ ${appSidebar('/jobs')}
             : rawStage === 'resuming'
               ? 'Resuming where it left off…'
               : rawStage;
-          detail.textContent = job.progress?.current
-            ? job.progress.current + (total ? '  —  ' + done + ' of ' + total : '')
-            : '';
+          // "Leander, TX  —  37 of 60 pages", or just "37 of 60 pages".
+          //
+          // THE COUNT USED TO BE HIDDEN BEHIND THE PAGE NAME: it was only
+          // drawn when progress.current was non-empty, and the generator
+          // clears that field at exactly the moments a person most wants a
+          // number — entering the location batch, finishing it, writing the
+          // sitemap. The one honest figure on the page disappeared for the
+          // longest stretch of the build, leaving a bare percentage to
+          // argue with.
+          const count = total ? done + ' of ' + total + ' pages' : '';
+          detail.textContent = [job.progress?.current || '', count]
+            .filter(Boolean)
+            .join('  —  ');
 
           if (done !== lastDone) { unchanged = 0; lastDone = done; }
           else if (++unchanged > 8) { interval = Math.min(interval + 500, 5000); }
