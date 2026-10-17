@@ -49,6 +49,7 @@
 
 const BlogSite = require('../models/BlogSite');
 const BlogCampaign = require('../models/BlogCampaign');
+const BlogPost = require('../models/BlogPost');
 const { sign } = require('../middleware/requireSite');
 const { checkSiteUrl } = require('./blog/siteUrlGuard');
 const { log } = require('./logger');
@@ -106,9 +107,19 @@ const PING_TIMEOUT_MS = Number(process.env.BLOG_PING_TIMEOUT_MS) || 10000;
 // log with its own HTML error page.
 const PING_DETAIL_CHARS = 300;
 
+/**
+ * How often to sweep articles whose retention window has closed.
+ *
+ * Hourly, on a loop that ticks every minute, because the window is measured
+ * in days. Sweeping on every tick would be sixty indexed deletes an hour to
+ * remove things that became deletable at some point in the last fifteen days.
+ */
+const SWEEP_GAP_MS = Number(process.env.BLOG_SWEEP_GAP_MS) || 60 * 60 * 1000;
+
 let timer = null;
 let running = false;
 let ticking = false;
+let lastSweepAt = 0;
 
 /**
  * What a site said when it refused, in one short line.
@@ -354,12 +365,61 @@ async function findWork(now = new Date(), graceMs = MISSED_GRACE_MS) {
   return bySite;
 }
 
+/**
+ * Delete articles whose fifteen-day window has closed.
+ *
+ * WHY IT RIDES THIS LOOP INSTEAD OF HAVING ITS OWN.
+ *
+ * utils/cleanupScheduler.js is the reason. It was written to delete expired
+ * build folders, it exports startCleanupScheduler(), and NOTHING IN THE APP
+ * EVER CALLED IT — the only other mention in the tree is a comment. So it has
+ * never run, dist/ has grown since launch, and nobody noticed for months
+ * because a sweeper that does nothing looks exactly like a sweeper with
+ * nothing to do.
+ *
+ * This loop is already started from server.js and already proven to run every
+ * minute in production. Hanging the sweep off it means there is no second
+ * thing to remember to wire up.
+ *
+ * AND IT LOGS EVERY RUN, INCLUDING THE ZEROS. That is the other half of the
+ * same lesson: "0 removed" in the log is the difference between "nothing was
+ * due" and "it is not running at all", and those are indistinguishable from
+ * the outside otherwise.
+ *
+ * It holds no policy. Everything deletable was marked deletable at
+ * confirmation time by utils/blog/retention.js.
+ */
+async function sweepArticles(now = Date.now()) {
+  if (now - lastSweepAt < SWEEP_GAP_MS) return 0;
+  lastSweepAt = now;
+
+  try {
+    const removed = await BlogPost.sweepDeletable(new Date(now));
+
+    log.info('blog.articles.swept', { removed });
+    return removed;
+
+  } catch (err) {
+    /* Swallowed on purpose. A failed sweep leaves articles in place, which is
+     * the harmless direction, and it must not stop the tick that collects and
+     * publishes for every site. The retry is in an hour either way. */
+    log.error('blog.articles.sweepFailed', err);
+    return 0;
+  }
+}
+
 async function tick() {
   // A slow site must not cause two ticks to overlap and double-ping everyone.
   if (ticking) return;
   ticking = true;
 
   try {
+    /* BEFORE findWork(), and that is not cosmetic: the next line returns
+     * early when no site has work, which is the normal state most minutes.
+     * Putting the sweep after it would mean it ran only on the minutes
+     * something else happened to be due. */
+    await sweepArticles();
+
     const work = await findWork();
     if (!work.size) return;
 
@@ -483,4 +543,4 @@ function stop() {
  * sandbox or on a laptop in a hotel. The sanitising is the part with the rules
  * in it; test-ping-detail.js checks it directly, and checks separately that
  * the failure branch still calls it. */
-module.exports = { start, stop, tick, findWork, pingSite, whatItSaid, pingTarget };
+module.exports = { start, stop, tick, findWork, pingSite, whatItSaid, pingTarget, sweepArticles };

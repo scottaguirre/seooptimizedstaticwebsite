@@ -306,58 +306,231 @@ Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
 
 ## PLANNED — blogs published to Cloudflare Pages
 
-Agreed 1 October, **not started**. Edwin: *"I want to do it but let's start
-tomorrow."*
+**Revised 16 October 2026. This supersedes the 1 October plan**, which is gone
+from this file rather than kept below it: two of its premises had quietly
+stopped being true and a stale plan read as a current one. What changed is
+listed under *What the 1 October plan got wrong* below.
 
-**The goal:** 20 blogs of his own, free hosting, generated and scheduled by
-this app and pushed as static HTML. WordPress stays for everything it does
-today; this is a second target, not a replacement.
+**Still NOT STARTED.** No code exists — there is no `utils/blog/cloudflare/`
+and no `utils/blog/render/`.
 
-### The facts that make it work
+### There are now TWO products here, and they are not the same job
+
+**A. Edwin's own 20 blogs.** Free hosting, generated and scheduled by this
+app, pushed as static HTML. His Cloudflare account, his domains. This is the
+1 October plan, unchanged.
+
+**B. Customers' own blogs.** NEW, asked for on 16 October. A customer enters
+their own Cloudflare credentials, connects their own domain, creates blogs,
+writes articles with Three Comets and pushes them to their own Cloudflare
+account.
+
+B is not a bigger A. It adds two things A does not have: **somebody else's
+credentials in our database**, and a **storage rule that cannot be "keep
+everything for ever"** once the blogs are not ours. Build A first. B is a
+second pass with its own design, not a flag on the first.
+
+### What the 1 October plan got wrong
+
+**1. "This is the change that puts articles in our database" — already done.**
+The plan's biggest data change was `BlogCampaign` slots gaining a body field.
+`models/BlogPost.js` arrived on 5 October for write-ahead campaigns and
+already stores the prose: `title`, `metaDescription`, `slug`, `sections[]`
+(heading + `paragraphs[]`), `words`, `quality`, `targets`, `pending`, one
+document per slot with a unique `{campaign, slotIndex}` index. The renderer
+would read documents that exist today. Nothing to migrate.
+
+**2. "Mongo is the only copy while the schedule runs" — wrong by three
+months.** Said in conversation, corrected by reading
+`wp-plugin/interlink-engine/includes/class-ie-publisher.php`. The plugin
+collects, inserts each post with `wp_insert_post` as **`future`** with a real
+date, and only *then* sends `/api/blog/complete`. So the full article text is
+a row in `wp_posts` within hours of being written. A future-dated post is
+**stored but not visible** — it returns 404 to the public until its date
+arrives, which is why the placeholder spans stay. "Not published" was read as
+"not saved". Those are different things.
+
+**3. The customer-facing version was an open question. It is now a
+requirement.** See B above.
+
+### The facts that make it work — unchanged, and still checked
 
 | | |
 |---|---|
 | Projects per Cloudflare account | **100** (soft cap, raisable by support) — 20 blogs = 20 projects |
-| Files per deployment | **20,000**, counting images. ~4,000 posts at 4 images each |
+| Files per deployment | **20,000**, counting images |
 | Max file size | 25 MiB |
 | Builds/month | 500 — **Git-connected only.** Direct Upload is exempt |
 | Bandwidth | unlimited |
 
-**Direct Upload not counting against the build quota is the whole design.**
-Cloudflare staff: *"currently they don't count towards any quota… in the
-future, there will likely be a separate 'deployments' quota."* So deploy
-**once per blog per scheduler run**, batching whatever came due — same result,
-a twentieth of the deploys, and immune if that quota appears.
+**Direct Upload not counting against the build quota is still the whole
+design.** Cloudflare staff: *"currently they don't count towards any quota…
+in the future, there will likely be a separate 'deployments' quota."* Deploy
+**once per blog per scheduler run**, batching whatever came due.
 
-**Storage cost is nil, and this was checked rather than assumed.** A post is
-1,000–1,300 words ≈ 12 KB stored. 20 blogs × 100 posts ≈ 24 MB raw, ~8 MB
-after Mongo's compression, against a 512 MB free tier. WordPress hosting for
-20 sites renews at $150–350/year. **Images never go in Mongo** — they are
-files, and they go to Cloudflare where storage and bandwidth are free.
+### Domains — verified 15 October against Cloudflare's docs
 
-### Why it lives in THIS app, not a separate one
+- **Apex domain** (`example.com`): the domain must be a Cloudflare zone on the
+  account holding the Pages project, and its **nameservers must point at
+  Cloudflare**. A CNAME at the registrar does not work for an apex. Cloudflare
+  creates the record itself once the nameservers resolve.
+- **Subdomain** (`blog.example.com`): external DNS is fine. One `CNAME` to
+  `<project>.pages.dev` — but **add the custom domain in the Pages dashboard
+  FIRST**. A hand-made CNAME without that step serves a 522.
+- **Therefore, for product B**: a customer on a subdomain keeps their existing
+  DNS and their email untouched. A customer who wants the apex has to move
+  nameservers, which moves their MX records too. That is a support
+  conversation, not a form field, and the flow has to say so before they
+  start.
 
-Edwin asked whether to build it as a separate app so a mistake could not
-damage what works. Right instinct, wrong tool, and the reasoning is worth
-keeping:
+### Storage — the question that drove this revision
 
-- A separate app needs the same database, so `BlogCampaign` and `BlogSite`
-  would be **duplicated schemas writing to one database**. Mongoose will not
-  stop the second app writing documents the first cannot read. That is the
-  same fault as the two hand-written `keptOn` coercions from 30 September,
-  scaled to an entire data model.
-- The change list is **eight new files**; the edits to existing ones are
-  additive — one enum value, one job kind, one route. Nothing in the WordPress
-  path changes behaviour.
-- The protection already exists: `deploy.sh` runs the suites plus
-  `check-boot.js` and refuses to ship. It stopped a broken build twice on
-  30 September.
-- **The isolation that is actually wanted is at the JOB level** — a `publish`
-  job that throws is one failed job, and site generation, blog writing and the
-  scheduler carry on.
+Edwin, 16 October: *"is there any way that instead of saving the articles in
+our mongodb can we just keep the basic such as article ID, h1, title, meta
+description and then if the user wants to update or add an article we just
+fetch the current articles from cloudflare?"*
 
-Extract later if the blog product gets its own customers or infrastructure.
-*Extract once the seams are known.*
+**THE PREMISE WAS MEASURED ON 17 OCTOBER AND IT DID NOT SURVIVE.**
+`scripts/measure-db.js`, run against the live Atlas:
+
+| | |
+|---|---|
+| Whole database | **12.5 MB of 512 MB — 2.4%** |
+| An article | **7.7 KB**, not the 12 KB assumed |
+| 604 articles | 4.6 MB, under 1% of the tier |
+| Room for | about **68,000** articles, not 40,000 |
+| Largest collection | `keywordcaches`, 17 MB of document data from 109 rows — and it carries a 30-day TTL index, so it is bounded by a month of lookups rather than by uptime |
+| `Job.payload` | 482 bytes each, 56 KB in total across every job ever run |
+
+So **nothing needs to move out of Mongo to save space**, and nothing in this
+plan may be justified that way again. In particular:
+
+- The index-only retention for product B is **withdrawn**. Mongo keeps the
+  prose for every target.
+- `Job.payload` clearing, shipped 17 October, reclaims 56 KB. It was still
+  right — Edwin's reason was *"a form for a site that no longer exists"*, not
+  space — but it was never a storage measure and should not be recorded as
+  one.
+- The fifteen-day WordPress deletion frees at most 4.6 MB at today's volume.
+  Also right, also not urgent.
+
+**`/_data/blog.json` survives the revision with a different job.** It is now a
+BACKUP, written and never read back — see below. The answer to Edwin's
+original question is kept because the reasoning still matters:
+
+Yes — but **not by reading the published HTML back**, and that distinction is
+the whole answer.
+
+**The Cloudflare Pages API cannot hand the file back.** Read on 15 October:
+the API offers `GET /deployments`, `POST /deployments`,
+`DELETE /deployments/{id}` and project details. **There is no endpoint that
+lists the files in a deployment, and none that returns a file's contents.** So
+the only Cloudflare-side read is an ordinary HTTPS request to the public page.
+
+**And parsing that HTML back is a mistake this codebase already made and
+fixed.** From the top of `utils/wpThemeBuilder/buildFromModel.js`:
+
+> *The old path (index.js) regex-parsed the HTML back into structure, which
+> lost every field name and produced admin labels like "Block 3 -> Heading 2
+> #1". This path reads the semantic model the generator already produced.*
+
+Same operation, same outcome. **Do not scrape our own output.**
+
+**So: deploy the structured source alongside the HTML.** The same answer as
+`content.json` for websites — the fix that already exists for this exact
+problem, applied to blogs.
+
+    /my-post/index.html     the page a reader sees
+    /_data/blog.json        every article as structured data
+
+**ONE BUNDLED FILE, NOT ONE PER ARTICLE, and the reason is the interlinks.**
+Post 7's anchor points at post 8. Adding or editing one post changes the ring,
+so a re-render needs *all* of them. One `blog.json` is one fetch; one file per
+article is a hundred fetches for a hundred-post blog.
+
+**What Mongo keeps: everything.** This is the part the 17 October measurement
+changed. The original answer was "the index only, and the prose lives on
+Cloudflare" — which was a storage trade, and there is no storage problem to
+trade against.
+
+So the direction reverses. Mongo stays the source of truth, and
+`/_data/blog.json` is written alongside the pages **and never read back**:
+
+- no fetch, no merge, no staleness, no "is the file older than the database"
+- a deploy is always a fresh render from Mongo
+- the copy on Cloudflare exists for the day Mongo does not
+
+That is the one risk the measurement did **not** remove. A WordPress article
+exists twice — here and in `wp_posts` — which is what makes the fifteen-day
+deletion safe. **A Cloudflare article exists once.** Cloudflare stores a
+rendered page, not an article, and the Pages API cannot hand a deployed file
+back. Shipping the structured source next to the HTML is the only thing that
+makes a static blog rebuildable from itself.
+
+**The caveat, which is real but small.** `/_data/blog.json` is publicly
+readable. The article text is public anyway; what it also exposes is the link
+plan and the money anchors — the SEO strategy, to anyone who guesses the path.
+Either accept that, or serve it through a Pages Function behind a token. The
+second is more work and buys obscurity, not security.
+
+### Retention — one rule per target, decided 16 October
+
+| `BlogSite.target` | Whose it is | What Mongo keeps |
+|---|---|---|
+| `wordpress` | customer's WP install | **delete the article on verified `/complete`** |
+| `cloudflare` (A) | Edwin's 20 | everything, for ever — Mongo is the only source |
+| `cloudflare` (B) | customer's account | everything — same as A. *Was* index-only; withdrawn 17 October when the storage premise was measured away |
+
+**The WordPress deletion comes first, before any of this.** Agreed with Edwin
+on 16 October, and his reasoning is on the record: a customer who trashes
+their own post is not this app's problem, and moving a *customer* to Cloudflare
+static hosting is a different product rather than a migration path, so neither
+is a reason to keep a second copy of an article that is already in `wp_posts`.
+
+**`/complete` is the correct trigger, not `/published`.** The row is in
+`wp_posts` at `/complete`; publishing only flips its status weeks later.
+Waiting would keep a redundant copy for a quarter and buy nothing.
+
+**ONE GUARD IS NOT OPTIONAL.** `routes/blogApiRoute.js` records
+
+    wpPostId: Number(item.wpPostId) || undefined,
+    url: String(item.url || ''),
+
+so **a confirmation with no post id and no URL still marks the slot
+`scheduled` and returns `ok: true`.** That is harmless while Mongo keeps the
+article and destructive the moment deletion hangs off it: a plugin bug, a
+half-failed insert or a modified plugin would delete the only copy we hold on
+a claim with nothing behind it. So:
+
+- keep recording the slot exactly as it does now, id or no id — nothing changes
+- **delete only when the confirmation carries a positive integer `wpPostId`
+  AND a non-empty `url`**
+- no id or no URL: slot still confirmed, article still kept
+
+Not a customer-responsibility question. A "do not destroy your only copy on an
+unverified claim from a remote machine" question.
+
+### Customer credentials (product B) — the riskiest thing this app would hold
+
+- A Cloudflare API token can reach far past Pages — DNS, zones, Workers —
+  depending on scope. **A database leak would become access to customers'
+  DNS.** That is a worse liability than holding their articles, which is what
+  this change is meant to avoid holding.
+- Minimum bar:
+  - require a token scoped to **Cloudflare Pages only**, with click-by-click
+    instructions — left to themselves most people will create a full-access
+    token (verify the exact permission name in Cloudflare's UI when building
+    this; it was not checked)
+  - encrypt at rest with a key in `.env`, never in Mongo
+  - never log it, never return it, show the last 4 only
+  - a visible Disconnect that deletes it
+- **Plan for revocation.** They can revoke at any time. Their blog stays live;
+  our pushes start failing. That needs a status the operator can see — the
+  shape `pingHealth`/`healthBadge` already gives `/blog-sites` for WordPress
+  licences.
+- Token storage is a **different posture from licence keys**, which are never
+  stored (SHA-256 and last 4 only). A token has to be usable, so it is stored
+  reversibly. Say so out loud in the code.
 
 ### Files
 
@@ -369,7 +542,18 @@ Extract later if the blog product gets its own customers or infrastructure.
     utils/blog/cloudflare/token.js      Encrypt/decrypt the API token.
     utils/blog/render/renderBlog.js     blog + posts -> { path: contents }.
                                         A MAP, not files on disk, so every
-                                        page is testable in memory.
+                                        page is testable in memory. Emits
+                                        _data/blog.json as one of its paths.
+    utils/blog/render/blogJson.js       BUILT 17 OCTOBER, ahead of the rest.
+                                        Pure: documents in, the backup
+                                        payload out. Names every field it
+                                        publishes rather than spreading a
+                                        document, because BlogSite carries
+                                        `secret` and this file is served at a
+                                        public URL. Deterministic and
+                                        timestamp-free, so an unchanged blog
+                                        produces a byte-identical file and
+                                        Direct Upload's hashing can skip it.
     utils/blog/render/postPage.js       one article -> HTML
     utils/blog/render/indexPage.js      home page and pagination
     utils/blog/render/feeds.js          sitemap.xml, rss.xml, robots.txt
@@ -377,59 +561,135 @@ Extract later if the blog product gets its own customers or infrastructure.
                                         render time — replaces repair_links()
     utils/blog/staticTarget.js          what a static target can and cannot
                                         do. Sibling of siteUrlGuard.js.
+    utils/blog/retention.js             one function: may this article be
+                                        deleted, and why not. Read by the
+                                        /complete route and by nothing else.
 
     test-blog-render.js
+    test-blog-json.js                   DONE — 18 assertions, 18 mutations,
+                                        no survivors.
     test-cloudflare-deploy.js
     test-static-target.js
+    test-blog-retention.js
 
 **Changed**
 
     models/BlogSite.js          target: 'wordpress'|'cloudflare', project,
-                                domain, encrypted token
-    models/BlogCampaign.js      slots gain a BODY field — today the schema
-                                stores only the plan (topic, slug, anchor,
-                                dates, wpPostId, publishedUrl) and the article
-                                text lives in WordPress. This is the change
-                                that puts articles in our database.
+                                domain, encrypted token, token status
+    models/BlogPost.js          nothing. It already holds the prose.
     utils/blogScheduler.js      enqueue one publish job PER BLOG, not per post
+    routes/blogApiRoute.js      /complete deletes the article when retention
+                                says it may — behind the wpPostId+url guard
     server.js                   jobRunner.registerGenerator('publish', …)
-    routes/blogSitesRoute.js    add/edit a Cloudflare blog
+    routes/blogSitesRoute.js    add/edit a Cloudflare blog; token status
     routes/blogReportRoute.js   columns that cannot apply to a static target
     utils/blog/reportFilters.js same
-    deploy.sh                   the three new suites
+    deploy.sh                   the four new suites
     .env                        CF_ACCOUNT_ID, CF_API_TOKEN,
                                 TOKEN_ENCRYPTION_KEY
 
-### Build order — and `staticTarget.js` comes FIRST
+### Build order — revised
 
-1. **`staticTarget.js` and the report semantics.** Decide on paper before any
-   rendering.
-2. One hardcoded blog: renderer + deploy, end to end.
-3. The `target` discriminator through the report.
-4. The other 19.
+0. **Measure first.** ✅ **DONE 17 October** — `scripts/measure-db.js`, and
+   the numbers are in *Storage* above. The headline: 2.4% of the tier used,
+   and the estimate the plan rested on was wrong in the comfortable
+   direction. The script is read-only and never prints the connection string;
+   re-run it before any future decision that turns on size.
+1. **The WordPress deletion**, with `retention.js` and the `wpPostId`+`url`
+   guard. Smallest change, immediate benefit, no Cloudflare involved. Needs
+   `target` on `BlogSite`, which product A needs anyway.
+2. **`staticTarget.js` and the report semantics**, on paper. Everything the
+   blog report says today assumes WordPress — posts trashed on the site, the
+   removal-timestamp queue, "published but the campaign was removed". **On a
+   static target none of it can happen**, because every deploy is a fresh
+   render. Ship without deciding this and the report grows a column reading
+   "Deleted" on a site where deletion is impossible. *A value that cannot be
+   true is worse than no value.*
+3. **One hardcoded blog of Edwin's**: renderer + deploy, end to end, including
+   `_data/blog.json`.
+4. The `target` discriminator through the report.
+5. Edwin's other 19.
+6. **Product B as its own design pass** — customer credentials, the apex/DNS
+   support flow, index-only retention, revocation status.
 
-**WHY THE ORDER.** Everything the blog report says today assumes WordPress:
-posts trashed on the site, campaigns deleted from a site that then stops
-reporting, the removal-timestamp queue, "published, but the campaign was
-removed". **On a static target none of it can happen** — every deploy is a
-fresh render from Mongo, so the database is the only truth and there is
-nothing to repair and nothing to reconcile.
+**Step 0 before step 1**, and step 1 before everything: the deletion is the
+only part with a measurable payoff today, and it is the only part whose cost
+is a guard rather than a subsystem.
 
-Ship the second target without deciding this and the report grows a column
-reading "Deleted" on a site where deletion is impossible. That is precisely
-what 30 September was spent removing. **A value that cannot be true is worse
-than no value.**
+### Why it lives in THIS app, not a separate one — unchanged
+
+Edwin asked whether to build it separately so a mistake could not damage what
+works. Right instinct, wrong tool:
+
+- A separate app needs the same database, so `BlogCampaign` and `BlogSite`
+  would be **duplicated schemas writing to one database**. Mongoose will not
+  stop the second app writing documents the first cannot read.
+- `deploy.sh` runs the suites plus `check-boot.js` and refuses to ship. It
+  stopped a broken build twice on 30 September.
+- **The isolation that is actually wanted is at the JOB level** — a `publish`
+  job that throws is one failed job, and site generation, blog writing and the
+  scheduler carry on.
+
+Extract later if the blog product gets its own customers or infrastructure.
+*Extract once the seams are known.*
 
 ### Open
 
-- Token storage is a **different posture from licence keys.** Licence keys are
-  never stored — SHA-256 and last 4 only. An API token must be *usable*, so it
-  is stored reversibly, encrypted at rest with a key in `.env`. A database
-  dump becomes a credential leak in a way it is not today.
-- Whether a customer-facing version later uses their Cloudflare account rather
-  than Edwin's. For his own 20 blogs: his account.
+- The exact Cloudflare token permission to require for Pages-only access. Not
+  verified; check it in Cloudflare's own UI when building product B.
+- Whether `/_data/blog.json` stays public or goes behind a Pages Function. It
+  carries `targets` — the link plan — so the SEO strategy is readable by
+  anyone who finds the path. `blogJson.js` includes it deliberately: a backup
+  that restores the prose and loses the interlinking is half a backup.
+  Edwin's call if that trade changes.
 - A brand-new Cloudflare account has a lower project cap for the first 48
   hours.
+- Images. They are files, and they go to Cloudflare where storage and
+  bandwidth are free — never into Mongo. How they are named and deduplicated
+  across deploys is undecided.
+
+## Generated websites are stored in ONE place, and it is not backed up
+
+Found on 16 October while answering "are we saving the content of every page?".
+**Not part of the Cloudflare plan**; recorded here because it is a decision
+nobody has made.
+
+**Where a customer's generated website lives:** `dist/user_<userId>/` on the
+VPS disk. The `.html` files, and `dist/user_<userId>/_src/content.json` —
+every page's headings, paragraphs, images, meta and schema.
+
+**Nothing about the generated prose is in Mongo.** The `Job.payload` holds
+what the customer *typed* in the wizard. Not what the model *wrote*.
+
+**Three facts, all read rather than assumed:**
+
+1. **Every regeneration wipes the previous site.** `runGeneration.js` step 2
+   calls `resetUserDirs()`, which is `fs.rmSync(distDir, {recursive: true})`.
+   One site per user.
+2. **No backup.** `dist/` and `builds/` are both in `.rsync-exclude`. They
+   exist on one disk and nowhere else, and a deploy never touches them.
+3. **The expiry sweeper has never run.** `utils/cleanupScheduler.js` deletes
+   `dist/user_*`, `builds/work/user_*` and the zips older than
+   `BUILD_TTL_HOURS` (default 24). **`startCleanupScheduler()` is exported and
+   nothing imports it** — the only other mention in the tree is a comment in
+   `routes/downloadZipRoute.js`. So no site was ever silently deleted, and
+   `dist/` has been growing since launch with nothing sweeping it.
+
+**Why it matters past disk.** `content.json` is the only input to the
+WordPress export: `buildFromModel.js` throws *"No content.json found.
+Regenerate the site before exporting to WordPress."* Once a dist folder is
+gone, that customer's Download ZIP and Convert to WordPress are both dead
+until they regenerate — and regenerating spends credits again.
+
+**Undecided, and left undecided deliberately:**
+
+- whether the sweeper gets wired up with a longer TTL, or deleted so nobody
+  turns it on by accident
+- whether `content.json` is persisted into Mongo so a site survives a
+  regeneration and a disk loss
+
+**Check before deciding:** `df -h` and
+`du -sh ~/app/dist ~/app/builds` on the VPS.
 
 ## PLANNED — pillar campaigns (a campaign with no target page)
 

@@ -2701,6 +2701,20 @@
     // toggle is what decides whether any are required — so the last row can
     // go rather than being emptied.
     row.remove();
+
+    /* AND THE ROWS BELOW IT TAKE NEW NUMBERS.
+     *
+     * Unticking a suggested town removes a row from the MIDDLE of the list,
+     * and this path does not go through the Delete button, so
+     * locationPages.js — which owns the row markup and the numbering —
+     * never hears about it. Without this call the list reads "Location 1,
+     * Location 3, Location 4", which looks like a row has gone missing
+     * rather than like one was removed on purpose.
+     *
+     * Called through the window guard because the numbering belongs to that
+     * file: if it ever fails to load there are no labels to renumber, and no
+     * Delete buttons either. */
+    if (window.renumberLocationRows) window.renumberLocationRows();
   }
 
   async function fetchNearbyTowns(locList, shown) {
@@ -3140,6 +3154,97 @@
       '</ol>';
   }
 
+  /* ------------------------------------------------------------------
+   * "This replaces your current website"
+   * ------------------------------------------------------------------
+   * THE FASTEST WAY TO LOSE A SITE, and until now the app said nothing.
+   *
+   * runGeneration step 2 calls resetUserDirs(), which is an rmSync of
+   * dist/user_<id>. There is ONE folder per user, not one per site. So a
+   * customer who generates three sites in a day does not keep three for 48
+   * hours — the second build deletes the first the moment it starts, and the
+   * third deletes the second. No warning, no undo, and they are mid-wizard
+   * so they are not looking at the dashboard.
+   *
+   * ON THE REVIEW STEP AND NOWHERE ELSE. It is the last screen before an
+   * irreversible action and already the place the credit cost is shown — the
+   * same moment, the same kind of fact. A warning on step one is noise they
+   * will have forgotten by step eight.
+   *
+   * FETCHED HERE RATHER THAN AT BOOT, deliberately: a wizard left open for
+   * two days would otherwise warn about a site the sweeper has since
+   * removed. Asked at the moment it matters, the answer is true.
+   *
+   * NOT A CONFIRM DIALOG. One would fire on every generation including the
+   * first, and people click through those without reading. Pressing Generate
+   * on this screen IS the confirmation; this is the fact they need before
+   * pressing it — with the download link, because a warning you cannot act
+   * on only makes people hesitate.
+   * ---------------------------------------------------------------- */
+  async function warnIfReplacing(host) {
+    let site = null;
+
+    try {
+      const res = await fetch('/api/me', { headers: { Accept: 'application/json' } });
+      if (!res.ok) return;
+
+      site = (await res.json()).currentSite;
+    } catch (_) {
+      /* Same rule as the credit check: a failed lookup must not block the
+       * customer. Worst case they lose a site they could have downloaded —
+       * which is exactly today's behaviour, so this cannot be worse. */
+      return;
+    }
+
+    if (!site) return;
+
+    const named = site.businessName
+      ? escapeHtml(site.businessName)
+      : 'Your current website';
+
+    const pages = Number(site.pageCount) || 0;
+
+    /* ONE BUTTON, AND IT GOES TO THE DASHBOARD.
+     *
+     * The first version linked straight to /download-zip. Two things wrong
+     * with that, and the second is the one that matters:
+     *
+     *   1. That route serves a ZIP already on disk and answers with a 404
+     *      HTML PAGE when there is not one — so for anyone who had never
+     *      pressed Download HTML Site it would have thrown them out of the
+     *      wizard and lost the whole form.
+     *
+     *   2. IT ASSUMED THEY WANTED THE STATIC ZIP. Edwin: "what if the user
+     *      wants to convert it to WordPress instead?" The dashboard carries
+     *      both buttons — Download HTML Site and Convert to WordPress — and
+     *      only the customer knows which one they are about to lose. A
+     *      branch here that picks for them is a guess dressed as a
+     *      convenience.
+     *
+     * So the warning states the fact and hands them the place where both
+     * choices live. No branch on hasStaticZip, no second code path, and
+     * nothing here has to stay in step with what the dashboard offers.
+     *
+     * NEW TAB, and the text says so. The form they have spent ten minutes
+     * filling in has to still be here when they come back, and they need to
+     * believe that before they will click. */
+    const warning = el('div', { class: 'alert alert-warning mt-3 mb-0', id: 'replaceWarning' });
+    warning.innerHTML = `
+      <strong>This replaces your current website.</strong>
+      ${named} — ${pages} page${1 === pages ? '' : 's'}, generated
+      ${escapeHtml(String(site.generatedAgo || 'earlier'))} — is deleted the
+      moment this build starts.
+      Download it or convert it to WordPress first if you want to keep it.
+      <div class="mt-2">
+        <a href="/dashboard" target="_blank" rel="noopener"
+           class="btn btn-sm btn-outline-dark">Open my dashboard</a>
+        <span class="small ms-2">Opens in a new tab — this form stays as it is.</span>
+      </div>
+    `;
+
+    host.appendChild(warning);
+  }
+
   function renderReviewStep() {
     container.innerHTML = '';
 
@@ -3157,6 +3262,12 @@
       </p>
     `;
     container.appendChild(header);
+
+    /* Arrives a moment after the step renders, like the credit total above
+     * it, and appends to the header so it sits between "this will use N
+     * credits" and the review cards — the two facts worth having before
+     * pressing Generate, together. */
+    warnIfReplacing(header);
 
     const grid = el('div', { class: 'row g-3' });
 

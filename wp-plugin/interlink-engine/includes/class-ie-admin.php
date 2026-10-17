@@ -105,6 +105,7 @@ class IE_Admin {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_post_ie_connect', array( __CLASS__, 'handle_connect' ) );
 		add_action( 'admin_post_ie_hygiene', array( __CLASS__, 'handle_hygiene' ) );
+		add_action( 'admin_post_ie_style', array( __CLASS__, 'handle_style' ) );
 		add_action( 'admin_post_ie_suggest', array( __CLASS__, 'handle_suggest' ) );
 		add_action( 'admin_post_ie_review_topics', array( __CLASS__, 'handle_review_topics' ) );
 		add_action( 'admin_post_ie_upload_topics', array( __CLASS__, 'handle_upload_topics' ) );
@@ -395,6 +396,8 @@ class IE_Admin {
 
 			<?php self::render_hygiene(); ?>
 
+			<?php self::render_style(); ?>
+
 			<h2><?php esc_html_e( 'Recent activity', 'interlink-engine' ); ?></h2>
 			<?php self::render_log(); ?>
 		</div>
@@ -479,6 +482,94 @@ class IE_Admin {
 			<?php submit_button( __( 'Save', 'interlink-engine' ), 'secondary' ); ?>
 		</form>
 		<?php
+	}
+
+	/**
+	 * Whether to style the articles this plugin writes.
+	 *
+	 * A CHECKBOX HERE, A SELECT ABOVE, AND THE DIFFERENCE IS REAL. The archive
+	 * control has three states — decide for me, always on, always off — and a
+	 * checkbox can only carry two. This has two: style them, or leave them to
+	 * the theme. There is no automatic mode to be mistaken for an unticked box.
+	 *
+	 * TICKED BY DEFAULT, and an unvisited site reads as ticked. That is the
+	 * right way round: on a theme with no opinion about typography the styling
+	 * is the difference between an article and a wall of text, and a feature
+	 * that ships off is a feature nobody ever sees.
+	 *
+	 * IT IS WORTH SAYING WHAT IS AND IS NOT CHANGED, because "style my posts"
+	 * from a plugin sounds like it might repaint the site. It cannot: the
+	 * stylesheet sets spacing, is scoped to a wrapper this plugin adds, and is
+	 * not even loaded on a page the plugin did not write.
+	 *
+	 * ITS OWN FORM, for the same reason the hygiene control has one.
+	 */
+	private static function render_style() {
+		$on = IE_Style::enabled();
+
+		?>
+		<h2><?php esc_html_e( 'Article styling', 'interlink-engine' ); ?></h2>
+
+		<p class="description" style="max-width:40em">
+			<?php esc_html_e( 'The posts this plugin writes are plain HTML, so how they look is entirely up to your theme. Some themes set a comfortable reading width and spacing; others leave the browser defaults, which run the text the full width of the window.', 'interlink-engine' ); ?>
+		</p>
+
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+			<input type="hidden" name="action" value="ie_style">
+			<?php wp_nonce_field( 'ie_style' ); ?>
+
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Style the articles', 'interlink-engine' ); ?></th>
+					<td>
+						<label for="ie-style">
+							<input type="checkbox" name="blog_styles" id="ie-style" value="1" <?php checked( $on ); ?>>
+							<?php esc_html_e( 'Apply reading width and spacing to posts this plugin wrote', 'interlink-engine' ); ?>
+						</label>
+
+						<p class="description">
+							<?php esc_html_e( 'Sets a comfortable line length, heading and link colour, spacing between sections, and boxes around lists and quotes. It does not change your typeface, and it never recolours body text — so it cannot clash with your theme or leave anything hard to read.', 'interlink-engine' ); ?>
+						</p>
+
+						<p class="description">
+							<?php esc_html_e( 'Nothing is saved into your posts. The styling is applied as each page is served, so turning it off here removes it from every article on the next page load, and your articles are left exactly as they are stored.', 'interlink-engine' ); ?>
+						</p>
+
+						<p class="description">
+							<?php esc_html_e( 'Pages and posts this plugin did not write are never affected, whichever way this is set.', 'interlink-engine' ); ?>
+						</p>
+					</td>
+				</tr>
+			</table>
+
+			<?php submit_button( __( 'Save', 'interlink-engine' ), 'secondary' ); ?>
+		</form>
+		<?php
+	}
+
+	/**
+	 * Save the article styling choice.
+	 *
+	 * AN ABSENT BOX MEANS OFF, and that is not the same shape as the hygiene
+	 * handler above. An unticked checkbox sends NOTHING — the browser omits
+	 * it — so "the key is missing" is the only way off can arrive, and
+	 * treating a missing key as "leave it as it was" would make the box
+	 * impossible to untick.
+	 *
+	 * BOTH ANSWERS ARE STORED EXPLICITLY, '1' as well as '0'. Storing only the
+	 * off case would work today, because the default is on — and would quietly
+	 * become wrong the day somebody changed that default, with every site that
+	 * had deliberately ticked the box flipping with it.
+	 */
+	public static function handle_style() {
+		check_admin_referer( 'ie_style' );
+		self::require_caps();
+
+		$on = ! empty( $_POST['blog_styles'] );
+
+		IE_Settings::set( array( IE_Style::SETTING => $on ? '1' : '0' ) );
+
+		self::redirect( 'interlink-connection', $on ? 'style_on' : 'style_off', '' );
 	}
 
 	/**
@@ -1954,18 +2045,53 @@ class IE_Admin {
 			 * THE RULE IS IN IE_Reach, not here, because it is five conditions
 			 * and each one is a different way to frighten somebody whose site
 			 * is working perfectly. See the note at the top of that file. */
-			if ( IE_Reach::unreachable( $campaign ) ) :
+			/* THREE OUTCOMES, NOT ONE, and the reason is on the record.
+			 *
+			 * This used to say "Your host appears to be blocking us" on the
+			 * strength of a single fact: nobody has rung in a while. On 17
+			 * October that sentence sent Edwin to a hosting company that had
+			 * done nothing wrong, while the real cause — a .htaccess missing
+			 * its WordPress rewrite block, which had also broken every pretty
+			 * URL on the site — went unnoticed for a week.
+			 *
+			 * IE_Reach::diagnosis() now asks the site to call its own REST
+			 * route before anybody blames anybody. See the note on
+			 * rest_self_test(). */
+			$verdict = IE_Reach::diagnosis( $campaign );
+
+			if ( '' !== $verdict ) :
 				$silent = IE_Reach::silent_minutes();
 				?>
 				<div class="notice notice-warning inline" style="margin:1rem 0">
 					<p style="margin-top:.5rem">
-						<strong><?php esc_html_e( 'Your host appears to be blocking us.', 'interlink-engine' ); ?></strong>
+						<strong><?php
+						if ( IE_Reach::REST_BROKEN === $verdict ) {
+							/* NOT THE HOST. The site cannot reach its own REST
+							 * API, so nothing outside it could either. */
+							esc_html_e( 'This site\'s links need rebuilding.', 'interlink-engine' );
+						} elseif ( IE_Reach::REST_OK === $verdict ) {
+							esc_html_e( 'Your host appears to be blocking us.', 'interlink-engine' );
+						} else {
+							esc_html_e( 'We cannot reach this site.', 'interlink-engine' );
+						}
+						?></strong>
 						<?php
 						/* THE REASSURANCE COMES FIRST, and it is not padding.
 						 * The owner is looking at a campaign they have paid
 						 * for and a count that is not moving; the first thing
 						 * they need to know is that the money is not gone. */
-						esc_html_e( 'Your posts are written and paid for — nothing is lost.', 'interlink-engine' );
+						/* TRUE AT 7 OF 12 AS WELL AS AT 12 OF 12.
+						 *
+						 * It used to say "Your posts are written and paid
+						 * for", which claims the batch has finished — and
+						 * this warning only ever appears while one is in
+						 * flight, so it was reliably wrong at exactly the
+						 * moment somebody read it. Edwin, 17 October,
+						 * looking at it next to "7 of 12 written".
+						 *
+						 * The reassurance that matters is about the money,
+						 * and that holds from the first post onward. */
+						esc_html_e( 'Nothing is lost. Every post is stored on our server as it is written.', 'interlink-engine' );
 						?>
 						<?php
 						echo esc_html( sprintf(
@@ -1980,18 +2106,73 @@ class IE_Admin {
 						) );
 						?>
 					</p>
-					<p>
-						<?php esc_html_e( 'They will still arrive while this page is open. To have them arrive on their own, send your hosting company this:', 'interlink-engine' ); ?>
-					</p>
-					<p>
-						<?php
-						/* SELECTABLE, because the whole point is that it gets
-						 * copied into somebody else's support form. A tooltip
-						 * or a title attribute cannot be copied. */
-						?>
-						<textarea readonly rows="4" style="width:100%;max-width:46rem;font-family:monospace"
-								  onclick="this.select()"><?php echo esc_textarea( IE_Reach::ticket_text() ); ?></textarea>
-					</p>
+					<?php if ( IE_Reach::REST_BROKEN === $verdict ) : ?>
+						<p>
+							<?php esc_html_e( 'This site cannot reach its own REST API, so nothing outside it can either. That is a setting here, not a problem with your host — and it means your ordinary page links are probably broken too.', 'interlink-engine' ); ?>
+						</p>
+						<p>
+							<strong><?php esc_html_e( 'The fix usually takes five seconds:', 'interlink-engine' ); ?></strong>
+							<?php
+							/* NAMED EXACTLY, because the person reading this
+							 * is being asked to go somewhere they may never
+							 * have been. "Regenerate your permalinks" is a
+							 * sentence that means nothing to them. */
+							printf(
+								/* translators: 1: opening link tag, 2: closing link tag */
+								esc_html__( 'open %1$sSettings → Permalinks%2$s and press Save Changes. Nothing needs to be changed on that page — saving it rewrites the rules this site is missing.', 'interlink-engine' ),
+								'<a href="' . esc_url( admin_url( 'options-permalink.php' ) ) . '">',
+								'</a>'
+							);
+							?>
+						</p>
+						<p>
+							<?php esc_html_e( 'If that page says it could not update your .htaccess file, it is not writable — that is what to ask your host about, rather than a firewall.', 'interlink-engine' ); ?>
+						</p>
+
+					<?php elseif ( IE_Reach::REST_OK === $verdict ) : ?>
+						<p>
+							<?php
+							/* THE CHECK PASSED, SO THE TICKET IS WORTH
+							 * SENDING. This is the only branch that blames
+							 * the host, and it is the only one that has
+							 * evidence for it: the site answers its own REST
+							 * API and we still cannot reach it. */
+							esc_html_e( 'This site answers its own REST API, so the problem is between our server and yours. They will still arrive while this page is open. To have them arrive on their own, send your hosting company this:', 'interlink-engine' );
+							?>
+						</p>
+						<p>
+							<?php
+							/* SELECTABLE, because the whole point is that it
+							 * gets copied into somebody else's support form.
+							 * A tooltip or a title attribute cannot be
+							 * copied. */
+							?>
+							<textarea readonly rows="8" style="width:100%;max-width:46rem;font-family:monospace"
+									  onclick="this.select()"><?php echo esc_textarea( IE_Reach::ticket_text() ); ?></textarea>
+						</p>
+
+					<?php else : ?>
+						<p>
+							<?php
+							/* NOBODY IS BLAMED HERE, on purpose. The site
+							 * could not even call itself, which says nothing
+							 * about whether anyone else can reach it. A guess
+							 * in either direction is what this whole change
+							 * exists to stop. */
+							esc_html_e( 'We could not work out why. This site could not call its own REST API to check, which some hosts block by default — so that on its own does not mean anything is wrong. Your posts will still arrive while this page is open.', 'interlink-engine' );
+							?>
+						</p>
+						<p>
+							<?php
+							printf(
+								/* translators: 1: opening link tag, 2: closing link tag */
+								esc_html__( 'Worth trying first: open %1$sSettings → Permalinks%2$s and press Save Changes. If posts still do not arrive on their own after that, it is worth a ticket with your host.', 'interlink-engine' ),
+								'<a href="' . esc_url( admin_url( 'options-permalink.php' ) ) . '">',
+								'</a>'
+							);
+							?>
+						</p>
+					<?php endif; ?>
 				</div>
 			<?php endif; ?>
 
@@ -2008,7 +2189,16 @@ class IE_Admin {
 						<?php esc_html_e( 'Check now', 'interlink-engine' ); ?>
 					</a>
 					<span class="description">
-						<?php esc_html_e( 'Already written and paid for. This only fetches them — it costs nothing.', 'interlink-engine' ); ?>
+						<?php
+						/* ABOUT THE BUTTON, NOT ABOUT THE BATCH.
+						 *
+						 * "Already written and paid for" sat beside a line
+						 * reading "7 of 12 written" and contradicted it.
+						 * Pressing this is free whether seven are ready or
+						 * twelve, and that is the only thing the sentence
+						 * needs to promise. */
+						esc_html_e( 'This only fetches posts that are already written — it costs nothing.', 'interlink-engine' );
+						?>
 					</span>
 
 				<?php elseif ( $pending && ! $paused ) : ?>
@@ -2299,7 +2489,7 @@ class IE_Admin {
 	 *
 	 * WHY THIS EXISTS AT ALL. Everything on the card — the count, and the
 	 * posts themselves — was refreshed only when the SERVER rang this site:
-	 * an inbound POST to /wp-json/interlink-engine/v1/run every two minutes.
+	 * an inbound POST to /wp-json/interlink/v1/run every two minutes.
 	 * The fifteen-second reload redrew stored values and asked nobody
 	 * anything, which is why the card could sit at "0 of 22" for a whole
 	 * batch and why the posts never arrived on their own.
@@ -5538,6 +5728,12 @@ class IE_Admin {
 			'connected'    => array( 'success', __( 'Connected.', 'interlink-engine' ) ),
 			'server_saved' => array( 'success', __( 'Server address saved. Your connection was left alone.', 'interlink-engine' ) ),
 			'hygiene_saved' => array( 'success', __( 'Saved. The line under the dropdown says what it does on this site.', 'interlink-engine' ) ),
+			/* TWO NOTICES, NOT ONE "Saved." A checkbox that has just been
+			 * submitted looks the same whichever way it went, and the change
+			 * it makes is on the front end where the owner is not looking.
+			 * Saying which way it went is the only confirmation they get. */
+			'style_on'  => array( 'success', __( 'Styling on. Your articles pick it up on their next page load.', 'interlink-engine' ) ),
+			'style_off' => array( 'success', __( 'Styling off. Your articles are back to your theme\'s own layout from the next page load. Nothing in them was changed.', 'interlink-engine' ) ),
 			'unchanged'    => array( 'info', __( 'Nothing to change — that is already the address.', 'interlink-engine' ) ),
 			'suggested' => array( 'success', __( 'Here are some topics. Edit anything, untick what you do not want, then plan the campaign.', 'interlink-engine' ) ),
 			'reviewing' => array( 'success', __( 'Your topics, ready to edit. Set the search each should win, how other posts refer to it, and a video if you want one — then plan the campaign.', 'interlink-engine' ) ),

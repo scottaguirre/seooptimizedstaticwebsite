@@ -366,18 +366,37 @@ test('an unknown kind still produces a sentence, not undefined', () => {
   assert.ok(conflictMessage().length > 10);
 });
 
-test('THE ROUTE USES IT RATHER THAN ITS OWN COPY', () => {
+test('THE CALLER USES IT RATHER THAN ITS OWN COPY', () => {
   /* The sentences live with the kinds because a copy at the call site is a
    * second definition of a decision made in planCampaign.js. Asserted by
-   * reading the route, since it cannot be required here — models/Job is not
-   * present in every checkout. */
-  const route = require('fs').readFileSync(
-    require('path').join(__dirname, 'routes/blogApiRoute.js'), 'utf8');
+   * reading the source, since it cannot be required here — models/Job is not
+   * present in every checkout.
+   *
+   * IT MOVED ON 17 OCTOBER, and this assertion is how we found out. The 200
+   * lines that plan a campaign came out of routes/blogApiRoute.js into
+   * utils/blog/createCampaign.js, so a second caller — the screen that plans
+   * campaigns for the Cloudflare blogs, which has no plugin to call the API —
+   * could use the same rules instead of a copy of them.
+   *
+   * This test failed on the move, correctly: it was pointed at the file the
+   * call used to be in. The intent is unchanged, so BOTH files are checked
+   * now. The route must not grow its own copy on the way back. */
+  const read = name => require('fs').readFileSync(
+    require('path').join(__dirname, name), 'utf8');
 
-  assert.ok(/conflictMessage\(plan\.conflicts\)/.test(route),
-    'the route no longer calls conflictMessage');
-  assert.ok(!/error: 'Some topics would compete with the target page\.'/.test(route),
-    'the route still carries its own copy of the sentence');
+  const planner = read('utils/blog/createCampaign.js');
+  const route = read('routes/blogApiRoute.js');
+
+  assert.ok(/conflictMessage\(plan\.conflicts\)/.test(planner),
+    'createCampaign no longer calls conflictMessage');
+
+  for (const [name, src] of [['createCampaign', planner], ['the route', route]]) {
+    assert.ok(!/error: 'Some topics would compete with the target page\.'/.test(src),
+      `${name} carries its own copy of the sentence`);
+  }
+
+  assert.ok(!/planForCampaign\(/.test(route),
+    'the route is planning campaigns again, so there are two copies of the rules');
 });
 
 test('the anchor mix is spread, not clumped', () => {

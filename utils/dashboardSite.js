@@ -32,20 +32,48 @@
 
 'use strict';
 
+const { TTL_MS } = require('./cleanupScheduler');
+const { relativeTime } = require('./currentSite');
+
 /** Jobs that mean "a website is being built right now". */
 const ACTIVE = ['queued', 'running'];
 
 /**
- * @param {object|null} site      getCurrentSite()'s output
- * @param {object|null} activeJob a Job with status queued or running, if any
+ * How long a generated site survives, in hours.
+ *
+ * READ FROM THE SWEEPER, not typed here. The dashboard used to say
+ * "Generated sites are kept for 24 hours" in a hard-coded sentence in
+ * authRoute.js — and on 16 October the window became 48, which made that
+ * sentence a lie the moment it shipped. One number, one source: the file that
+ * actually does the deleting.
+ */
+const KEPT_HOURS = Math.round(TTL_MS / 3600000);
+
+/**
+ * @param {object|null} site        getCurrentSite()'s output
+ * @param {object|null} activeJob   a Job with status queued or running, if any
+ * @param {object|null} lastSiteJob the most recent COMPLETED site job, if any
  * @returns {{state: string, subtitle: string, jobId: string}}
  *
  *   building  a build is in flight. Whatever is on disk is a half-written
  *             site, and the buttons must not be offered.
  *   ready     a finished site, nothing running.
- *   none      nothing to show.
+ *   expired   they generated one, the sweeper removed it after the window.
+ *   none      they have never generated anything.
+ *
+ * EXPIRED AND NONE LOOK IDENTICAL ON DISK, which is the whole reason the
+ * third argument exists. getCurrentSite() counts .html files; once
+ * cleanupScheduler has swept the folder it finds none, exactly as it does for
+ * somebody who has never pressed Generate. So the card told a customer whose
+ * paid site had just been deleted that they had "not generated a website
+ * yet" — the same class of bug as "generated 2 minutes ago" on a site that
+ * was half written, and found the same way: by asking which question the card
+ * is actually answering.
+ *
+ * The job record outlives the folder, so the job queue is what knows the
+ * difference.
  */
-function siteCardState(site, activeJob) {
+function siteCardState(site, activeJob, lastSiteJob = null) {
   const job = activeJob && ACTIVE.includes(String(activeJob.status || ''))
     ? activeJob
     : null;
@@ -96,6 +124,21 @@ function siteCardState(site, activeJob) {
   }
 
   if (!site) {
+    /* Nothing on disk. Did they ever have one?
+     *
+     * Only a COMPLETED job counts. A failed build produced no site, and
+     * telling its owner their website "was removed" would describe a deletion
+     * that never happened — on top of a failure they already saw. */
+    const finished = completedAt(lastSiteJob);
+
+    if (finished) {
+      return {
+        state: 'expired',
+        subtitle: `Generated ${relativeTime(finished)} · removed after ${KEPT_HOURS} hours`,
+        jobId: '',
+      };
+    }
+
     return { state: 'none', subtitle: '', jobId: '' };
   }
 
@@ -110,4 +153,22 @@ function siteCardState(site, activeJob) {
   };
 }
 
-module.exports = { siteCardState, ACTIVE };
+/**
+ * When a finished site job finished, or null if this is not one.
+ *
+ * Defensive about the shape because it arrives from a .lean() query that is
+ * wrapped in a try/catch — a failed lookup hands this undefined, and the
+ * dashboard is the page people land on after logging in.
+ */
+function completedAt(job) {
+  if (!job || 'object' !== typeof job || Array.isArray(job)) return null;
+  if ('completed' !== String(job.status || '')) return null;
+
+  const when = job.finishedAt || job.createdAt;
+  if (!when) return null;
+
+  const date = when instanceof Date ? when : new Date(when);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+module.exports = { siteCardState, ACTIVE, KEPT_HOURS };

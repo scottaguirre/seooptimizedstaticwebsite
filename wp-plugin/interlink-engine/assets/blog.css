@@ -1,0 +1,335 @@
+/*
+ * blog.css — the look of a post this plugin wrote.
+ *
+ * LOADED ONLY ON POSTS CARRYING `_ie_campaign`, and only inside .ie-post.
+ * A customer's own pages never see this file at all.
+ *
+ * ONE ACCENT, AND NOTHING ELSE IS COLOURED
+ *
+ * --ie-accent is the single hard-coded colour in the file. It is used on
+ * headings, links, bullets and the quote bar, and on nothing else. BODY TEXT
+ * IS NEVER GIVEN A COLOUR, so it stays whatever the theme set — which is the
+ * only way to be sure the article never ends up pale text on a pale page.
+ *
+ * THE BOXES HAVE NO COLOUR OF THEIR OWN
+ *
+ * --ie-tint and --ie-edge are the theme's own TEXT colour at 5% and 15%,
+ * mixed with transparency. On a white page that resolves to a pale grey; on
+ * a dark page to something a shade lighter than the page. A box therefore
+ * cannot come out as a dark panel on a light background, because there is no
+ * dark value anywhere in it to produce one. It also means a site with a
+ * cream, grey or branded background gets boxes that sit on that background
+ * rather than fighting it.
+ *
+ * WHAT IS STILL DELIBERATELY NOT SET
+ *
+ * No font family — the typeface is the theme's, always. No colour on
+ * paragraphs or list text. No !important anywhere: a theme specific enough
+ * to beat these rules has an opinion about its own typography, and an arms
+ * race over specificity is how a plugin ends up fighting the site it is a
+ * guest on.
+ *
+ * Sizes and spacing are in em, so everything scales with whatever size the
+ * theme chose.
+ */
+
+/* --------------------------------------------------------------------
+ * The wrapper, and the three values everything else is built from.
+ *
+ * max-width, never width: a theme that already constrains its content
+ * area more tightly keeps its own measure, and nothing here can make a
+ * column wider than the theme intended.
+ *
+ * THE rgba FALLBACKS ARE NEUTRAL GREY ON PURPOSE. color-mix has been
+ * supported everywhere for years, but a browser without it must still get
+ * a box — and a grey at low alpha is the one value that is inoffensive on
+ * a light page and on a dark one. It is a fallback, not a colour choice.
+ * ----------------------------------------------------------------- */
+.ie-post {
+  --ie-accent: #1f6fd0;
+  --ie-tint: rgba(127, 127, 127, 0.07);
+  --ie-edge: rgba(127, 127, 127, 0.18);
+
+  box-sizing: border-box;
+  max-width: 78ch;
+  line-height: 1.8;
+
+  /* BIGGER THAN THE THEME, BUT RELATIVE TO IT.
+   *
+   * em, never px. A theme that has already chosen 18px gets 20; one that
+   * left it at the browser default gets 17.6; one built for large type
+   * stays large. A px value here would override all three and be wrong for
+   * two of them.
+   *
+   * Everything inside is sized in em as well, so the headings, the lead
+   * paragraph and the step badges all move with it rather than drifting out
+   * of proportion. */
+  font-size: 1.1em;
+
+  /* DECLARED ON <body>, NOT HERE, and inherited down — see .ie-styled
+   * below. The fallback of 0 is what happens on a theme that throws away
+   * body_class: no gutter, which is exactly how this looked before, rather
+   * than a second copy of the clamp drifting out of step with the title's. */
+  padding-left: var(--ie-gutter, 0);
+
+  /* SPACE UNDER THE TITLE, set here rather than on the first paragraph.
+   *
+   * The first child has its own top margin zeroed a few rules down, which
+   * is what stops the hairline above an opening h2 landing under the
+   * byline. That left the article sitting directly under the title on any
+   * theme that did not add a gap of its own — and plenty do not. One margin
+   * on the wrapper gives the gap back without putting the first element's
+   * spacing out of step with the rest. */
+  margin-top: 1.8em;
+}
+
+/* --------------------------------------------------------------------
+ * The post title
+ *
+ * Outside .ie-post — WordPress renders it from the theme's template — so
+ * this is the one block of rules reached through the body class instead.
+ * See IE_Style::BODY_CLASS for why that is as narrowly scoped as it looks.
+ *
+ * A HEADLINE NEEDS A MEASURE TOO, and a much tighter one than body text:
+ * at display size, 68ch is most of a monitor. 26ch breaks a typical
+ * generated headline over two or three lines, which is how a headline is
+ * meant to be read.
+ *
+ * No colour and no typeface here. The title stays the theme's in every
+ * respect except how wide it is allowed to get.
+ * ----------------------------------------------------------------- */
+.ie-styled {
+  /* THE GUTTER, DECLARED ONCE. On <body> so both the title and the article
+   * inherit the same value and cannot drift apart. Small on a phone, where
+   * every pixel of width is reading space; generous on a desktop, where
+   * text hard against the browser edge looks unfinished. */
+  --ie-gutter: clamp(1rem, 4vw, 3.25rem);
+}
+
+.ie-styled h1 {
+  box-sizing: border-box;
+  max-width: 26ch;
+  padding-left: var(--ie-gutter, 0);
+  line-height: 1.15;
+}
+
+@supports (color: color-mix(in srgb, currentColor 5%, transparent)) {
+  .ie-post {
+    --ie-tint: color-mix(in srgb, currentColor 5%, transparent);
+    --ie-edge: color-mix(in srgb, currentColor 15%, transparent);
+  }
+}
+
+/* Nothing above the first thing in the article. The theme has already put
+ * space between the title and the content, and the rule drawn above every
+ * other h2 would read as a stray line under the byline. */
+.ie-post > :first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* --------------------------------------------------------------------
+ * Paragraphs
+ * ----------------------------------------------------------------- */
+.ie-post p {
+  margin: 0 0 1.35em;
+}
+
+/* THE OPENING PARAGRAPH, SET LARGER.
+ *
+ * Two selectors because these articles come in two shapes. IE_Links::render
+ * emits a heading then its paragraphs, section after section — so a post
+ * whose first section has a heading opens with an h2, and one whose first
+ * section has none opens with a p. Both are the opening paragraph; neither
+ * is matched by the other's selector.
+ *
+ * :first-child rather than :first-of-type, so this can only ever be the
+ * paragraph at the very top. :first-of-type would pick the first paragraph
+ * ANYWHERE after a run of headings, which on a long article is a random
+ * sentence half way down suddenly rendering bigger than its neighbours. */
+.ie-post > p:first-child,
+.ie-post > h2:first-child + p {
+  font-size: 1.2em;
+  line-height: 1.6;
+  margin-bottom: 1.7em;
+}
+
+/* --------------------------------------------------------------------
+ * Headings
+ *
+ * The space above is larger than the space below: a heading belongs to
+ * what follows it, not to what came before. Browsers and many themes set
+ * them equal, which makes an article read as a flat list of blocks rather
+ * than as sections.
+ *
+ * The hairline above each h2 is --ie-edge, so it is the theme's own text
+ * colour and disappears into any palette.
+ * ----------------------------------------------------------------- */
+.ie-post h2 {
+  color: var(--ie-accent);
+  font-size: 1.62em;
+  line-height: 1.2;
+  letter-spacing: -0.012em;
+  margin: 2.4em 0 0.55em;
+  padding-top: 1.6em;
+  border-top: 1px solid var(--ie-edge);
+}
+
+.ie-post h3 {
+  color: var(--ie-accent);
+  font-size: 1.18em;
+  line-height: 1.35;
+  margin: 2em 0 0.5em;
+}
+
+/* --------------------------------------------------------------------
+ * Links
+ *
+ * The posts are written to carry interlinks, so links are the one element
+ * guaranteed to appear and worth making legible. Underlined as well as
+ * coloured — colour alone is not something every reader can see.
+ * ----------------------------------------------------------------- */
+.ie-post a {
+  color: var(--ie-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 0.08em;
+}
+
+/* --------------------------------------------------------------------
+ * Lists, as boxes
+ *
+ * A default list sits flush with the paragraphs around it and is easy to
+ * read straight past. In a tinted box it reads as the aside it usually is.
+ *
+ * WORTH KNOWING: IE_Links::render only ever emits <h2> and <p>, so a post
+ * this plugin wrote has no list in it unless the owner added one in the
+ * editor. These rules are here for that case, and for the day the writer
+ * starts producing lists. They cost nothing while nothing matches them.
+ * ----------------------------------------------------------------- */
+.ie-post ul,
+.ie-post ol {
+  background: var(--ie-tint);
+  border: 1px solid var(--ie-edge);
+  border-radius: 10px;
+  padding: 1.25em 1.4em;
+  margin: 1.7em 0;
+  list-style: none;
+}
+
+.ie-post li {
+  margin: 0 0 0.7em;
+  line-height: 1.65;
+}
+
+.ie-post li:last-child {
+  margin-bottom: 0;
+}
+
+/* A small accent diamond, drawn rather than typed, so it lines up with the
+ * first line of text at any font size. */
+.ie-post ul li {
+  position: relative;
+  padding-left: 1.7em;
+}
+
+.ie-post ul li::before {
+  content: "";
+  position: absolute;
+  left: 0.15em;
+  top: 0.52em;
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 2px;
+  background: var(--ie-accent);
+  transform: rotate(45deg);
+}
+
+/* Numbered steps in accent circles. The counter is reset on the list
+ * rather than relying on the browser's, because list-style is off. */
+.ie-post ol {
+  counter-reset: ie-step;
+}
+
+.ie-post ol li {
+  position: relative;
+  padding-left: 2.4em;
+  counter-increment: ie-step;
+}
+
+/* THE ONLY WHITE IN THE FILE, and it sits on the accent — a digit on a
+ * coloured disc, not text on the page. */
+.ie-post ol li::before {
+  content: counter(ie-step);
+  position: absolute;
+  left: 0;
+  top: 0.12em;
+  width: 1.6em;
+  height: 1.6em;
+  border-radius: 50%;
+  background: var(--ie-accent);
+  color: #fff;
+  font-size: 0.76em;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --------------------------------------------------------------------
+ * Pull quotes
+ *
+ * The same box as the lists, with an accent bar down the left. Also only
+ * ever present on a post the owner has edited — see the note above.
+ * ----------------------------------------------------------------- */
+.ie-post blockquote {
+  margin: 1.9em 0;
+  padding: 1.1em 1.3em;
+  background: var(--ie-tint);
+  border: 1px solid var(--ie-edge);
+  border-left: 4px solid var(--ie-accent);
+  border-radius: 8px;
+}
+
+.ie-post blockquote p {
+  margin: 0;
+  font-size: 1.03em;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------------
+ * Images
+ *
+ * IE_Image sets one as the post thumbnail, so it is rendered by the theme
+ * ABOVE the title and outside this wrapper. What this catches is an image
+ * inside the article body.
+ * ----------------------------------------------------------------- */
+.ie-post img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 2em 0;
+}
+
+/* --------------------------------------------------------------------
+ * Narrow screens
+ *
+ * The measure is already a max-width so it does nothing here, but the
+ * heading gap and the box padding are worth tightening: 2.4em of empty
+ * space is a lot of a phone screen.
+ * ----------------------------------------------------------------- */
+@media (max-width: 480px) {
+  .ie-post h2 {
+    font-size: 1.45em;
+    margin-top: 1.9em;
+    padding-top: 1.2em;
+  }
+
+  .ie-post ul,
+  .ie-post ol,
+  .ie-post blockquote {
+    padding: 1em 1.1em;
+  }
+}

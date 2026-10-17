@@ -211,29 +211,347 @@ class IE_Reach {
 	}
 
 	/**
+	 * Where the plugin's routes live, rooted at the site.
+	 *
+	 * ONE CONSTANT, because this string is now in the ticket twice — once
+	 * inside each full URL and once on its own as the path to match. Written
+	 * out three times it would be renamed in two of them, and the failure is
+	 * silent: a host whitelists a path that does not exist, nothing improves,
+	 * and everybody concludes the software is at fault.
+	 *
+	 * It mirrors IE_Rest::REST_NAMESPACE, and test-host-blocked.php reads
+	 * that constant to prove the two still agree.
+	 */
+	const REST_BASE = '/wp-json/interlink/v1/';
+
+	/** How long a resolved address is reused before looking it up again. */
+	const IP_CACHE = 'ie_server_ip';
+	const IP_TTL   = 21600;   // six hours
+
+	/** The self-check's verdict, cached so it is not run on every page load. */
+	const SELF_CACHE = 'ie_rest_selftest';
+	const SELF_TTL   = 900;   // fifteen minutes
+
+	/* What the site found when it called its own REST route.
+	 *
+	 *   REST_OK       the route answered. WordPress is handling /wp-json/.
+	 *   REST_BROKEN   the route did not reach WordPress at all.
+	 *   REST_UNKNOWN  the check itself could not run.
+	 */
+	const REST_OK      = 'ok';
+	const REST_BROKEN  = 'broken';
+	const REST_UNKNOWN = 'unknown';
+
+	/**
+	 * CAN THIS SITE REACH ITS OWN REST API?
+	 *
+	 * WHY THIS EXISTS, and it is the most expensive lesson in this file.
+	 *
+	 * On 17 October a campaign sat at "0 of 23" for hours and the card said
+	 * "Your host appears to be blocking us." Edwin sent that to his hosting
+	 * company. They had done nothing wrong: the site's own .htaccess had lost
+	 * its WordPress rewrite block, so /wp-json/ was never reaching WordPress
+	 * — and every pretty URL on that site was broken too, which nobody had
+	 * noticed. Support tried to help and pasted our REST path into their
+	 * image hotlink protection, where it could not possibly do anything.
+	 *
+	 * A five-second fix — Settings, Permalinks, Save — cost a support ticket,
+	 * a week, and a wrong answer in somebody's config file.
+	 *
+	 * THE WARNING WAS GUESSING. It knew one fact — nobody has rung in 213
+	 * minutes — and from inside WordPress, "a firewall is eating the
+	 * requests" and "my own rewrite rules are broken" look identical. So it
+	 * named the more dramatic one.
+	 *
+	 * IT DOES NOT HAVE TO GUESS. The plugin runs inside WordPress, which can
+	 * ask itself. This is the same check WordPress core's Site Health does.
+	 *
+	 * THREE ANSWERS, NOT TWO. "Could not run the check" is its own verdict:
+	 * plenty of hosts block loopback requests, and a site that cannot call
+	 * itself has told us nothing about whether anyone else can reach it.
+	 * Collapsing that into either of the other two would put us straight back
+	 * to guessing, which is the thing being fixed.
+	 *
+	 * @param bool $fresh skip the cache — for a button that re-runs it
+	 * @return string one of the REST_* constants
+	 */
+	public static function rest_self_test( $fresh = false ) {
+		if ( ! $fresh && function_exists( 'get_transient' ) ) {
+			$cached = get_transient( self::SELF_CACHE );
+			if ( is_string( $cached ) && '' !== $cached ) {
+				return $cached;
+			}
+		}
+
+		$verdict = self::run_self_test();
+
+		if ( function_exists( 'set_transient' ) ) {
+			set_transient( self::SELF_CACHE, $verdict, self::SELF_TTL );
+		}
+
+		return $verdict;
+	}
+
+	/**
+	 * The check itself, with no caching around it.
+	 *
+	 * ASKS FOR OUR OWN NAMESPACE, not the REST root. The root answering
+	 * proves WordPress is handling /wp-json/; our namespace answering proves
+	 * that AND that the plugin's routes are registered. One request, two
+	 * facts, and the second one matters on a site where the plugin was
+	 * deactivated by a well-meaning optimisation tool.
+	 *
+	 * A GET, DELIBERATELY. The real traffic is POSTs, and a host that refuses
+	 * POSTs from strangers would still let this through — but this check is
+	 * not trying to reproduce the block. It is answering one narrower
+	 * question: does /wp-json/ reach WordPress at all? A GET answers that,
+	 * and a POST here would be a write to our own API from our own site.
+	 */
+	private static function run_self_test() {
+		if ( ! function_exists( 'rest_url' ) || ! function_exists( 'wp_remote_get' ) ) {
+			return self::REST_UNKNOWN;
+		}
+
+		$url = rest_url( 'interlink/v1' );
+
+		$response = wp_remote_get( $url, array(
+			'timeout'   => 8,
+			/* The site calling itself. A redirect here is usually http to
+			 * https, which is fine and worth following — the question is
+			 * whether WordPress answers, not how many hops it took. */
+			'redirection' => 3,
+			'sslverify' => false,
+		) );
+
+		if ( function_exists( 'is_wp_error' ) && is_wp_error( $response ) ) {
+			/* The loopback itself failed — DNS, a firewall between the site
+			 * and itself, a host that blocks them outright. Says nothing
+			 * about whether anyone else can reach this site. */
+			return self::REST_UNKNOWN;
+		}
+
+		$code = (int) wp_remote_retrieve_response_code( $response );
+		$body = (string) wp_remote_retrieve_body( $response );
+
+		/* JSON IS THE WHOLE TEST, not the status code.
+		 *
+		 * 404 FROM WORDPRESS IS A PASS. An unknown route returns
+		 * {"code":"rest_no_route"} with a 404 — and that is WordPress
+		 * answering, which is exactly what is being checked. The failure
+		 * looks like HTML: Apache serving its own error page because nothing
+		 * rewrote the URL to index.php.
+		 *
+		 * So: did something that speaks JSON answer, or did something that
+		 * speaks HTML? */
+		$decoded = json_decode( $body, true );
+
+		if ( is_array( $decoded ) ) {
+			return self::REST_OK;
+		}
+
+		if ( 0 === $code ) {
+			return self::REST_UNKNOWN;
+		}
+
+		return self::REST_BROKEN;
+	}
+
+	/**
+	 * What the owner should be told, given everything the site knows.
+	 *
+	 * ONE FUNCTION DECIDES, so the card renders a verdict rather than
+	 * computing one. The screen had the rule in it once; five conditions
+	 * spread through a template is how a warning ends up firing on sites that
+	 * are working perfectly.
+	 *
+	 * @return string '' when there is nothing to say, otherwise a REST_*
+	 *                constant naming which message to show
+	 */
+	public static function diagnosis( $campaign, $now = null ) {
+		if ( ! self::unreachable( $campaign, $now ) ) {
+			return '';
+		}
+
+		return self::rest_self_test();
+	}
+
+	/**
+	 * The address the server is reached at, RESOLVED NOW RATHER THAN STORED.
+	 *
+	 * THE OLD RULE WAS "NO IP IN THE TICKET", and the reasoning behind it was
+	 * right: a hard-coded address goes stale the day the server moves, and a
+	 * stale IP in a support ticket is worse than none — the host whitelists
+	 * it, nothing improves, and everybody concludes the software is at fault.
+	 *
+	 * What changed is not the reasoning, it is the method. Edwin, 17 October,
+	 * after a host asked for one: the ticket has to carry a source address,
+	 * because "whitelist this path" is a thing many firewalls cannot do and
+	 * "whitelist this sender" is a thing all of them can.
+	 *
+	 * So it is DERIVED, not written down. The host comes out of the server
+	 * URL this site is configured to talk to, and it is resolved when the
+	 * ticket is generated. Move the server and change the DNS and the next
+	 * ticket carries the new address with nobody editing anything. There is
+	 * no copy of it anywhere to go out of date.
+	 *
+	 * HONEST ABOUT WHAT IT IS. This is the address the server ANSWERS on,
+	 * which is not guaranteed to be the one it sends from — today they are
+	 * the same machine, and tomorrow is not promised. The ticket says
+	 * "currently resolves to" rather than asserting it, so a host who finds
+	 * it does not match sees a hint rather than a contradiction.
+	 *
+	 * Cached, because this runs while an admin page is rendering and a DNS
+	 * lookup that hangs would hang the screen with it.
+	 *
+	 * @return string the address, or '' if it cannot be resolved
+	 */
+	public static function server_ip() {
+		$host = self::server_host();
+		if ( '' === $host ) {
+			return '';
+		}
+
+		$cached = function_exists( 'get_transient' ) ? get_transient( self::IP_CACHE ) : false;
+		if ( is_string( $cached ) ) {
+			return $cached;
+		}
+
+		$ip = '';
+
+		if ( function_exists( 'gethostbyname' ) ) {
+			$found = gethostbyname( $host );
+
+			/* gethostbyname RETURNS ITS ARGUMENT UNCHANGED ON FAILURE, which
+			 * is the trap: without the first check a ticket would cheerfully
+			 * tell a hosting company to whitelist the string "threecomets.com"
+			 * as though it were an address.
+			 *
+			 * THE filter_var IS BELT AND BRACES AND NO TEST CAN KILL IT,
+			 * which is said here rather than left for somebody to rediscover
+			 * by mutation. gethostbyname only ever answers with an address or
+			 * with its own argument, so the first check already covers every
+			 * case that exists today. It stays because this value is pasted
+			 * into a stranger's firewall rule, and "it cannot happen" is a
+			 * worse guarantee than one line. */
+			if ( $found !== $host && filter_var( $found, FILTER_VALIDATE_IP ) ) {
+				$ip = $found;
+			}
+		}
+
+		if ( function_exists( 'set_transient' ) ) {
+			set_transient( self::IP_CACHE, $ip, self::IP_TTL );
+		}
+
+		return $ip;
+	}
+
+	/** The host this site is configured to talk to, without the scheme. */
+	public static function server_host() {
+		if ( ! class_exists( 'IE_Settings' ) ) {
+			return '';
+		}
+
+		$url = (string) IE_Settings::server_url();
+		if ( '' === $url ) {
+			return '';
+		}
+
+		$host = function_exists( 'wp_parse_url' )
+			? wp_parse_url( $url, PHP_URL_HOST )
+			: parse_url( $url, PHP_URL_HOST );
+
+		return is_string( $host ) ? $host : '';
+	}
+
+	/**
 	 * What to send the hosting company.
 	 *
-	 * NO IP ADDRESS, deliberately. The plugin does not know the server's
-	 * address and should not pretend to: a hard-coded one goes stale the day
-	 * the server moves, and a stale IP in a support ticket is worse than none
-	 * — the host whitelists it, nothing improves, and everybody concludes the
-	 * software is at fault.
+	 * WRITTEN TO BE PASTED WHOLE. The person sending it is a business owner
+	 * forwarding something they do not understand to somebody who will read
+	 * it in thirty seconds, so it names every fact that ticket needs and
+	 * nothing else: the site, the method, the exact paths, and where the
+	 * requests come from.
 	 *
-	 * The path is the durable part, and it is what a host can actually act on.
+	 * BOTH ROUTES, because they are refused separately. /run is how posts are
+	 * collected and /ping is how the site is told there is work — a firewall
+	 * rule written for one of them leaves the other failing, and the symptom
+	 * of each is "nothing happens".
+	 *
+	 * FULL URLS, NOT PATHS — Edwin, 17 October, and he was right. A path is
+	 * what a firewall RULE is written against, but the person reading the
+	 * ticket is a support agent who wants to paste something into a browser
+	 * and see what happens. Giving them a fragment makes them go and find
+	 * the domain themselves, on a ticket that may be one of forty that hour.
+	 *
+	 * So it carries both: the whole URL to test, and the path to match on.
+	 * They cost two lines between them and they answer different questions.
+	 *
+	 * THE METHOD IS NAMED. Several of the products that cause this refuse
+	 * POSTs from strangers while letting GETs through, so a host who tests
+	 * the URL in a browser sees it working and closes the ticket.
 	 */
 	public static function ticket_text() {
 		$home = function_exists( 'home_url' ) ? home_url( '/' ) : '';
+		$host = self::server_host();
+		$ip   = self::server_ip();
 
-		return sprintf(
-			/* translators: 1: the site's own address */
+		/* BUILT FROM home_url(), not pasted together from $home.
+		 *
+		 * home_url('/') ends in a slash and home_url('/wp-json/…') does not
+		 * double it — concatenating the two by hand gives
+		 * 'https://site//wp-json/…', which plenty of servers answer with a
+		 * redirect or a 404. The ticket would then send a host chasing a URL
+		 * that fails for a reason that is ours. */
+		$run  = function_exists( 'home_url' ) ? home_url( self::REST_BASE . 'run' ) : self::REST_BASE . 'run';
+		$ping = function_exists( 'home_url' ) ? home_url( self::REST_BASE . 'ping' ) : self::REST_BASE . 'ping';
+
+		$lines = array(
+			sprintf(
+				/* translators: 1: the site's own address */
+				__( 'My site %1$s uses an application that reaches it over the WordPress REST API.', 'interlink-engine' ),
+				$home
+			),
+			'',
+			__( 'POST requests to these URLs are being refused before WordPress sees them:', 'interlink-engine' ),
+			'',
+			'    ' . $run,
+			'    ' . $ping,
+			'',
+		);
+
+		/* THE SENDER LINE IS OMITTED RATHER THAN GUESSED AT. A ticket that
+		 * says "they come from" and then nothing is worse than one that does
+		 * not mention the sender at all. */
+		if ( '' !== $host && '' !== $ip ) {
+			$lines[] = sprintf(
+				/* translators: 1: hostname, 2: IP address */
+				__( 'They come from %1$s, which currently resolves to %2$s.', 'interlink-engine' ),
+				$host,
+				$ip
+			);
+			$lines[] = '';
+		} elseif ( '' !== $host ) {
+			$lines[] = sprintf(
+				/* translators: 1: hostname */
+				__( 'They come from %1$s.', 'interlink-engine' ),
+				$host
+			);
+			$lines[] = '';
+		}
+
+		/* THE PATH AS WELL AS THE URLS. A rule is written against a path; a
+		 * test is run against a URL. The ticket gives both rather than
+		 * making somebody derive one from the other. */
+		$lines[] = sprintf(
+			/* translators: 1: the REST path, e.g. /wp-json/interlink/v1/ */
 			__(
-				'My site %1$s uses an application that needs to reach it over the REST API. '
-				. 'Requests to /wp-json/interlink/v1/ are being refused before WordPress sees them. '
-				. 'Please allow them through — whitelisting that path, or the sending server, '
+				'Please allow them through — by URL, by path (%1$s), or by sending address, '
 				. 'whichever your firewall supports.',
 				'interlink-engine'
 			),
-			$home
+			self::REST_BASE
 		);
+
+		return implode( "\n", $lines );
 	}
 }

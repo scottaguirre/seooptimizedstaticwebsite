@@ -127,7 +127,15 @@ for suite in \
   test-theme-header.js \
   test-brand-name.js \
   test-dashboard-card.js \
-  test-build-progress.js
+  test-build-progress.js \
+  test-blog-retention.js \
+  test-probe-log.js \
+  test-build-cleanup.js \
+  test-job-payloads.js \
+  test-blog-json.js \
+  test-static-site.js \
+  test-plan-contract.js \
+  test-static-blogs.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.
@@ -163,7 +171,8 @@ if command -v php > /dev/null 2>&1; then
     wp-plugin/test-writing-progress.php \
     wp-plugin/test-host-blocked.php \
     wp-plugin/test-blog-image.php \
-    wp-plugin/test-business-source.php
+    wp-plugin/test-business-source.php \
+    wp-plugin/test-blog-style.php
   do
     if ! php "$suite" > /dev/null; then
       echo

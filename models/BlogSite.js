@@ -79,14 +79,69 @@ const blogSiteSchema = new mongoose.Schema({
     index: true,
   },
 
-  licenceKeyHash: { type: String, required: true, unique: true, index: true },
+  /**
+   * The licence key's SHA-256. WORDPRESS SITES ONLY.
+   *
+   * A Cloudflare blog has no plugin to paste a key into and nothing that
+   * calls in, so it has no key and no hash. `required` is conditional rather
+   * than removed, because a WordPress site without one would be a site the
+   * plugin can never activate — created silently and broken on arrival.
+   *
+   * THE UNIQUE INDEX MOVED, and it had to. `unique: true` on the field
+   * builds a plain unique index, and a plain unique index treats every
+   * document that is MISSING the field as holding the same value — null. One
+   * Cloudflare blog would have been fine; the second would have been refused
+   * by a duplicate-key error naming a field it does not have.
+   *
+   * It is declared below as a partial index over documents where the hash is
+   * actually a string. See the note there: the existing index has to be
+   * replaced on the server, once, by hand.
+   */
+  licenceKeyHash: {
+    type: String,
+    required: function () { return 'cloudflare' !== this.target; },
+
+    /* A PLAIN INDEX AS WELL AS THE PARTIAL UNIQUE ONE BELOW, and the
+     * duplication is on purpose.
+     *
+     * The obvious tidy-up is to delete this and let the partial index serve
+     * findByLicenceKey as well as enforce uniqueness. MongoDB will only use
+     * a partial index for a query it can PROVE falls inside the filter, and
+     * whether an equality against a string counts as proving `$type:
+     * 'string'` is a planner detail rather than a documented guarantee. Get
+     * it wrong and every activation becomes a collection scan — which, on a
+     * table this small, nothing would ever notice.
+     *
+     * Two indexes on seven documents cost nothing. A silent scan that
+     * appears at ten thousand costs an afternoon. */
+    index: true,
+  },
 
   // Shown once, at creation, so the customer can copy it into wp-admin. Kept
   // only so support can confirm "the key ending 4F2A" without being able to
   // reconstruct the key itself.
   licenceKeyLast4: { type: String, default: '' },
 
-  secret: { type: String, required: true },
+  /**
+   * The HMAC signing key every inbound plugin request is verified against.
+   * WORDPRESS SITES ONLY, and the absence is load-bearing.
+   *
+   * AN EMPTY SECRET IS NOT A SECRET. HMAC with an empty key is a function
+   * anybody can compute, so a site carrying '' here could have its
+   * signatures forged by anyone holding the 24 characters of its id — which
+   * is not secret and travels in a header. That would be an open door to
+   * /api/blog/plan and /write, which spend credits.
+   *
+   * So two things guard it, not one. This field is only required for a
+   * WordPress site, AND middleware/requireSite.js refuses any site whose
+   * target is not 'wordpress' before it looks at a signature at all. The
+   * second is the real protection; this comment exists so nobody removes it
+   * on the grounds that the field is optional anyway.
+   */
+  secret: {
+    type: String,
+    required: function () { return 'cloudflare' !== this.target; },
+  },
 
   // Set on activation from what the plugin reports. Compared on every
   // subsequent request: a signature valid for site A must not authorise work
@@ -106,6 +161,34 @@ const blogSiteSchema = new mongoose.Schema({
     type: { type: String, default: '' },
     location: { type: String, default: '' },
     phone: { type: String, default: '' },
+  },
+
+  /**
+   * Where this site's posts actually go.
+   *
+   *   'wordpress'  a WordPress install running the plugin. It collects posts
+   *                and inserts them itself, so our stored copy is the SECOND
+   *                copy and may be dropped after a window.
+   *   'cloudflare' a static blog deployed to Cloudflare Pages. There is no
+   *                WordPress database — every deploy is a fresh render from
+   *                Mongo — so our copy is the ONLY copy and is never dropped.
+   *
+   * ONE FIELD, TWO JOBS, on purpose. It picks the publishing path, and
+   * utils/blog/retention.js reads the same field to decide whether an article
+   * may be deleted. Two separate flags would eventually disagree, and the
+   * direction they would disagree in is "delete the only copy of a static
+   * blog's article".
+   *
+   * NO SITE EVER CHANGES TARGET. A customer's WordPress install and a static
+   * blog are different products, not two modes of one, so this is set when
+   * the site is created and never migrated. Code that handles a site
+   * switching sides would be solving a problem that does not exist.
+   */
+  target: {
+    type: String,
+    enum: ['wordpress', 'cloudflare'],
+    default: 'wordpress',
+    index: true,
   },
 
   status: {
@@ -150,6 +233,56 @@ const blogSiteSchema = new mongoose.Schema({
 
   createdAt: { type: Date, default: Date.now },
 });
+
+/**
+ * One licence key per site — for the sites that have one.
+ *
+ * PARTIAL, NOT PLAIN, and that is the whole reason this index is declared
+ * here instead of on the field. A plain unique index counts every document
+ * missing the field as a duplicate of every other, so the second static blog
+ * ever created would be refused with a duplicate-key error about a licence
+ * key it does not have. The filter limits uniqueness to documents where the
+ * hash is really there.
+ *
+ * THE OLD INDEX HAS TO BE DROPPED ONCE, AND THE ORDER MATTERS.
+ *
+ * The live database carries a `licenceKeyHash_1` that is PLAIN UNIQUE — the
+ * field used to declare `unique: true`. Mongoose creates indexes that are
+ * missing; it does not alter one that already exists with different options,
+ * and it does not warn. So:
+ *
+ *   1. deploy this code and restart. `licenceKeyHash_unique` is created, and
+ *      from that moment uniqueness is enforced by BOTH indexes.
+ *   2. then, once:  db.blogsites.dropIndex('licenceKeyHash_1')
+ *   3. restart again. Mongoose recreates `licenceKeyHash_1` as the plain
+ *      lookup index it is now declared to be.
+ *
+ * IN THAT ORDER, uniqueness is never unenforced — step 1 puts the new
+ * constraint in place before step 2 removes the old one. Dropping first
+ * would leave a window in which two sites could take the same licence key.
+ *
+ * Until step 2 is done, the old index still treats every document MISSING
+ * the field as the same value, so the SECOND Cloudflare blog fails with
+ * E11000 naming a licence key it does not have.
+ */
+blogSiteSchema.index(
+  { licenceKeyHash: 1 },
+  {
+    /* NAMED, AND IT HAS TO BE.
+     *
+     * MongoDB derives an index's name from its key specification unless you
+     * give it one — so this and the plain lookup index on the field above
+     * would BOTH be born as `licenceKeyHash_1`. The second one to be created
+     * is then refused with IndexOptionsConflict, at startup, and which of
+     * the two survives depends on nothing anybody chose.
+     *
+     * Caught before it shipped by printing the names rather than assuming
+     * them. The test below pins both. */
+    name: 'licenceKeyHash_unique',
+    unique: true,
+    partialFilterExpression: { licenceKeyHash: { $type: 'string' } },
+  }
+);
 
 /** Does this raw secret match? Constant time, so timing reveals nothing. */
 blogSiteSchema.methods.secretMatches = function (candidate) {

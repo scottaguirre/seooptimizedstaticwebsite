@@ -135,6 +135,26 @@ const blogPostSchema = new mongoose.Schema({
    */
   pending: [{ type: mongoose.Schema.Types.Mixed }],
 
+  /**
+   * The date this article may be thrown away. Null means never.
+   *
+   * Stamped by /api/blog/complete, from utils/blog/retention.js, at the one
+   * moment every fact is in hand: the site, its target, and what the plugin
+   * claimed about the insert. That file carries the reasoning — why fifteen
+   * days, and why the decision is made there rather than in the sweeper.
+   *
+   * NULL IS THE DEFAULT AND IT IS LOAD-BEARING. The sweep is
+   *
+   *     deleteMany({ deletableAt: { $lte: new Date() } })
+   *
+   * which holds no policy at all — nothing is deletable unless something
+   * deliberately said so. A static-blog post, an unproven confirmation, and
+   * every article written before this field existed all carry no stamp, so
+   * none of them can be swept. Every bug in the stamping therefore fails as
+   * "an article was kept", which costs twelve kilobytes.
+   */
+  deletableAt: { type: Date, default: null, index: true },
+
   createdAt: { type: Date, default: Date.now },
 });
 
@@ -203,18 +223,51 @@ blogPostSchema.statics.forCampaign = function (campaignId) {
 };
 
 /**
- * Deliberately NOT deleted after publication.
+ * Deleted fifteen days after WordPress confirms it — CHANGED 16 October 2026.
  *
- * The obvious economy is to drop the stored copy once WordPress has the post —
- * it is duplicated on the customer's site at that point, and this collection
- * grows without bound. It is kept anyway, for two reasons that have both
- * already happened elsewhere in this app: a site restored from an old backup
- * needs to be re-fed, and a support question about what was actually sent
- * cannot be answered from a database that threw the evidence away.
+ * This note used to read "Deliberately NOT deleted after publication", and it
+ * gave three reasons. Edwin went through them:
  *
- * If it does need pruning later, prune by campaign age and completion, not by
- * slot status — a campaign that ended six months ago is safe to lose; a
- * published post in a campaign still running is not.
+ *   - "a site restored from an old backup needs to be re-fed" — his call: a
+ *     customer who trashes their own post has made a choice about their own
+ *     site. Not this app's problem. A product boundary, and his to set.
+ *   - "a customer could be moved to static hosting later" — the Cloudflare
+ *     blogs are a separate product with their own `target`, not a migration
+ *     path for a WordPress site. The reason rested on a hypothesis that is
+ *     not on the roadmap.
+ *   - "a support question about what was actually sent cannot be answered
+ *     from a database that threw the evidence away" — THIS ONE STANDS. A
+ *     customer saying "this is not what I paid 100 credits for" is asking
+ *     about the article as delivered, and their live site is not that: they
+ *     may have edited it since.
+ *
+ * So the window exists for the third reason alone, and fifteen days is how
+ * long Edwin wants it. The old note's own advice pointed the same way —
+ * *prune by campaign age and completion, not by slot status*.
+ *
+ * WHAT THIS DOES NOT TOUCH. BlogCampaign keeps the plan for ever: topic,
+ * slug, anchor, credits, wpPostId, publishedUrl, publishedTitle, dates. The
+ * blog report reads none of its columns from here, so a swept article leaves
+ * every screen intact. What is lost is the prose.
+ *
+ * The rules live in utils/blog/retention.js. Nothing is deletable unless that
+ * file stamped `deletableAt` on it.
  */
+
+/**
+ * Delete every article whose window has closed.
+ *
+ * Deliberately the whole policy in one line of query. The decision was made
+ * at confirmation time; this is only the broom. A caller cannot widen it by
+ * accident, because there is nothing here to widen — no site filter, no
+ * status check, no age arithmetic.
+ *
+ * @param {Date} [now]
+ * @returns {Promise<number>} how many were removed
+ */
+blogPostSchema.statics.sweepDeletable = async function (now = new Date()) {
+  const result = await this.deleteMany({ deletableAt: { $ne: null, $lte: now } });
+  return result.deletedCount || 0;
+};
 
 module.exports = mongoose.model('BlogPost', blogPostSchema);

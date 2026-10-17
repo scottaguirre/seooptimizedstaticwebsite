@@ -23,6 +23,7 @@ const requireAuth = require('./middleware/requireAuth');
 const { requireOwnDist } = require('./middleware/requireOwnDist');
 const helmet = require('helmet');
 const { log } = require('./utils/logger');
+const probeLog = require('./utils/probeLog');
 const { requestId } = require('./middleware/requestId');
 const { csrfToken, csrfProtect } = require('./middleware/csrf');
 const mongoSanitize = require('express-mongo-sanitize');
@@ -51,6 +52,7 @@ const exportWpThemeRoute = require('./routes/exportWpThemeRoute');
 const blogApiRoute = require('./routes/blogApiRoute');
 const blogTopicsRoute = require('./routes/blogTopicsRoute');
 const blogSitesRoute = require('./routes/blogSitesRoute');
+const staticBlogsRoute = require('./routes/staticBlogsRoute');
 
 // Every post ever published, across every site, with the page it links to —
 // and a CSV of it. Read-only, and built from the campaign records rather than
@@ -325,9 +327,28 @@ app.use(mongoSanitize({
     const where = (req && req.method) ? `${req.method} ${req.path}` : 'unknown route';
     const who = (req && req.ip) ? req.ip : 'unknown ip';
 
-    console.warn(
-      `⚠️ Stripped a Mongo operator from the ${key} of ${where} (ip ${who}) — keys after sanitising: ${paths}`
-    );
+    /* NOT console.warn, AND NOT ONE LINE PER REQUEST. Both were wrong, and
+     * fixing either alone fixes nothing.
+     *
+     * console.warn writes to STDERR, which pm2 files under
+     * webgen-error.log. On 16 October the last thirty lines of that file were
+     * twenty `/index.php` probes and two real faults — a page-content JSON
+     * parse failure and a ValueSERP timeout — buried among them. A blocked
+     * scanner probe is not an application error.
+     *
+     * And one line per request is the wrong rate for traffic nobody
+     * controls. probeLog keeps the FIRST of each shape, at once and in full,
+     * and counts the rest into an hourly summary. The first one answers the
+     * only question this logging exists for — a scanner, or our own front end
+     * sending a dotted key — and the two hundredth answers it again.
+     *
+     * log.security rather than log.info: these are blocked probes, and the
+     * `security: true` flag is what groups them with failed logins and
+     * rate-limit trips. It is warn level, so it lands in app.log and leaves
+     * error.log for errors. */
+    for (const { event, context } of probeLog.note({ where, who, keys: paths })) {
+      log.security(event, { container: key, ...context });
+    }
   },
 }));
 
@@ -400,6 +421,7 @@ app.use('/', requireAuth, productionRoute);   // /production
 app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
 app.use('/', requireAuth, blogSitesRoute);    // /blog-sites — licence keys
+app.use('/', requireAuth, staticBlogsRoute);  // /static-blogs — Cloudflare blogs, planned here rather than in wp-admin
 app.use('/', requireAuth, blogReportRoute);   // /blog-report(.csv) — every post, every site
 app.use('/', requireAuth, pluginDownloadRoute); // /plugin/download — the WP plugin
 
@@ -488,6 +510,19 @@ jobRunner.registerGenerator('build', buildForJob);
 // blog has no visitors — which is the entire reason someone is buying posts.
 const blogScheduler = require('./utils/blogScheduler');
 
+/* Deletes a customer's generated site 48 hours after its last write.
+ *
+ * REQUIRED HERE BECAUSE IT WAS NOT, FOR SIX MONTHS. The module has exported
+ * startCleanupScheduler() since it was written and nothing ever called it, so
+ * it never ran once — and nothing said so, because a sweeper that deletes
+ * nothing looks exactly like a sweeper with nothing to delete. The line below
+ * is the whole of the bug that was.
+ *
+ * Expiring a build costs the customer their Download ZIP, their Convert to
+ * WordPress and their preview; the module header explains the trade and who
+ * chose it. */
+const { startCleanupScheduler } = require('./utils/cleanupScheduler');
+
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on http://localhost:${PORT}`);
 
@@ -496,6 +531,12 @@ app.listen(PORT, () => {
   const startWorkers = () => {
     jobRunner.start();
     blogScheduler.start();
+
+    /* With the others, not before them. The sweep reads the filesystem and
+     * needs no database — but starting it here keeps every background worker
+     * in one list, which is the thing that would have made its absence
+     * visible. */
+    startCleanupScheduler();
   };
 
   mongoose.connection.once('open', startWorkers);

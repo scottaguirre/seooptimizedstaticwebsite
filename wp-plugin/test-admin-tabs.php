@@ -337,6 +337,28 @@ function plugin_dir_path( $f ) { return '/tmp/'; }
 function plugin_dir_url( $f ) { return 'http://site/'; }
 function is_wp_error( $t ) { return $t instanceof WP_Error; }
 
+/* THE SITE CALLING ITSELF.
+ *
+ * IE_Reach::rest_self_test() asks WordPress for its own REST namespace
+ * before anything on the card blames anybody. Without these stubs the check
+ * cannot run, every stranded site comes back "we could not work out why",
+ * and three tests below fail for a reason that has nothing to do with them.
+ *
+ * DEFAULTS TO HEALTHY, because that is the case most of this file is about:
+ * a site whose REST API works and which our server still cannot reach. A
+ * test that wants the other answer sets $GLOBALS['ie_loopback']. */
+function rest_url( $path = '' ) { return 'http://site/wp-json/' . ltrim( (string) $path, '/' ); }
+function wp_remote_get( $url, $args = array() ) {
+	return isset( $GLOBALS['ie_loopback'] )
+		? $GLOBALS['ie_loopback']
+		: array( 'code' => 200, 'body' => '{"namespace":"interlink\/v1"}' );
+}
+function wp_remote_retrieve_response_code( $r ) { return is_array( $r ) ? ( $r['code'] ?? 0 ) : 0; }
+function wp_remote_retrieve_body( $r ) { return is_array( $r ) ? ( $r['body'] ?? '' ) : ''; }
+
+/** Apache's own 404 — what a missing WordPress rewrite block produces. */
+const APACHE_404 = '<!doctype html><html><head><title>404 Error</title></head><body>Not found</body></html>';
+
 class WP_Error {
 	private $m, $d;
 	public function __construct( $c = '', $m = '', $d = null ) { $this->m = $m; $this->d = $d; }
@@ -3720,6 +3742,11 @@ function poll_reset() {
 	$GLOBALS['ie_transient_ttl'] = array();
 	$GLOBALS['ie_transient']     = null;
 	$GLOBALS['ie_run_result']    = array();
+
+	/* Back to a site whose own REST API works, so a test that does not care
+	 * about the self-check gets the answer most of this file assumes. The
+	 * transients are cleared above, which also clears the cached verdict. */
+	unset( $GLOBALS['ie_loopback'] );
 }
 
 test( 'THE SCREEN ASKS THE SERVER, RATHER THAN WAITING TO BE ASKED', function () {
@@ -3926,9 +3953,59 @@ test( 'A BLOCKED SITE SAYS SO, IN THE PLACE THE OWNER IS ALREADY LOOKING', funct
 
 	$html = render( 'running' );
 
+	/* THE HOST IS BLAMED ONLY BECAUSE THE SELF-CHECK PASSED. poll_reset()
+	 * leaves the loopback healthy, which is this case: the site answers its
+	 * own REST API and our server still cannot reach it. That is the one
+	 * situation where a support ticket is the right advice. */
 	has( $html, 'Your host appears to be blocking us', 'the warning is nowhere on the card' );
-	has( $html, 'written and paid for', 'the owner is not told their money is safe' );
+	has( $html, 'Nothing is lost', 'the owner is not told their money is safe' );
 	has( $html, 'wp-json/interlink/v1/', 'nothing on the page says what to ask the host for' );
+} );
+
+test( 'AND IT IS NOT BLAMED WHEN THE SITE CANNOT REACH ITSELF', function () {
+	/* THE CASE THAT COST A WEEK, on 17 October. The site's .htaccess had
+	 * lost its WordPress rewrite block, so /wp-json/ never reached
+	 * WordPress — and every pretty URL on the site was broken too. The card
+	 * said the host was blocking us, the ticket went to a hosting company
+	 * that had done nothing wrong, and support pasted our REST path into
+	 * their image hotlink protection.
+	 *
+	 * Apache's 404 is HTML; WordPress answers JSON. The site can tell the
+	 * difference by itself, and now it does. */
+	poll_reset();
+	$GLOBALS['ie_options']['ie_last_rung']       = time() - 4000;
+	$GLOBALS['ie_options']['ie_expecting_since'] = time() - 4000;
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+	$GLOBALS['ie_loopback']  = array( 'code' => 404, 'body' => APACHE_404 );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Your host appears to be blocking us',
+		'a site with broken rewrite rules is still being told to blame its host' );
+	hasnt( $html, '<textarea readonly',
+		'a support ticket is offered for a problem the host cannot fix' );
+
+	has( $html, 'links need rebuilding', 'the real cause is not named' );
+	has( $html, 'options-permalink.php', 'the screen that fixes it is not linked' );
+	has( $html, 'Nothing is lost', 'the owner is not told their money is safe' );
+} );
+
+test( 'and nobody is blamed when the check could not run', function () {
+	/* Plenty of hosts block a site from calling itself. That says nothing
+	 * about whether anyone else can reach it, so guessing in either
+	 * direction would put us back where we started. */
+	poll_reset();
+	$GLOBALS['ie_options']['ie_last_rung']       = time() - 4000;
+	$GLOBALS['ie_options']['ie_expecting_since'] = time() - 4000;
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+	$GLOBALS['ie_loopback']  = new WP_Error();
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Your host appears to be blocking us', 'the host was blamed on no evidence' );
+	hasnt( $html, '<textarea readonly', 'a ticket was offered on no evidence' );
+	has( $html, 'We cannot reach this site', 'the card says nothing at all' );
+	has( $html, 'Nothing is lost', 'the owner is not told their money is safe' );
 } );
 
 test( 'AND IT SURVIVES THE SPINNER GIVING UP', function () {
@@ -3978,6 +4055,31 @@ test( 'the text can be copied, not just read', function () {
 	$html = render( 'running' );
 
 	has( $html, '<textarea readonly', 'the ticket text is not in anything selectable' );
+} );
+
+test( 'AND NEITHER SENTENCE CLAIMS THE BATCH HAS FINISHED', function () {
+	/* BOTH LINES USED TO. "Your posts are written and paid for" and
+	 * "Already written and paid for" each assert that every post in the
+	 * campaign is done — and the warning they sit in only ever appears while
+	 * a batch is IN FLIGHT. Edwin read them on 17 October directly beneath a
+	 * line saying "7 of 12 written".
+	 *
+	 * Five of twelve were written and five were paid for. The sentences were
+	 * reassuring somebody with a fact that was not true yet. */
+	poll_reset();
+	$GLOBALS['ie_options']['ie_last_rung']       = time() - 4000;
+	$GLOBALS['ie_options']['ie_expecting_since'] = time() - 4000;
+	$GLOBALS['ie_campaigns'] = array( blocked_fixture() );
+
+	$html = render( 'running' );
+
+	hasnt( $html, 'Your posts are written and paid for',
+		'the warning still claims the whole batch is written' );
+	hasnt( $html, 'Already written and paid for',
+		'the fetch button still claims the whole batch is written' );
+
+	has( $html, 'Nothing is lost', 'the owner is no longer told their money is safe' );
+	has( $html, 'already written', 'the fetch button no longer says it costs nothing' );
 } );
 
 test( 'A HEALTHY CAMPAIGN SAYS NOTHING OF THE KIND', function () {

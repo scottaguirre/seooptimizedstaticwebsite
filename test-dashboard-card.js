@@ -34,7 +34,7 @@
 //   node test-dashboard-card.js
 
 const assert = require('assert');
-const { siteCardState, ACTIVE } = require('./utils/dashboardSite');
+const { siteCardState, ACTIVE, KEPT_HOURS } = require('./utils/dashboardSite');
 
 let passed = 0, failed = 0;
 
@@ -131,6 +131,85 @@ test('no site and no job shows nothing at all', function () {
   assert.strictEqual(siteCardState(null, null).state, 'none');
 });
 
+/* -------------------------------------------------------------------------
+ * A SITE THAT WAS SWEPT IS NOT A SITE THAT NEVER EXISTED
+ *
+ * cleanupScheduler deletes dist/user_<id>/ 48 hours after the last write. At
+ * that moment getCurrentSite() counts zero .html files — exactly what it
+ * counts for somebody who has never pressed Generate. So the dashboard told a
+ * customer whose paid site had just been removed that they "haven't generated
+ * a website yet".
+ *
+ * Same class of bug as "generated 2 minutes ago" above, and found the same
+ * way: by asking which question the card is answering.
+ * ---------------------------------------------------------------------- */
+
+const DONE = {
+  _id: 'job-9',
+  kind: 'site',
+  status: 'completed',
+  finishedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+};
+
+test('A SWEPT SITE SAYS IT WAS REMOVED, NOT THAT NONE WAS EVER MADE', function () {
+  const card = siteCardState(null, null, DONE);
+
+  assert.strictEqual(card.state, 'expired');
+  assert.match(card.subtitle, /removed/i);
+  assert.match(card.subtitle, /3 days ago/);
+});
+
+test('and it names the window, from the sweeper rather than from prose', function () {
+  /* The dashboard carried "kept for 24 hours" in a hard-coded sentence. The
+   * window became 48 on 16 October and that sentence was a lie the moment it
+   * shipped. One number, one source. */
+  const { TTL_MS } = require('./utils/cleanupScheduler');
+
+  assert.strictEqual(KEPT_HOURS, Math.round(TTL_MS / 3600000));
+  assert.match(siteCardState(null, null, DONE).subtitle, new RegExp(`${KEPT_HOURS} hours`));
+});
+
+test('A FAILED BUILD IS NOT AN EXPIRY', function () {
+  /* It produced no site, so nothing was removed. Telling its owner their
+   * website "was removed after 48 hours" would describe a deletion that never
+   * happened, on top of a failure they already watched. */
+  for (const status of ['failed', 'cancelled', 'queued', 'running', '']) {
+    assert.strictEqual(
+      siteCardState(null, null, { ...DONE, status }).state, 'none',
+      `a ${status || 'blank'} job was reported as an expired website`
+    );
+  }
+});
+
+test('and a site still on disk is never called expired', function () {
+  /* The order of the branches. A completed job exists for every finished
+   * site, including the one sitting in the folder right now. */
+  assert.strictEqual(siteCardState(SITE, null, DONE).state, 'ready');
+});
+
+test('nor is one that is being rebuilt right now', function () {
+  assert.strictEqual(siteCardState(null, RUNNING, DONE).state, 'building');
+});
+
+test('a job with no finish time falls back to when it was created', function () {
+  /* finishedAt was added later than the Job model. An older record has
+   * createdAt and nothing else, and "removed" with no date is worse than a
+   * roughly right one. */
+  const old = { kind: 'site', status: 'completed', createdAt: new Date(Date.now() - 7200000) };
+
+  assert.strictEqual(siteCardState(null, null, old).state, 'expired');
+  assert.match(siteCardState(null, null, old).subtitle, /2 hours ago/);
+});
+
+test('and junk in that argument does not throw or invent an expiry', function () {
+  for (const junk of [undefined, null, 'yes', 7, [], {}, { status: 'completed' }]) {
+    assert.strictEqual(
+      siteCardState(null, null, junk).state, 'none',
+      `${JSON.stringify(junk)} was treated as a removed website`
+    );
+  }
+});
+
 test('and junk does not throw', function () {
   /* This runs on the page people land on after logging in. A fatal here is
    * the whole dashboard, not one card. */
@@ -197,6 +276,44 @@ test('and a building card offers the progress link INSTEAD of the buttons', func
     /'building'\s*===\s*cardState\.state\s*\?\s*buildingCard/.test(src),
     'the building card is defined and never rendered'
   );
+});
+
+test('THE DASHBOARD LOOKS UP THE JOB BEHIND A MISSING SITE', function () {
+  /* Without this query siteCardState() is never handed the third argument
+   * and the expired state can never be reached — the card would go back to
+   * "you haven't generated a website yet". */
+  const src = code('./routes/authRoute.js');
+
+  assert.ok(/siteCardState\(site, activeJob, lastSiteJob\)/.test(src),
+    'the card is not told about the job behind a missing site');
+  assert.ok(/kind: 'site'/.test(src) && /status: 'completed'/.test(src),
+    'the lookup does not restrict to completed SITE jobs');
+});
+
+test('and the expired card is actually selected and rendered', function () {
+  /* Found by mutation on the building card: a card that is DEFINED and never
+   * chosen is dead code that reads as a feature. */
+  const src = code('./routes/authRoute.js');
+
+  assert.ok(/const expiredCard = /.test(src), 'there is no expired card');
+  assert.ok(/'expired' === cardState\.state \? expiredCard/.test(src),
+    'the expired card is defined and never rendered');
+
+  const card = src.slice(src.indexOf('const expiredCard'), src.indexOf('const siteCard'));
+
+  assert.ok(!/dlStatic|export-wp-theme|previewUrl/.test(card),
+    'the expired card offers a download, convert or preview button for a site that is gone');
+});
+
+test('NO SCREEN TYPES THE RETENTION WINDOW AS PROSE', function () {
+  /* authRoute carried "kept for 24 hours" as literal text. The window became
+   * 48 and that sentence was wrong the moment it shipped — the same drift
+   * shape as the brand name and the fixed page count. */
+  const src = code('./routes/authRoute.js');
+
+  assert.ok(!/kept for \d+ hours/.test(src),
+    'the retention window is typed out instead of read from the sweeper');
+  assert.ok(/KEPT_HOURS/.test(src), 'the window is not read from anywhere');
 });
 
 test('THE PROGRESS PAGE REFUSES TO BE SERVED FROM THE BACK BUTTON', function () {

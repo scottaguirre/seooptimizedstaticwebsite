@@ -58,9 +58,14 @@ const { quotePosts, CREDITS_PER_POST } = require('../utils/blogPricing');
 const { planForCampaign } = require('../utils/blog/campaignPlan');
 // The refusal sentence lives with the conflict kinds it describes.
 const { conflictMessage } = require('../utils/blog/planCampaign');
+const { createCampaign } = require('../utils/blog/createCampaign');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { parseReportedRemoval } = require('../utils/blog/removalTime');
+// Imported whole rather than destructured. Three of its exports are read in
+// /complete and the file is the one place the deletion rules live — a reader
+// who sees `retention.deletableAt` knows where to go.
+const retention = require('../utils/blog/retention');
 const { readBusiness, businessChanged, mergeBusiness } = require('../utils/blog/businessShape');
 const { refuseMove, refuseOccupiedDomain } = require('../utils/blog/activationGuards');
 
@@ -280,201 +285,28 @@ router.post('/api/blog/activate', blogActivateLimiter, async (req, res) => {
 
 router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
   try {
-    const { targetPage, topics, schedule, linkMode, extendsCampaign, name } = req.body || {};
-
-    /* A PILLAR CAMPAIGN HAS NO TARGET PAGE, AND IS NOT MISSING ONE.
+    /* THE RULES LIVE IN utils/blog/createCampaign.js, because a second
+     * caller needs them: the Cloudflare blogs have no plugin, so their
+     * campaigns are planned from a screen on our own site by a logged-in
+     * user. This route is now the plugin's doorway into the same function.
      *
-     * It writes the hub articles a later campaign will point at, so its posts
-     * carry only the ring they already had. See the flag on BlogCampaign for
-     * why pillars never link down to their children.
-     *
-     * READ FROM THE BODY AS A FLAG, never inferred from an absent targetPage.
-     * A client that forgot to send one is a bug, and treating the absence as
-     * intent would turn it into a campaign quietly missing a third of its
-     * links — a failure that only surfaces months later, as posts that never
-     * fed anything. */
-    const isPillar = req.body.isPillar === true || req.body.isPillar === 'true';
-
-    if (!isPillar && (!targetPage || !targetPage.url || !targetPage.keyword)) {
-      return res.status(400).json({ error: 'A target page with a URL and keyword is required.' });
-    }
-
-    if (!Array.isArray(topics) || !topics.length) {
-      return res.status(400).json({ error: 'At least one topic is required.' });
-    }
-
-    /* TWO IS THE FLOOR FOR A PILLAR CAMPAIGN, and nothing downstream would
-     * have caught one.
-     *
-     * With no money page and no sibling, a single post has NO outbound links
-     * at all — and it passes every check, because every link assertion in
-     * qualityCheck.js is conditional on the link having been asked for. An
-     * ordinary single-post campaign is fine: it still carries its money link.
-     *
-     * Refused here as well as in planCampaign() because this is where the
-     * customer finds out, with a sentence they can act on, rather than a 500
-     * from a thrown Error. */
-    if (isPillar && topics.length < 2) {
-      return res.status(400).json({
-        error: 'A pillar campaign needs at least two posts — they link to each other, so a single post would have no links at all.',
-      });
-    }
-
-    if (topics.length > 52) {
-      // A year of weekly posts. Beyond this the ring stops being a ring and
-      // the plan is almost certainly a mistake.
-      return res.status(400).json({ error: 'A campaign can hold at most 52 posts.' });
-    }
-
-    /* Anchors already pointing at this page from earlier runs. Passed so the
-     * planner does not reuse them: a second campaign repeating the first
-     * campaign's phrases adds link volume without adding any variety, which
-     * is the thing the anchor mix exists to produce.
-     *
-     * SKIPPED FOR A PILLAR CAMPAIGN. The query keys on targetPage.url, so with
-     * no target page it would match every OTHER pillar campaign on the site —
-     * all of which store '' — and feed their empty anchors in as "already
-     * used". There are no money anchors to avoid reusing. */
-    const priorCampaigns = isPillar ? [] : await BlogCampaign.find({
-      site: req.site._id,
-      'targetPage.url': String(targetPage.url),
-    }).select('slots.moneyAnchor').lean();
-
-    /* REFRESHED HERE, BEFORE THE ANCHORS ARE CHOSEN.
-     *
-     * This is the one moment the value is actually used: planForCampaign()
-     * builds the branded anchor phrases from it and freezes them into the
-     * slots, where they stay for the life of the campaign. Refreshing after
-     * planning would be a copy nothing reads.
-     *
-     * Persisted rather than merely used, so the report and any later plan
-     * see the same name, and so a site that renames once does not have to
-     * keep re-sending before anything is right. */
-    const reportedBusiness = readBusiness(req.body.business, req.body.businessFields);
-
-    if (businessChanged(req.site.business, reportedBusiness)) {
-      req.site.business = mergeBusiness(req.site.business, reportedBusiness);
-      await BlogSite.updateOne({ _id: req.site._id }, { $set: { business: req.site.business } });
-
-      log.info('blog.business.updated', {
-        requestId: req.id,
-        siteId: String(req.site._id),
-        at: 'plan',
-      });
-    }
-
-    const plan = planForCampaign({
-      targetPage,
-      topics,
-      isPillar,
-      business: req.site.business || {},
-      schedule: schedule || {},
-      priorCampaigns,
-      linkMode: linkMode === 'extend' ? 'extend' : 'standalone',
-    });
-
-    if (plan.conflicts && plan.conflicts.length) {
-      /* Refused rather than silently adjusted. A post that cannibalises the
-       * page it is meant to feed is worse than no post, and the customer is
-       * the one who should decide how to reword it.
-       *
-       * THE SENTENCE NOW NAMES THE CONFLICT THAT ACTUALLY FIRED — 7 October.
-       * It read "Some topics would compete with the target page" for all three
-       * kinds queryConflicts raises, and only one of them is about the target
-       * page. Edwin hit it on a pair of HIS OWN topics overlapping each other,
-       * read the sentence, and went to look at the pillar — exactly where it
-       * sent him, and the wrong place. The detail was in the panel above
-       * saying "duplicate:", so the screen disagreed with itself.
-       *
-       * THE SENTENCES LIVE WITH THE KINDS, in planCampaign.js, because that is
-       * where the kinds are invented. A sentence per kind written here would
-       * be a second copy of a decision made there — the mistake this project
-       * has paid for more than any other. */
-      return res.status(400).json({
-        error: conflictMessage(plan.conflicts),
-        conflicts: plan.conflicts,
-      });
-    }
-
-    const campaign = await BlogCampaign.create({
-      user: req.site.user,
-      site: req.site._id,
-      name: String(name || '').slice(0, 200) || plan.suggestedName,
-      isPillar,
-
-      /* OMITTED, NOT WRITTEN EMPTY. The schema's `required` is now conditional
-       * on isPillar, so a sub-document of three empty strings would validate —
-       * and then buildLinkPlan() would read a url of '' and hand the writer a
-       * money link pointing nowhere. The absence has to stay an absence all
-       * the way down. */
-      ...(isPillar ? {} : {
-        targetPage: {
-          url: String(targetPage.url),
-          keyword: String(targetPage.keyword),
-          intent: String(targetPage.intent || ''),
-        },
-      }),
-
-      linkMode: plan.linkMode,
-      extendsCampaign: plan.linkMode === 'extend' ? extendsCampaign || null : null,
-      schedule: plan.schedule,
-      slots: plan.slots,
-
-      // A DRAFT, not active. Before write-ahead there was no separate approval
-      // step — planning and starting were one act, so this was created active.
-      // Now approval is what triggers a large charge, and the two have to be
-      // distinct: nothing happens to this campaign until someone says yes.
-      status: 'draft',
-    });
-
-    const quote = quotePosts(plan.slots.length);
-    const user = await User.findById(req.site.user).lean();
-    const available = Number(user?.credits || 0);
-
-    log.info('blog.plan.created', {
+     * NOTHING HERE DECIDES ANYTHING. If a rule appears in this handler
+     * again, there are two copies of it. */
+    const result = await createCampaign({
+      site: req.site,
+      body: req.body,
       requestId: req.id,
-      campaignId: String(campaign._id),
-      siteId: String(req.site._id),
-      posts: plan.slots.length,
-      estimatedCredits: quote.total,
-      affordable: available >= quote.total,
     });
 
-    res.json({
-      campaignId: String(campaign._id),
-      status: campaign.status,
-      slots: campaign.slots.map(s => ({
-        index: s.index,
-        topic: s.topic,
-        targetQuery: s.targetQuery,
-        publishAt: s.publishAt,
-        status: s.status,
-      })),
-      quote,
+    if (!result.ok) {
+      /* The conflict refusal carries the list as well as the sentence, and
+       * the others carry nothing — so the extra keys are spread rather than
+       * named, exactly as they were when this was one object literal. */
+      const { ok, status, error, ...rest } = result;
+      return res.status(status).json({ error, ...rest });
+    }
 
-      /* ECHOED SO THE PLUGIN READS THE SERVER'S RECORD, NOT ITS OWN FORM.
-       *
-       * wp-admin posted the checkbox, so it already "knows" — and that is
-       * exactly the trap. Two copies of one fact, written by two sides, will
-       * disagree the first time a request is retried, a form is resubmitted,
-       * or this route rejects the flag for a reason the plugin did not model.
-       * The campaign that EXISTS is the only authority on what it is.
-       *
-       * IE_Campaigns::create_from_plan() reads it from here, and
-       * wp-plugin/test-pillar-plugin.php proves it prefers this over the
-       * form's own copy. */
-      isPillar: campaign.isPillar,
-
-      // Shown in wp-admin so the customer knows the whole cost before they
-      // approve, rather than after the third post fails.
-      creditsAvailable: available,
-      enoughCredits: available >= quote.total,
-      schedule: campaign.schedule,
-      anchorSummary: plan.anchorSummary,
-      // Not errors — several posts may end up linking with the same phrase.
-      // Worth a line in wp-admin so the customer can widen the pool.
-      warnings: plan.anchorWarnings,
-    });
+    res.json(result.response);
 
   } catch (err) {
     log.error('blog.plan.failed', err, { requestId: req.id });
@@ -885,6 +717,16 @@ router.post('/api/blog/complete', blogApiLimiter, requireSite, async (req, res) 
     const recorded = [];
     const rejected = [];
 
+    /* Slots whose stored article may now be dropped, and the date it becomes
+     * droppable.
+     *
+     * ONE DATE FOR THE WHOLE REQUEST, not one per slot. These posts were
+     * confirmed by the same site in the same call; giving them timestamps
+     * milliseconds apart would imply a precision that means nothing and would
+     * stop the stamp being written in a single update. */
+    const droppable = [];
+    const dropAt = new Date(Date.now() + retention.WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
     // The same slot twice in one payload. The stale campaign document below
     // would still say 'ready' for the second copy — it was loaded before this
     // request changed anything — so without this the duplicate is reported as
@@ -917,6 +759,24 @@ router.post('/api/blog/complete', blogApiLimiter, requireSite, async (req, res) 
 
       if (updated) {
         recorded.push(index);
+
+        /* THE ARTICLE IS NOW IN wp_posts, SO OUR COPY IS THE SECOND COPY.
+         *
+         * Only for a site whose target is 'wordpress', and only when this
+         * confirmation PROVED the insert — a real post id and a real URL.
+         * retention.js holds both rules and the reasoning; the important half
+         * is that it returns null rather than a date whenever it is unsure,
+         * so an unproven confirmation leaves the article untouched for ever.
+         *
+         * Note what is NOT stamped: a duplicate confirmation falling through
+         * to the branch below. That slot was confirmed by an earlier request
+         * and already carries its date; re-stamping would push the window
+         * forward every time a site re-confirmed, and a site that re-confirms
+         * on every run would keep its articles for ever. */
+        if (retention.deletableAt(req.site, item)) {
+          droppable.push(index);
+        }
+
         continue;
       }
 
@@ -932,6 +792,28 @@ router.post('/api/blog/complete', blogApiLimiter, requireSite, async (req, res) 
       }
     }
 
+    /* Stamp the window on everything that earned one, in one update.
+     *
+     * IN ITS OWN try/catch, AND THAT IS THE POINT. The confirmation is the
+     * part the plugin is waiting on: a site that inserted twelve posts and
+     * got a 500 back would offer all twelve again. Failing to write a
+     * retention date costs twelve kilobytes a post; failing the request costs
+     * the customer a duplicate post on their site. */
+    if (droppable.length) {
+      try {
+        await BlogPost.updateMany(
+          { campaign: campaign._id, slotIndex: { $in: droppable } },
+          { $set: { deletableAt: dropAt } }
+        );
+      } catch (err) {
+        log.error('blog.complete.retentionStampFailed', err, {
+          requestId: req.id,
+          campaignId: String(campaign._id),
+          slots: droppable,
+        });
+      }
+    }
+
     const after = await BlogCampaign.findById(campaign._id);
 
     log.info('blog.complete.ok', {
@@ -939,6 +821,18 @@ router.post('/api/blog/complete', blogApiLimiter, requireSite, async (req, res) 
       campaignId: String(campaign._id),
       recorded,
       rejected: rejected.length,
+
+      /* What was marked for dropping, and — when nothing was — why not.
+       *
+       * The two are not the same question. "0 droppable" on a WordPress site
+       * means the plugin is confirming without sending post ids, which is a
+       * bug worth seeing; on a Cloudflare site it means the feature is
+       * working exactly as intended. Without the reason the log cannot tell
+       * them apart, and this is the only place that knows. */
+      droppable: droppable.length,
+      keptBecause: droppable.length === recorded.length
+        ? ''
+        : retention.whyNot(req.site, items[0]),
     });
 
     res.json({

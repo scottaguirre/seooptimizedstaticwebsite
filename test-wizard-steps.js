@@ -619,6 +619,352 @@ test('ONE SUMMARY HELPER, READ BY BOTH REVIEW ROWS', () => {
     'the row shows where no badges are possible, reporting a choice nobody made');
 });
 
+
+/* -------------------------------------------------------------------------
+ * The numbers on the location rows
+ *
+ * The service pages step numbers its rows. This step did not, so the only
+ * screen that said how many towns had been added was the review step, one
+ * click later — after the customer had already chosen what to pay for.
+ *
+ * The rows live in public/js/locationPages.js, a second browser IIFE, and
+ * BOTH files add and remove them: the Add button and the Delete button in
+ * that file, a ticked or unticked suggested town in this one. That split is
+ * the whole risk here, so it is what these checks are aimed at.
+ * ---------------------------------------------------------------------- */
+
+const LOC_RAW = fs.readFileSync(
+  path.join(__dirname, 'public/js/locationPages.js'), 'utf8');
+
+const LOC = withoutComments(LOC_RAW);
+
+/** One function out of locationPages.js, by matching its braces. */
+function locFunction(name) {
+  const at = LOC.indexOf(`function ${name}(`);
+  assert.notStrictEqual(at, -1, `${name}() has been renamed or removed from locationPages.js`);
+
+  const open = LOC.indexOf('{', at);
+  let depth = 0;
+
+  for (let i = open; i < LOC.length; i++) {
+    if (LOC[i] === '{') depth++;
+    else if (LOC[i] === '}' && --depth === 0) return LOC.slice(at, i + 1);
+  }
+
+  throw new Error(`${name}() has no closing brace`);
+}
+
+/* The smallest DOM the numbering needs: a list whose labels can be asked
+ * for in document order. Enough to run the real function rather than read
+ * it — and enough to delete a row from the middle, which is the case a
+ * source check cannot see. */
+function fakeList(count) {
+  const labels = [];
+  for (let i = 0; i < count; i++) labels.push({ textContent: 'Location' });
+
+  return {
+    labels,
+    querySelectorAll(selector) {
+      assert.strictEqual(selector, '.location-label',
+        `the numbering is looking for "${selector}", which the row markup does not use`);
+      return labels;
+    },
+  };
+}
+
+/** renumberLocationRows(), lifted out and given a document to work on. */
+function numbering(list) {
+  const document = {
+    getElementById(id) {
+      assert.strictEqual(id, 'locationsList', `the numbering reads #${id}, not the locations list`);
+      return list;
+    },
+  };
+
+  return new Function('document',
+    `${locFunction('renumberLocationRows')}; return renumberLocationRows;`)(document);
+}
+
+test('EVERY LOCATION ROW IS NUMBERED, FROM ONE', () => {
+  const list = fakeList(4);
+  numbering(list)();
+
+  assert.deepStrictEqual(
+    list.labels.map(l => l.textContent),
+    ['Location 1', 'Location 2', 'Location 3', 'Location 4']
+  );
+});
+
+test('AND DELETING THE MIDDLE ROW RENUMBERS THE ONES BELOW IT', () => {
+  /* The reason the number is recomputed from position instead of being
+   * written once when the row is built. Assign it at birth and deleting row
+   * 2 of 4 leaves the list reading "1, 3, 4" — which reads as a row having
+   * gone missing, not as one having been deleted. */
+  const list = fakeList(4);
+  const renumber = numbering(list);
+  renumber();
+
+  list.labels.splice(1, 1);   // they pressed Delete on the second row
+  renumber();
+
+  assert.deepStrictEqual(
+    list.labels.map(l => l.textContent),
+    ['Location 1', 'Location 2', 'Location 3']
+  );
+});
+
+test('an empty list, and a step that is not on screen, are both fine', () => {
+  /* The toggle empties the list, and this function is published on `window`
+   * where any later caller can reach it from any step. */
+  assert.doesNotThrow(() => numbering(fakeList(0))());
+
+  const absent = new Function('document',
+    `${locFunction('renumberLocationRows')}; return renumberLocationRows;`)({
+      getElementById: () => null,
+    });
+
+  assert.doesNotThrow(absent);
+});
+
+test('the row carries a label for the number to go in', () => {
+  /* The markup and the numbering are in the same file precisely so they
+   * cannot disagree — but they are still two separate strings. */
+  const body = locFunction('addLocationInput');
+
+  assert.ok(/class="form-label location-label"/.test(body),
+    'the location row has no label, so there is nowhere for the number to appear');
+  assert.ok(/renumberLocationRows\(\)/.test(body),
+    'a newly added row keeps whatever text the markup gave it');
+  assert.ok(/align-items-end/.test(body),
+    'the row still centres its columns, which floats Delete above the field it deletes');
+});
+
+test('THE VALUE IS SET AS A PROPERTY, NOT INTERPOLATED INTO THE TAG', () => {
+  /* It used to be `value="${initialValue}"`. These strings come back from a
+   * draft in sessionStorage and from the suggestion panel, and one double
+   * quote in a town name would close the attribute early and put the rest of
+   * the string into the tag. */
+  const body = locFunction('addLocationInput');
+
+  assert.ok(!/value="\$\{/.test(body),
+    'the row still interpolates a value into its markup');
+  assert.ok(/\.value = initialValue/.test(body),
+    'the initial value is never applied, so a restored draft comes back blank');
+});
+
+test('deleting a row renumbers, and so does unticking a suggested town', () => {
+  /* The two paths that remove a row, in two different files. The Delete
+   * button is handled in locationPages.js; unticking a suggestion calls
+   * removeLocationRow() in the wizard, which never touches that button. */
+  const del = LOC.slice(LOC.indexOf("classList.contains('remove-location')"));
+
+  assert.ok(/renumberLocationRows\(\)/.test(del.slice(0, 400)),
+    'the Delete button removes a row and leaves the numbers behind it stale');
+
+  const unticked = bodyOf('removeLocationRow');
+
+  assert.ok(/renumberLocationRows/.test(unticked),
+    'unticking a suggested town removes a row from the middle and leaves a gap in the numbers');
+});
+
+test('and the numbering is published for the other file to call', () => {
+  /* Without this the wizard cannot renumber after unticking a town, and the
+   * check above would be asserting a call to a function that is not there. */
+  assert.ok(/window\.renumberLocationRows = renumberLocationRows/.test(LOC),
+    'renumberLocationRows is private, so the wizard cannot call it');
+});
+
+/* -------------------------------------------------------------------------
+ * "This replaces your current website"
+ *
+ * There is ONE dist folder per user, not one per site. runGeneration step 2
+ * rmSyncs it before writing, so generating a second site deletes the first
+ * the moment the build starts — not after the 48-hour window, and until now
+ * with no warning anywhere in the app. A customer mid-wizard is not looking
+ * at the dashboard.
+ * ---------------------------------------------------------------------- */
+
+test('the review step asks whether there is a site to lose', () => {
+  const body = bodyOf('renderReviewStep');
+
+  assert.ok(/warnIfReplacing\(/.test(body),
+    'the review step never checks for an existing site');
+});
+
+test('AND IT ASKS AT REVIEW TIME, NOT AT BOOT', () => {
+  /* A wizard left open for two days would otherwise warn about a site the
+   * sweeper has since removed. Asked at the moment it matters, the answer is
+   * true. */
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(/fetch\('\/api\/me'/.test(warn),
+    'the warning does not fetch the current site');
+  assert.ok(!/state\.currentSite/.test(JS),
+    'the site is cached in state, so a stale answer can be shown');
+});
+
+test('NOTHING IS SHOWN TO SOMEBODY WITH NOTHING TO REPLACE', () => {
+  /* A replacement warning on a first build is noise, and noise is what
+   * people learn to click past — including the time it matters. */
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(/if \(!site\) return;/.test(warn),
+    'the warning renders even when there is no existing site');
+});
+
+test('and a failed lookup does not block the customer', () => {
+  /* Same rule as the credit check. Worst case they lose a site they could
+   * have downloaded — which is exactly today's behaviour, so a swallowed
+   * error cannot make things worse than not having the warning at all. */
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(/catch/.test(warn), 'a network blip would throw inside the review step');
+  assert.ok(/res\.ok/.test(warn), 'a non-200 is parsed as if it were a site');
+});
+
+test('THE BUSINESS NAME IS ESCAPED', () => {
+  /* It goes into innerHTML and the customer typed it. */
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(/escapeHtml\(site\.businessName\)/.test(warn),
+    'the business name is interpolated into innerHTML unescaped');
+  assert.ok(/escapeHtml\(String\(site\.generatedAgo/.test(warn),
+    'generatedAgo is interpolated unescaped');
+});
+
+test('it offers a way to save the site, because a warning you cannot act on is just friction', () => {
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(/replaces your current website/i.test(warn),
+    'the warning does not say what is about to happen');
+  assert.ok(/\/dashboard/.test(warn), 'there is no way to save the site first');
+});
+
+test('IT SENDS THEM TO THE DASHBOARD, NOT STRAIGHT AT THE ZIP', () => {
+  /* Two versions of this were wrong before it was right.
+   *
+   * The first linked to /download-zip unconditionally. That route serves a
+   * ZIP already on disk and answers with a 404 HTML PAGE when there is not
+   * one — so for anyone who had never pressed Download HTML Site it would
+   * have navigated them out of the wizard and lost the whole form. A warning
+   * about losing work that loses their work.
+   *
+   * The second branched on hasStaticZip to pick between the direct link and
+   * the dashboard. Edwin: "what if the user wants to convert it to WordPress
+   * instead?" The dashboard carries BOTH buttons and only the customer knows
+   * which one they are about to lose. Choosing for them is a guess dressed
+   * as a convenience. */
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(!/download-zip/.test(warn),
+    'the warning links straight at the ZIP, which 404s out of the wizard for anyone who has not built one');
+  assert.ok(!/hasStaticZip/.test(warn.replace(/\s+/g, ' ')) || !/site\.hasStaticZip/.test(warn),
+    'the warning branches on whether a ZIP exists instead of letting the customer choose');
+});
+
+test('and it names both things they could be about to lose', () => {
+  /* "Download it first" alone reads as "the static ZIP is the only option".
+   * A customer who was going to convert to WordPress needs to know that is
+   * on the other end of this link too. */
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(/[Dd]ownload/.test(warn), 'the warning does not mention downloading');
+  assert.ok(/WordPress/.test(warn), 'the warning does not mention the WordPress conversion');
+});
+
+test('THE LINK OPENS A NEW TAB, AND SAYS SO', () => {
+  /* The form they have spent ten minutes filling in has to still be there
+   * when they come back — and they have to believe that before they will
+   * click, which is why the reassurance is in the text and not only in the
+   * markup. */
+  const warn = bodyOf('warnIfReplacing');
+  const links = warn.match(/<a [^>]*>/g) || [];
+
+  assert.strictEqual(links.length, 1, `expected one link, found ${links.length}`);
+  assert.ok(/target="_blank"/.test(links[0]), `the link navigates the wizard away: ${links[0]}`);
+  assert.ok(/rel="noopener"/.test(links[0]), `the new-tab link has no rel=noopener: ${links[0]}`);
+
+  assert.ok(/new tab/i.test(warn), 'nothing tells them the form survives the click');
+});
+
+test('AND IT IS NOT A CONFIRM DIALOG', () => {
+  /* One would fire on every generation including the first, and people click
+   * through those without reading. Pressing Generate on this screen is the
+   * confirmation. */
+  const warn = bodyOf('warnIfReplacing');
+
+  assert.ok(!/confirm\(|window\.confirm/.test(warn),
+    'the warning blocks on a dialog people will click through');
+});
+
+/* -------------------------------------------------------------------------
+ * The endpoint behind it
+ * ---------------------------------------------------------------------- */
+
+const AUTH = fs.readFileSync(path.join(__dirname, 'routes/authRoute.js'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n')
+  .filter(line => !/^\s*\/\//.test(line))
+  .join('\n');
+
+test('/api/me reports the site the next build would destroy', () => {
+  const me = AUTH.slice(AUTH.indexOf("router.get('/api/me'"), AUTH.indexOf("router.get('/verify'"));
+
+  assert.ok(me.length > 0, 'the /api/me handler could not be found');
+  assert.ok(/getCurrentSite\(req\.session\.userId\)/.test(me),
+    '/api/me does not look up the current site');
+
+  /* THE RESPONSE OBJECT, not the handler.
+   *
+   * Found by mutation: deleting `currentSite` from the res.json() payload
+   * left a handler that looks it up, builds it, and throws it away — and a
+   * search of the whole handler still matched the local variable. The wizard
+   * would read undefined and silently never warn, which is the bug this
+   * endpoint change exists to prevent. */
+  const sent = me.indexOf('res.json({');
+  const payload = me.slice(sent, me.indexOf('}', me.indexOf(')', sent)));
+
+  assert.ok(/currentSite/.test(payload),
+    'currentSite is computed and never sent');
+
+  /* AND IT IS THE VARIABLE, NOT A LITERAL. Second mutation on the same
+   * line: `currentSite: null` in the payload passes a presence check while
+   * throwing away the lookup above it, and the wizard would never warn
+   * anybody. Written as a NOT so an explicit `currentSite: currentSite`
+   * stays legal. */
+  assert.ok(!/currentSite\s*:\s*(null|undefined|false|\{\s*\})/.test(payload),
+    'currentSite is sent as a literal, so the lookup above it is discarded');
+});
+
+test('AND IT IS NULL WHEN THERE IS NOTHING THERE', () => {
+  /* The wizard keys its warning off this being falsy. An object with empty
+   * fields would warn every first-time customer about a site that does not
+   * exist. */
+  const me = AUTH.slice(AUTH.indexOf("router.get('/api/me'"), AUTH.indexOf("router.get('/verify'"));
+
+  assert.ok(/let currentSite = null;/.test(me),
+    'currentSite does not default to null');
+  assert.ok(/if \(existing\)/.test(me),
+    'the response is built without checking a site was found');
+});
+
+test('a filesystem error does not take the credits badge down with it', () => {
+  /* /api/me exists for the header's credit count. It must not start failing
+   * because a directory read did. */
+  const me = AUTH.slice(AUTH.indexOf("router.get('/api/me'"), AUTH.indexOf("router.get('/verify'"));
+  const lookup = me.slice(me.indexOf('let currentSite'), me.indexOf('res.json'));
+
+  assert.ok(/try \{/.test(lookup) && /catch/.test(lookup),
+    'the site lookup is unguarded inside the endpoint the header depends on');
+});
+
+test('and the dashboard card says it too', () => {
+  /* The wizard warning catches people who reach Review. The card catches
+   * people looking at the site they are about to lose. */
+  assert.ok(/Generating a new website replaces this one/.test(AUTH),
+    'the dashboard card does not mention that a new build replaces it');
+});
+
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);
 console.log('');

@@ -8,7 +8,7 @@ const User = require('../models/User');
 const BlogSite = require('../models/BlogSite');
 const requireAuth = require('../middleware/requireAuth');
 const { getCurrentSite } = require('../utils/currentSite');
-const { siteCardState, ACTIVE } = require('../utils/dashboardSite');
+const { siteCardState, ACTIVE, KEPT_HOURS } = require('../utils/dashboardSite');
 const Job = require('../models/Job');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
@@ -293,7 +293,29 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       log.error('dashboard.activeJob.failed', err, { requestId: req.id });
     }
 
-    const cardState = siteCardState(site, activeJob);
+    /* The job that made the site that is no longer there.
+     *
+     * Looked up only when there is nothing on disk — a dashboard with a live
+     * site does not need it, and this is the page everyone lands on after
+     * logging in. Swallowed like the lookup above for the same reason.
+     *
+     * kind: 'site' matters. A completed blog or build job says nothing about
+     * whether a WEBSITE ever existed, and treating one as proof would tell a
+     * blog-only customer that a website of theirs had been removed. */
+    let lastSiteJob = null;
+    if (!site && !activeJob) {
+      try {
+        lastSiteJob = await Job.findOne({
+          user: req.session.userId,
+          kind: 'site',
+          status: 'completed',
+        }).sort({ finishedAt: -1 }).lean();
+      } catch (err) {
+        log.error('dashboard.lastSiteJob.failed', err, { requestId: req.id });
+      }
+    }
+
+    const cardState = siteCardState(site, activeJob, lastSiteJob);
 
     // Blog Automation had no entry point anywhere in the app. /blog-sites was
     // reachable only by typing the URL, which means the feature effectively
@@ -376,7 +398,38 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         </div>
       </div>`;
 
-    const siteCard = 'building' === cardState.state ? buildingCard : site ? `
+    /* A website that WAS there. Not an error and not an empty state: they
+     * paid for this, it was built, and it has been cleaned up on schedule.
+     * The card says when, says why, and offers the one thing that fixes
+     * it. */
+    const expiredCard = `
+      <div class="card bg-secondary-subtle text-dark mb-4">
+        <div class="card-body">
+          <h5 class="card-title mb-1">Your last website</h5>
+          <p class="card-subtitle text-muted mb-0">${cardState.subtitle}</p>
+
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <!-- NOT "Generate it again". That promised a one-click rebuild
+                 the app does not do and that Edwin decided it should not do:
+                 clearDraft() wipes the saved form the moment Generate is
+                 pressed, so this link opens an EMPTY wizard. A button whose
+                 label describes a feature nobody built is how somebody
+                 spends ten minutes looking for it. -->
+            <a href="/" class="btn btn-primary">Build a new website</a>
+          </div>
+
+          <p class="text-muted small mb-0 mt-3">
+            Generated sites are kept for ${KEPT_HOURS} hours so the server does not
+            fill up. A removed site cannot be restored — building a new one
+            means filling in the form again, and costs the same credits as
+            the first time.
+          </p>
+        </div>
+      </div>`;
+
+    const siteCard = 'building' === cardState.state ? buildingCard
+      : 'expired' === cardState.state ? expiredCard
+      : site ? `
       <div class="card bg-secondary-subtle text-dark mb-4">
         <div class="card-body">
           <h5 class="card-title mb-1">
@@ -401,7 +454,14 @@ router.get('/dashboard', requireAuth, async (req, res) => {
           </div>
 
           <p class="text-muted small mb-0 mt-3">
-            Generated sites are kept for 24 hours. After that you'll need to generate again.
+            Generated sites are kept for ${KEPT_HOURS} hours. After that you'll need to generate again.
+          </p>
+
+          <!-- The faster way to lose this site, and until now the app said
+               nothing about it: one folder per user means the next build
+               overwrites this one the moment it starts. -->
+          <p class="text-muted small mb-0 mt-2">
+            Generating a new website replaces this one.
           </p>
 
           <div id="siteAlert" class="alert alert-danger mt-3 d-none" role="alert"></div>
@@ -586,11 +646,47 @@ router.get('/api/me', requireAuth, async (req, res) => {
     const user = await User.findById(req.session.userId).lean();
     if (!user) return res.status(401).json({ error: 'Not logged in' });
 
+    /* THE SITE THE NEXT GENERATION WILL DESTROY.
+     *
+     * runGeneration's step 2 calls resetUserDirs(), which is
+     * fs.rmSync(dist/user_<id>, { recursive: true }). There is ONE folder per
+     * user, not one per site, so starting a build deletes the previous one
+     * instantly — not after the 48-hour window, and with no warning anywhere
+     * in the app. Generating twice in a morning is a more likely way to lose
+     * a site than the sweeper is.
+     *
+     * Returned from HERE rather than from a new endpoint because the wizard
+     * already calls /api/me on every page load for the credits badge. One
+     * extra field costs nothing; a second request for one boolean would.
+     *
+     * Null when there is nothing to lose, so the warning cannot fire on a
+     * first-time customer — a replacement warning shown to somebody with
+     * nothing to replace is the kind of noise people learn to click past.
+     *
+     * Swallowed: this endpoint's job is the credits badge, and it must not
+     * start failing because a filesystem read did. */
+    let currentSite = null;
+    try {
+      const existing = getCurrentSite(req.session.userId);
+
+      if (existing) {
+        currentSite = {
+          businessName: existing.businessName || '',
+          pageCount: existing.pageCount,
+          generatedAgo: existing.generatedAgo,
+
+        };
+      }
+    } catch (err) {
+      log.error('api.me.currentSite.failed', err, { requestId: req.id });
+    }
+
     res.json({
       email: user.email,
       role: user.role,
       credits: user.credits,
-      verified: user.verified
+      verified: user.verified,
+      currentSite
     });    
 
   } catch (err) {

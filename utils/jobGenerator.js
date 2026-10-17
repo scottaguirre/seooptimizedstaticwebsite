@@ -10,6 +10,7 @@
 const User = require('../models/User');
 const { runGeneration } = require('./runGeneration');
 const { cleanupJobUploads, filesFromJob } = require('./jobUploads');
+const { clearForUsers } = require('./jobPayloads');
 const { log } = require('./logger');
 
 /**
@@ -24,6 +25,33 @@ async function generateForJob(job, { onProgress }) {
   if (!user) {
     throw new Error('The user who queued this job no longer exists');
   }
+
+  /* THE PREVIOUS SITE IS ABOUT TO BE DELETED, SO ITS FORM CAN GO TOO.
+   *
+   * runGeneration's step 2 calls resetUserDirs(), which rmSyncs
+   * dist/user_<id>. There is one folder per USER, not one per site, so
+   * starting this build destroys whatever was there — the 48-hour sweep is
+   * not the only way a site disappears, and it is not even the common one.
+   *
+   * Their payloads describe a website that is seconds from not existing, and
+   * a swept or overwritten site is gone for good rather than rebuildable, so
+   * nothing will read them again.
+   *
+   * `except` is belt and braces: this job is 'running', and clearForUsers
+   * only touches 'completed' ones, so it could not be hit. Naming it anyway
+   * means a future change to either rule cannot quietly empty the form of
+   * the build currently using it.
+   *
+   * BEFORE runGeneration rather than after, and the window that opens is
+   * harmless: if this build fails before step 2 the old site survives with
+   * its payload cleared, and that payload was only ever going to be read by
+   * a resume of the OLD job, which has already completed. Doing it
+   * afterwards would miss every build that crashes half way — exactly the
+   * ones that leave the most behind. */
+  await clearForUsers([job.user], {
+    except: job._id,
+    reason: 'replaced by a new build',
+  });
 
   try {
     const result = await runGeneration({

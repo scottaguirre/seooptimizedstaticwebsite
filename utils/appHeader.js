@@ -336,6 +336,16 @@ function appSidebar(current = '') {
     { href: '/', icon: 'bi-magic', label: 'Build a Website', cta: true },
     { href: '/keyword-research', icon: 'bi-search', label: 'Keyword Research' },
     { href: '/blog-sites', icon: 'bi-journal-text', label: 'Blog Automation' },
+
+    /* ADDED THE DAY THE SCREEN SHIPPED, and only because Edwin asked where
+     * the feature was. The route went live with nothing linking to it —
+     * which is exactly the failure described a few lines above this list,
+     * committed again by the person who had just read the warning.
+     *
+     * A tool that is not linked from somewhere a customer looks is a tool
+     * nobody uses. */
+    { href: '/static-blogs', icon: 'bi-cloud', label: 'Static Blogs' },
+
     { href: '/dashboard', icon: 'bi-speedometer2', label: 'Dashboard' },
   ];
 

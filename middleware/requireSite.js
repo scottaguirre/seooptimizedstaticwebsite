@@ -148,6 +148,32 @@ async function requireSite(req, res, next) {
       return deny(res, 'unknown-site', 401, { siteId, ip: req.ip, requestId: req.id });
     }
 
+    /* A STATIC BLOG CANNOT AUTHENTICATE, AND THIS IS THE LINE THAT SAYS SO.
+     *
+     * Before targets existed, every BlogSite had a secret and `required` on
+     * the schema guaranteed it. A Cloudflare blog has no plugin, nothing that
+     * calls in, and therefore no secret — so the schema stopped demanding
+     * one, and that quietly turned this function into a hole: HMAC with an
+     * empty key is a function anyone can compute, and the site id it needs
+     * is not secret. Anybody holding 24 hex characters could have signed a
+     * request to /api/blog/plan or /write and spent the owner's credits.
+     *
+     * The fix is not "reject an empty secret" — that would be a rule about a
+     * value, and a future bug that put a short string there would walk round
+     * it. It is "a site that has no inbound API is not reachable through the
+     * inbound API", which is a rule about what the site IS.
+     *
+     * BEFORE THE SIGNATURE CHECK, so no empty-key HMAC is ever computed.
+     * 'unknown-site' rather than something descriptive, for the same reason
+     * every other refusal here is vague: a caller must not be able to use
+     * this endpoint to ask what kind of site an id belongs to. */
+    if ('wordpress' !== (site.target || 'wordpress')) {
+      log.security('blog.auth.notAWordPressSite', {
+        requestId: req.id, siteId, target: site.target, ip: req.ip, path: req.path,
+      });
+      return deny(res, 'unknown-site', 401, { siteId, ip: req.ip, requestId: req.id });
+    }
+
     if (site.status !== 'active') {
       return deny(res, `site-${site.status}`, 403, { siteId, siteUrl: site.siteUrl, requestId: req.id });
     }
