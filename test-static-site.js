@@ -234,6 +234,89 @@ test('and the default target still demands them', function () {
   assert.ok(site.validateSync(), 'a site with no target was created without a licence key');
 });
 
+section('ONE BLOG PER DOMAIN, ENFORCED BY THE DATABASE AND NOT ONLY BY CODE');
+
+test('THERE IS A UNIQUE INDEX ON (user, siteUrl)', function () {
+  /* THE CHECK EXISTED ONLY IN CODE. staticBlogsRoute does a findOne before
+   * creating a blog, which is a read and a write with a gap between them —
+   * two requests arriving together both find nothing and both insert. Rare,
+   * and the consequence is not rare at all: two blogs on one domain share a
+   * Cloudflare project name, so each deploy replaces the other's site.
+   *
+   * It also had to be guarded by hand in the restore script, which is the
+   * sign that the guarantee was in the wrong place. */
+  const onPair = BlogSite.schema.indexes()
+    .filter(([fields]) => fields.user && fields.siteUrl);
+
+  assert.ok(onPair.length, 'nothing stops two blogs taking the same domain');
+
+  const unique = onPair.filter(([, options]) => options.unique);
+
+  assert.strictEqual(unique.length, 1,
+    `expected exactly one unique index on (user, siteUrl), found ${unique.length}`);
+});
+
+test('AND IT IS PARTIAL, BECAUSE AN EMPTY DOMAIN IS NOT A DOMAIN', function () {
+  /* siteUrl DEFAULTS TO THE EMPTY STRING, and a WordPress site can sit at
+   * that default for its whole life. A plain unique index would let an
+   * account hold exactly ONE site with no domain and refuse the second with
+   * a duplicate-key error naming a field neither of them had filled in —
+   * the same trap the licence key index fell into, one field over.
+   *
+   * `$gt: ''` rather than `$type: 'string'`: the default IS a string, so
+   * the type test alone excludes nothing. MongoDB's comparison operators do
+   * not match across BSON types, so this is exactly "a non-empty string". */
+  const unique = BlogSite.schema.indexes()
+    .filter(([fields, options]) => fields.user && fields.siteUrl && options.unique);
+
+  assert.deepStrictEqual(
+    unique[0][1].partialFilterExpression,
+    { siteUrl: { $gt: '' }, status: { $in: ['active', 'suspended'] } },
+    'the unique index is not limited to blogs that actually have a domain'
+  );
+});
+
+test('AND IT LEAVES REVOKED BLOGS OUT, BECAUSE THE PRODUCT DOES', function () {
+  /* FOUND BY RUNNING THE CHECK AGAINST THE LIVE DATABASE, which is the only
+   * reason this is right. The first filter was the domain alone, and it
+   * found a real duplicate that turned out to be correct data.
+   *
+   * activationGuards.refuseOccupiedDomain enforces one blog per domain and
+   * tests against other NON-REVOKED sites only: revoking a licence is how
+   * an owner frees a domain for a new key, and the revoked record stays as
+   * history. An index that counted it would have made that remedy
+   * impossible — the guard would allow the activation and the database
+   * would refuse the write.
+   *
+   * It would also have failed to build at all, and Mongoose logs that and
+   * carries on. */
+  const unique = BlogSite.schema.indexes()
+    .filter(([fields, options]) => fields.user && fields.siteUrl && options.unique);
+
+  const statuses = unique[0][1].partialFilterExpression.status.$in;
+
+  assert.ok(!statuses.includes('revoked'),
+    'a revoked blog still occupies its domain, so no licence can replace it');
+  assert.ok(statuses.includes('active'), 'active blogs are not covered by the index at all');
+});
+
+test('AND IT IS NAMED, SO IT CANNOT COLLIDE WITH ANOTHER', function () {
+  /* The lesson from licenceKeyHash: MongoDB derives an index name from its
+   * keys, so two indexes over the same keys are born with the same name and
+   * the second is refused at startup with IndexOptionsConflict. Which one
+   * survives then depends on nothing anybody chose. */
+  const unique = BlogSite.schema.indexes()
+    .filter(([fields, options]) => fields.user && fields.siteUrl && options.unique);
+
+  assert.ok(unique[0][1].name, 'the unique index has no explicit name');
+
+  const all = BlogSite.schema.indexes().map(([fields, options]) =>
+    options.name || Object.entries(fields).map(([k, v]) => `${k}_${v}`).join('_'));
+
+  assert.strictEqual(new Set(all).size, all.length,
+    `two indexes on BlogSite share a name: ${all.join(', ')}`);
+});
+
 section('ONE LICENCE KEY PER SITE, FOR THE SITES THAT HAVE ONE');
 
 test('THE UNIQUE INDEX IS PARTIAL', function () {

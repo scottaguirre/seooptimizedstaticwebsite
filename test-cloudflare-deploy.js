@@ -1304,6 +1304,76 @@ test('NO CREDENTIALS MEANS NO CALL AT ALL', async () => {
 
 /* ======================================================================= */
 
+/* ------------------------------------- telling "not yours" from "cannot ask"
+ *
+ * Added 19 October, with the domain check at blog creation. The creation
+ * screen warns somebody their domain is not in their account — and it must
+ * only do that when it KNOWS. No credentials and a token without Zone:Read
+ * both come back ok:false too, and warning on those is a confident lie that
+ * sends people hunting for a problem they do not have.
+ */
+
+test('findZone MARKS THE NO-MATCH BRANCH, SO A CALLER CAN TELL IT APART', async () => {
+  await withEnv(async () => {
+    const fetchImpl = cfFetch([['zones?name=', found([])]]);
+
+    const out = await cf.findZone({ domain: 'nothing.example.com', fetchImpl });
+
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.noZone, true,
+      'a caller cannot tell "not in this account" from "could not ask"');
+  });
+});
+
+test('AND A FAILURE TO ASK CARRIES NO SUCH MARK', async () => {
+  await withEnv(async () => {
+    const fetchImpl = cfFetch([['zones?name=', refused('9109', 'Unauthorized', 403)]]);
+
+    const out = await cf.findZone({ domain: 'nothing.example.com', fetchImpl });
+
+    assert.strictEqual(out.ok, false);
+    assert.ok(!out.noZone, 'a permission failure was reported as a missing domain');
+  });
+});
+
+test('THE SUGGESTER TURNS A HYPHEN BACK INTO THE DOT IT SHOULD HAVE BEEN', async () => {
+  /* The exact mistake: `all-about-hvac.explr-home.com` typed as
+   * `all-bout-hvac-explr-home.com`. */
+  assert.strictEqual(
+    cf.suggestZoneFix({ domain: 'all-bout-hvac-explr-home.com', zones: ['explr-home.com'] }).suggestion,
+    'all-bout-hvac.explr-home.com');
+});
+
+test('AND SAYS NOTHING WHEN IT HAS NOTHING TO SAY', async () => {
+  /* A wrong suggestion is worse than none: it invites somebody to accept
+   * it. Only the one mistake it can prove is offered. */
+  for (const domain of [
+    'all-about-hvac.explr-home.com',
+    'somewhere-else.com',
+    'explr-home.com',
+    '',
+  ]) {
+    assert.strictEqual(
+      cf.suggestZoneFix({ domain, zones: ['explr-home.com'] }).suggestion, '',
+      `it invented a suggestion for ${JSON.stringify(domain)}`);
+  }
+});
+
+test('AND A DOMAIN THAT IS ONLY THE TAIL GETS NO SUGGESTION', async () => {
+  /* FOUND BY MUTATION. Without the length guard, `-explr-home.com` leaves
+   * an empty label and the suggestion becomes `.explr-home.com` — a string
+   * that is not a domain, offered to somebody as the fix. */
+  assert.strictEqual(
+    cf.suggestZoneFix({ domain: '-explr-home.com', zones: ['explr-home.com'] }).suggestion, '');
+});
+
+test('AND IT MATCHES WHATEVER ZONE FITS, NOT JUST THE FIRST', async () => {
+  assert.strictEqual(
+    cf.suggestZoneFix({ domain: 'blog-second-site.com', zones: ['first-site.com', 'second-site.com'] }).suggestion,
+    'blog.second-site.com');
+});
+
+
 (async () => {
   for (const run of queue) await run();
 

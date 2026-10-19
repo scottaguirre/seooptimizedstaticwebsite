@@ -44,7 +44,20 @@ const requireAuth = require('../middleware/requireAuth');
 const { createCampaign } = require('../utils/blog/createCampaign');
 const { suggestForSite } = require('../utils/blog/suggestForSite');
 const { publishBlog } = require('../utils/blog/render/publishBlog');
-const { deleteProject, releaseDomain, childEnv } = require('../utils/blog/cloudflare/deploy');
+
+/* DESTRUCTURED AT LOAD, like publishBlog above it — which means a test that
+ * stubs it has to do so BEFORE requiring this router. That trap has been
+ * walked into three times on this file; see the note at the top of
+ * test-static-blogs.js, which now lists this one too. */
+const { markPublished } = require('../utils/blog/markPublished');
+const {
+  deleteProject, releaseDomain, childEnv,
+  /* ADDED 19 OCTOBER, for the domain check at blog creation. Destructured at
+   * load like the rest of this file, so a test that stubs them has to do it
+   * before requiring the router — see the note at the top of
+   * test-static-blogs.js, which has now caught five features. */
+  findZone, listZones, suggestZoneFix,
+} = require('../utils/blog/cloudflare/deploy');
 const { approveCampaign } = require('../utils/blog/approveCampaign');
 
 /* THE SAME CONVERSION THE SCHEDULER USES, not a second one. A start date
@@ -530,6 +543,79 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
       timezone,
     });
 
+    /* AND NOW, BEFORE ANYTHING HAS BEEN WRITTEN OR PAID FOR, IS THE DOMAIN
+     * REACHABLE AT ALL?
+     *
+     * ON 19 OCTOBER EDWIN TYPED `all-bout-hvac-explr-home.com` meaning
+     * `all-about-hvac.explr-home.com` — one dot became a hyphen, which
+     * turns a subdomain of a domain he owns into a brand new .com nobody
+     * owns. Nothing noticed. A campaign was approved, three articles were
+     * written and charged for, the site deployed, and only the publish
+     * screen said "No zone in this Cloudflare account matches" — by which
+     * point every canonical, the sitemap and the feed named an address that
+     * does not exist.
+     *
+     * The same findZone() call, moved to the one moment when a typo is
+     * still free to fix.
+     *
+     * IT WARNS, IT DOES NOT BLOCK. A blog on a domain Cloudflare does not
+     * host is a legitimate thing to want: the owner points the DNS himself
+     * and everything else works. Refusing would break that for the sake of
+     * catching a typo.
+     *
+     * AND A FAILURE TO ASK IS NOT A FAILURE TO MATCH. No credentials, or a
+     * token without Zone:Read, also comes back ok:false — saying "that
+     * domain is not in your account" then would be a confident lie. Only
+     * the noZone branch warns. */
+    const zone = await findZone({ domain });
+
+    if (!zone.ok && zone.noZone) {
+      const owned = await listZones();
+      const { suggestion } = owned.ok ? suggestZoneFix({ domain, zones: owned.names }) : {};
+
+      log.info('staticBlogs.domainNotInAccount', {
+        requestId: req.id,
+        siteId: String(blog._id),
+        domain,
+        suggestion: suggestion || '',
+      });
+
+      return send(res, page({
+        title: 'Blog added',
+        body: `
+          <h1 class="h2 mb-3">Blog added \u2014 but check the domain</h1>
+
+          <div class="alert alert-warning">
+            <p><strong>No domain in your Cloudflare account matches
+            <code>${esc(domain)}</code>.</strong></p>
+
+            ${suggestion ? `
+            <p class="mb-0">
+              Did you mean <strong><code>${esc(suggestion)}</code></strong>?
+              A hyphen where a dot should be turns a subdomain of a domain you
+              own into a different domain entirely.
+            </p>` : `
+            <p class="mb-0">
+              That is fine if you point the DNS yourself. If it was a typo,
+              now is the moment to fix it \u2014 before any articles are written.
+            </p>`}
+          </div>
+
+          <p class="lead">
+            You can carry on either way. The blog will publish to its Cloudflare
+            address, but the DNS record will not be created automatically and
+            every link on the site will name <code>${esc(domain)}</code>.
+          </p>
+
+          <a href="/static-blogs/${blog._id}" class="btn btn-primary">
+            Carry on with this domain
+          </a>
+          <a href="/static-blogs/${blog._id}/delete" class="btn btn-outline-light ms-2">
+            Delete it and start again
+          </a>`,
+      }));
+    }
+
     res.redirect(`/static-blogs/${blog._id}`);
 
   } catch (err) {
@@ -921,11 +1007,25 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
           </button>
         </div>
         <div class="form-text text-white-50">
+          <!-- THIS USED TO SAY THE OPPOSITE, and said it confidently: that
+               an article pushed up ahead of its day kept its planned date
+               and that Google would read that date. True until
+               markPublished began pulling a future date back, which is
+               what was asked for. The sentence outlived the change and was
+               the only place either screen explained the rule, so it was
+               not a stale note — it was an instruction to expect the wrong
+               thing.
+
+               THE OLD SENTENCE IS NOT QUOTED HERE, on purpose. Quoting it
+               put the exact words back on the page inside this comment,
+               and the test that bans them failed — correctly. A comment is
+               not a safe place to keep text you have forbidden: comments
+               ship to the browser. Third time this file has taught that. -->
           Puts <strong>every written article</strong> on the site immediately,
           schedule ignored. Use it to get a new blog live on the day you set
-          it up. The articles keep the dates they were planned for, so one
-          published early still reads as next week's — that is what Google
-          will see.
+          it up. An article pushed up before its day is <strong>redated to
+          today</strong>, so nobody lands on a page dated next month.
+          Articles still waiting keep the dates they were planned for.
         </div>
       </form>
 
@@ -1640,6 +1740,21 @@ router.post('/static-blogs/:id/publish', requireAuth, async (req, res) => {
           lastDeployUrl: result.url || '',
         } }
       );
+
+      /* AND THE SLOTS THEMSELVES, WHICH NOTHING DID UNTIL 19 OCTOBER.
+       *
+       * A Cloudflare slot used to sit at `ready` for ever: the article was
+       * on the internet and the campaign record did not know it. The
+       * scheduler cannot be written on top of that — "what still needs
+       * publishing" has no answer — so this is the step that gives it one.
+       *
+       * AFTER the deploy and inside the !dryRun branch, deliberately. A
+       * preview must leave the campaign exactly as it found it, and an
+       * article is not published until Cloudflare has actually taken it.
+       *
+       * utils/blog/markPublished.js rather than ten lines here, because
+       * the scheduler is about to be the second caller. */
+      await markPublished({ pages: result.pages, requestId: req.id });
     }
 
     const rows = result.pages.map(p => `
@@ -1689,8 +1804,9 @@ router.post('/static-blogs/:id/publish', requireAuth, async (req, res) => {
         ${includeScheduled
           ? `<div class="alert alert-warning">
                <strong>Schedule ignored.</strong> Every written article is
-               included, whatever its date. Articles dated in the future
-               still carry those dates on the page.
+               included, whatever its date. Anything that was dated in the
+               future is now dated today, so no page on the site carries a
+               date that has not happened.
              </div>`
           : ''}
 

@@ -1310,6 +1310,63 @@ test('THE BACKUP SHIPS WITH IT, AND CARRIES NO SECRETS', async () => {
   assert.ok(slugs.includes('second'));
   assert.ok(!slugs.includes('third'),
     'the backup contains an article that is not on the site');
+
+  /* AND EVERY ARTICLE IN IT CARRIES ITS DATE.
+   *
+   * FOUND BY MUTATION, exactly like the empty-list case above it. publishAt
+   * lives on the campaign SLOT, not on the article, so the backup only has
+   * it because this file's caller merges the two before building it. Delete
+   * that merge and every test in test-blog-json.js still passes — they all
+   * hand the date in directly — while the real backup goes out with every
+   * article undated. Which is what version 1 did for its whole life.
+   *
+   * Swept rather than spot-checked: one article carrying a date is what a
+   * half-done merge looks like. */
+  assert.ok(data.posts.length >= 2, 'not enough articles to sweep');
+
+  for (const article of data.posts) {
+    assert.ok(article.publishAt,
+      `${article.slug} went into the backup with no date`);
+    assert.ok(!Number.isNaN(new Date(article.publishAt).getTime()),
+      `${article.slug} carries a date nothing can read: ${article.publishAt}`);
+  }
+
+  /* And the clock those dates are in, which is on the blog rather than on
+   * any article — without it a restore renders them all in whatever zone
+   * the restoring machine happens to be set to. */
+  assert.ok(data.blog.timezone, 'the backup does not say which timezone its dates are in');
+
+  /* AND THE CAMPAIGNS, which only reach the file because this file's caller
+   * passes them.
+   *
+   * FOUND BY MUTATION, and it is the third time tonight the same gap has
+   * appeared: every test in test-blog-json.js hands campaigns in directly,
+   * so deleting the one line in publishBlog that supplies them broke
+   * nothing — while the real backup went out with no campaign data at all.
+   * Which is the exact hole v3 exists to close.
+   *
+   * isPillar is checked by name because it is the field whose absence made
+   * the restore unsaveable: the model refuses a non-pillar campaign with no
+   * money page. */
+  assert.ok(Array.isArray(data.campaigns) && data.campaigns.length,
+    'the backup went out with no campaigns in it');
+
+  for (const c of data.campaigns) {
+    assert.ok(c.id, 'a campaign in the backup has no id');
+    assert.strictEqual(typeof c.isPillar, 'boolean',
+      `${c.id} does not say whether it is a pillar, so it cannot be restored`);
+    assert.ok(c.schedule && c.schedule.timezone, `${c.id} carries no cadence`);
+  }
+
+  /* And every article's campaign is one of them — an article pointing at a
+   * campaign the file does not describe is an article that cannot be
+   * reattached. */
+  const known = new Set(data.campaigns.map(c => c.id));
+
+  for (const article of data.posts) {
+    assert.ok(known.has(article.campaign),
+      `${article.slug} belongs to campaign ${article.campaign}, which is not in the backup`);
+  }
 });
 
 test('A DRY RUN RENDERS AND SENDS NOTHING', async () => {

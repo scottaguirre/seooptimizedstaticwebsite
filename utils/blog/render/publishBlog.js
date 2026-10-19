@@ -98,7 +98,27 @@ function renderSite({ blog, campaigns, posts, now = new Date(), includeScheduled
    * prose plus the link plan. See blogJson.js: it is written and never
    * read back, so Mongo stays the source of truth — but a blog can be
    * rebuilt from it if Mongo is ever not there. */
-  const backup = blogJsonFile({ site: blog, posts: pages.map(p => p.post) });
+  /* THE DATE IS MERGED IN HERE, because this is the only place both halves
+   * are in hand. publishAt lives on the campaign SLOT, not on the article —
+   * so a backup built from posts alone came back with every article undated,
+   * which is what version 1 of this file did for its whole life.
+   *
+   * Object.assign onto a fresh object rather than onto p.post: these are
+   * lean documents shared with the renderer above, and mutating one here to
+   * carry a field it does not own is the kind of thing that shows up three
+   * files away a month later. */
+  const backup = blogJsonFile({
+    site: blog,
+
+    /* EVERY CAMPAIGN OF THIS BLOG, not only the ones with a live article.
+     * A campaign whose posts are all still scheduled is still a campaign
+     * the owner planned and paid for, and a restore that dropped it would
+     * lose the money page and the cadence along with it. The articles are
+     * filtered to what is live; the campaigns are not. */
+    campaigns,
+
+    posts: pages.map(p => Object.assign({}, p.post, { publishAt: p.slot.publishAt })),
+  });
   files[backup.path] = backup.contents;
 
   return { files, pages, missing };

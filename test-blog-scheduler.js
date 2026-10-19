@@ -94,20 +94,68 @@ for (const [url, why] of [
   });
 }
 
+/* THE RESOLVER IS INJECTED FROM HERE DOWN, and that is why this file can
+ * now run on a deploy at all.
+ *
+ * These three used to resolve `example.com` for real. On any machine
+ * without DNS — a container, a laptop on a hotel network — two of them
+ * failed, so the suite was never added to deploy.sh, so the SSRF GUARD HAD
+ * NO CHECK RUNNING AGAINST IT ON ANY DEPLOY. The file protecting us from an
+ * attacker-reported hostname was the one file nothing verified.
+ *
+ * Whether Node's DNS works is not this project's code. What the guard does
+ * with an answer is. */
+const resolvesTo = (...addresses) => async () => addresses.map(address => ({ address }));
+const neverResolves = async () => { throw new Error('ENOTFOUND'); };
+
 await test('rejects a hostname that does not resolve', async () => {
-  const result = await checkSiteUrl('https://this-host-does-not-exist-99a7f3.example/');
+  const result = await checkSiteUrl('https://whatever.example/', { lookup: neverResolves });
   assert.strictEqual(result.ok, false);
+  assert.ok(/could not resolve/.test(result.reason), result.reason);
 });
 
 await test('accepts an ordinary public https URL', async () => {
-  const result = await checkSiteUrl('https://example.com/');
+  const result = await checkSiteUrl('https://example.com/', { lookup: resolvesTo('93.184.216.34') });
   assert.strictEqual(result.ok, true, `rejected: ${result.reason}`);
-  assert.ok(result.addresses.length > 0);
+  assert.deepStrictEqual(result.addresses, ['93.184.216.34']);
 });
 
 await test('accepts an explicit :443', async () => {
-  const result = await checkSiteUrl('https://example.com:443/');
+  const result = await checkSiteUrl('https://example.com:443/', { lookup: resolvesTo('93.184.216.34') });
   assert.strictEqual(result.ok, true, `rejected: ${result.reason}`);
+});
+
+await test('AND A HOSTNAME THAT RESOLVES TO NOTHING IS REFUSED', async () => {
+  /* Unreachable against real DNS, which is the point of injecting: a
+   * lookup that succeeds with an empty list is a different branch from one
+   * that throws, and it had never been exercised. */
+  const result = await checkSiteUrl('https://example.com/', { lookup: resolvesTo() });
+
+  assert.strictEqual(result.ok, false);
+  assert.ok(/no addresses/.test(result.reason), result.reason);
+});
+
+await test('AND ONE PRIVATE ADDRESS AMONG PUBLIC ONES REFUSES THE LOT', async () => {
+  /* THE ASSERTION THIS WHOLE FILE EXISTS FOR, and it could not be written
+   * before: a hostname under an attacker's control resolving to both a
+   * public address and 169.254.169.254 would otherwise be a coin toss
+   * decided by whichever the connection happened to pick. You cannot ask
+   * real DNS for that. */
+  const result = await checkSiteUrl('https://example.com/', {
+    lookup: resolvesTo('93.184.216.34', '169.254.169.254'),
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.ok(/169\.254\.169\.254/.test(result.reason), result.reason);
+});
+
+await test('AND THE ORDER THEY ARRIVE IN DOES NOT MATTER', async () => {
+  const result = await checkSiteUrl('https://example.com/', {
+    lookup: resolvesTo('10.0.0.5', '93.184.216.34'),
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.ok(/10\.0\.0\.5/.test(result.reason), result.reason);
 });
 
 console.log('\nAddress dispatch');

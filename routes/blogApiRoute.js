@@ -56,8 +56,13 @@ const { requireSite } = require('../middleware/requireSite');
 const { blogActivateLimiter, blogApiLimiter } = require('../middleware/rateLimits');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { planForCampaign } = require('../utils/blog/campaignPlan');
-// The refusal sentence lives with the conflict kinds it describes.
-const { conflictMessage } = require('../utils/blog/planCampaign');
+/* conflictMessage WAS IMPORTED HERE AND USED NOWHERE — removed 19 October.
+ *
+ * It moved into createCampaign.js when the refusal sentence was put next to
+ * the conflict kinds it describes, and the import it left behind read, to
+ * anyone scanning this file, as though this route still formatted its own
+ * conflict messages. A dead import is not harmless: it is a wrong answer to
+ * "where does this happen", left where somebody will trust it. */
 const { createCampaign } = require('../utils/blog/createCampaign');
 const { approveCampaign } = require('../utils/blog/approveCampaign');
 const { ownedCampaign: findOwnedCampaign } = require('../utils/blog/ownedCampaign');

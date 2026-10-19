@@ -358,6 +358,89 @@ const blogSiteSchema = new mongoose.Schema({
  * field as the same value, so the SECOND Cloudflare blog failed with E11000
  * naming a licence key it did not have. That is now fixed.
  */
+/**
+ * ONE BLOG PER DOMAIN, PER ACCOUNT — in the database, not only in the code.
+ *
+ * staticBlogsRoute already refuses a duplicate: it does a findOne before
+ * creating. That is a read and a write with a gap between them, and two
+ * requests arriving together both find nothing and both insert. Rare; the
+ * consequence is not. Two blogs on one domain produce the same Cloudflare
+ * project name, so every deploy of either one replaces the other's site —
+ * and the owner sees a blog that keeps losing its articles.
+ *
+ * It also had to be guarded by hand in scripts/restore-blog.js, which is
+ * what a guarantee living in the wrong layer looks like.
+ *
+ * SCOPED TO THE ACCOUNT, matching the check in the route. Making it global
+ * is defensible — two accounts on one domain collide in Cloudflare just as
+ * badly — but it is a product decision about whose domain it is, not a
+ * correctness fix, and it would refuse the second account with no way round
+ * it. Left as it is, deliberately, and worth revisiting before the first
+ * customer arrives.
+ *
+ * PARTIAL, BECAUSE THE DEFAULT IS A STRING. siteUrl defaults to '' and a
+ * WordPress site can sit there for its whole life. A plain unique index
+ * would allow an account exactly ONE site with no domain and refuse the
+ * next with a duplicate-key error about a field neither had filled in —
+ * the licence key trap, one field over.
+ *
+ * `$gt: ''` AND NOT `$type: 'string'`, which is what the licence key index
+ * uses: here the empty default IS a string, so the type test would exclude
+ * nothing. MongoDB's comparison operators do not match across BSON types,
+ * so this reads as exactly "a non-empty string".
+ *
+ * NAMED, FOR THE REASON BELOW. An index over these keys would otherwise be
+ * born as `user_1_siteUrl_1`, and so would any other declared over the same
+ * pair later.
+ *
+ * BEFORE THIS SHIPS: a database that already holds two blogs on one domain
+ * for one account will refuse to build this index. Check with
+ *   db.blogsites.aggregate([
+ *     { $match: { siteUrl: { $gt: '' } } },
+ *     { $group: { _id: { u: '$user', s: '$siteUrl' }, n: { $sum: 1 } } },
+ *     { $match: { n: { $gt: 1 } } },
+ *   ])
+ * and fix the duplicates first. Mongoose logs the failure and carries on,
+ * so an unbuilt index looks exactly like a built one from the application.
+ */
+blogSiteSchema.index(
+  { user: 1, siteUrl: 1 },
+  {
+    name: 'user_siteUrl_unique',
+    unique: true,
+
+    /* REVOKED SITES ARE EXCLUDED, AND THAT IS NOT A LOOPHOLE — IT IS THE
+     * PRODUCT RULE, FOUND BY THE INDEX REFUSING TO BUILD.
+     *
+     * The first version of this filter was `{ siteUrl: { $gt: '' } }` and
+     * nothing more. Run against the live database it found a duplicate on
+     * hilltophomeloans.net and would have silently failed to build —
+     * Mongoose logs that and carries on, so an unbuilt index looks exactly
+     * like a working one.
+     *
+     * The duplicate was correct data. activationGuards.refuseOccupiedDomain
+     * already enforces one blog per domain, and it tests against OTHER
+     * NON-REVOKED sites only: revoking a licence is how an owner frees a
+     * domain for a new key, and the revoked record stays behind as history.
+     * A plain unique index would have made that remedy impossible — the
+     * second activation would fail at the database with a duplicate-key
+     * error, after the guard had already decided to allow it.
+     *
+     * $in RATHER THAN $ne: MongoDB documents $in as valid in a partial
+     * filter and does not document $ne. A filter built on an undocumented
+     * operator is one that may be refused by a future server version at
+     * startup, which is the worst possible moment.
+     *
+     * THE STATUS LIST IS THE SCHEMA'S, MINUS 'revoked'. A fourth status
+     * added later will NOT be covered here, and that is the safe direction
+     * to be wrong in: it loosens the index rather than refusing writes. */
+    partialFilterExpression: {
+      siteUrl: { $gt: '' },
+      status: { $in: ['active', 'suspended'] },
+    },
+  }
+);
+
 blogSiteSchema.index(
   { licenceKeyHash: 1 },
   {

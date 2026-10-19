@@ -64,7 +64,15 @@
  * Anything reading an old backup needs to know which shape it is holding,
  * and the only moment that information exists is now.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 3;
+
+/* 1 -> 2, on 19 October. Version 1 carried the prose and the link plan and
+ * nothing else — no date, no campaign, no slotIndex, no targetUrl, no
+ * extraUrl, no timezone. It could restore the WORDS of a blog and not the
+ * blog: every article would come back undated, in no campaign, with the
+ * owner's own link fields stripped. A version 1 file is still readable, and
+ * anything reading one should expect those fields to be absent rather than
+ * empty. */
 
 /** Trim to a string, whatever arrived. */
 function text(value) {
@@ -103,12 +111,42 @@ function section(raw) {
 function post(raw) {
   const doc = raw || {};
 
+  /* THE DATE, AS AN INSTANT. Stored ISO rather than formatted, because the
+   * formatting needs a timezone and the timezone is on the blog — a
+   * restore reads both and renders them together, which is the whole
+   * lesson of the toLocaleDateString bug.
+   *
+   * It does NOT live on the post document: the planner puts it on the
+   * campaign slot, and publishBlog merges the two before calling here.
+   * null when absent, never a guess. */
+  const at = doc.publishAt ? new Date(doc.publishAt) : null;
+
   return {
     id: text(doc._id || doc.id),
     slug: text(doc.slug),
     title: text(doc.title),
     metaDescription: text(doc.metaDescription),
     words: Number(doc.words) || 0,
+    publishAt: at && !Number.isNaN(at.getTime()) ? at.toISOString() : null,
+
+    /* WHICH ARTICLE THIS IS, AND WHERE IN THE RING. Without the pair there
+     * is no way to rebuild a campaign from a backup — only a heap of
+     * articles that used to link to each other for a reason nobody can
+     * reconstruct.
+     *
+     * slotIndex is read with a Number() and an explicit integer check, not
+     * `|| 0`: slot 0 is the front page of every blog and the one article
+     * guaranteed to exist. */
+    campaign: text(doc.campaign),
+    slotIndex: Number.isInteger(Number(doc.slotIndex)) ? Number(doc.slotIndex) : null,
+
+    /* THE TWO FIELDS THE OWNER TYPED BY HAND, which exist nowhere else.
+     * targetUrl retargets this article's money link; extraUrl is where its
+     * {{link}} points. Both were added hours before this gap was found, and
+     * neither was in the backup. */
+    targetUrl: text(doc.targetUrl),
+    extraUrl: text(doc.extraUrl),
+
     sections: Array.isArray(doc.sections) ? doc.sections.map(section) : [],
 
     /* The link plan. Mixed on the model — the values are { url } or
@@ -155,7 +193,53 @@ function order(a, b) {
  * the shaping. That is what makes every rule above testable without a Mongo
  * connection and without a Cloudflare account.
  */
-function buildBlogJson({ site, posts } = {}) {
+/**
+ * One campaign, field by field.
+ *
+ * NAMED RATHER THAN SPREAD, like everything else here. A campaign document
+ * holds the slots — with wpPostIds, anchor pools and a status machine —
+ * none of which belongs on a public URL or helps a rebuild. The slots'
+ * useful half (dates, slugs, slot numbers) already rides on the articles.
+ */
+function campaign(raw) {
+  const doc = raw || {};
+  const target = doc.targetPage || {};
+  const plan = doc.schedule || {};
+
+  const startAt = plan.startAt ? new Date(plan.startAt) : null;
+
+  return {
+    id: text(doc._id || doc.id),
+    name: text(doc.name),
+
+    /* THE FLAG THE RESTORE USED TO GUESS, and the whole reason for v3. */
+    isPillar: !!doc.isPillar,
+
+    /* PRESENT AND EMPTY ON A PILLAR, never absent. A missing key and an
+     * empty one read the same to a careless reader; this one says "there
+     * genuinely is no money page here" rather than "nobody wrote it down". */
+    targetPage: {
+      url: text(target.url),
+      keyword: text(target.keyword),
+      intent: text(target.intent),
+    },
+
+    linkMode: 'extend' === doc.linkMode ? 'extend' : 'standalone',
+
+    /* THE CADENCE. Four fields that were never written down, which is why
+     * every restore so far has ended by apologising for losing them. The
+     * defaults match the model's so a campaign saved before they existed
+     * restores to what it would have behaved as. */
+    schedule: {
+      everyDays: Number(plan.everyDays) || 7,
+      publishTime: text(plan.publishTime) || '09:00',
+      timezone: text(plan.timezone) || 'UTC',
+      startAt: startAt && !Number.isNaN(startAt.getTime()) ? startAt.toISOString() : null,
+    },
+  };
+}
+
+function buildBlogJson({ site, posts, campaigns } = {}) {
   const blog = site || {};
 
   return {
@@ -167,7 +251,20 @@ function buildBlogJson({ site, posts } = {}) {
       id: text(blog._id || blog.id),
       name: text((blog.business && blog.business.name) || blog.name),
       domain: text(blog.siteUrl || blog.domain),
+
+      /* THE CLOCK THE DATES ABOVE ARE IN. Defaulted to UTC rather than left
+       * empty: a backup carrying '' restores into whatever zone the
+       * restoring machine happens to be set to, which is how every date on
+       * the site silently moves by a day. The model defaults it the same
+       * way, so this agrees with the document it came from. */
+      timezone: text(blog.timezone) || 'UTC',
     },
+
+    /* BEFORE THE POSTS, because that is the order a restore needs them in:
+     * a campaign has to exist before an article can belong to it. The file
+     * is read by people too, and reading it top to bottom should describe
+     * the blog in the order it would be rebuilt. */
+    campaigns: (Array.isArray(campaigns) ? campaigns : []).map(campaign),
 
     posts: (Array.isArray(posts) ? posts.slice() : []).sort(order).map(post),
   };

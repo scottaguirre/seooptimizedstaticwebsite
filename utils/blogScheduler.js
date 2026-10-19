@@ -52,6 +52,10 @@ const BlogCampaign = require('../models/BlogCampaign');
 const BlogPost = require('../models/BlogPost');
 const { sign } = require('../middleware/requireSite');
 const { checkSiteUrl } = require('./blog/siteUrlGuard');
+
+/* The static-blog half of the schedule. Aliased on import because `tick()`
+ * reads better saying what it does than naming the module twice. */
+const { publishDue: publishDueBlogs } = require('./blog/publishDue');
 const { log } = require('./logger');
 
 // How often to look for work.
@@ -420,6 +424,25 @@ async function tick() {
      * something else happened to be due. */
     await sweepArticles();
 
+    /* AND THE STATIC BLOGS, ALSO ABOVE THE EARLY RETURN, FOR THE SAME REASON.
+     *
+     * findWork() below is the WordPress query, and the ping path under it
+     * excludes Cloudflare blogs on purpose: no plugin, no secret, no route
+     * to knock on. So a static blog's schedule reached nothing down there —
+     * and until 19 October it reached nothing anywhere. The dates were
+     * planned, stored and rendered, and only a button ever acted on them.
+     *
+     * THE DEPLOYING IS NOT IN THIS FILE, deliberately: the header above
+     * promises it "does not write and it does not publish", and that is
+     * still true — utils/blog/publishDue.js does both, and this line is the
+     * timer calling it.
+     *
+     * It rides this tick for the reason sweepArticles() does. There is
+     * already a utils/cleanupScheduler.js with its own start function that
+     * NOTHING EVER CALLED, so it has never run. A second timer is a second
+     * thing to forget to wire up. */
+    await publishDueBlogs();
+
     const work = await findWork();
     if (!work.size) return;
 
@@ -575,4 +598,7 @@ function stop() {
  * sandbox or on a laptop in a hotel. The sanitising is the part with the rules
  * in it; test-ping-detail.js checks it directly, and checks separately that
  * the failure branch still calls it. */
-module.exports = { start, stop, tick, findWork, pingSite, whatItSaid, pingTarget, sweepArticles };
+module.exports = {
+  start, stop, tick, findWork, pingSite, whatItSaid, pingTarget, sweepArticles,
+  publishDueBlogs,
+};

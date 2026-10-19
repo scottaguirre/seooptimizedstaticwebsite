@@ -57,6 +57,20 @@ publishModule.publishBlog = async (opts) => {
   return publish.answer;
 };
 
+/* AND markPublished, BEFORE THE ROUTER, FOR THE FOURTH TIME IN THIS FILE.
+ *
+ * Same trap, same reason: the route destructures it at load. Stubbed here
+ * rather than left to hit a real Mongo, because what these tests are about
+ * is WHETHER the route calls it and with WHAT — the writing itself is
+ * test-mark-published.js's job, and it owns 16 assertions about it. */
+const markModule = require('./utils/blog/markPublished');
+
+const marked = { calls: [], answer: { marked: 0 } };
+markModule.markPublished = async (opts) => {
+  marked.calls.push(opts);
+  return marked.answer;
+};
+
 /* AND THE CLOUDFLARE PROJECT DELETE, BEFORE THE ROUTER, FOR THE THIRD
  * TIME IN THIS FILE.
  *
@@ -85,6 +99,26 @@ cloudflareModule.releaseDomain = async (opts) => {
   cloudflare.releaseCalls.push(opts);
   return cloudflare.release;
 };
+
+/* AND THE ZONE LOOKUP, BEFORE THE ROUTER, FOR THE FIFTH TIME IN THIS FILE.
+ *
+ * AND BELOW cloudflareModule, OBVIOUSLY — the first draft of this block
+ * sat above the require that defines it and the whole file died with
+ * "Cannot access 'cloudflareModule' before initialization".
+ *
+ * Same trap, same reason. These three are what the creation screen uses to
+ * notice a typo'd domain before anything is written. Defaulted to "the zone
+ * was found", which is the quiet path, so every existing creation test goes
+ * on behaving as it did. */
+const zones = {
+  find: { ok: true, id: 'z1', name: 'explr-home.com' },
+  list: { ok: true, names: ['explr-home.com'] },
+  findCalls: [],
+};
+
+cloudflareModule.findZone = async (opts) => { zones.findCalls.push(opts); return zones.find; };
+cloudflareModule.listZones = async () => zones.list;
+
 
 /* childEnv throws when the credentials are absent, which they are in a
  * test run. The route calls it to hand an environment to a child that
@@ -412,6 +446,106 @@ test('and the same domain twice is refused', async () => {
 
   assert.strictEqual(out.status, 400);
   assert.strictEqual(db.created, null, 'a second blog was created on the same domain');
+});
+
+test('A DOMAIN THIS ACCOUNT DOES NOT HOST IS FLAGGED BEFORE ANYTHING IS WRITTEN', async () => {
+  /* THE WHOLE POINT, AND IT COST A CAMPAIGN TO LEARN. Edwin typed
+   * `all-bout-hvac-explr-home.com` meaning `all-about-hvac.explr-home.com`
+   * — one dot became a hyphen, which is a different domain entirely. The
+   * app found out only at publish time, after a campaign was approved,
+   * three articles were written and charged for, and the site deployed
+   * with every canonical naming an address that does not exist. */
+  install({ blogs: [] });
+  zones.find = { ok: false, noZone: true, error: 'No zone in this Cloudflare account matches it.' };
+  zones.list = { ok: true, names: ['explr-home.com'] };
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'All About HVAC', domain: 'all-bout-hvac-explr-home.com' },
+  }));
+
+  assert.ok(!out.redirected, 'it redirected past the warning');
+  assert.ok(/No domain in your Cloudflare account matches/i.test(out.html),
+    'the screen does not say the domain is unreachable');
+});
+
+test('AND IT SUGGESTS THE DOMAIN THAT WAS PROBABLY MEANT', async () => {
+  install({ blogs: [] });
+  zones.find = { ok: false, noZone: true, error: 'no' };
+  zones.list = { ok: true, names: ['explr-home.com'] };
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'All About HVAC', domain: 'all-bout-hvac-explr-home.com' },
+  }));
+
+  assert.ok(out.html.includes('all-bout-hvac.explr-home.com'),
+    'it does not offer the corrected domain');
+  assert.ok(/Did you mean/i.test(out.html));
+});
+
+test('BUT THE BLOG IS STILL CREATED, BECAUSE IT WARNS RATHER THAN BLOCKS', async () => {
+  /* A blog on a domain Cloudflare does not host is a legitimate thing to
+   * want — the owner points the DNS himself and everything else works.
+   * Refusing would break that to catch a typo. */
+  install({ blogs: [] });
+  zones.find = { ok: false, noZone: true, error: 'no' };
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'Elsewhere', domain: 'blog.somewhere-else.com' },
+  }));
+
+  assert.ok(db.created, 'the blog was refused rather than flagged');
+  assert.strictEqual(db.created.siteUrl, 'blog.somewhere-else.com');
+  assert.ok(/Carry on with this domain/i.test(out.html), 'there is no way past the warning');
+
+  /* 200, NOT 400. The blog WAS created; this page is a heads-up, not a
+   * rejection. Found by mutation: adding a 400 here broke nothing, and a
+   * 400 is what a browser, a log and the next developer all read as
+   * "this failed". */
+  assert.strictEqual(out.status, 200, 'a successful creation answered with an error status');
+});
+
+test('AND A MATCHING DOMAIN GOES STRAIGHT THROUGH, AS IT DID BEFORE', async () => {
+  install({ blogs: [] });
+  zones.find = { ok: true, id: 'z1', name: 'explr-home.com' };
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'All About HVAC', domain: 'all-about-hvac.explr-home.com' },
+  }));
+
+  assert.ok(out.redirected, 'a perfectly good domain was interrupted by a warning');
+});
+
+test('AND A LOOKUP THAT COULD NOT RUN DOES NOT CLAIM THE DOMAIN IS WRONG', async () => {
+  /* THE HALF THAT STOPS THIS BEING WORSE THAN NOTHING. No credentials, or a
+   * token without Zone:Read, also comes back ok:false. Telling somebody
+   * their domain is not in their account on that basis is a confident lie,
+   * and they would go and look for a problem that is not there. Only the
+   * noZone branch warns. */
+  install({ blogs: [] });
+  zones.find = { ok: false, error: 'No Cloudflare credentials.' };
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', domain: 'all-about-hvac.explr-home.com' },
+  }));
+
+  assert.ok(out.redirected, 'a failed lookup was reported as a bad domain');
+  assert.ok(db.created, 'a failed lookup stopped the blog being created');
+});
+
+test('AND IT STILL WARNS WHEN THE ZONE LIST CANNOT BE READ', async () => {
+  /* The suggestion is a bonus; the warning is the point. A token that can
+   * check one zone but not list them all still catches the typo, just
+   * without naming the fix. */
+  install({ blogs: [] });
+  zones.find = { ok: false, noZone: true, error: 'no' };
+  zones.list = { ok: false, error: 'nope' };
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', domain: 'all-bout-hvac-explr-home.com' },
+  }));
+
+  assert.ok(/No domain in your Cloudflare account matches/i.test(out.html));
+  assert.ok(!/Did you mean/i.test(out.html), 'it suggested something it could not know');
 });
 
 test('a blog with no name or no domain is refused', async () => {
@@ -1799,6 +1933,67 @@ test('AND BOTH AT ONCE GETS BOTH SENTENCES', async () => {
   assert.ok(/Your own link/.test(out.html), "the owner's half is missing");
 });
 
+test('A REAL PUBLISH MARKS WHAT WENT LIVE', async () => {
+  /* THE WHOLE REASON markPublished EXISTS. A Cloudflare slot used to sit
+   * at `ready` for ever — the article on the internet, the campaign record
+   * none the wiser — so "what still needs publishing" had no answer and a
+   * scheduler could not be built on top of it. */
+  install();
+  stubPublish(PUBLISHED);
+  marked.calls.length = 0;
+
+  await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode: 'publish' } }));
+
+  assert.strictEqual(marked.calls.length, 1, 'a real publish marked nothing');
+  assert.strictEqual(marked.calls[0].pages, PUBLISHED.pages,
+    'it was handed something other than what actually deployed');
+});
+
+test('AND A PREVIEW MARKS NOTHING AT ALL', async () => {
+  /* The half that matters more. A dry run that advanced campaign state
+   * would make the preview button destructive — and it is the DEFAULT
+   * mode, so it is the one most likely to be pressed by accident. */
+  install();
+  stubPublish({ ...PUBLISHED, dryRun: true, url: undefined });
+
+  for (const mode of ['preview', 'previewAll', 'nonsense', undefined]) {
+    marked.calls.length = 0;
+    await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode } }));
+
+    assert.strictEqual(marked.calls.length, 0,
+      `${JSON.stringify(mode)} advanced the campaign without deploying`);
+  }
+});
+
+test('AND A FAILED DEPLOY MARKS NOTHING EITHER', async () => {
+  /* Cloudflare refused it, so it is not on the internet, so it is not
+   * published. Marking it here would leave the app certain an article is
+   * live that nobody can read — and, worse, the filter would then skip it
+   * on the retry that would have fixed it. */
+  install();
+  stubPublish({
+    ok: false,
+    error: 'The deploy to Cloudflare did not finish.',
+    pages: [], missing: [], files: 0,
+  });
+  marked.calls.length = 0;
+
+  await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode: 'publish' } }));
+
+  assert.strictEqual(marked.calls.length, 0, 'a failed deploy was recorded as published');
+});
+
+test('AND publishAll MARKS TOO, BECAUSE THOSE ARTICLES ARE ALSO LIVE', async () => {
+  install();
+  stubPublish(PUBLISHED);
+  marked.calls.length = 0;
+
+  await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode: 'publishAll' } }));
+
+  assert.strictEqual(marked.calls.length, 1,
+    'the override published articles and left them looking unpublished');
+});
+
 test("another account cannot publish this blog", async () => {
   install();
   const calls = stubPublish(PUBLISHED);
@@ -1933,9 +2128,8 @@ test('THE OVERRIDE IS A REAL BOOLEAN BY THE TIME IT LEAVES THE ROUTE', async () 
 });
 
 test('THE PAGE SAYS SO WHEN THE SCHEDULE WAS IGNORED', async () => {
-  /* Publishing everything does not move any dates — an article planned
-   * for next week goes up today still saying next week, and Google reads
-   * that date. Nobody should learn this from the live site. */
+  /* The override has to announce itself. Replacing a live site with
+   * everything ever written is not something to discover afterwards. */
   install();
   stubPublish(PUBLISHED);
 
@@ -1948,6 +2142,72 @@ test('THE PAGE SAYS SO WHEN THE SCHEDULE WAS IGNORED', async () => {
     req({ body: { mode: 'publish' } }));
   assert.ok(!/schedule ignored/i.test(due.html),
     'an ordinary publish claimed to ignore the schedule');
+});
+
+test('AND IT NO LONGER CLAIMS THE DATES ARE LEFT ALONE', async () => {
+  /* THE SENTENCE THIS TEST EXISTS TO KILL. Both screens used to promise
+   * that an article pushed up early "still reads as next week's — that is
+   * what Google will see", because for months that was true.
+   *
+   * It stopped being true the moment markPublished started pulling a
+   * future date back to today, which is what Edwin asked for. Neither
+   * screen noticed. A help text that confidently describes the OPPOSITE of
+   * what the button does is worse than no help text: it is the thing
+   * somebody reads instead of checking.
+   *
+   * Asserted on both screens, because the claim was written twice. */
+  install();
+  stubPublish(PUBLISHED);
+
+  const screen = await call(handler('get', '/static-blogs/:id'));
+  const after = await call(handler('post', '/static-blogs/:id/publish'),
+    req({ body: { mode: 'publishAll' } }));
+
+  /* THE CLAIM, NOT THE PHRASE. A first draft of this test banned "keep
+   * the dates they were planned for" outright and failed against the
+   * corrected screen — because that phrase is now TRUE of the articles
+   * still waiting, which is the other half of the rule and worth saying.
+   * What was wrong was never the words; it was the promise about an
+   * article pushed up EARLY. So that is what is asserted. */
+  for (const [where, html] of [['the blog screen', screen.html], ['the confirmation', after.html]]) {
+    assert.ok(!/still carry those dates/i.test(html),
+      `${where} still promises a future date survives the publish`);
+    assert.ok(!/reads as next week/i.test(html),
+      `${where} still says an early article reads as next week's`);
+    assert.ok(!/published early still/i.test(html),
+      `${where} still describes what an early publish used to do`);
+  }
+});
+
+test('AND BOTH SCREENS SAY WHAT ACTUALLY HAPPENS TO THE DATE', async () => {
+  /* Removing the wrong sentence is half the job. Saying nothing would
+   * leave the owner to guess, and the guess most people would make is the
+   * one the old text taught them. */
+  install();
+  stubPublish(PUBLISHED);
+
+  const screen = await call(handler('get', '/static-blogs/:id'));
+  const after = await call(handler('post', '/static-blogs/:id/publish'),
+    req({ body: { mode: 'publishAll' } }));
+
+  /* WHITESPACE FLATTENED FIRST. The template wraps its prose across
+   * source lines, so "redated to today" reaches the page as "redated to\n
+   * today" and a plain regex misses it — which it duly did, reporting a
+   * sentence as absent while it sat on screen. Any assertion about
+   * rendered prose in this file has to do this. */
+  const flat = (html) => String(html).replace(/\s+/g, ' ');
+
+  for (const [where, html] of [['the blog screen', screen.html], ['the confirmation', after.html]]) {
+    assert.ok(/redated to today|dated today/i.test(flat(html)),
+      `${where} does not say an early article is redated`);
+  }
+
+  /* And the other half of the rule: a slot still waiting is NOT touched.
+   * Only what actually went up is redated, so pressing the button does not
+   * flatten the whole campaign onto one day — and an owner who thought it
+   * did would never press it. */
+  assert.ok(/still waiting keep the dates/i.test(flat(screen.html)),
+    'the blog screen does not say the articles still waiting keep their dates');
 });
 
 test('ALL FOUR BUTTONS ARE ON THE PAGE', async () => {

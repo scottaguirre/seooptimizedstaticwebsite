@@ -111,7 +111,22 @@ function isPrivateAddress(ip) {
  * @param {string} rawUrl
  * @returns {Promise<{ok: boolean, reason?: string, url?: URL, addresses?: string[]}>}
  */
-async function checkSiteUrl(rawUrl) {
+/* THE RESOLVER IS INJECTABLE, and that is a testing decision with a real
+ * consequence — 19 October.
+ *
+ * This file is the SSRF guard. Its tests live in test-blog-scheduler.js,
+ * which was NOT in deploy.sh and therefore had never run on a deploy: two
+ * of its assertions resolve `example.com` for real, so the suite fails on
+ * any machine without DNS and nobody was willing to wire it in. The result
+ * was that the one file standing between an attacker-reported hostname and
+ * our instance metadata had no check running against it at all.
+ *
+ * Whether Node's DNS works is not this project's code. What the guard does
+ * with an answer IS. So the answer is injected, the suite is deterministic,
+ * and it can finally be run on every deploy.
+ *
+ * Production calls this with one argument and is untouched. */
+async function checkSiteUrl(rawUrl, { lookup = dns.lookup } = {}) {
   let url;
   try {
     url = new URL(String(rawUrl || ''));
@@ -137,7 +152,7 @@ async function checkSiteUrl(rawUrl) {
 
   let resolved;
   try {
-    resolved = await dns.lookup(url.hostname, { all: true, verbatim: true });
+    resolved = await lookup(url.hostname, { all: true, verbatim: true });
   } catch (err) {
     return { ok: false, reason: `could not resolve ${url.hostname}` };
   }

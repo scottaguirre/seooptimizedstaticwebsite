@@ -85,6 +85,214 @@ function article(extra = {}) {
 
 /* ========================================================================= */
 
+section('WHAT A REBUILD ACTUALLY NEEDS');
+
+/* THE BACKUP COULD NOT REBUILD A BLOG, and nothing said so — 19 October.
+ *
+ * The file carried id, slug, title, metaDescription, words, sections and
+ * targets. That restores the WORDS. It does not restore the BLOG:
+ *
+ *   no date        every page prints one and the sitemap carries one, so a
+ *                  restored blog came back with every article undated
+ *   no campaign    nor slotIndex, so the ring — which article is slot 3 of
+ *                  12 — was gone, and campaigns could not be rebuilt at all
+ *   no targetUrl   the per-article money override
+ *   no extraUrl    the owner's own {{link}} destination
+ *   no timezone    so the dates that were missing would have rendered in
+ *                  the server's clock anyway, which is a bug this project
+ *                  has already paid for once
+ *
+ * Every one of these is on the document already or one field away on the
+ * slot. None of them was named, and a field nobody names cannot escape —
+ * which is the rule that keeps the secret out and quietly kept these out
+ * too. */
+
+test('THE PUBLICATION DATE SURVIVES', function () {
+  const out = buildBlogJson({
+    site: site(),
+    posts: [article({ publishAt: new Date('2026-10-19T09:00:00Z') })],
+  });
+
+  assert.strictEqual(out.posts[0].publishAt, '2026-10-19T09:00:00.000Z',
+    'a restored blog would lose every article date it ever had');
+});
+
+test('AND AN ARTICLE WITH NO DATE SAYS SO RATHER THAN INVENTING ONE', function () {
+  /* new Date(undefined) is Invalid Date and JSON.stringify turns it into
+   * null anyway — but a silent `null` from a crash and a deliberate null
+   * read the same, so the empty case is pinned on purpose. */
+  const out = buildBlogJson({ site: site(), posts: [article()] });
+
+  assert.strictEqual(out.posts[0].publishAt, null);
+});
+
+test('AND THE RING IS REBUILDABLE', function () {
+  const out = buildBlogJson({ site: site(), posts: [article()] });
+
+  assert.strictEqual(out.posts[0].campaign, 'campaign-9');
+  assert.strictEqual(out.posts[0].slotIndex, 0);
+});
+
+test('AND SLOT ZERO IS NOT DROPPED FOR BEING FALSY', function () {
+  /* The classic. `doc.slotIndex || ''` loses the front page of every blog —
+   * the one article guaranteed to exist. */
+  const out = buildBlogJson({ site: site(), posts: [article({ slotIndex: 0 })] });
+
+  assert.strictEqual(out.posts[0].slotIndex, 0);
+});
+
+test('AND THE TWO LINK FIELDS THE OWNER TYPED ARE KEPT', function () {
+  /* Added on 19 October, hours before this gap was found: targetUrl is the
+   * per-article money override and extraUrl is where {{link}} points. Both
+   * are typed by hand and exist nowhere else. */
+  const out = buildBlogJson({
+    site: site(),
+    posts: [article({ targetUrl: 'https://own.example/page/', extraUrl: 'https://wiki.example/x' })],
+  });
+
+  assert.strictEqual(out.posts[0].targetUrl, 'https://own.example/page/');
+  assert.strictEqual(out.posts[0].extraUrl, 'https://wiki.example/x');
+});
+
+test('AND THE BLOG CARRIES THE CLOCK ITS DATES ARE IN', function () {
+  /* Without it a restore renders every date in whatever zone the server
+   * happens to run in — the exact bug toLocaleDateString() caused on the
+   * confirmation screen, found only by running the suite under
+   * TZ=Asia/Tokyo. */
+  const out = buildBlogJson({ site: site({ timezone: 'America/Chicago' }), posts: [] });
+
+  assert.strictEqual(out.blog.timezone, 'America/Chicago');
+});
+
+test('AND A BLOG WITH NO TIMEZONE SET IS UTC, NOT EMPTY', function () {
+  /* The model defaults it to UTC. A backup saying '' would be a backup that
+   * restores into whatever the restoring machine is set to. */
+  const out = buildBlogJson({ site: site(), posts: [] });
+
+  assert.strictEqual(out.blog.timezone, 'UTC');
+});
+
+/* ========================================================================= */
+
+section('AND THE CAMPAIGNS THEMSELVES, WHICH v2 STILL DID NOT CARRY');
+
+/* FOUND BY RUNNING --write FOR THE FIRST TIME, against a real backup.
+ *
+ * v2 fixed the articles: dates, campaign ids, slot numbers, link overrides.
+ * It recorded nothing about the CAMPAIGNS those ids pointed at, so a restore
+ * had to invent one — and inventing it meant guessing `isPillar: false`,
+ * which Mongoose refused outright:
+ *
+ *   BlogCampaign validation failed: targetPage.keyword is required,
+ *   targetPage.url is required
+ *
+ * targetPage is `required: function () { return !this.isPillar; }`. The
+ * campaign being restored was a PILLAR, which has no money page by design.
+ * So the validator caught a restore that would otherwise have silently
+ * turned a pillar campaign into an ordinary one wanting a page it never
+ * had.
+ *
+ * A backup that cannot say which kind of campaign it held is a backup that
+ * cannot restore either kind.
+ */
+
+const campaign = (over = {}) => Object.assign({
+  _id: 'campaign-9',
+  name: 'Winter push',
+  isPillar: false,
+  targetPage: { url: 'https://example.com/free-dental', keyword: 'emergency dentist', intent: 'book now' },
+  linkMode: 'standalone',
+  schedule: { everyDays: 7, publishTime: '09:00', timezone: 'America/Chicago', startAt: new Date('2026-10-01T09:00:00Z') },
+  status: 'active',
+  slots: [],
+}, over);
+
+test('THE CAMPAIGN IS RECORDED, NOT INFERRED FROM ITS ARTICLES', function () {
+  const out = buildBlogJson({ site: site(), posts: [article()], campaigns: [campaign()] });
+
+  assert.strictEqual(out.campaigns.length, 1);
+  assert.strictEqual(out.campaigns[0].id, 'campaign-9');
+  assert.strictEqual(out.campaigns[0].name, 'Winter push');
+});
+
+test('AND IT SAYS WHETHER IT IS A PILLAR, WHICH DECIDES EVERYTHING ELSE', function () {
+  /* THE FIELD THE RESTORE HAD TO GUESS. Guess it wrong one way and the
+   * document is refused; wrong the other and a campaign silently changes
+   * kind. */
+  const ordinary = buildBlogJson({ site: site(), posts: [], campaigns: [campaign()] });
+  const pillar = buildBlogJson({ site: site(), posts: [], campaigns: [campaign({ isPillar: true })] });
+
+  assert.strictEqual(ordinary.campaigns[0].isPillar, false);
+  assert.strictEqual(pillar.campaigns[0].isPillar, true);
+});
+
+test('AND THE MONEY PAGE, WITHOUT WHICH AN ORDINARY CAMPAIGN CANNOT BE SAVED', function () {
+  const out = buildBlogJson({ site: site(), posts: [], campaigns: [campaign()] });
+
+  assert.deepStrictEqual(out.campaigns[0].targetPage, {
+    url: 'https://example.com/free-dental',
+    keyword: 'emergency dentist',
+    intent: 'book now',
+  });
+});
+
+test('AND A PILLAR CARRIES AN EMPTY ONE RATHER THAN A MISSING ONE', function () {
+  /* An absent key and an empty one read the same to a careless restore.
+   * Present-and-empty says "there genuinely is no money page here". */
+  const out = buildBlogJson({ site: site(), posts: [], campaigns: [campaign({ isPillar: true, targetPage: null })] });
+
+  assert.deepStrictEqual(out.campaigns[0].targetPage, { url: '', keyword: '', intent: '' });
+});
+
+test('AND THE SCHEDULE, SO THE RESTORE STOPS APOLOGISING FOR IT', function () {
+  /* Every restore so far has warned that the cadence had to be set again.
+   * It is four fields and they were simply never written down. */
+  const out = buildBlogJson({ site: site(), posts: [], campaigns: [campaign()] });
+
+  assert.deepStrictEqual(out.campaigns[0].schedule, {
+    everyDays: 7,
+    publishTime: '09:00',
+    timezone: 'America/Chicago',
+    startAt: '2026-10-01T09:00:00.000Z',
+  });
+});
+
+test('AND A CAMPAIGN WITH NO SCHEDULE GETS THE MODEL\u2019S OWN DEFAULTS', function () {
+  const out = buildBlogJson({ site: site(), posts: [], campaigns: [campaign({ schedule: null })] });
+
+  assert.strictEqual(out.campaigns[0].schedule.everyDays, 7);
+  assert.strictEqual(out.campaigns[0].schedule.publishTime, '09:00');
+  assert.strictEqual(out.campaigns[0].schedule.timezone, 'UTC');
+  assert.strictEqual(out.campaigns[0].schedule.startAt, null);
+});
+
+test('AND NOTHING ELSE OFF THE CAMPAIGN DOCUMENT COMES WITH IT', function () {
+  /* The same rule as the articles and the site: every field named, one at a
+   * time. A campaign holds slots with wpPostIds, anchor pools and a status
+   * machine; none of it belongs on a public URL and none of it helps a
+   * rebuild. */
+  const out = buildBlogJson({
+    site: site(),
+    posts: [],
+    campaigns: [campaign({ secretish: 'nope', slots: [{ wpPostId: 12 }] })],
+  });
+
+  assert.deepStrictEqual(
+    Object.keys(out.campaigns[0]).sort(),
+    ['id', 'isPillar', 'linkMode', 'name', 'schedule', 'targetPage']);
+
+  assert.ok(!JSON.stringify(out).includes('nope'));
+  assert.ok(!JSON.stringify(out).includes('wpPostId'));
+});
+
+test('AND NO CAMPAIGNS AT ALL IS AN EMPTY LIST, NOT A MISSING KEY', function () {
+  assert.deepStrictEqual(buildBlogJson({ site: site(), posts: [] }).campaigns, []);
+});
+
+test('AND THE SHAPE CHANGED AGAIN, SO THE VERSION DID', function () {
+  assert.strictEqual(SCHEMA_VERSION, 3);
+});
+
 section('WHAT MUST NEVER BE IN IT');
 
 test('THE SIGNING SECRET IS NOT IN THE FILE', function () {
@@ -107,10 +315,12 @@ test('AND NEITHER IS ANYTHING ELSE NOBODY NAMED', function () {
   /* The general form of the rule, which is what keeps it true next year. A
    * field added to BlogSite in six months must not appear here because
    * somebody spread the document; it appears only when somebody decides it
-   * should. The blog block is three keys and that is the whole contract. */
+   * should. The blog block is four keys and that is the whole contract —
+   * four since 19 October, when timezone was added because a restore
+   * without it renders every date in the restoring machine's clock. */
   const out = buildBlogJson({ site: site({ invoiceEmail: 'edwin@example.com' }), posts: [] });
 
-  assert.deepStrictEqual(Object.keys(out.blog).sort(), ['domain', 'id', 'name']);
+  assert.deepStrictEqual(Object.keys(out.blog).sort(), ['domain', 'id', 'name', 'timezone']);
   assert.ok(!JSON.stringify(out).includes('edwin@example.com'),
     'a field added to the site document was published without anyone deciding to');
 });
@@ -122,9 +332,15 @@ test('the operational noise stays out of the articles too', function () {
    * and both would have to be explained to anyone reading the backup. */
   const out = buildBlogJson({ site: site(), posts: [article()] });
 
+  /* THE LIST GREW ON 19 OCTOBER and every addition was a deliberate one:
+   * publishAt, campaign, slotIndex, targetUrl and extraUrl, because without
+   * them the file restored the words of a blog and not the blog. Nothing
+   * else came with them — quality, pending, missingLinks, deletableAt, job
+   * and site are all still absent, which is the property this test is for. */
   assert.deepStrictEqual(
     Object.keys(out.posts[0]).sort(),
-    ['id', 'metaDescription', 'sections', 'slug', 'targets', 'title', 'words']
+    ['campaign', 'extraUrl', 'id', 'metaDescription', 'publishAt', 'sections',
+     'slotIndex', 'slug', 'targetUrl', 'targets', 'title', 'words']
   );
 });
 
@@ -292,8 +508,15 @@ test('A HALF-WRITTEN POST DOES NOT POISON THE WHOLE FILE', function () {
   const out = buildBlogJson({ site: site(), posts: [broken, article({ _id: 'z' })] });
 
   assert.strictEqual(out.posts.length, 2);
+  /* THE DEFAULTS ARE NOT ALL THE SAME, AND THAT IS DELIBERATE. The strings
+   * empty, the number zero, the containers empty — and publishAt and
+   * slotIndex NULL rather than '' or 0. A missing date is not the epoch and
+   * a missing slot is not the front page; a restore reading 0 would put a
+   * half-written article at the top of the blog. */
   assert.deepStrictEqual(out.posts.find(p => 'broken' === p.id), {
-    id: 'broken', slug: '', title: '', metaDescription: '', words: 0, sections: [], targets: {},
+    id: 'broken', slug: '', title: '', metaDescription: '', words: 0,
+    publishAt: null, campaign: '', slotIndex: null, targetUrl: '', extraUrl: '',
+    sections: [], targets: {},
   });
 });
 

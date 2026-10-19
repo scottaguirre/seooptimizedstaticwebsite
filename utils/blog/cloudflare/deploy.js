@@ -459,7 +459,69 @@ async function findZone({ domain, fetchImpl = fetch } = {}) {
     if (zone && zone.id) return { ok: true, id: zone.id, name: zone.name };
   }
 
-  return { ok: false, error: `No zone in this Cloudflare account matches ${domain}.` };
+  /* `noZone` MARKS THIS BRANCH, and the marker matters because the caller
+   * has to tell two very different failures apart: "this account does not
+   * host that domain", which is routine and sometimes intended, and "the
+   * token cannot read zones", which is a misconfiguration. Both arrive here
+   * as ok:false. Matching on the error TEXT would work until somebody
+   * reworded it, which is not a thing anybody would think to check. */
+  return { ok: false, noZone: true, error: `No zone in this Cloudflare account matches ${domain}.` };
+}
+
+/**
+ * Every zone this account holds.
+ *
+ * ONLY EVER CALLED WHEN A DOMAIN DID NOT MATCH ONE, so it costs nothing on
+ * the path where everything is fine. Its whole job is to turn "no zone
+ * matches" into "no zone matches, and here is the one you probably meant".
+ */
+async function listZones({ fetchImpl = fetch } = {}) {
+  const answer = await cfApi('/zones?per_page=50', { fetchImpl });
+
+  if (!answer.ok) return { ok: false, error: answer.error };
+
+  return {
+    ok: true,
+    names: (answer.result || []).map(z => String((z && z.name) || '')).filter(Boolean),
+  };
+}
+
+/**
+ * The domain somebody probably meant.
+ *
+ * ONE MISTAKE, CAUGHT PRECISELY, rather than fuzzy matching that guesses.
+ * Edwin typed `all-bout-hvac-explr-home.com` meaning
+ * `all-about-hvac.explr-home.com`: the dot before the zone became a hyphen.
+ * That turns a subdomain of a domain he owns into a brand-new .com nobody
+ * owns, and nothing noticed until three articles had been written and
+ * deployed with canonicals pointing at it.
+ *
+ * So the test is exact: does the typed domain end with a hyphen followed by
+ * a zone this account holds? If it does, that hyphen should have been a dot
+ * and we can say so. If it does not, we say nothing — a wrong suggestion is
+ * worse than none, because it invites somebody to accept it.
+ *
+ * PURE. No network, no Cloudflare, so every case is one assertion.
+ */
+function suggestZoneFix({ domain, zones } = {}) {
+  const typed = String(domain || '').trim().toLowerCase();
+  const owned = Array.isArray(zones) ? zones : [];
+
+  for (const zone of owned) {
+    const name = String(zone || '').trim().toLowerCase();
+    if (!name) continue;
+
+    const tail = `-${name}`;
+
+    /* LONGER THAN THE TAIL, not merely ending with it: a domain that IS
+     * `-example.com` and nothing else has no subdomain label to rescue. */
+    if (typed.length > tail.length && typed.endsWith(tail)) {
+      const label = typed.slice(0, typed.length - tail.length);
+      return { suggestion: `${label}.${name}`, zone: name };
+    }
+  }
+
+  return { suggestion: '', zone: '' };
 }
 
 /**
@@ -591,17 +653,38 @@ async function attachDomain({ project, domain, fetchImpl = fetch } = {}) {
  * address serves the blog, and the record is one row in a dashboard. What
  * matters is that the screen says so instead of claiming success.
  */
-async function pointDomainAtProject({ project, domain, target, fetchImpl = fetch } = {}) {
+async function pointDomainAtProject({
+  project, domain, target, fetchImpl = fetch, redirect = null,
+} = {}) {
   const attached = await attachDomain({ project, domain, fetchImpl });
+
+  /* THE pages.dev REDIRECT, REQUIRED LAZILY, AND THAT IS NOT LAZINESS.
+   *
+   * redirects.js needs cfApi() and scrub() from THIS file, so requiring it
+   * at the top would be a cycle: each module would see the other half
+   * initialised, depending on which got loaded first, and the symptom is
+   * `cfApi is not a function` in whichever order production happens to
+   * pick. Required at call time, both modules are whole.
+   *
+   * It is also injectable, so a test can pass its own without reaching
+   * through a module cache. */
+  const sendRedirect = redirect
+    || ((args) => require('./redirects').redirectPagesDev(args));
+
+  /* NOT GATED ON THE DNS WORKING, and not allowed to stop it either. The
+   * redirect lives in an account-level list and has nothing to do with
+   * this domain's zone — a blog whose DNS is somebody else's problem still
+   * wants its pages.dev address pointed home. */
+  const pagesDev = await sendRedirect({ project, domain, fetchImpl });
 
   const zone = await findZone({ domain, fetchImpl });
   if (!zone.ok) {
-    return { attached, dns: { ok: false, error: zone.error }, url: `https://${domain}/` };
+    return { attached, pagesDev, dns: { ok: false, error: zone.error }, url: `https://${domain}/` };
   }
 
   const dns = await ensureDnsRecord({ zoneId: zone.id, name: domain, target, fetchImpl });
 
-  return { attached, dns, zone: zone.name, url: `https://${domain}/` };
+  return { attached, pagesDev, dns, zone: zone.name, url: `https://${domain}/` };
 }
 
 /**
@@ -708,15 +791,27 @@ async function removeDnsRecord({ zoneId, name, expected, fetchImpl = fetch } = {
  * is having a bad morning is worse than some tidying left undone. Each
  * step reports itself and the caller decides what to say.
  */
-async function releaseDomain({ project, domain, expected, fetchImpl = fetch } = {}) {
+async function releaseDomain({
+  project, domain, expected, fetchImpl = fetch, release = null,
+} = {}) {
   const detached = await detachDomain({ project, domain, fetchImpl });
 
+  /* Lazily required for the same reason as in pointDomainAtProject above. */
+  const dropRedirect = release
+    || ((args) => require('./redirects').releasePagesDev(args));
+
+  /* BEFORE THE ZONE LOOKUP, because the redirect is account-level and does
+   * not need one. A blog on a domain this account does not host would
+   * otherwise leave its entry in the shared list for ever — and that list
+   * is the one thing here every blog shares. */
+  const pagesDev = await dropRedirect({ project, domain, fetchImpl });
+
   const zone = await findZone({ domain, fetchImpl });
-  if (!zone.ok) return { detached, dns: { ok: false, error: zone.error } };
+  if (!zone.ok) return { detached, pagesDev, dns: { ok: false, error: zone.error } };
 
   const dns = await removeDnsRecord({ zoneId: zone.id, name: domain, expected, fetchImpl });
 
-  return { detached, dns, zone: zone.name };
+  return { detached, pagesDev, dns, zone: zone.name };
 }
 
 /**
@@ -892,6 +987,6 @@ async function deployBlog({ blog, files, requestId, run = runWrangler, attach = 
 module.exports = {
   deployBlog, projectNameFor, resolveInside, writeSite, scrub, urlFrom, childEnv,
   wranglerEntry, runWrangler, ensureProject, attachDomain, deleteProject,
-  cfApi, findZone, ensureDnsRecord, pointDomainAtProject,
+  cfApi, findZone, listZones, suggestZoneFix, ensureDnsRecord, pointDomainAtProject,
   detachDomain, removeDnsRecord, releaseDomain,
 };
