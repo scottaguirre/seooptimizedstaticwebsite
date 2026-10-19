@@ -148,6 +148,86 @@ const blogSiteSchema = new mongoose.Schema({
   // against site B, even with the same licence key.
   siteUrl: { type: String, default: '', index: true },
 
+  /**
+   * WHICH ARTICLE IS SERVED AT `/`. CLOUDFLARE BLOGS ONLY.
+   *
+   * A static blog has no listing page — Edwin, 17 October: "the same blog
+   * format, no blog page". The articles are reached by their own URLs and
+   * by the ring of links between them, as the plugin produces on WordPress.
+   * But the bare domain still has to answer, so one article is the root.
+   *
+   * ON THE SITE, NOT ON THE CAMPAIGN, and that is the whole decision.
+   *
+   * The plugin keeps this as a per-campaign checkbox and gets away with it
+   * because WordPress simply overwrites `page_on_front`. A static site
+   * cannot: two files would both want to be `/`. A blog with a campaign in
+   * November and another in March would have two campaigns claiming the
+   * root and nothing to decide between them — you would tick the box on the
+   * second and watch nothing happen, with no explanation anywhere.
+   *
+   * Asked of the blog, the question has exactly one answer.
+   *
+   * A SLUG RATHER THAN AN ID, because the slug is what the URL is built
+   * from and what a person picking from a list recognises. A slug does not
+   * change once the article is written.
+   *
+   * EMPTY IS NOT BROKEN. Until one is chosen — and a blog's first deploy
+   * happens before anybody has thought about it — the renderer uses the
+   * oldest live article. The same if the chosen article is deleted or has
+   * not reached its publish date: the root must never 404 because of a
+   * stale setting. See homeOf() in utils/blog/render/interlinks.js.
+   */
+  homeSlug: { type: String, default: '' },
+
+  /**
+   * The Cloudflare Pages project this blog owns. CLOUDFLARE BLOGS ONLY.
+   *
+   * WRITTEN ON THE FIRST SUCCESSFUL DEPLOY, and read on every one after.
+   * The name is derived from the domain — leanderwaterheaters.com becomes
+   * leanderwaterheaters-com — but it is STORED rather than recomputed,
+   * because a blog whose domain changes must keep deploying to the project
+   * it already has. Recompute it and the old project goes on serving the
+   * old pages for ever while a second one quietly appears beside it.
+   */
+  project: { type: String, default: '' },
+
+  // When this blog was last pushed, and where it landed. Both for the
+  // screen: "last published 3 days ago" is the first thing anyone wants to
+  // know, and the pages.dev URL is how you check it without a custom domain.
+  lastDeployAt: { type: Date },
+  lastDeployUrl: { type: String, default: '' },
+
+  /**
+   * The business's own timezone, as an IANA name. CLOUDFLARE BLOGS ONLY.
+   *
+   * WHY IT IS STORED RATHER THAN ASKED FOR EACH TIME. A WordPress site
+   * reports its zone on every call — wp_timezone_string() — so the plugin
+   * never had to keep one. A Cloudflare blog has no plugin and nothing that
+   * ever calls in, so there is nowhere for the zone to come from except the
+   * blog itself.
+   *
+   * WHAT GOES WRONG WITHOUT IT, which is not a rounding error.
+   * campaignPlan.js falls back to UTC, so "post at 9" becomes 9:00 UTC —
+   * four in the morning in Texas, and the single most recognisable sign of
+   * an automated blog there is. Worse, it MOVES: 9:00 UTC is 4am Central in
+   * October and 3am in November, because UTC does not observe daylight
+   * saving and Central does. schedule.js exists precisely to hold a
+   * wall-clock time steady across that boundary, and handing it UTC throws
+   * all of that away.
+   *
+   * DEFAULT 'UTC' AND NOT ''. The empty string is not a timezone, and
+   * campaignPlan.js would pass it to Intl, which throws a RangeError on
+   * anything it does not recognise. isValidTimeZone() in schedule.js
+   * catches that and falls back — but a default that relies on somebody
+   * else's guard is a default waiting for that guard to be refactored.
+   *
+   * NOT VALIDATED BY MONGOOSE with an enum. The IANA list changes a few
+   * times a year as countries move their clocks, and a schema enum frozen
+   * at deploy time would start refusing zones that Intl itself accepts.
+   * The route validates against Intl, which is the thing that has to agree.
+   */
+  timezone: { type: String, default: 'UTC' },
+
   // The active theme's PHP function prefix, e.g. 'local_business_theme'.
   // The plugin writes meta descriptions to '<prefix>_page_description' so the
   // theme's own SEO output picks them up; the server needs to know it to
@@ -244,9 +324,22 @@ const blogSiteSchema = new mongoose.Schema({
  * key it does not have. The filter limits uniqueness to documents where the
  * hash is really there.
  *
- * THE OLD INDEX HAS TO BE DROPPED ONCE, AND THE ORDER MATTERS.
+ * THE MIGRATION IS DONE — 17 OCTOBER 2026, ON THE LIVE DATABASE.
  *
- * The live database carries a `licenceKeyHash_1` that is PLAIN UNIQUE — the
+ * Verified in Atlas afterwards: `licenceKeyHash_1` is back as a REGULAR
+ * index with no UNIQUE property, rebuilt at the restart (its stats start
+ * that day and it is 20.5 kB against the others' 36.9), and
+ * `licenceKeyHash_unique` carries UNIQUE and PARTIAL. Eight indexes, all
+ * READY.
+ *
+ * NOTHING BELOW NEEDS DOING AGAIN. It is kept because it is the only
+ * record of why the two indexes exist and why they were built in that
+ * order, and because the same trap waits for anyone who ever changes the
+ * options on an index that is already live.
+ *
+ * THE OLD INDEX HAD TO BE DROPPED ONCE, AND THE ORDER MATTERED.
+ *
+ * The live database carried a `licenceKeyHash_1` that was PLAIN UNIQUE — the
  * field used to declare `unique: true`. Mongoose creates indexes that are
  * missing; it does not alter one that already exists with different options,
  * and it does not warn. So:
@@ -261,9 +354,9 @@ const blogSiteSchema = new mongoose.Schema({
  * constraint in place before step 2 removes the old one. Dropping first
  * would leave a window in which two sites could take the same licence key.
  *
- * Until step 2 is done, the old index still treats every document MISSING
- * the field as the same value, so the SECOND Cloudflare blog fails with
- * E11000 naming a licence key it does not have.
+ * Until step 2 was done, the old index treated every document MISSING the
+ * field as the same value, so the SECOND Cloudflare blog failed with E11000
+ * naming a licence key it did not have. That is now fixed.
  */
 blogSiteSchema.index(
   { licenceKeyHash: 1 },

@@ -54,11 +54,13 @@ const BlogPost = require('../models/BlogPost');
 
 const { requireSite } = require('../middleware/requireSite');
 const { blogActivateLimiter, blogApiLimiter } = require('../middleware/rateLimits');
-const { quotePosts, CREDITS_PER_POST } = require('../utils/blogPricing');
+const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { planForCampaign } = require('../utils/blog/campaignPlan');
 // The refusal sentence lives with the conflict kinds it describes.
 const { conflictMessage } = require('../utils/blog/planCampaign');
 const { createCampaign } = require('../utils/blog/createCampaign');
+const { approveCampaign } = require('../utils/blog/approveCampaign');
+const { ownedCampaign: findOwnedCampaign } = require('../utils/blog/ownedCampaign');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { parseReportedRemoval } = require('../utils/blog/removalTime');
@@ -76,38 +78,15 @@ const { refuseMove, refuseOccupiedDomain } = require('../utils/blog/activationGu
 const COLLECT_DEFAULT = 5;
 const COLLECT_MAX = 20;
 
-/** Statuses meaning "this slot has been written and paid for". */
-const WRITTEN = ['ready', 'scheduled', 'published'];
-
 /**
  * Find a campaign this site is allowed to touch.
  *
- * The signature proved which SITE is calling; this proves the campaign belongs
- * to it. Without the check, any activated site could read any other customer's
- * posts by guessing a campaign id — and campaign ids appear in wp-admin, so
- * they are not secret.
- *
- * Returns null for both "no such campaign" and "not yours", and the caller
- * answers 404 either way. Telling the two apart would turn this into a way to
- * enumerate other people's campaigns.
+ * The rule itself is in utils/blog/ownedCampaign.js, because approveCampaign
+ * needs it too and is called from a screen that has no `req`. This is the
+ * shape the five handlers below already pass it.
  */
-async function ownedCampaign(req, campaignId) {
-  if (!/^[a-f0-9]{24}$/i.test(String(campaignId || ''))) return null;
-
-  const campaign = await BlogCampaign.findById(campaignId);
-  if (!campaign) return null;
-
-  if (String(campaign.site) !== String(req.site._id)) {
-    log.security('blog.wrongSite', {
-      requestId: req.id,
-      siteId: String(req.site._id),
-      campaignId: String(campaignId),
-    });
-    return null;
-  }
-
-  return campaign;
-}
+const ownedCampaign = (req, campaignId) =>
+  findOwnedCampaign({ site: req.site, campaignId, requestId: req.id });
 
 /* -------------------------------------------------------------------------
  * Activation
@@ -328,234 +307,21 @@ router.post('/api/blog/plan', blogApiLimiter, requireSite, async (req, res) => {
 
 router.post('/api/blog/write', blogApiLimiter, requireSite, async (req, res) => {
   try {
-    const { campaignId, slotIndexes, cancel } = req.body || {};
-
-    const campaign = await ownedCampaign(req, campaignId);
-    if (!campaign) {
-      return res.status(404).json({ error: 'Campaign not found.' });
-    }
-
-    if (campaign.status === 'cancelled') {
-      return res.status(409).json({ error: 'This campaign was cancelled.', status: 'cancelled' });
-    }
-
-    /* ---- stop the batch, carried on the poll that is already happening ---- */
-
-    /* NO NEW ENDPOINT, AND DELIBERATELY SO. The plugin polls this route every
-     * few seconds for as long as the spinner turns, so a paused campaign
-     * re-asserts the cancel on every poll: a request that fails costs a few
-     * seconds instead of being lost for ever.
-     *
-     * That matters more here than anywhere. Four facts have already been lost
-     * in this plugin to one-shot calls with no retry behind them — the note
-     * above campaigns_present() in class-ie-api.php lists them — and a cancel
-     * is the worst of all of them to deliver once and hope, because the
-     * failure mode is writing and charging for everything the owner just said
-     * to stop. Which is precisely what happened: eleven posts, 825 credits,
-     * after Pause was pressed.
-     *
-     * ONLY MEANINGFUL WHILE A BATCH IS RUNNING. Set at any other moment the
-     * flag would sit there and cancel the NEXT batch, so it is ignored unless
-     * the campaign is writing. runBatch() also clears it as it claims the
-     * campaign, which closes the race where a cancel lands in between. */
-    if (true === cancel || 'true' === cancel) {
-      if ('writing' === campaign.status) {
-        await BlogCampaign.updateOne(
-          { _id: campaign._id },
-          { $set: { 'batch.cancelRequested': true } }
-        );
-
-        log.info('blog.write.cancelRequested', {
-          requestId: req.id,
-          campaignId: String(campaign._id),
-        });
-      }
-
-      /* FALLS THROUGH to the status branches below rather than returning.
-       *
-       * The plugin asked what is happening as well as for it to stop, and a
-       * cancel that answered nothing would leave the spinner unable to say
-       * whether it had been heard — which is the thing that made the original
-       * bug so unpleasant to watch. */
-    }
-
-    /* ---- already running: report, do not start a second ---- */
-
-    if (campaign.status === 'writing') {
-      const job = campaign.batch?.job ? await Job.findById(campaign.batch.job).lean() : null;
-
-      // A job that died leaves the campaign stuck in 'writing' forever, so a
-      // failed job has to be reported as failure rather than as progress. The
-      // runner requeues genuinely stale jobs; this is for one that gave up.
-      //
-      // A MISSING job is the same problem wearing different clothes: a record
-      // deleted by hand, or a crash between creating the job and recording it.
-      // Without this branch the campaign polls "writing, 0 of 12" forever and
-      // no amount of pressing the button will ever start it again.
-      if (!job || job.status === 'failed') {
-        await BlogCampaign.updateOne({ _id: campaign._id }, { $set: { status: 'draft' } });
-
-        log.error('blog.write.batchLost', new Error('Campaign was writing with no live job'), {
-          campaignId: String(campaign._id),
-          jobId: String(campaign.batch?.job || ''),
-          jobStatus: job?.status || 'missing',
-        });
-
-        return res.status(409).json({
-          status: 'failed',
-          error: job?.error?.message || 'The batch stopped. Approve the campaign again to restart it.',
-        });
-      }
-
-      return res.json({
-        status: 'writing',
-        done: job?.progress?.done ?? 0,
-        total: job?.progress?.total ?? campaign.slots.length,
-        current: job?.progress?.current || '',
-        stage: job?.progress?.stage || 'queued',
-        /* SO THE SPINNER CAN SAY IT WAS HEARD. Without this the plugin shows
-         * an unchanged progress bar for as long as the post in flight takes
-         * to finish, which is exactly the minute in which somebody decides
-         * the Pause button does not work — and presses it again. */
-        cancelling: !!(campaign.batch && campaign.batch.cancelRequested),
-      });
-    }
-
-    /* ---- gap fill: reopen the named slots first ---- */
-
-    // A failed slot stays failed. Reopening it is explicit, and it happens
-    // here rather than inside the writer so that "write the campaign" can
-    // never quietly retry something the customer was told had failed.
-    const scope = Array.isArray(slotIndexes) && slotIndexes.length
-      ? slotIndexes.map(Number).filter(Number.isInteger)
-      : null;
-
-    if (scope) {
-      for (const index of scope) {
-        await BlogCampaign.reopenSlot(campaign._id, index);
-      }
-    }
-
-    /* ---- what is left to write, and what it costs ---- */
-
-    const fresh = await BlogCampaign.findById(campaign._id);
-
-    const inScope = (fresh.slots || []).filter(s => !scope || scope.includes(s.index));
-    const toWrite = inScope.filter(s => s.status === 'pending');
-
-    if (!toWrite.length) {
-      const remaining = (fresh.slots || []).filter(s => s.status === 'ready').length;
-
-      // Nothing to do is a success, not an error: the plugin polls this and
-      // needs a terminal answer it can act on.
-      return res.json({
-        status: 'written',
-        written: (fresh.slots || []).filter(s => WRITTEN.includes(s.status)).length,
-        failed: (fresh.slots || []).filter(s => s.status === 'failed').map(s => s.index),
-        readyToCollect: remaining,
-        total: fresh.slots.length,
-      });
-    }
-
-    const quote = quotePosts(toWrite.length);
-    const user = await User.findById(fresh.user).lean();
-    const available = Number(user?.credits || 0);
-
-    if (available < quote.total) {
-      // REFUSED, not reported. This is the difference between the old design
-      // and this one: a batch allowed to start underfunded writes four posts,
-      // stops, and leaves a ring with a hole in it that the customer paid for.
-      log.info('blog.write.refused', {
-        requestId: req.id,
-        campaignId: String(campaign._id),
-        needs: quote.total,
-        has: available,
-      });
-
-      return res.status(402).json({
-        error: `This campaign needs ${quote.total} credits and you have ${available}.`,
-        creditsError: true,
-        quote,
-        creditsAvailable: available,
-
-        // Where to fix it.
-        //
-        // This is the most common wall a self-serve customer hits, and until
-        // now it was a dead end: WordPress showed them the shortfall and
-        // nothing else. They are standing in wp-admin on their own site, and
-        // nothing on that screen says the balance lives somewhere else, let
-        // alone where. Sent as an absolute URL because the plugin has no idea
-        // what this server's address is beyond the one it was configured
-        // with, and building it there would guess wrong on every custom
-        // domain.
-        buyCreditsUrl: `${baseUrl(req)}/buy-credits`,
-      });
-    }
-
-    /* ---- start it ---- */
-
-    const job = await Job.create({
-      user: fresh.user,
-      kind: 'blog',
-      status: 'queued',
-      payload: {
-        campaignId: String(fresh._id),
-        ...(scope ? { slotIndexes: scope } : {}),
-      },
-      progress: {
-        // The SCOPE, not the number left to write.
-        //
-        // writeCampaign counts everything in scope and seeds `done` with what
-        // is already written, so a re-approval of a half-written campaign
-        // reports 9 of 12 rather than 0 of 3. If this said 3, the first
-        // response and every poll after it would disagree about the
-        // denominator, and the progress bar would jump the moment the job
-        // started.
-        total: inScope.length,
-        done: 0,
-        stage: 'queued',
-        current: toWrite[0]?.topic || '',
-      },
-    });
-
-    // Conditional on the campaign NOT already being in 'writing', so two
-    // approvals arriving together cannot both enqueue a batch. The loser
-    // deletes its job and reports the winner's progress.
-    const claimed = await BlogCampaign.findOneAndUpdate(
-      { _id: fresh._id, status: { $ne: 'writing' } },
-      { $set: { status: 'writing', 'batch.job': job._id, 'batch.startedAt': new Date() } },
-      { new: true }
-    );
-
-    if (!claimed) {
-      await Job.deleteOne({ _id: job._id });
-
-      log.info('blog.write.raceLost', {
-        requestId: req.id, campaignId: String(campaign._id),
-      });
-
-      return res.json({ status: 'writing', done: 0, total: inScope.length, stage: 'queued' });
-    }
-
-    log.info('blog.write.queued', {
+    const result = await approveCampaign({
+      site: req.site,
+      body: req.body || {},
       requestId: req.id,
-      campaignId: String(campaign._id),
-      jobId: String(job._id),
-      posts: toWrite.length,
-      estimatedCredits: quote.total,
+      // Built here, not in there. baseUrl() reads the request's own host and
+      // proxy headers, which the Cloudflare screen's caller does not have.
+      baseUrl: baseUrl(req),
     });
 
-    res.json({
-      status: 'writing',
-      jobId: String(job._id),
-      done: 0,
-      total: inScope.length,
-      // What this run will actually write and charge for, which is not the
-      // same number when a partly written campaign is approved again.
-      toWrite: toWrite.length,
-      stage: 'queued',
-      quote,
-    });
+    /* NO SPREADING HERE, unlike /plan above. Two of these refusals carry a
+     * `status` key of their own — 'cancelled' and 'failed' — which is the
+     * same word the HTTP code was going to use. approveCampaign hands back
+     * the code and the body as separate fields so the two can never be
+     * merged; this line is the whole reason for that. */
+    res.status(result.code).json(result.body);
 
   } catch (err) {
     log.error('blog.write.failed', err, { requestId: req.id });

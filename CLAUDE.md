@@ -588,6 +588,109 @@ unverified claim from a remote machine" question.
     .env                        CF_ACCOUNT_ID, CF_API_TOKEN,
                                 TOKEN_ENCRYPTION_KEY
 
+### Report semantics for a static target — RULED 17 October 2026
+
+Step 2 of the build order below. Two of the three questions are now answered
+by Edwin; the third is still open and is marked as such.
+
+**1. What `scheduled` and `published` mean. DECIDED, Edwin's words:**
+
+> *scheduled = the article is written, it has a date, and we haven't put it
+> on the site yet.*
+> *published = we put it on the site, the upload worked, and its date has
+> arrived.*
+
+Why it had to be decided rather than inherited: on WordPress the PLUGIN does
+the waiting. It inserts the post with a future date, WordPress hides it until
+that date, flips it live, and the plugin tells us. A static site has no
+hidden state — a file is deployed or it is not — so there is nobody to do the
+waiting and nobody to report back.
+
+What that means in code:
+
+- Nothing is reported back to us. We set `published` because WE deployed it;
+  there is no equivalent of `/api/blog/published` for a static target.
+- `published` needs BOTH conditions. A successful deploy alone is not enough
+  — an article can be in a deploy before its date if a later article in the
+  same run forced a push. Date alone is not enough either, because the upload
+  can fail.
+- **Deploy on the due date, do not deploy everything at once.** The rejected
+  alternative was pushing all twelve immediately and hiding the future ones
+  with JavaScript. Google would see twelve pages on day one, which is the
+  opposite of posting weekly, and a page hidden by script is still a page
+  that was crawled.
+
+**2. Where the report lives. DECIDED — a SEPARATE screen, not the existing
+one with conditional columns.** Edwin, 17 October: *"can we have a different
+screen/report for cloudflare?"*
+
+- `blogReportRoute.js` is 59 KB and `reportFilters.js` another 13 KB, all of
+  it built on WordPress facts. A `target` branch through both risks the
+  product that earns money today for one that has no customers yet.
+- Three concepts cannot occur on a static target at all, because every deploy
+  is a fresh render of what we hold: `deletedAt` (a post trashed in
+  wp-admin), `removedAt` (the campaign gone from the site), and `wpPostId`.
+  On a separate screen they are simply absent, which is the point — *a value
+  that cannot be true is worse than no value*, and a dash reads as "no"
+  rather than "not a thing here".
+- A static report can show what the WordPress one cannot: which deploy an
+  article went out in, the live URL, when the blog was last pushed.
+- **The shared part gets ONE function, not a copy.** Campaign name, topic,
+  target phrase, publish date and slot status mean the same thing on both
+  screens. Those come from a shared builder, the way createCampaign and
+  approveCampaign are shared. Everything else is per-screen.
+- **Start on the blog's own page** (`/static-blogs/:id`), which already lists
+  campaigns — expand a campaign to its articles. A separate
+  `/static-blog-report` across all blogs is worth building at twenty blogs,
+  not at one, and by then it will be clear from use which columns matter.
+
+**3. Deletion. DECIDED 17 October — Mongo keeps the prose for Cloudflare
+targets. The fifteen-day deletion stays WordPress-only.**
+
+**First, a correction to how this file put it before.** It said "the
+Cloudflare Pages API cannot read a file back", which is true and was being
+read as "the file cannot be got back". Those are not the same claim, and
+Edwin caught the difference: *"can we just send the json file along with the
+blogs to cloudflare and then if we need to rebuild it we use the json
+file?"*
+
+He is right about the mechanism, and a future session should not re-derive
+the wrong version:
+
+- The **API** has no endpoint listing a deployment's files or returning
+  their contents (checked 15 October). That part stands.
+- But `_data/blog.json` sits at a public URL on the blog itself, so **an
+  ordinary HTTPS GET fetches it back.** It holds every article's title,
+  meta, slug, headings and paragraphs, plus `targets` — so a full rebuild,
+  interlinks included, is genuinely possible from it.
+- And this is NOT the thing the plan rejected. Rejected was scraping the
+  published **HTML**. Reading back a structured file we authored ourselves
+  is a different act with none of the same failure modes.
+
+**So why keep the prose in Mongo anyway.** Not because the restore is
+impossible. Because deleting buys nothing and costs something:
+
+- **It buys nothing measurable.** The reason to delete was space, and the
+  measurement killed that premise: 2.4% of the tier, room for about 68,000
+  articles.
+- **It costs a dependency.** Today Mongo is the original and Cloudflare the
+  copy. Deleting inverts that and makes Cloudflare the only copy — one
+  suspended account, one lapsed domain, one deleted project.
+- **An untested restore is not a backup.** Delete on the strength of it and
+  the first run of the restore path is the day it is actually needed.
+- **It makes staleness real.** Written-and-never-read means "what if the
+  file is older than the database" cannot happen. Make it the source and
+  every edit becomes fetch, merge, re-render, with that question live.
+
+**What to build because of this, and it is not nothing:**
+
+- Keep shipping `_data/blog.json` on every deploy. Already built and tested.
+- **Write the restore script, and run it once for real** — a blog's JSON
+  fetched from its public URL into a SCRATCH database, rebuilt, compared.
+  A backup nobody has restored from is a belief, not a backup.
+- Re-run `scripts/measure-db.js` before ever revisiting this. The decision
+  turns on a number, and the number is the thing that changed last time.
+
 ### Build order — revised
 
 0. **Measure first.** ✅ **DONE 17 October** — `scripts/measure-db.js`, and
@@ -647,6 +750,45 @@ Extract later if the blog product gets its own customers or infrastructure.
 - Images. They are files, and they go to Cloudflare where storage and
   bandwidth are free — never into Mongo. How they are named and deduplicated
   across deploys is undecided.
+
+### Asked for, and deliberately AFTER this — the plugin taking an external target page
+
+**Edwin, 17 October 2026:** *"I will eventually want the plugin to accept
+external url just like what we are doing with the cloudflare blogs but not
+now. Let's focus on the cloudflare first."*
+
+Not an open question. It is decided, and it is sequenced behind the
+Cloudflare work. Do not start it, and do not fold it into a Cloudflare commit
+as "while we are here".
+
+**What it means.** Today wp-admin builds the target page from a picker over
+the site's own posts and pages — `get_permalink( $page )` in
+`class-ie-admin.php` — so the URL is always absolute and always on that site.
+The posts link inward: blog → the customer's own money page, one domain. The
+Cloudflare screen is a free text box, so a blog there can already feed a page
+on any domain.
+
+Eventually the plugin should do the same: a WordPress blog whose posts point
+at a page somewhere else.
+
+**More of it is already done than is obvious.**
+
+- Nothing on the server ever required the target page to be on the calling
+  site. `createCampaign` checks the url and keyword are present; `linkPlan.js`
+  uses `target.url` verbatim as `slot.money.url`. There is no origin check to
+  remove, because there never was one.
+- The scheme check added on 17 October lives in `createCampaign`, so both
+  callers already have it: http/https only, decided by the URL parser.
+
+**So the work is almost entirely in the plugin**, and it is a UI job. The page
+picker needs a "somewhere else" option with a text field beside it, and the
+server's refusal wording has to reach the screen.
+
+**The one real question, unanswered.** Whether an outbound money link to
+another domain should carry `rel="nofollow"`. On WordPress the plugin writes
+the href as it inserts the post; on Cloudflare our renderer will. Same
+question in two places, and it is Edwin's SEO call rather than a technical
+one. Ask before building either.
 
 ## Generated websites are stored in ONE place, and it is not backed up
 

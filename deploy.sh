@@ -135,7 +135,12 @@ for suite in \
   test-blog-json.js \
   test-static-site.js \
   test-plan-contract.js \
-  test-static-blogs.js
+  test-static-blogs.js \
+  test-write-contract.js \
+  test-scheduler-target.js \
+  test-suggest-contract.js \
+  test-blog-render.js \
+  test-cloudflare-deploy.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.

@@ -97,10 +97,27 @@ function ringNeighbours(slots, index) {
    * with wording that still makes sense when post 5 finally exists. Falling
    * back to the topic is acceptable but worse: topics are headline-shaped and
    * read awkwardly mid-sentence.
+   *
+   * THE KEYWORD SITS BETWEEN THEM — 19 October. Only the WordPress path ever
+   * collects a linkPhrase; parseTopics on the static-blog side reads a topic
+   * and a query and nothing else, so every Cloudflare blog fell past both
+   * better options and anchored its whole internal ring on article H1s.
+   *
+   * targetQuery goes AFTER linkPhrase, not before it. A phrase written for
+   * mid-sentence use beats a search query at the one thing an anchor has to
+   * do, which is read like English; putting the keyword first would fix the
+   * static blogs by quietly degrading every campaign that was already right.
+   *
+   * TRIMMED BEFORE IT IS CHOSEN. '   ' is truthy, so an untrimmed check wins
+   * the chain and then renders as an anchor wrapped around three spaces —
+   * the same shape of bug the money override had.
    */
   function referTo(slot) {
     if (!slot) return null;
-    return slot.linkPhrase || slot.publishedTitle || slot.topic || null;
+
+    const keyword = String(slot.targetQuery || '').trim();
+
+    return slot.linkPhrase || keyword || slot.publishedTitle || slot.topic || null;
   }
   
   /**

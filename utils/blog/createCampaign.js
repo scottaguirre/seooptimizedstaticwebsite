@@ -97,6 +97,52 @@ async function createCampaign({ site, body, requestId }) {
       return refuse('A target page with a URL and keyword is required.');
     }
 
+    /* AND IT HAS TO BE A WEB ADDRESS, which nothing checked until now.
+     *
+     * The url is not fetched by us. It is written into every post in the
+     * campaign as the href of the money link — so whatever is in this field
+     * is what twelve articles will point at, and a mistake is found after
+     * they have been written and charged for, not before.
+     *
+     * It mattered less when only the plugin could get here: wp-admin builds
+     * this from get_permalink(), which is always absolute. The Cloudflare
+     * screen is a text box somebody types into, and 'example.com/repair'
+     * looks right and is not a link.
+     *
+     * CHECKED WITH THE URL PARSER, NOT A REGEX, so the answer matches what
+     * a browser would do with it rather than what a pattern guesses.
+     *
+     * HTTP AND HTTPS ONLY. Everything else a URL can start with is either
+     * useless in a blog post or worse: javascript:, data: and file: all
+     * parse perfectly well and none of them belong in an href we generate.
+     *
+     * Skipped for a pillar campaign, which has no target page at all. */
+    if (!isPillar) {
+      let scheme = '';
+      try {
+        /* The .trim() is BELT AND BRACES and cannot be mutation-tested away:
+         * the WHATWG parser already strips surrounding whitespace, so
+         * `new URL('  https://x/y  ')` parses either way. Kept because the
+         * next person to read this should not have to know that, and
+         * removed only by somebody who does.
+         *
+         * NOT the value that gets stored, though — the url is saved further
+         * down as String(targetPage.url), untrimmed. A pasted address with
+         * a trailing space therefore passes this check and is stored with
+         * the space on it. Harmless in every browser tried, and left alone
+         * rather than changed inside a commit about schemes. */
+        scheme = new URL(String(targetPage.url).trim()).protocol;
+      } catch {
+        scheme = '';
+      }
+
+      if ('http:' !== scheme && 'https:' !== scheme) {
+        return refuse(
+          'The target page needs to be a full web address, starting with http:// or https://'
+        );
+      }
+    }
+
     if (!Array.isArray(topics) || !topics.length) {
       return refuse('At least one topic is required.');
     }

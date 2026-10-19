@@ -27,7 +27,31 @@
 // attribute, so an owner's own edits elsewhere in the post are untouchable —
 // and if they deleted the span, the swap simply finds nothing.
 
-const TOKEN_NAMES = ['money', 'prev', 'next'];
+/**
+ * `link` IS THE OWNER'S OWN, AND IT IS DIFFERENT FROM THE OTHER THREE.
+ *
+ * money, prev and next are decided by the campaign: the planner knows the
+ * money page and the ring, and the writer is handed the exact phrase to
+ * wrap. `link` is nobody's business but the person editing the article —
+ * they write the anchor into a sentence themselves and name its URL on
+ * the article.
+ *
+ * IT EXISTS BECAUSE OF PILLAR CAMPAIGNS. A pillar's articles link to each
+ * other and to no money page, so there was no slot at all for "send this
+ * sentence somewhere of my choosing". Retargeting a {{money}} token that
+ * a pillar article never had was not an answer.
+ *
+ * SAFE TO ADD TO AN EXISTING LIST. applyLinks() unwraps any token with no
+ * target, so every post ever written — none of which contains {{link}} —
+ * behaves exactly as it did.
+ *
+ * THE PLUGIN'S PHP DOES NOT KNOW THIS ONE. IE_Links::render() mirrors
+ * money/prev/next, so a {{link}} token in a WordPress post would reach
+ * the page as literal text. It cannot happen today, because the editor is
+ * Cloudflare-only and no writer prompt emits one — but it is the first
+ * thing to fix if the editor ever reaches WordPress.
+ */
+const TOKEN_NAMES = ['money', 'prev', 'next', 'link'];
 
 function escapeHtmlAttr(value) {
   return String(value)

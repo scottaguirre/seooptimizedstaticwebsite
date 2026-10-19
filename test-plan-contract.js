@@ -325,6 +325,74 @@ test('no target page', async () => {
   assert.strictEqual(calls.created, null, 'a campaign was created anyway');
 });
 
+test('A TARGET PAGE THAT IS NOT A WEB ADDRESS', async () => {
+  /* The url is never fetched by us — it is written into every post in the
+   * campaign as the href of the money link. So whatever is in this field is
+   * what twelve articles point at, and the mistake is found after they have
+   * been written and charged for, not before.
+   *
+   * It mattered less when only the plugin could get here: wp-admin builds
+   * this from get_permalink(), which is always absolute. The Cloudflare
+   * screen is a text box somebody types into, and 'example.com/repair'
+   * looks right and is not a link.
+   *
+   * Each spelling runs on its own, because one array would still pass with
+   * eight of the nine rejected and the ninth let through. */
+  for (const url of [
+    'example.com/repair',          // the one somebody will actually type
+    'www.example.com',
+    '/water-heater-repair',        // relative
+    'javascript:alert(1)',         // parses fine; belongs in no href we write
+    'data:text/html,<h1>hi</h1>',
+    'file:///etc/passwd',
+    'ftp://example.com/x',
+    'not a url at all',
+    '   ',
+  ]) {
+    install();
+    const { status, json } = await run({
+      body: body({ targetPage: { url, keyword: 'water heater repair' } }),
+    });
+
+    assert.strictEqual(status, 400, `"${url}" was accepted as a target page`);
+    assert.ok(/http/i.test(json.error), `the refusal does not say what is wanted: ${json.error}`);
+    assert.strictEqual(calls.created, null, `a campaign was created for "${url}"`);
+  }
+});
+
+test('and both schemes still pass, with a port, a query and an anchor', async () => {
+  /* The check must not be tighter than it needs to be. A staging site on
+   * http with a port is a real page somebody will want to feed. */
+  for (const url of [
+    'https://example.com/water-heater-repair/',
+    'http://example.com/water-heater-repair/',
+    'http://staging.example.com:8080/preview?id=7',
+    'https://example.com/path/with%20space#section',
+  ]) {
+    install();
+    /* THE DEFAULT KEYWORD, not one of my own. The fixture's topics are
+     * tuned not to cannibalise it; a different keyword here made the
+     * cannibalisation check refuse the campaign, and the test blamed the
+     * scheme check for it. */
+    const { status, json } = await run({
+      body: body({ targetPage: { url, keyword: 'water heater repair leander' } }),
+    });
+
+    assert.strictEqual(status, 200,
+      `"${url}" was refused and should not have been: ${json && json.error}`);
+  }
+});
+
+test('and a pillar campaign is not asked for one at all', async () => {
+  /* It has no target page by design — it writes the hub articles a later
+   * campaign points at. A scheme check that ran regardless would refuse
+   * every pillar campaign there has ever been. */
+  install();
+  const { status } = await run({ body: body({ isPillar: true, targetPage: null }) });
+
+  assert.strictEqual(status, 200, 'the scheme check refused a pillar campaign');
+});
+
 test('no topics', async () => {
   install();
   const { status, json } = await run({ body: body({ topics: [] }) });

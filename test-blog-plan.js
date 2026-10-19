@@ -448,6 +448,89 @@ test('the last slot closes the ring back to slot 0', () => {
   assert.ok(slot.nextAnchor, 'the ring should close forward to slot 0');
 });
 
+/* ------------------------------------------------- what a neighbour is called
+ *
+ * referTo() decides the words one article uses to link to another. The order
+ * is linkPhrase -> targetQuery -> publishedTitle -> topic, and every step of
+ * it is load-bearing:
+ *
+ *   linkPhrase     written for mid-sentence use, so it reads best. Only the
+ *                  WordPress path collects one.
+ *   targetQuery    the keyword the target article is ranking for. ADDED 19
+ *                  October: the static-blog path has no linkPhrase, so it was
+ *                  falling all the way through to the topic and anchoring
+ *                  every internal link on an H1.
+ *   publishedTitle what WordPress actually called it.
+ *   topic          last resort.
+ */
+
+/** A two-slot campaign whose slot 1 carries exactly the fields given. */
+function neighbourNamed(fields) {
+  return {
+    targetPage: TARGET,
+    site: { business: BUSINESS },
+    slots: [
+      { index: 0, topic: 'First', targetQuery: 'first query', slug: 'first',
+        moneyAnchor: 'water heater repair', anchorType: 'exact',
+        status: 'published', publishedUrl: 'https://x.example/first/' },
+      Object.assign({ index: 1, slug: 'second', moneyAnchor: 'repair', anchorType: 'exact',
+        status: 'published', publishedUrl: 'https://x.example/second/' }, fields),
+    ],
+  };
+}
+
+/** What slot 0 calls slot 1 when it links forward. */
+function callsItsNeighbour(fields) {
+  return buildLinkPlan(neighbourNamed(fields), 0).slot.nextAnchor;
+}
+
+test('A NEIGHBOUR IS CALLED BY ITS KEYWORD WHEN NOTHING BETTER EXISTS', () => {
+  /* THE BUG THIS FIXES. Every static blog reaches here: parseTopics collects
+   * a topic and a query and no linkPhrase, so the chain used to fall past
+   * the keyword and anchor on the article's own H1 — headline-shaped,
+   * capitalised, and telling Google nothing it did not already have. */
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop',
+                        targetQuery: 'water heater popping sound' }),
+    'water heater popping sound');
+});
+
+test('BUT A linkPhrase STILL WINS, SO WORDPRESS IS UNTOUCHED', () => {
+  /* The narrow half of the change. A phrase written for mid-sentence use
+   * reads better than a search query and must keep its place — otherwise
+   * this "fix" quietly degrades every campaign that had it right. */
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop',
+                        targetQuery: 'water heater popping sound',
+                        linkPhrase: 'that popping sound from the tank' }),
+    'that popping sound from the tank');
+});
+
+test('AND THE TITLE IS STILL THERE WHEN THERE IS NO KEYWORD', () => {
+  /* An empty targetQuery must fall THROUGH, not win as ''. The schema
+   * defaults it to the empty string, so a check on presence rather than
+   * truth would hand every anchor an empty phrase. */
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop',
+                        targetQuery: '', publishedTitle: 'What WordPress called it' }),
+    'What WordPress called it');
+});
+
+test('AND THE TOPIC IS THE LAST RESORT, NOT THE FIRST', () => {
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop', targetQuery: '' }),
+    'Sediment is what makes a heater pop');
+});
+
+test('A KEYWORD OF PURE WHITESPACE IS NOT A KEYWORD', () => {
+  /* '   ' is truthy. Without a trim it wins the chain and every internal
+   * link on the site becomes three spaces wrapped in an anchor — the same
+   * shape of bug the money override had. */
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop', targetQuery: '   ' }),
+    'Sediment is what makes a heater pop');
+});
+
 test('a forward link to an unpublished post becomes a placeholder', () => {
   const { targets } = buildLinkPlan(campaignFrom(plan), 0);
   assert.ok(targets.next.pendingId, 'expected a pendingId, got a live URL');

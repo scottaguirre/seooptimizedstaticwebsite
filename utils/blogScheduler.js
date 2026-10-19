@@ -433,9 +433,41 @@ async function tick() {
       status: 'active',
       siteUrl: { $ne: '' },
       pingFailures: { $lt: MAX_PING_FAILURES },
-      $or: [
-        { lastPingAt: { $lt: loosest } },
-        { lastPingAt: { $exists: false } },
+
+      /* $and, NOT TWO $or KEYS. An object literal cannot hold two of the
+       * same key — the second wins and the first is gone, with no error
+       * anywhere. The one that would vanish is the gap rule below, and
+       * losing it means pinging every site on every tick. */
+      $and: [
+        /* WORDPRESS ONLY, AND THE SECOND CLAUSE IS NOT OPTIONAL.
+         *
+         * This route knocks on <site>/wp-json/interlink/v1/run and signs
+         * with site.secret. A Cloudflare blog has neither — pingSite would
+         * sign with String(undefined), the request would fail, and
+         * pingFailures would climb until the scheduler abandoned the blog.
+         * Silently: nothing crashes and nothing reaches a screen.
+         *
+         * `target: 'wordpress'` alone would be wrong. The field has
+         * `default: 'wordpress'`, and a Mongoose default is applied when a
+         * document is SAVED — it does not reach back into rows already in
+         * the database. Sites created before `target` existed have no
+         * `target` key at all, and that spelling matches none of them: every
+         * legacy site would stop being pinged, with no error to say so.
+         *
+         * Same mistake as the licenceKeyHash index, one layer up. A missing
+         * field is not the default value.
+         *
+         * Written as a whitelist rather than `$ne: 'cloudflare'` so that a
+         * third target added later is excluded until somebody decides it
+         * should be pinged — the safe direction to be wrong in. */
+        { $or: [{ target: 'wordpress' }, { target: { $exists: false } }] },
+
+        // The looser of the two gaps. Each site's real gap is checked below,
+        // once we know whether its work is urgent.
+        { $or: [
+          { lastPingAt: { $lt: loosest } },
+          { lastPingAt: { $exists: false } },
+        ] },
       ],
     });
 

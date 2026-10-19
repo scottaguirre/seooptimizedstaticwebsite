@@ -93,6 +93,54 @@ const blogPostSchema = new mongoose.Schema({
   sections: [sectionSchema],
 
   /**
+   * Where THIS article's money link points, overriding the campaign's.
+   *
+   * WHY PER ARTICLE AND NOT PER CAMPAIGN. The campaign's targetPage is the
+   * page the batch was planned around, and for most articles it stays
+   * right. But a campaign is a dozen articles written weeks apart, and one
+   * of them will suit a different page — a specific service, a seasonal
+   * offer, a post on the blog itself. Edwin asked for it that way round:
+   * "the url each page will link to", on an individual page.
+   *
+   * EMPTY MEANS "USE THE CAMPAIGN'S", which is what every article nobody
+   * has edited will hold for ever. It is an ABSENCE, not a copy of the
+   * campaign's value: copy it in at write time and the day somebody fixes
+   * a typo on the campaign, twelve articles keep the old URL and nothing
+   * on any screen says why.
+   *
+   * THE ANCHOR TEXT IS NOT HERE. It lives in the prose, between {{money}}
+   * and {{/money}}, because it is part of a sentence and has to read as
+   * one. Editing the paragraph edits the anchor, and there is no second
+   * copy to keep in step.
+   *
+   * CLOUDFLARE BLOGS IN PRACTICE. A WordPress post is written once and
+   * repaired in place, so an override there would have to be pushed to
+   * the plugin; a static blog re-renders from scratch every deploy and
+   * simply picks this up.
+   */
+  targetUrl: { type: String, default: '' },
+
+  /**
+   * Where this article's OWN link points — the {{link}} token.
+   *
+   * SEPARATE FROM targetUrl, AND THE DIFFERENCE IS WHOSE DECISION IT IS.
+   * targetUrl retargets the campaign's money link: the slot exists, the
+   * planner put it there, this only changes its destination. extraUrl is
+   * a link the owner invents — they write {{link}}the words{{/link}} into
+   * a sentence and name the URL here.
+   *
+   * IT IS WHAT A PILLAR ARTICLE HAS INSTEAD. A pillar campaign has no
+   * money page by design, so its articles carry no {{money}} token and
+   * targetUrl has nothing to point. This one works the same on every
+   * article, pillar or not — which is the whole reason it exists.
+   *
+   * EMPTY MEANS NO LINK, not a fallback to anything. There is no campaign
+   * value behind it; if nobody has set one, the token unwraps to plain
+   * text and the sentence reads normally.
+   */
+  extraUrl: { type: String, default: '' },
+
+  /**
    * Where each link token points, in the shape IE_Links::render() reads.
    *
    * Mixed, and this one has to be. The keys are money/prev/next but the values
