@@ -51,8 +51,20 @@ function planForCampaign(input) {
    * way of saying the money keyword, so a pool with no keyword is not an empty
    * pool, it is an unanswerable question. A pillar campaign has no money
    * anchors to balance at all. */
-  const { pool, shortfalls } = isPillar
-    ? { pool: null, shortfalls: [] }
+  /* `mix` COMES BACK WITH THE POOL, and is handed to planCampaign below.
+   *
+   * buildAnchorPool is the one place that asks whether this site is a
+   * business, so it is the one place that decides the spread: a blog spends
+   * branded's 10% on semantic instead, having no brand to anchor with. See
+   * GENERAL_MIX in anchors.js.
+   *
+   * CARRIED RATHER THAN RE-DERIVED. Asking isLocalBusiness() again here
+   * would be a second place to get it wrong, and the symptom would be
+   * silent — shortfalls measured against one spread and slots allocated
+   * against another, so the screen warns about a bucket nothing uses and
+   * says nothing about the one that is short. */
+  const { pool, shortfalls, mix } = isPillar
+    ? { pool: null, shortfalls: [], mix: null }
     : buildAnchorPool({
         targetPage,
         business,
@@ -76,6 +88,23 @@ function planForCampaign(input) {
     },
     anchorPool: pool,
     usedAnchors,
+
+    /* OMITTED FOR A PILLAR CAMPAIGN rather than passed as null.
+     *
+     * AND IT MAKES NO DIFFERENCE TODAY — mutation says so. `mix: null`
+     * survives, because planCampaign reads the mix only through
+     * `isPillar ? [] : allocateAnchorTypes(n, mix)`, and mix is null only
+     * when isPillar is true. The null never reaches anything.
+     *
+     * An earlier version of this comment claimed it would throw in
+     * Object.keys(). That was wrong, and worth correcting rather than
+     * deleting: a comment asserting a danger that does not exist teaches
+     * the next reader to keep a guard they cannot test, and to trust the
+     * next claim in the same voice.
+     *
+     * The spread stays because "a pillar campaign has no mix" is true and
+     * says so, where `mix: null` would read as a value somebody chose. */
+    ...(mix ? { mix } : {}),
     // planCampaign's own date arithmetic is replaced below. Passing the
     // defaults keeps its slots well-formed; publishAt is overwritten with a
     // timezone-correct value.

@@ -12,7 +12,7 @@ const BlogSite = require('../models/BlogSite');
 const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
-const { pageTitle, APP_NAME } = require('../utils/pageTitle');
+const { pageTitle, APP_NAME, TOOL_WP_BLOGS } = require('../utils/pageTitle');
 const { baseUrl } = require('../utils/baseUrl');
 
 const projectRoot = path.join(__dirname, '..');
@@ -295,7 +295,7 @@ router.post('/export-wp-theme', requireAuth, async (req, res) => {
             a schedule — each one linking to the service page you want to rank.
             It works on the theme you just built, and on any other WordPress site.
           </p>
-          <a href="/blog-sites" class="btn btn-success btn-sm">Set up Blog Automation</a>
+          <a href="/blog-sites" class="btn btn-success btn-sm">Set up ${TOOL_WP_BLOGS}</a>
           <span class="text-muted small ms-2">${CREDITS_PER_POST} credits per post</span>
         </div>`;
 

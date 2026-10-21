@@ -145,7 +145,14 @@ for suite in \
   test-cloudflare-deploy.js \
   test-redirects.js \
   test-restore-blog.js \
-  test-blog-scheduler.js
+  test-blog-scheduler.js \
+  test-csv-topics.js \
+  test-inline-handlers.js \
+  test-theme-activation.js \
+  test-blog-api.js \
+  test-blog-pages.js \
+  test-service-names.js \
+  test-plugin-download.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.

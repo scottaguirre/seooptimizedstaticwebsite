@@ -108,16 +108,28 @@ function ringNeighbours(slots, index) {
    * do, which is read like English; putting the keyword first would fix the
    * static blogs by quietly degrading every campaign that was already right.
    *
-   * TRIMMED BEFORE IT IS CHOSEN. '   ' is truthy, so an untrimmed check wins
-   * the chain and then renders as an anchor wrapped around three spaces —
-   * the same shape of bug the money override had.
+   * EVERY CANDIDATE IS TRIMMED BEFORE IT IS CHOSEN. '   ' is truthy, so an
+   * untrimmed check wins the chain and then renders as an anchor wrapped
+   * around three spaces — the same shape of bug the money override had.
+   *
+   * THIS PARAGRAPH WAS ALREADY HERE AND THE CODE BELOW IT TRIMMED ONLY
+   * targetQuery — 20 October. linkPhrase is FIRST in the chain, so it is the
+   * one position where an untrimmed value cannot be rescued by anything after
+   * it, and it is also the only field of the four a person types by hand.
+   *
+   * A comment describing a guard the line under it does not have is worse
+   * than no comment at all: it is read as proof the case was handled, and
+   * that is how this survived three passes over this file.
    */
   function referTo(slot) {
     if (!slot) return null;
 
-    const keyword = String(slot.targetQuery || '').trim();
+    const phrase  = String(slot.linkPhrase     || '').trim();
+    const keyword = String(slot.targetQuery    || '').trim();
+    const title   = String(slot.publishedTitle || '').trim();
+    const topic   = String(slot.topic          || '').trim();
 
-    return slot.linkPhrase || keyword || slot.publishedTitle || slot.topic || null;
+    return phrase || keyword || title || topic || null;
   }
   
   /**

@@ -19,6 +19,7 @@
 //   node test-blog-pages.js
 
 const assert = require('assert');
+const { TOOL_WP_BLOGS } = require('./utils/pageTitle');
 const Module = require('module');
 const path = require('path');
 const http = require('http');
@@ -252,10 +253,15 @@ function request(method, p, headers = {}, body) {
 
   console.log('\nThe dashboard');
 
-  await test('the Blog Automation card renders', async () => {
+  await test('the WP blogs card renders', async () => {
+    /* READ FROM THE CONSTANT, NOT TYPED — 21 October, when the tool was
+     * renamed from "Blog Automation" and this test went red against a
+     * dashboard that was correct. A test that hardcodes a label is a
+     * second place that label lives, and it is the place nobody
+     * remembers. */
     const p = await get('/dashboard');
     assert.strictEqual(p.status, 200, p.body.slice(0, 300));
-    assert.ok(p.body.includes('Blog Automation'), 'no card');
+    assert.ok(p.body.includes(TOOL_WP_BLOGS), 'no card');
     assert.ok(p.body.includes('href="/blog-sites"'), 'the card does not link anywhere');
     assert.ok(p.body.includes('Set it up'), 'expected the no-sites wording');
   });
@@ -367,14 +373,19 @@ function request(method, p, headers = {}, body) {
     assert.ok(mod.stack && mod.stack.length, 'the router registered no routes');
   });
 
-  await test('it invites a first-time user to set up Blog Automation', () => {
+  await test('it invites a first-time user to set up WP blogs', () => {
     // The one moment they have just made a WordPress site, which is the
     // plugin's only prerequisite. Before this the flow ended with
     // "Back to Generator" and no hint the feature existed.
     const src = require('fs').readFileSync(
       require('path').join(__dirname, 'routes', 'exportWpThemeRoute.js'), 'utf8');
-    assert.ok(src.includes('href="/blog-sites"'), 'no link to Blog Automation');
-    assert.ok(/Set up Blog Automation/.test(src), 'no call to action');
+    assert.ok(src.includes('href="/blog-sites"'), 'no link to the WP blogs screen');
+
+    /* THE SOURCE INTERPOLATES THE NAME, so the rendered words are not in
+     * this file to match against. Asserting the call to action is still
+     * BUILT — "Set up ${TOOL_WP_BLOGS}" — is the honest check; asserting
+     * the old literal would demand the label never change again. */
+    assert.ok(/Set up \$\{TOOL_WP_BLOGS\}/.test(src), 'no call to action');
   });
 
   await test('the invitation is suppressed once a site is connected', () => {

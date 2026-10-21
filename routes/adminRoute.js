@@ -115,7 +115,7 @@ router.get('/admin', requireAdmin, async (req, res) => {
             action="/admin/users/${u._id}/delete" 
             method="POST" 
             class="d-inline ms-1"
-            onsubmit="return confirm('Are you sure you want to delete this user?');"
+            data-confirm="Are you sure you want to delete this user?"
           >${res.locals.csrfField || ''}
             <button 
               type="submit" 

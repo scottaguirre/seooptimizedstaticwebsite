@@ -292,6 +292,150 @@ test('THE MIX IS WHAT THE COMMENTS SAY IT IS', () => {
     'bucketCounts(9) no longer matches the worked example in its own docblock');
 });
 
+/* -------------------------------------------------------------------------
+ * A BLOG IS NOT A BUSINESS — 20 October 2026
+ *
+ * `branded` was the one bucket never split between a local business and an
+ * informational site. `semantic` was split after "professional carbon offset
+ * programs" shipped; `descriptive` was split after "what the work involves"
+ * went out on a blog about a subject nobody performs. `branded` kept its four
+ * templates for everyone, so Edwin's blogs linked to their own pillar with:
+ *
+ *     All About Plumbing's plumbing jobsite injuries
+ *     the team at All About Plumbing
+ *
+ * There is no team, nobody is hiring anyone, and the blog does not HAVE
+ * plumbing jobsite injuries. Two fixes had already been made for exactly this
+ * and neither crossed to the third bucket.
+ *
+ * Not rare: 10% of links are branded and `the team at …` is second in the
+ * list, so it ships from roughly fifteen posts up. Edwin runs twenty-five.
+ * ---------------------------------------------------------------------- */
+
+const BLOG = { name: 'All About Plumbing' };          // no location: not local
+const blogPool = (keyword, count = 25) =>
+  buildAnchorPool({ targetPage: { keyword }, business: BLOG, count });
+const localPool = (keyword, count = 25) =>
+  buildAnchorPool({ targetPage: { keyword }, business: BUSINESS, count });
+
+test('A BLOG GETS NO BRANDED ANCHORS AT ALL', () => {
+  assert.deepStrictEqual(blogPool('plumbing jobsite injuries').pool.branded, [],
+    'a blog is still linking to itself by name');
+});
+
+test('and in particular not the two that invent a company', () => {
+  /* The plain name is at least a true statement. These two are not: one
+   * asserts the blog performs the service, the other that it has staff. */
+  const flat = JSON.stringify(blogPool('plumbing jobsite injuries').pool);
+
+  assert.ok(!/the team at/i.test(flat), 'a blog still claims to have a team');
+  assert.ok(!/All About Plumbing's/i.test(flat), 'a blog still claims to do the work');
+});
+
+test('BUT A LOCAL BUSINESS KEEPS ITS NAME, WHICH IS THE POINT OF THE BUCKET', () => {
+  /* The fix is a split, not a deletion. For a real business this is the one
+   * bucket a competitor cannot imitate. */
+  const { pool } = localPool('water heater repair');
+
+  assert.ok(pool.branded.includes('Acme Plumbing'), 'the business name itself is gone');
+  assert.ok(pool.branded.length >= 2, 'a local business lost its branded anchors');
+});
+
+test('THE SHARE A BLOG WOULD HAVE SPENT ON BRANDED GOES TO SEMANTIC', () => {
+  /* Edwin's call, 20 October. It could have gone to descriptive — that
+   * bucket had room and semantic did not — so the four new templates below
+   * exist to make this the right answer rather than merely the chosen one. */
+  const { mix } = blogPool('plumbing jobsite injuries');
+
+  assert.strictEqual(mix.branded, 0, 'a blog still spends part of its links on branded');
+  assert.strictEqual(mix.semantic, DEFAULT_MIX.semantic + DEFAULT_MIX.branded,
+    'the branded share went somewhere other than semantic');
+  assert.strictEqual(mix.exact, DEFAULT_MIX.exact, 'the exact share moved');
+  assert.strictEqual(mix.descriptive, DEFAULT_MIX.descriptive, 'the descriptive share moved');
+});
+
+test('AND A LOCAL BUSINESS IS LEFT ON THE ORIGINAL MIX', () => {
+  assert.deepStrictEqual(localPool('water heater repair').mix, DEFAULT_MIX,
+    'a local business no longer uses the default mix');
+});
+
+test('A SHARE OF ZERO IS NEVER ALLOCATED A SLOT', () => {
+  /* bucketCounts hands leftovers to the largest fractional parts, and a zero
+   * share has a fraction of zero — so it should sort last and never be
+   * reached. That is an argument, and an argument is not a test: one branded
+   * anchor appearing on a blog would undo the whole change. */
+  const { allocateAnchorTypes } = require('./utils/blog/anchors');
+  const mix = { exact: 30, semantic: 50, descriptive: 20, branded: 0 };
+
+  for (let n = 2; n <= 60; n++) {
+    const counts = bucketCounts(n, mix);
+
+    assert.strictEqual(counts.branded, 0, `bucketCounts(${n}) gave a branded slot to a blog`);
+    assert.strictEqual(counts.exact + counts.semantic + counts.descriptive, n,
+      `bucketCounts(${n}) did not fill every slot`);
+    assert.ok(!allocateAnchorTypes(n, mix).includes('branded'),
+      `allocateAnchorTypes(${n}) put a branded anchor in a blog campaign`);
+  }
+});
+
+test('A BLOG HAS FOUR MORE WAYS TO SAY ITS KEYWORD', () => {
+  /* WHY PREFIXES AND NOT SUFFIXES. Two of Edwin's own keywords — "plumber
+   * return to work injury" and "exoskeletons for plumbers" — carry a
+   * preposition, so `suffixable` is false and every appending template is
+   * dropped. A prefix cannot be tripped that way, which is the same reason
+   * the templates already in this branch wrap the keyword. */
+  const { pool } = blogPool('plumbing jobsite injuries');
+
+  for (const phrase of [
+    'what to know about plumbing jobsite injuries',
+    'the basics of plumbing jobsite injuries',
+    'a guide to plumbing jobsite injuries',
+    'an overview of plumbing jobsite injuries',
+  ]) {
+    assert.ok(pool.semantic.includes(phrase), `missing: ${phrase}`);
+  }
+});
+
+test('AND THEY SURVIVE A KEYWORD WITH A PREPOSITION IN IT', () => {
+  /* The case that made them prefixes. If these four were suffixes the bucket
+   * would be back where it started on exactly this keyword. */
+  const { pool } = blogPool('exoskeletons for plumbers');
+
+  assert.ok(pool.semantic.includes('a guide to exoskeletons for plumbers'),
+    'a keyword with a preposition lost the new anchors too');
+});
+
+test('A LOCAL BUSINESS DOES NOT GET THEM', () => {
+  /* They live in the general branch. Putting them in both is how two sets
+   * stop being two sets. */
+  assert.ok(!localPool('water heater repair').pool.semantic.includes('a guide to water heater repair'),
+    'the blog templates leaked into the local set');
+});
+
+test('THEY NARROW THE SHORTFALL THE CHANGE WAS MEASURED AGAINST', () => {
+  /* The number that started this: 25 posts, "only 5 semantic anchor(s)
+   * available for 10 needed". With branded folded in, semantic now needs 13
+   * — so WITHOUT the four new templates this change would have made Edwin's
+   * warning worse. That is the thing worth pinning. */
+  const { pool, shortfalls } = blogPool('plumbing jobsite injuries', 25);
+  const semantic = shortfalls.find(s => 'semantic' === s.type);
+
+  assert.ok(pool.semantic.length >= 10,
+    `the semantic bucket is still too small: ${pool.semantic.length}`);
+
+  if (semantic) {
+    assert.ok(semantic.needed - semantic.have <= 3,
+      `the shortfall grew instead of shrinking: short ${semantic.needed - semantic.have}`);
+  }
+});
+
+test('AND THE SHORTFALL IS MEASURED AGAINST THE MIX THAT WILL BE USED', () => {
+  /* Checking a blog's buckets against the default mix would warn about a
+   * bucket that is about to be given no slots at all. */
+  assert.ok(!blogPool('plumbing jobsite injuries', 25).shortfalls.some(s => 'branded' === s.type),
+    'a blog is warned that it is short of anchors it will never use');
+});
+
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);
 console.log('');

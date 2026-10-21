@@ -80,7 +80,42 @@ function entriesIn(zipPath) {
   });
 
   await test('the filename carries the version', () => {
-    assert.strictEqual(built.filename, `interlink-engine-${built.version}.zip`);
+    /* ASSERTED AGAINST THE EXPORTED NAME, NOT A STRING TYPED HERE.
+     *
+     * This read `interlink-engine-${version}.zip` and had done since the
+     * download was renamed to the product's own name. It was wrong for
+     * weeks and nothing said so, because this suite is not in deploy.sh and
+     * had never once been run — which is the whole reason it was audited on
+     * 20 October.
+     *
+     * A hardcoded copy of a name that lives in another file is a second
+     * place for that name to be, and this is what happens to the copy. */
+    assert.strictEqual(built.filename, `${pkg.DOWNLOAD_NAME}-${built.version}.zip`);
+  });
+
+  await test('THE DOWNLOAD NAME AND THE FOLDER NAME ARE NOT THE SAME THING', () => {
+    /* THE DISTINCTION THE FILENAME TEST EXISTS TO PROTECT, and it had no
+     * test of its own — so "fixing" the failure above by renaming
+     * DOWNLOAD_NAME back to the slug would have gone unnoticed.
+     *
+     * WordPress identifies a plugin by the FOLDER inside the archive.
+     * Rename that and the next upload installs a second copy beside the
+     * first, leaving the old one active and the new one deactivated — on a
+     * customer's site that looks like nothing happening at all, with no
+     * error to explain it.
+     *
+     * The file's name in a Downloads folder is a label. Nothing depends on
+     * it, which is exactly why it is allowed to say what the product is
+     * called this month. */
+    assert.notStrictEqual(pkg.DOWNLOAD_NAME, pkg.PLUGIN_SLUG,
+      'the download name is back to being the slug, so the two can drift together');
+
+    const roots = new Set(entriesIn(built.zipPath).map(e => e.split('/')[0]));
+
+    assert.deepStrictEqual([...roots], [pkg.PLUGIN_SLUG],
+      'the folder inside the archive is no longer the slug WordPress identifies the plugin by');
+    assert.ok(!built.filename.startsWith(`${pkg.PLUGIN_SLUG}-`),
+      'the downloaded file is named after the slug again');
   });
 
   await test('the archive is a valid zip', () => {

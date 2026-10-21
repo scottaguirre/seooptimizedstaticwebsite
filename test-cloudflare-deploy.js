@@ -656,6 +656,121 @@ test('BUT A FAILED CREATE IS SHOWN WHEN THE DEPLOY FAILS TOO', async () => {
   });
 });
 
+/* ---------------------------------------------------------- worth a retry */
+
+test('AND THAT ONE FAILURE IS MARKED AS WORTH RETRYING', async () => {
+  /* THE ONLY PUBLISH FAILURE A RETRY ACTUALLY FIXES, and the screen could
+   * not tell it from the ones that never fix themselves.
+   *
+   * 19 October: a 10-article campaign died on `[code: 8000000]` — a
+   * Cloudflare internal error with no detail — and the screen showed two
+   * raw wrangler errors, the second of them ("the project does not exist")
+   * being nothing but a consequence of the first. Edwin could not tell
+   * which half had broken, or whether to wait, fix a token or call
+   * support. Hours later the identical publish worked untouched.
+   *
+   * BOTH HALVES ARE REQUIRED, and the tests below are about why. "The
+   * create did not succeed" alone is not enough: ensureProject() returns
+   * created:false for a refusal AND for a project that was already there,
+   * and it refuses on purpose to tell them apart. So the deploy has to
+   * ALSO say the project is missing. Together they mean one thing only:
+   * the project genuinely is not there, which is genuinely why the deploy
+   * failed, and waiting is genuinely the right advice. */
+  await withEnv(async () => {
+    const run = recorder((args) => (
+      'create' === args[2]
+        ? { code: 1, stdout: '', stderr: 'An unknown error occurred [code: 8000000]' }
+        : { code: 1, stdout: '', stderr: 'The Pages project "leanderwaterheaters-com" does not exist.' }
+    ));
+
+    const out = await cf.deployBlog({ blog: FRESH_BLOG, files: FILES, run, attach: attacher() });
+
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.projectMissing, true, 'the one retryable failure is not marked');
+  });
+});
+
+test('BUT NOT WHEN THE CREATE ITSELF WORKED', async () => {
+  /* A project that was created and then reported missing is not a wait —
+   * it is something stranger, and telling somebody to try again in a few
+   * minutes would be a guess dressed up as instruction. This is the test
+   * that keeps the flag from collapsing into "the deploy said the project
+   * is missing", which is the half anyone would reach for first. */
+  await withEnv(async () => {
+    const run = recorder((args) => (
+      'create' === args[2]
+        ? { code: 0, stdout: 'Successfully created the project', stderr: '' }
+        : { code: 1, stdout: '', stderr: 'The Pages project "leanderwaterheaters-com" does not exist.' }
+    ));
+
+    const out = await cf.deployBlog({ blog: FRESH_BLOG, files: FILES, run, attach: attacher() });
+
+    assert.strictEqual(out.ok, false);
+    assert.notStrictEqual(out.projectMissing, true,
+      'a created project reported missing was offered a pointless retry');
+  });
+});
+
+test('NOR WHEN THE DEPLOY FAILED FOR ITS OWN REASON', async () => {
+  /* THE OTHER HALF, AND THE ONE THAT MATTERS MOST. A token short a
+   * permission never fixes itself, so "try again in a few minutes" sends
+   * somebody away to wait for a thing that will never happen. The create
+   * failing is not licence to offer a retry; the deploy has to say the
+   * project is the problem. */
+  await withEnv(async () => {
+    const run = recorder((args) => (
+      'create' === args[2]
+        ? { code: 1, stdout: '', stderr: 'An unknown error occurred [code: 8000000]' }
+        : { code: 1, stdout: '', stderr: 'Authentication error [code: 10000]' }
+    ));
+
+    const out = await cf.deployBlog({ blog: FRESH_BLOG, files: FILES, run, attach: attacher() });
+
+    assert.strictEqual(out.ok, false);
+    assert.notStrictEqual(out.projectMissing, true,
+      'a token with the wrong permission was told to wait a few minutes');
+  });
+});
+
+test('THE DEPLOY IS WHAT IS READ, NOT THE CREATE', async () => {
+  /* WHICH OUTPUT THE PHRASE IS LOOKED FOR IN. The combined text is what
+   * goes to the screen, and searching THAT would mean a create whose own
+   * complaint mentions a missing project decides the verdict — when the
+   * step that actually could not find the project is the deploy. Found by
+   * mutation: swapping `output` for `full` survived the suite. */
+  await withEnv(async () => {
+    const run = recorder((args) => (
+      'create' === args[2]
+        ? { code: 1, stdout: '', stderr: 'The Pages project template does not exist [code: 8000013]' }
+        : { code: 1, stdout: '', stderr: 'Authentication error [code: 10000]' }
+    ));
+
+    const out = await cf.deployBlog({ blog: FRESH_BLOG, files: FILES, run, attach: attacher() });
+
+    assert.strictEqual(out.ok, false);
+    assert.notStrictEqual(out.projectMissing, true,
+      "the create's own complaint was allowed to pass for the deploy's");
+  });
+});
+
+test('AND NEVER ON A BLOG THAT HAS ALREADY PUBLISHED', async () => {
+  /* No setup runs on an established blog, so there is no failed create to
+   * blame and nothing a wait would mend. A project missing HERE means
+   * somebody deleted it in the dashboard — which is a thing to be told
+   * about, not a thing to sit out. */
+  await withEnv(async () => {
+    const run = recorder({
+      code: 1, stdout: '', stderr: 'The Pages project "leanderwaterheaters-com" does not exist.',
+    });
+
+    const out = await cf.deployBlog({ blog: BLOG, files: FILES, run, attach: attacher() });
+
+    assert.strictEqual(out.ok, false);
+    assert.notStrictEqual(out.projectMissing, true,
+      'a deleted project on a live blog was reported as a passing Cloudflare mood');
+  });
+});
+
 test('THE SETUP CALLS CARRY THE SAME SCRUBBED ENVIRONMENT', async () => {
   /* childEnv() hands the child PATH, HOME and the Cloudflare pair and
    * nothing else — this process also holds the Mongo URI, the OpenAI key

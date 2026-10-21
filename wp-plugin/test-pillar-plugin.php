@@ -1102,6 +1102,37 @@ test( 'the box IS offered on a post the plugin wrote', function () {
 	ok( isset( $GLOBALS['ie_boxes']['ie-seo-meta'] ), 'the box was not registered on our own post' );
 } );
 
+test( 'THE BOX TITLE SAYS THREE COMETS, NOT THE OLD NAME', function () {
+	/* THE LAST CUSTOMER-FACING "Interlink Engine" IN THE PRODUCT.
+	 *
+	 * This sits on the post editor of a customer's own site, above their own
+	 * title and description fields, so it is the one string here a customer
+	 * reads. It was missed when everything else was renamed because the name
+	 * appears a dozen more times in this plugin and all the others MUST NOT
+	 * CHANGE:
+	 *
+	 *   - the folder interlink-engine/  — WordPress identifies a plugin by
+	 *     its directory. Rename it and the next upload installs a SECOND copy
+	 *     beside the first: old one active, new one deactivated, no error.
+	 *   - PLUGIN_SLUG, the 'interlink-engine' text domain, the ie_ prefixes,
+	 *     the _ie_ meta keys — all are identifiers other code and stored rows
+	 *     already point at.
+	 *
+	 * So the rule is not "remove the word", it is "remove it from the strings
+	 * a customer sees". This pins that one string, because a name nothing
+	 * tests drifts back the next time someone edits this file. */
+	$GLOBALS['ie_boxes'] = array();
+	$id = ie_seo_post();
+
+	IE_Metabox::register( 'post', new IE_Test_Post( $id ) );
+	$title = $GLOBALS['ie_boxes']['ie-seo-meta']['title'];
+
+	ok( false !== strpos( $title, 'Three Comets' ),
+		"the box title does not name the product: {$title}" );
+	ok( false === stripos( $title, 'interlink' ),
+		"the box title still shows the old product name: {$title}" );
+} );
+
 test( 'saving writes the plugin key AND the theme key', function () {
 	/* BOTH, because a generated theme renders from the prefixed one in its
 	 * own wp_head. Writing only the plugin's key would mean editing this box

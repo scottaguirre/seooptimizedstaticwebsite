@@ -183,7 +183,18 @@ async function publishBlog({
   const result = await deploy({ blog, files, requestId });
 
   if (!result.ok) {
-    return { ok: false, error: result.error, output: result.output, files: 0, pages, missing };
+    /* projectMissing IS CARRIED, NOT RE-DERIVED. deploy.js is the only
+     * thing that saw both the create and the deploy, and it is the only
+     * thing that can say whether a retry is worth offering — a screen
+     * matching on wrangler's prose for itself would be a second opinion
+     * formed from half the evidence. */
+    return {
+      ok: false,
+      error: result.error,
+      output: result.output,
+      projectMissing: !!result.projectMissing,
+      files: 0, pages, missing,
+    };
   }
 
   return {

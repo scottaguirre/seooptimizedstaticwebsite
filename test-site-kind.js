@@ -434,12 +434,51 @@ test('the exact bucket is still exactly the keyword', () => {
   assert.deepStrictEqual(localPool.pool.exact, ['water heater repair']);
 });
 
-test('the branded bucket still works on a blog', () => {
-  /* A site title makes a perfectly good publisher name — "Climate Desk" reads
-   * correctly as a branded anchor. This is the one bucket that needed no
-   * change, asserted so that a later tidy-up does not take it. */
-  assert.ok(blogPool.pool.branded.includes('Climate Desk'));
-  assert.ok(!blogPool.pool.branded.some(p => /in\s*$/.test(p)), 'an empty town leaked into a branded phrase');
+test('THE BRANDED BUCKET IS EMPTY ON A BLOG — REVERSED 20 OCTOBER 2026', () => {
+  /* THIS TEST USED TO ASSERT THE OPPOSITE, AND SAID WHY:
+   *
+   *     "A site title makes a perfectly good publisher name — 'Climate
+   *      Desk' reads correctly as a branded anchor. This is the one bucket
+   *      that needed no change, asserted so that a later tidy-up does not
+   *      take it."
+   *
+   * It was right about the plain name and wrong about the bucket. Three of
+   * the four templates do not stop at the name:
+   *
+   *     Climate Desk in <town>
+   *     Climate Desk's carbon offset programs
+   *     the team at Climate Desk
+   *
+   * The blog has no team and does not perform the service. The plain name
+   * is first in the list, so a short campaign only ever reached the honest
+   * one — which is how this bucket passed review while the other two were
+   * being split. From about fifteen posts up the rest ship, and Edwin's
+   * blogs run twenty-five.
+   *
+   * SO THE GUARD DID ITS JOB AND THE ANSWER CHANGED ANYWAY. It stopped a
+   * tidy-up, correctly; this is not one. Edwin, 20 October: "drop the
+   * branded for cloudflare blogs as they wont be local business websites.
+   * They are meant to be general blogs." The 10% goes to semantic, and
+   * anchorPool gained four more ways to say the keyword so that moving it
+   * there does not simply widen the shortfall.
+   *
+   * WHAT IS LOST, STATED PLAINLY: a blog can no longer link to its own
+   * pillar by its own name. That was a real anchor and it reads well. It
+   * went because the bucket it lived in could not be trusted to stop
+   * there, not because the phrase was wrong — and if it is ever wanted
+   * back, the way is a one-phrase branded bucket for a non-local site, not
+   * restoring these four templates. */
+  assert.deepStrictEqual(blogPool.pool.branded, [],
+    'a blog is naming itself in an anchor again');
+
+  assert.ok(!blogPool.pool.branded.some(p => /in\s*$/.test(p)),
+    'an empty town leaked into a branded phrase');
+
+  /* AND THE LOCAL SITE IS UNTOUCHED, in the same breath. The change is a
+   * split; a test that only looks at the blog cannot tell a split from a
+   * deletion. */
+  assert.ok(localPool.pool.branded.length > 0,
+    'a real business lost the one bucket a competitor cannot imitate');
 });
 
 /* ------------------------------------------------------------------ *

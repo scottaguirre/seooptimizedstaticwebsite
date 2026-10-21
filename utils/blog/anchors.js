@@ -52,6 +52,40 @@ const DEFAULT_MIX = {
 };
 
 /**
+ * The same spread for a site that is not a business — 20 October 2026.
+ *
+ * `branded` is the business NAME, and on an informational blog there is no
+ * business to name. The templates produced "the team at All About Plumbing"
+ * and "All About Plumbing's plumbing jobsite injuries": one claims staff,
+ * the other claims the blog performs the service. Both shipped.
+ *
+ * THE BUCKET IS GIVEN NO SLOTS, rather than being quietly filled from
+ * somewhere else. A share of zero never reaches allocateAnchorTypes' output,
+ * so no slot is ever labelled `branded` while holding a phrase from another
+ * bucket — which is what the empty-bucket fallback in anchorPool.js would
+ * otherwise have done, invisibly: the plan would say branded and the text
+ * would be semantic.
+ *
+ * ITS SHARE GOES TO semantic, WHICH IS EDWIN'S CALL AND WAS THE HARDER ONE.
+ * descriptive had room and semantic did not — six phrases where 40% of a
+ * 25-post campaign already wanted ten. Moving 10% there makes it want
+ * thirteen. The four prefix templates added to anchorPool.js's general
+ * branch at the same time are what make this the right answer rather than
+ * merely the chosen one: without them, this change would have widened the
+ * very warning that started it.
+ *
+ * DERIVED FROM DEFAULT_MIX RATHER THAN TYPED OUT. Two tables of percentages
+ * drift, and this file has already lost that argument once — see the comment
+ * above about prose restating numbers the code had moved on from.
+ */
+const GENERAL_MIX = {
+  exact:       DEFAULT_MIX.exact,
+  semantic:    DEFAULT_MIX.semantic + DEFAULT_MIX.branded,
+  descriptive: DEFAULT_MIX.descriptive,
+  branded:     0,
+};
+
+/**
  * Turn percentages into whole counts for n posts, using largest remainder.
  *
  * Plain rounding does not work. A NINE-POST CAMPAIGN, against the mix above:
@@ -167,4 +201,4 @@ function pickAnchors(types, pool, used = new Set()) {
   });
 }
 
-module.exports = { DEFAULT_MIX, bucketCounts, allocateAnchorTypes, pickAnchors };
+module.exports = { DEFAULT_MIX, GENERAL_MIX, bucketCounts, allocateAnchorTypes, pickAnchors };

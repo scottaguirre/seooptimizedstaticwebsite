@@ -3737,6 +3737,34 @@ class IE_Admin {
 						if (all[i] !== b) { all[i].disabled = true; }
 					}
 				});
+
+				/* THE LATCH HAS TO LET GO WHEN THE PAGE COMES BACK.
+				 *
+				 * `busy` is set once and was never cleared, which is right
+				 * while a navigation is under way and wrong the moment the
+				 * page is RESTORED. Press Back after an upload and the
+				 * browser hands back this same page out of its cache, with
+				 * busy still true and the spinner still drawn into the
+				 * button — so the first line of the submit handler cancels
+				 * every later press, in silence. The form is dead for the
+				 * rest of that page's life and nothing on screen says why.
+				 *
+				 * pageshow fires on an ordinary load as well as a restore,
+				 * so there is no state to work out here: clear the flag,
+				 * wake the buttons, and let the labels be whatever the
+				 * server just rendered.
+				 *
+				 * THE BUTTONS ARE RE-ENABLED TOO. On a restore they come
+				 * back disabled exactly as they were left, and a form whose
+				 * controls are greyed out with no request in flight is the
+				 * same dead end wearing different clothes. */
+				window.addEventListener('pageshow', function () {
+					busy = false;
+					clicked = null;
+
+					var all = form.querySelectorAll('button[type="submit"]');
+					for (var i = 0; i < all.length; i++) { all[i].disabled = false; }
+				});
 			}());
 			</script>
 		</form>
@@ -4924,11 +4952,38 @@ class IE_Admin {
 			return new WP_Error( 'ie_csv_unreadable', __( 'That file could not be read.', 'interlink-engine' ) );
 		}
 
+		/* THE BYTE ORDER MARK COMES OFF BEFORE fgetcsv SEES THE LINE, and
+		 * that position is the whole fix — 20 October 2026.
+		 *
+		 * It used to be stripped from cells[0] AFTER parsing, which works
+		 * for an unquoted first field and fails for a quoted one. Edwin's
+		 * file begins:
+		 *
+		 *     \xEF\xBB\xBF"How to Start a Local Plumbing Company: Licensing, Insurance, ..."
+		 *
+		 * With the mark in front, the quote is not the first character of
+		 * the field, so fgetcsv does not treat the field as quoted — and
+		 * every comma inside his title splits a column. He got the topic cut
+		 * at the first comma, "Insurance" as the keyword and "Equipment" as
+		 * the link phrase. Stripping afterwards removed the mark and left
+		 * the wreckage, reporting success on a row already shredded.
+		 *
+		 * ONLY THE FIRST ROW, which is why it survived a test. Rows 13 and
+		 * 15 of the same file are quoted too and always parsed correctly,
+		 * and the existing BOM test used an unquoted field — the one shape
+		 * where the bug cannot bite.
+		 *
+		 * fread THEN rewind, rather than seeking three bytes blind: a file
+		 * shorter than three bytes returns what there is, and a file without
+		 * the mark must not lose its first three characters. */
+		if ( "\xEF\xBB\xBF" !== fread( $handle, 3 ) ) {
+			rewind( $handle );
+		}
+
 		$rows    = array();
 		$seen    = array();
 		$skipped = 0;
 		$read    = 0;
-		$first   = true;
 
 		/* ALL FIVE ARGUMENTS. PHP 8.4 deprecates relying on the default escape
 		 * character, and a deprecation notice printed into a redirect is a
@@ -4945,15 +5000,12 @@ class IE_Admin {
 
 			$topic = isset( $cells[0] ) ? (string) $cells[0] : '';
 
-			/* A UTF-8 byte order mark, which Excel writes and nothing shows.
-			 * Left in place it rides along inside the first topic, so the first
-			 * post of the campaign gets a title and a slug subtly unlike every
-			 * other one and nobody can see why. */
-			if ( $first ) {
-				$topic = preg_replace( '/^\xEF\xBB\xBF/', '', $topic );
-				$first = false;
-			}
-
+			/* THE MARK IS ALREADY GONE — see the fread() above. The strip
+			 * that used to live here ran after fgetcsv had finished with the
+			 * line, which is too late to save a quoted first field, and its
+			 * presence made the problem harder to see: the mark really was
+			 * removed, so the symptom looked like a file with the wrong
+			 * number of columns rather than one parsed in the wrong places. */
 			$topic = sanitize_text_field( trim( $topic ) );
 
 			if ( '' === $topic ) {

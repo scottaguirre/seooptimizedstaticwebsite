@@ -394,6 +394,68 @@ function ${p}_build_menu( $front_page_id, $services, $locations, $contact = null
 
 
 /**
+ * The generated settings, merged over what is already stored.
+ *
+ * WHAT THE MODEL MAY AND MAY NOT OVERWRITE — 20 October 2026.
+ *
+ * This was \`array_merge( $existing, $model['global'] )\`, so the model won
+ * every key it carried — including the ones it carries as an EMPTY STRING
+ * because they were blank when the site was exported.
+ *
+ * Edwin exported a site with no social profiles. A week later the profiles
+ * went live, he typed the six URLs into Theme Settings, and they saved
+ * correctly. The settings page also offers "Re-import content from theme",
+ * which calls \`${p}_activate()\` — and one press would have handed all six
+ * back as '' and reported success.
+ *
+ * The old comment read: "Imported values win on first activation; later
+ * edits are preserved because activation only runs when the theme is
+ * switched on." True when written. The re-import button re-runs activation
+ * on demand, and so does switching themes away and back.
+ *
+ * IT WAS NEVER ONLY THE SOCIALS. phone, email, address, the business name,
+ * the whole SMTP block — anything edited after export and blank in the
+ * model was in the same position.
+ *
+ * THE RULE: a blank from the model may not erase a value that is there. A
+ * real value from the model still wins, because restoring the generated
+ * content is the entire point of the button.
+ *
+ * EMPTY STRING, NOT empty(). A stored "0" is a value somebody chose — a
+ * Google Maps CID of 0, a setting deliberately set to zero — and empty()
+ * would throw it away along with ''. The settings page saves '0' as a
+ * string, so that is the case this has to survive.
+ *
+ * SEPARATE FROM ${p}_activate() SO IT CAN BE DRIVEN BY A TEST. Activation
+ * imports pages, builds menus and sets theme mods; a test of all that is a
+ * test of its own stubs. This is two arrays in and one out.
+ */
+function ${p}_merge_global_settings( $stored, $incoming ) {
+    if ( ! is_array( $stored ) ) {
+        $stored = array();
+    }
+    if ( ! is_array( $incoming ) ) {
+        $incoming = array();
+    }
+
+    $merged = $stored;
+
+    foreach ( $incoming as $key => $value ) {
+        $blank_incoming = ( '' === $value || null === $value );
+        $have_stored    = array_key_exists( $key, $stored ) && '' !== $stored[ $key ] && null !== $stored[ $key ];
+
+        // A blank from the model never erases something already there.
+        if ( $blank_incoming && $have_stored ) {
+            continue;
+        }
+
+        $merged[ $key ] = $value;
+    }
+
+    return $merged;
+}
+
+/**
  * Run the full import. Idempotent: safe to run again.
  */
 function ${p}_activate() {
@@ -402,12 +464,13 @@ function ${p}_activate() {
     // 1. Global settings
     if ( ! empty( $model['global'] ) ) {
         $existing = get_option( '${p}_global_settings', array() );
-        if ( ! is_array( $existing ) ) {
-            $existing = array();
-        }
-        // Imported values win on first activation; later edits are preserved
-        // because activation only runs when the theme is switched on.
-        update_option( '${p}_global_settings', array_merge( $existing, $model['global'] ) );
+
+        // See ${p}_merge_global_settings(): the model wins, EXCEPT where it
+        // would replace something the owner has since entered with a blank.
+        update_option(
+            '${p}_global_settings',
+            ${p}_merge_global_settings( $existing, $model['global'] )
+        );
     }
 
     // 2. Pages

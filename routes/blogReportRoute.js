@@ -49,7 +49,7 @@ const {
   readFilters, keep, stateOf, campaignStatusOf, dateFilterLabel,
 } = require('../utils/blog/reportFilters');
 const { withAppHeader } = require('../utils/appHeader');
-const { pageTitle } = require('../utils/pageTitle');
+const { pageTitle, TOOL_WP_BLOGS } = require('../utils/pageTitle');
 
 /** The shell every other logged-in page uses. */
 function page({ title, body, status = 200 }) {
@@ -130,6 +130,18 @@ function page({ title, body, status = 200 }) {
        is still live. Grey reads as "fine, just old". */
     .pill-warn { background: rgba(255,193,7,.32); color: #ffe69c; }
 
+    /* QUIETER THAN THE STATE PILL, AND ON PURPOSE.
+       WP/CF and Pillar/Silo say what kind of thing a row IS; the state pill
+       says what has HAPPENED to it, which is the question the report is
+       open to answer. Three pills of equal weight in one cell is a wall, so
+       these are outlined rather than filled and sit a shade back. */
+    .pill-kind {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,.28);
+      color: rgba(255,255,255,.65);
+      letter-spacing: .02em;
+    }
+
     /* THE TABS, AND THEY HAVE TO LOOK LIKE TABS.
        The first version carried its state in an underline and nothing else —
        quiet, tidy, and invisible: the reader never saw them at all and went
@@ -167,8 +179,14 @@ function page({ title, body, status = 200 }) {
 
     /* Small, quiet, and beside the name rather than in a column of its own:
        it is a way in, not a decision. */
+    /* NO margin-left ANY MORE. It existed to hold the button off the end of
+       the campaign name, back when the two shared a line. The button now
+       sits in a flex strip whose gap does that job, and the old margin
+       added to it — leaving the button pushed away from the pills it is
+       meant to sit with. A spacing rule outlives the layout it was written
+       for unless it is removed with it. */
     .report-check {
-      margin-left: .6rem; padding: .05rem .5rem; font-size: .75rem;
+      padding: .05rem .5rem; font-size: .75rem;
       vertical-align: baseline; white-space: nowrap;
     }
     .report-link:hover { color: #9ec5fe; }
@@ -322,6 +340,26 @@ async function rowsFor(userId, filters = {}) {
       rows.push({
         site: site ? (site.siteUrl || '') : '',
         siteStatus: site ? site.status : '',
+
+        /* WHERE IT PUBLISHES, AND WHAT SHAPE THE CAMPAIGN IS.
+         *
+         * Both were already stored and neither was on any screen, so a
+         * report of 1,066 posts across WordPress installs and Cloudflare
+         * blogs, pillars and silos, read as one undifferentiated list.
+         *
+         * EMPTY RATHER THAN 'wordpress' WHEN THE SITE IS GONE. A campaign
+         * outlives a deleted BlogSite and its rows still render — with the
+         * site column blank, deliberately. Defaulting here would print a
+         * confident WP on exactly the rows where nobody can check it; the
+         * schema's own default only covers sites that exist. */
+        siteTarget: site ? (site.target || 'wordpress') : '',
+
+        /* COERCED, because an old document has no isPillar at all and
+         * undefined is falsy enough to render correctly by accident — until
+         * something compares against false, or the CSV ever carries it and
+         * prints an empty cell for half the rows. */
+        isPillar: !!campaign.isPillar,
+
         /* THE ID, NOT JUST THE NAME. Two campaigns on one site can share a
          * name — re-planning the same money page produces exactly that — and
          * grouping the campaigns tab by name merged them into one line. Six
@@ -451,6 +489,11 @@ function campaignsFrom(rows) {
         campaignId: row.campaignId,
         campaign: row.campaign,
         site: row.site,
+        /* CARRIED, NOT RECOMPUTED. Both are properties of the campaign and
+         * its site, so every row in the group already agrees about them —
+         * taking the first row's copy is the whole of the logic. */
+        siteTarget: row.siteTarget,
+        isPillar: row.isPillar,
         /* Carried rather than counted here, because this function is called
          * twice: once to hand out the numbers and once to build the table.
          * Counting inside it would number the campaigns twice and the second
@@ -560,6 +603,48 @@ function slotPill(row) {
   const [cls, label, title] = PILLS[row.state || stateOf(row)] || PILLS.planned;
 
   return `<span class="pill ${cls}"${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</span>`;
+}
+
+/**
+ * What KIND of thing a row is: where it publishes, and what shape of
+ * campaign wrote it.
+ *
+ * TWO SHORT WORDS, NOT TWO COLUMNS. The table already carries nine columns
+ * and the window is the window; a pill rides along inside a cell that
+ * exists, and two more headings would take width from the post title —
+ * which is the column anybody is actually reading.
+ *
+ * WP AND CF RATHER THAN THE FULL WORDS, because they repeat on all 1,066
+ * rows and "WordPress"/"Cloudflare" at that count is a column of noise.
+ * Expanded in the title attribute, where a reader who does not know the
+ * abbreviation can find out without it costing everyone else width.
+ *
+ * SILO IS THIS CODEBASE'S WORD, not a coinage for the screen: planCampaign
+ * and qualityCheck both use it for a campaign that points at a money page.
+ * Calling it "Not pillar" here would invent a second vocabulary for one
+ * thing.
+ *
+ * NOTHING IS PRINTED FOR A SITE THAT IS GONE. siteTarget is empty on those
+ * rows, deliberately — see rowsFor(). A pill is a claim, and that is a row
+ * nobody can make one about.
+ */
+function kindPills(row) {
+  const out = [];
+
+  const where = {
+    wordpress: ['WP', 'Published to a WordPress site running the plugin'],
+    cloudflare: ['CF', 'Published as static pages on Cloudflare'],
+  }[row.siteTarget];
+
+  if (where) {
+    out.push(`<span class="pill pill-kind" title="${esc(where[1])}">${esc(where[0])}</span>`);
+  }
+
+  out.push(row.isPillar
+    ? `<span class="pill pill-kind" title="The posts link to each other and to no money page">Pillar</span>`
+    : `<span class="pill pill-kind" title="The posts link to the money page this campaign was planned around">Silo</span>`);
+
+  return out.join(' ');
 }
 
 
@@ -834,7 +919,7 @@ router.get('/blog-report', requireAuth, async (req, res) => {
           <h1 class="h3">Blog Report</h1>
           <p class="muted">Nothing yet. Once a campaign publishes its first post, every post shows
           up here with the page it links to.</p>
-          <a class="btn btn-outline-light" href="/blog-sites">Blog Automation</a>`,
+          <a class="btn btn-outline-light" href="/blog-sites">${TOOL_WP_BLOGS}</a>`,
       }));
     }
 
@@ -954,8 +1039,32 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                 <td>
                   <a href="/blog-report${queryString({ view: 'posts', campaignId: c.campaignId })}"
                      class="report-link">${esc(c.campaign)}</a>
-                  <a href="/blog-report${queryString({ view: 'posts', campaignId: c.campaignId })}"
-                     class="btn btn-sm btn-outline-success report-check">Check posts</a>
+                  ${/* ONE STRIP UNDER THE NAME: pills, then the button.
+                        Edwin, 21 October — "Unclogging Sewer Line Services"
+                        wrapped to two lines and Check posts tucked itself
+                        against the end of the second, with the pills on a
+                        third row. The button landed somewhere different on
+                        every row, wherever that row's name happened to
+                        break, and the cell read as three stacked things
+                        rather than a name and its labels.
+
+                        The name now owns its lines and everything that
+                        describes the row sits on one strip beneath it.
+
+                        PILLS FIRST, BUTTON LAST. The pills are read — they
+                        say what the row is — and the button is clicked. A
+                        control at the end of a line is where a hand goes
+                        looking; a label at the end of a line is something
+                        the eye has to hunt past the control to find.
+
+                        flex-wrap, because a narrow window must break this
+                        strip rather than widen the column and squeeze the
+                        dates. */ ''}
+                  <div class="mt-1 d-flex align-items-center gap-2 flex-wrap">
+                    ${kindPills(c)}
+                    <a href="/blog-report${queryString({ view: 'posts', campaignId: c.campaignId })}"
+                       class="btn btn-sm btn-outline-success report-check">Check posts</a>
+                  </div>
                 </td>
                 <td class="muted">${esc(c.site)}</td>
                 ${/* RED, LIKE THE REMOVAL DATE BESIDE IT. Muted grey read as
@@ -1113,7 +1222,15 @@ router.get('/blog-report', requireAuth, async (req, res) => {
                     ? `<div class="text-danger" style="font-size:.78rem">removed ${esc(shownDay(r.removedAt))}</div>`
                     : ''}
                 </td>
-                <td class="muted">${esc(r.site)}</td>
+                ${/* THE KIND PILLS RIDE WITH THE SITE, because WP/CF is a
+                      fact ABOUT the site and Pillar/Silo reads naturally
+                      beside it. In the State column they would sit against
+                      the pill that answers the report's actual question and
+                      compete with it. */ ''}
+                <td class="muted">
+                  ${esc(r.site)}
+                  <div class="mt-1">${kindPills(r)}</div>
+                </td>
                 <td>${slotPill(r)}</td>
               </tr>`).join('')}
           </tbody>

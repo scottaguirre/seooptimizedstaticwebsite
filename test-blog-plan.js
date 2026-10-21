@@ -68,10 +68,70 @@ test('a missing business name does not leave the branded bucket empty', () => {
 });
 
 test('a keyword with no business details at all still yields a usable pool', () => {
-  const { pool } = buildAnchorPool({ targetPage: { keyword: 'drain cleaning' }, business: {}, count: 4 });
-  for (const type of ['exact', 'semantic', 'descriptive', 'branded']) {
+  /* REWRITTEN 20 OCTOBER, AND THE CHANGE IS THE POINT OF THE TEST NOW.
+   *
+   * This used to require ALL FOUR buckets to be non-empty, because an empty
+   * bucket made pickAnchors throw and killed the campaign. With no name and
+   * no location this site is not a business, so `branded` is now
+   * deliberately empty — a blog has no brand to anchor with, and the
+   * templates that ran here invented one ("the team at …").
+   *
+   * EMPTY IS SAFE ONLY BECAUSE OF THE SHARE. pickAnchors reads a bucket
+   * only when allocateAnchorTypes named it, and a 0% share is never named.
+   * So the guarantee worth asserting is no longer "every bucket has
+   * something in it" — it is "every bucket that will be ASKED for something
+   * has something in it". */
+  const { pool, mix } = buildAnchorPool({
+    targetPage: { keyword: 'drain cleaning' }, business: {}, count: 4,
+  });
+
+  for (const type of ['exact', 'semantic', 'descriptive']) {
     assert.ok(pool[type].length > 0, `${type} empty`);
   }
+
+  assert.strictEqual(mix.branded, 0, 'a site with no business details still spends links on a brand');
+  assert.deepStrictEqual(pool.branded, [], 'a site with no name invented one anyway');
+});
+
+test('AND A BLOG CAMPAIGN PLANS WITH NO BRANDED ANCHOR IN IT', () => {
+  /* THE GUARANTEE THE TEST ABOVE USED TO CARRY, asserted directly rather
+   * than through a proxy. "No empty buckets" was only ever a way of saying
+   * "the campaign does not die in pickAnchors" — so now that a bucket is
+   * allowed to be empty, something has to say the real thing.
+   *
+   * TWENTY-FIVE TOPICS, AND THE SIZE IS LOAD-BEARING. The first version of
+   * this test used four, and mutation walked straight through it: at four
+   * posts the default mix gives branded ZERO slots anyway (10% of 4 rounds
+   * away), so deleting the line that carries the blog's mix into the
+   * planner changed nothing the test could see. Twenty-five is the size of
+   * the campaign that raised this, and the size at which branded is reached
+   * three times over.
+   *
+   * NAMED, TOO. With no business name the branded bucket is empty for a
+   * second reason, so a test using one cannot tell "the share is zero" from
+   * "there was nothing to put in it". */
+  const plan = planForCampaign({
+    topics: Array.from({ length: 25 }, (_, i) => ({ topic: `Plumbing topic number ${i + 1}` })),
+    targetPage: {
+      url: 'https://all-about-plumbing.explr-home.com/injuries/',
+      keyword: 'plumbing jobsite injuries',
+    },
+    business: { name: 'All About Plumbing' },      // a blog: a name, no location
+    schedule: { everyDays: 7, publishTime: '09:00', timezone: 'UTC' },
+  });
+
+  assert.strictEqual(plan.slots.length, 25, 'the campaign did not plan');
+
+  assert.ok(!plan.slots.some(s => 'branded' === s.anchorType),
+    'a blog was given a branded anchor anyway');
+
+  /* AND THE NAME IS NOWHERE IN THE ANCHOR TEXT. The type is the label; this
+   * is the thing a reader would actually see. */
+  const anchors = plan.slots.map(s => s.moneyAnchor).join(' | ');
+
+  assert.ok(!/All About Plumbing/.test(anchors),
+    `the blog is still linking to itself by name: ${anchors}`);
+  assert.ok(!/the team at/i.test(anchors), 'the blog still claims to have a team');
 });
 
 test('a missing keyword throws rather than producing silent nonsense', () => {
@@ -504,6 +564,64 @@ test('BUT A linkPhrase STILL WINS, SO WORDPRESS IS UNTOUCHED', () => {
                         targetQuery: 'water heater popping sound',
                         linkPhrase: 'that popping sound from the tank' }),
     'that popping sound from the tank');
+});
+
+test('A linkPhrase OF NOTHING BUT SPACES FALLS THROUGH, IT DOES NOT WIN', () => {
+  /* THE COMMENT ABOVE referTo() PROMISED THIS AND THE LINE BELOW IT DID NOT
+   * DELIVER IT — found 20 October by reading the two together.
+   *
+   * The comment says, correctly, that '   ' is truthy and would therefore win
+   * the chain and render as an anchor wrapped around three spaces. The fix
+   * was then applied to targetQuery only. linkPhrase is the FIRST item in the
+   * chain, so it is the one position where an untrimmed value cannot be
+   * rescued by anything after it.
+   *
+   * The result would be <a href="...">   </a>: a link with no clickable text
+   * and no anchor for Google to read. Worse than the H1 fallback this chain
+   * exists to avoid, and invisible on the page — nobody would report it,
+   * because there is nothing on screen to report. */
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop',
+                        targetQuery: 'water heater popping sound',
+                        linkPhrase: '   ' }),
+    'water heater popping sound');
+});
+
+test('A linkPhrase PADDED WITH SPACES IS TRIMMED, NOT DISCARDED', () => {
+  /* The other half, and the reason the fix is trim-then-test rather than a
+   * whitespace check that rejects. ' that popping sound ' is a real phrase
+   * with sloppy edges — a hand-typed cell in wp-admin, or a model that put a
+   * space after the opening quote. It must still win, just without the
+   * padding, because an anchor is rendered between tags where the browser
+   * will not show the difference but a diff of the HTML will. */
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop',
+                        targetQuery: 'water heater popping sound',
+                        linkPhrase: '  that popping sound from the tank  ' }),
+    'that popping sound from the tank');
+});
+
+test('THE SAME HOLDS FOR THE TITLE AND THE TOPIC, THE TWO LATER CANDIDATES', () => {
+  /* ADDED BECAUSE MUTATION FOUND THEM UNTESTED. Removing .trim() from the
+   * title line and from the topic line both SURVIVED the two tests above —
+   * those only exercise the first two candidates, so the other half of the
+   * fix was riding on nothing.
+   *
+   * These are not hypothetical sources. publishedTitle is whatever WordPress
+   * stored, and a post title pasted with a trailing space keeps it. topic is
+   * a CSV cell or a line the model wrote.
+   *
+   * Two assertions in one test because they are one claim: every candidate in
+   * the chain is trimmed, not just the ones that happened to have a test. */
+  assert.strictEqual(
+    callsItsNeighbour({ topic: 'Sediment is what makes a heater pop',
+                        targetQuery: '', publishedTitle: '  What WordPress called it  ' }),
+    'What WordPress called it');
+
+  assert.strictEqual(
+    callsItsNeighbour({ topic: '  Sediment is what makes a heater pop  ',
+                        targetQuery: '' }),
+    'Sediment is what makes a heater pop');
 });
 
 test('AND THE TITLE IS STILL THERE WHEN THERE IS NO KEYWORD', () => {

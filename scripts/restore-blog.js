@@ -28,6 +28,12 @@
 
 const fs = require('fs');
 const path = require('path');
+
+/* THE TOOL'S NAME, IMPORTED RATHER THAN TYPED. This line tells somebody
+ * which screen to go to, so it has to still be true after the screen is
+ * renamed — and a printed string in a script is the last place anybody
+ * greps. */
+const { TOOL_CF_BLOGS } = require('../utils/pageTitle');
 const mongoose = require('mongoose');
 
 const { planRestore, writeRestore } = require('../utils/blog/restoreBlog');
@@ -140,7 +146,7 @@ if (/mongodb\+srv:/.test(uri) && !force) {
 
   console.log(`\n  Restored ${plan.site.siteUrl}: `
     + `${out.campaigns} campaign(s), ${out.posts} article(s).`);
-  console.log('  Publish it from the Static Blogs screen to put it back on Cloudflare.\n');
+  console.log(`  Publish it from the ${TOOL_CF_BLOGS} screen to put it back on Cloudflare.\n`);
 
   await mongoose.disconnect();
 })().catch(async (err) => {

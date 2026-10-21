@@ -21,7 +21,7 @@ const router = express.Router();
 
 const requireAuth = require('../middleware/requireAuth');
 const { appHeader, appHeaderAssets, appHeaderScripts } = require('../utils/appHeader');
-const { pageTitle } = require('../utils/pageTitle');
+const { pageTitle, TOOL_WP_BLOGS } = require('../utils/pageTitle');
 const { ensureZip } = require('../utils/pluginPackage');
 const { log } = require('../utils/logger');
 
@@ -69,7 +69,7 @@ ${appHeader(res.locals.csrfField || '')}
     <h1>We could not build the plugin download</h1>
     <p class="lead">This is our problem, not yours. Please try again in a moment.</p>
     <p class="text-white-50 small">Reference: ${req.id || 'unknown'}</p>
-    <a href="/blog-sites" class="btn btn-primary mt-3">Back to Blog Automation</a>
+    <a href="/blog-sites" class="btn btn-primary mt-3">&larr; ${TOOL_WP_BLOGS}</a>
   </div>
 ${appHeaderScripts()}
 </body>

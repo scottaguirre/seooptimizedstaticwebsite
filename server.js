@@ -21,7 +21,7 @@ const keywordVolumesRoute = require('./routes/keywordVolumesRoute');
 const keywordResearchRoute = require('./routes/keywordResearchRoute');
 const requireAuth = require('./middleware/requireAuth');
 const { requireOwnDist } = require('./middleware/requireOwnDist');
-const helmet = require('helmet');
+const { securityHeaders } = require('./middleware/securityHeaders');
 const { log } = require('./utils/logger');
 const probeLog = require('./utils/probeLog');
 const { requestId } = require('./middleware/requestId');
@@ -189,65 +189,13 @@ app.use(session({
 
 // ===== SECURITY HEADERS =====
 //
-// helmet sets the standard set: X-Frame-Options, X-Content-Type-Options,
-// Referrer-Policy, HSTS and so on.
-//
-// The Content-Security-Policy is written explicitly rather than taking the
-// default, because the default blocks inline styles and scripts — which this
-// app uses on its own generated pages — and the jsDelivr CDN that serves
-// Bootstrap. A CSP that breaks the app gets switched off, so it is better to
-// state exactly what is allowed.
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-
-      // 'unsafe-inline' is needed for the inline <script> on the generation
-      // success page and the wizard's inline handlers. Worth removing later
-      // by moving those to files and adding a nonce; noted, not urgent.
-      scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net', 'https://js.stripe.com'],
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
-
-      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-      fontSrc: ["'self'", 'data:', 'https://cdn.jsdelivr.net'],
-      // jsdelivr is here only so DevTools can fetch Bootstrap's source maps.
-      // Without it the console fills with CSP errors that look alarming and
-      // mean nothing — which makes real errors easy to miss.
-      connectSrc: ["'self'", 'https://api.stripe.com', 'https://cdn.jsdelivr.net'],
-
-      // Generated previews embed YouTube and Google Maps
-      frameSrc: [
-        "'self'",
-        'https://www.youtube.com',
-        'https://www.google.com',
-        'https://maps.google.com',
-        // 3-D Secure challenges are shown in a Stripe-hosted iframe
-        'https://checkout.stripe.com',
-        'https://js.stripe.com',
-        'https://hooks.stripe.com',
-      ],
-
-      objectSrc: ["'none'"],          // no Flash/Java applets
-      baseUri: ["'self'"],            // stop <base> hijacking relative URLs
-      // Stripe Checkout is a redirect to Stripe's own domain, so it must be
-      // allowed here. With 'self' alone the browser silently refuses the
-      // redirect and the user just stays on the page — no error, no payment.
-      formAction: ["'self'", 'https://checkout.stripe.com'],
-      frameAncestors: ["'self'"],     // clickjacking protection
-    },
-  },
-
-  // Generated site previews load images and iframes from other origins;
-  // the strict default would block them.
-  crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-
-  // Tell browsers to use HTTPS for a year. Only meaningful over HTTPS, and
-  // only enabled in production so local development still works.
-  hsts: process.env.NODE_ENV === 'production'
-    ? { maxAge: 31536000, includeSubDomains: true, preload: false }
-    : false,
-}));
+// Moved to middleware/securityHeaders.js, and not for tidiness: while the
+// policy lived here as an options object, the only way to know what the
+// browser was actually told was to read it and reason about helmet's
+// defaults. That is exactly what went wrong on 19 October — see the note at
+// the top of that file, and test-inline-handlers.js, which now produces the
+// real header and asserts it.
+app.use(securityHeaders());
 
 
 // /dist holds every user's generated site. Without a guard, anyone who knew

@@ -39,7 +39,7 @@
 
 // The product's name. It lives in its own module so a SIGNED-OUT page can
 // brand its tab without importing the logged-in header — see pageTitle.js.
-const { APP_NAME } = require('./pageTitle');
+const { APP_NAME, TOOL_WP_BLOGS, TOOL_CF_BLOGS } = require('./pageTitle');
 
 /**
  * Stylesheets and CSS the header needs, for the <head>.
@@ -101,6 +101,61 @@ function appHeaderAssets() {
       --bs-btn-disabled-border-color: rgba(93,220,149,.45);
       --bs-btn-focus-shadow-rgb: 93,220,149;
     }
+
+    /* A TABLE ON THE NAVY, NAMED ONCE.
+     *
+     * The blog report carries these exact declarations in its own <style>,
+     * under a comment saying they were "lifted from the keyword research
+     * table so the two read as one app". Two copies, and Static Blogs was
+     * about to make a third — at which point the three drift and the app
+     * stops reading as one thing, which is the only reason any of them
+     * exist.
+     *
+     * WHY NOT table-dark. Bootstrap's is #212529, a near-black chosen for
+     * a white page. On #082d5b it is a black box sitting ON the navy rather
+     * than part of it. Transparent lets the page show through and the rows
+     * separate by a wash of white instead.
+     *
+     * A CLASS, NOT A RULE ON table. /blog-sites draws its sites table
+     * inside bg-light text-dark — a white card, on purpose. Styling every
+     * table from here would paint that one white on white and delete the
+     * page, with nothing in the screen being worked on to show it. Opting
+     * in is the whole design. */
+    .table-navy {
+      --bs-table-bg: transparent;
+      --bs-table-color: #fff;
+      --bs-table-striped-bg: rgba(255,255,255,.07);
+      --bs-table-striped-color: #fff;
+      --bs-table-hover-bg: rgba(255,255,255,.13);
+      --bs-table-hover-color: #fff;
+      --bs-table-border-color: rgba(255,255,255,.12);
+      color: #fff;
+    }
+
+    /* Uppercase, dimmer and never wrapped: a heading labels its column, it
+       does not compete with the data under it. */
+    .table-navy thead th {
+      border-bottom: 2px solid rgba(255,255,255,.35) !important;
+      font-size: .8rem;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.7);
+      white-space: nowrap;
+    }
+
+    /* THE ROW NUMBER. Right-aligned and tabular so 9 and 10 put their last
+       digit in the same column — a ragged number column drags the eye down
+       the wrong edge of the table. Muted, because it labels the row rather
+       than saying anything about it, and narrow so it takes width from
+       nothing that matters. */
+    .table-navy .rownum {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: rgba(255,255,255,.45);
+      width: 1%;
+      white-space: nowrap;
+      padding-right: .75rem;
+    }
   </style>`;
 }
 
@@ -121,7 +176,13 @@ function appHeaderAssets() {
 function appHeaderScripts() {
   return `
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/js/currentUserInfo.js" defer></script>`;
+  <script src="/js/currentUserInfo.js" defer></script>
+  <!-- "Are you sure?" on any form carrying data-confirm. Loaded for every
+       page rather than per route, because the prompts it replaces were
+       onsubmit attributes that the CSP blocks outright — and a guard kept
+       in three separate templates is a guard that goes missing from one of
+       them. See public/js/confirmSubmit.js. -->
+  <script src="/js/confirmSubmit.js" defer></script>`;
 }
 
 /**
@@ -335,7 +396,7 @@ function appSidebar(current = '') {
     // used to. It is the END the other tools are means to.
     { href: '/', icon: 'bi-magic', label: 'Build a Website', cta: true },
     { href: '/keyword-research', icon: 'bi-search', label: 'Keyword Research' },
-    { href: '/blog-sites', icon: 'bi-journal-text', label: 'Blog Automation' },
+    { href: '/blog-sites', icon: 'bi-journal-text', label: TOOL_WP_BLOGS },
 
     /* ADDED THE DAY THE SCREEN SHIPPED, and only because Edwin asked where
      * the feature was. The route went live with nothing linking to it —
@@ -344,7 +405,7 @@ function appSidebar(current = '') {
      *
      * A tool that is not linked from somewhere a customer looks is a tool
      * nobody uses. */
-    { href: '/static-blogs', icon: 'bi-cloud', label: 'Static Blogs' },
+    { href: '/static-blogs', icon: 'bi-cloud', label: TOOL_CF_BLOGS },
 
     { href: '/dashboard', icon: 'bi-speedometer2', label: 'Dashboard' },
   ];

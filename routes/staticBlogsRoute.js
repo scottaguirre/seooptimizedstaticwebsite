@@ -42,6 +42,12 @@ const BlogPost = require('../models/BlogPost');
 
 const requireAuth = require('../middleware/requireAuth');
 const { createCampaign } = require('../utils/blog/createCampaign');
+
+/* THE CSV PARSER'S OWN SOURCE, for inlining into the campaign form. See
+ * utils/blog/csvTopics.js: the file is read in the browser rather than
+ * uploaded, and the page is handed the tested function rather than a
+ * hand-written copy of it. */
+const { browserSource } = require('../utils/blog/csvTopics');
 const { suggestForSite } = require('../utils/blog/suggestForSite');
 const { publishBlog } = require('../utils/blog/render/publishBlog');
 
@@ -73,7 +79,7 @@ const { withAppHeader } = require('../utils/appHeader');
  * a suite whose entire job is to stop exactly that: one file writing the
  * brand by hand is one file that still says the old name on the day it
  * changes. It is imported from the one place that defines it. */
-const { pageTitle, APP_NAME } = require('../utils/pageTitle');
+const { pageTitle, APP_NAME, TOOL_CF_BLOGS } = require('../utils/pageTitle');
 const { log } = require('../utils/logger');
 
 /** The shell blogSitesRoute and creditsRoute use, so this does not look bolted on. */
@@ -343,14 +349,50 @@ function publishTimeFrom(value) {
  * The query each post should win is optional and goes after a pipe. Without
  * one the topic is used as its own query, which is what the planner does
  * with a topic it is given nothing else for.
+ *
+ * AND A THIRD FIELD AFTER A SECOND PIPE: the link phrase, which is how
+ * SIBLING POSTS refer to this one mid-sentence. It exists because the
+ * plugin's CSV has carried three columns since it was written, and until
+ * the CSV loader arrived this box could read only two — so loading a file
+ * threw the third away silently.
+ *
+ * IT STAYS OPTIONAL, AND EMPTY MEANS ABSENT RATHER THAN BLANK. A trailing
+ * pipe is a typing accident, not an instruction to use an empty anchor, and
+ * an empty linkPhrase reaching the planner would render a link with no
+ * words in it. Unset, linkPlan.referTo() falls back to the keyword — which
+ * is what it was changed to do on 19 October.
+ *
+ * THE LIMIT OF THREE ON THE SPLIT IS DOCUMENTATION, NOT BEHAVIOUR, and that
+ * is worth saying plainly because it reads like a guard. Destructuring three
+ * names already ignores a fourth field; removing the limit changes nothing
+ * any test can observe, and mutation confirmed it. It stays because it says
+ * out loud how many fields this format has — not because anything depends
+ * on it.
  */
 function parseTopics(raw) {
   return String(raw || '')
     .split('\n')
     .map(line => line.trim())
     .map(line => {
-      const [topic, query] = line.split('|').map(part => (part || '').trim());
-      return { topic, targetQuery: query || topic };
+      const [topic, query, phrase] = line.split('|', 3).map(part => (part || '').trim());
+      return {
+        topic,
+        targetQuery: query || topic,
+        /* OMITTED RATHER THAN EMPTY — AND TODAY THAT IS A DISTINCTION
+         * NOTHING DOWNSTREAM CAN SEE. campaignPlan stores `s.linkPhrase ||
+         * ''`, planCampaign passes `t.linkPhrase || null` and qualityCheck
+         * tests `!t.linkPhrase`: all three coalesce the two cases, so
+         * `linkPhrase: ''` would behave identically. Mutation says so
+         * outright, and the honest word for that is an equivalent mutant —
+         * not a hole in the tests, and not something to contrive an
+         * assertion around.
+         *
+         * It is written this way because "no phrase was given" is what a
+         * trailing pipe MEANS, and the first consumer to tell '' from
+         * absent should find the right answer already here rather than a
+         * blank somebody has to go and interpret. */
+        ...(phrase ? { linkPhrase: phrase } : {}),
+      };
     })
     /* ONE FILTER, NOT TWO. There was a .filter(Boolean) on the trimmed lines
      * as well, and it was dead: this one already drops anything with no
@@ -382,24 +424,29 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
 
     const byId = new Map(counts.map(c => [String(c._id), c.n]));
 
-    const rows = blogs.map(blog => `
+    /* NUMBERED FROM THE POSITION, NOT FROM THE BLOG. The sort above is
+       newest-first, so the only thing that knows a row is "the fourth one"
+       is where it landed in THIS list. Nothing on the document could say
+       it, which is why the map takes an index. */
+    const rows = blogs.map((blog, i) => `
       <tr>
+        <td class="rownum">${i + 1}</td>
         <td><a href="/static-blogs/${blog._id}" class="link-light">${esc((blog.business && blog.business.name) || 'Untitled blog')}</a></td>
         <td class="text-white-50">${esc(blog.siteUrl || '—')}</td>
         <td class="text-end">${byId.get(String(blog._id)) || 0}</td>
       </tr>`).join('');
 
     const list = blogs.length
-      ? `<table class="table table-dark table-hover align-middle">
-           <thead><tr><th>Blog</th><th>Domain</th><th class="text-end">Articles</th></tr></thead>
+      ? `<table class="table table-navy table-hover align-middle">
+           <thead><tr><th></th><th>Blog</th><th>Domain</th><th class="text-end">Articles</th></tr></thead>
            <tbody>${rows}</tbody>
          </table>`
       : `<p class="lead text-white-50">You have no static blogs yet.</p>`;
 
     send(res, page({
-      title: 'Static blogs',
+      title: TOOL_CF_BLOGS,
       body: `
-        <h1 class="mb-4">Static blogs</h1>
+        <h1 class="mb-4">${TOOL_CF_BLOGS}</h1>
 
         <p class="text-white-50">
           Blogs published as plain pages, with no WordPress and no plugin.
@@ -656,6 +703,22 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
  * first run, which is the entire reason /static-blogs has a suite.
  */
 function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', status = 200, suggestions = [] }) {
+  /* THE ARTICLE COUNT IS articles.length, AND IT IS WATCHED.
+   *
+   * It was briefly a parameter of its own, so the count could come from a
+   * countDocuments() while the list stayed a list. Mutation killed that
+   * idea rather than the code: nothing passed it, so the parameter and its
+   * default were an untested branch dressed up as foresight.
+   *
+   * The two are the same number today because the front-page dropdown names
+   * every article, so this page loads every article. IF THAT DROPDOWN IS
+   * EVER CAPPED — and it should be; 171 <option> elements is why it is in
+   * CLAUDE.md — then articles.length silently becomes "how many the dropdown
+   * offers" while still reading as "how many exist", and the button below
+   * starts understating the blog. At that point the count must come from
+   * countDocuments(), and this comment is the warning that it has to move
+   * in the same commit. */
+
   /* THE SUGGESTIONS, AS A LIST TO TICK RATHER THAN TEXT TO EDIT.
    *
    * They used to be appended straight into the topics box. Twelve of
@@ -683,7 +746,7 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
         <div class="card-body">
           <h3 class="h6 mb-3">Suggested topics</h3>
 
-          <table class="table table-dark table-striped table-sm align-middle mb-3">
+          <table class="table table-navy table-striped table-sm align-middle mb-3">
             <thead>
               <tr>
                 <th style="width:2.5rem">
@@ -866,8 +929,9 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
             }</small>`;
   };
 
-  const rows = campaigns.map(c => `
+  const rows = campaigns.map((c, i) => `
       <tr>
+        <td class="rownum">${i + 1}</td>
         <td>${esc(c.name || 'Untitled')}</td>
         <td><span class="badge bg-secondary">${esc(c.status)}</span></td>
         <td class="text-end">${(c.slots || []).length}</td>
@@ -876,19 +940,58 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
         <td class="text-end">${actionFor(c)}</td>
       </tr>`).join('');
 
-    const planned = campaigns.length
-      ? `<form method="post">
+    const plannedTable = `<form method="post">
            ${form.csrfField || ''}
-           <table class="table table-dark align-middle">
-             <thead><tr><th>Campaign</th><th>Status</th><th class="text-end">Posts</th><th>Publishes</th><th>Keyword</th><th></th></tr></thead>
+           <table class="table table-navy align-middle">
+             <thead><tr><th></th><th>Campaign</th><th>Status</th><th class="text-end">Posts</th><th>Publishes</th><th>Keyword</th><th></th></tr></thead>
              <tbody>${rows}</tbody>
            </table>
          </form>
          <p class="text-white-50 small">
            Nothing is written or charged until a campaign is approved.
            Approving writes every post in it and charges for them.
-         </p>`
-    : '<p class="text-white-50">No campaigns yet.</p>';
+         </p>`;
+
+    /* THE FOLD, AND WHY IT IS <details> RATHER THAN A BUTTON.
+     *
+     * Asked for by Edwin on 21 October. This table sits between the
+     * timezone form and the front-page picker, so a worked blog pushes
+     * both off the screen — the same crowding the Articles list caused,
+     * one table along.
+     *
+     * NO JAVASCRIPT AT ALL. helmet sets script-src-attr to 'none', so an
+     * onclick toggle would render, look right and do nothing — which is
+     * exactly how the Clear topics button failed on 20 October: silently,
+     * with the only evidence in a console nobody had open. <details> is
+     * the browser's own disclosure control. It needs no script, no CSP
+     * exception, and it keeps working with scripting off entirely.
+     *
+     * IT HIDES, IT DOES NOT WITHHOLD. Everything is in the page; opening
+     * it costs no request. That is what makes it safe to default shut.
+     *
+     * A FOLD, NOT A SECOND SCREEN — the difference from what the Articles
+     * list got. Articles are a destination: you go there to edit one.
+     * Campaigns are read in place and then acted on in the Plan form
+     * directly below. Moving them would put the list and the form on
+     * different screens, which is worse than the crowding. */
+    const FOLD_ABOVE = 5;
+
+    /* OPEN WHEN THERE IS LITTLE TO SEE. A control that hides a blog's only
+     * campaign is worse than no control: it costs a click to find out
+     * there was nothing behind it. Five is roughly what fits without
+     * pushing the form below the fold. */
+    const folded = campaigns.length > FOLD_ABOVE;
+
+    const planned = !campaigns.length
+      ? '<p class="text-white-50">No campaigns yet.</p>'
+      : !folded
+        ? plannedTable
+        : `<details class="mb-3">
+             <summary class="text-white-50" style="cursor:pointer">
+               ${campaigns.length} campaigns &mdash; show
+             </summary>
+             <div class="mt-3">${plannedTable}</div>
+           </details>`;
 
   return page({
     status,
@@ -1070,30 +1173,26 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
         </div>
       </form>
 
-      <!-- THE WRITTEN ARTICLES, WITH A WAY INTO EACH ONE.
-           Until this list existed there was no route to an article at
-           all: the only thing that named them was the front-page
-           dropdown, which selects one and opens nothing. An editor
-           nothing links to is an editor nobody finds. -->
+      <!-- THE WRITTEN ARTICLES — A COUNT AND A DOOR, NOT THE LIST.
+           Until a list existed there was no route to an article at all:
+           the only thing that named them was the front-page dropdown,
+           which selects one and opens nothing. An editor nothing links to
+           is an editor nobody finds.
+
+           SO IT WAS BUILT AS A WAY IN, AND GREW INTO A REPORT. On Edwin's
+           plumbing blog it reached 171 unpaged rows, sitting above the
+           campaign form and the front-page picker — the two things anybody
+           opens this page for. The list moved to its own screen on 21
+           October; what belongs here is the number and the door to it. -->
       <h2 class="h4 mt-5 mb-3">Articles</h2>
 
-      <table class="table table-dark table-striped align-middle">
-        <thead><tr><th>Article</th><th>Address</th><th></th></tr></thead>
-        <tbody>
-          ${articles.map(a => `
-          <tr>
-            <td>${esc(a.title || a.slug)}</td>
-            <td class="text-white-50 small"><code>/${esc(a.slug)}/</code></td>
-            <td class="text-end">
-              <a href="/static-blogs/${blog._id}/articles/${a._id}/edit"
-                 class="btn btn-sm btn-outline-light">Edit</a>
-            </td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-
-      <p class="text-white-50 small">
-        Edits reach the live site the next time you publish.
+      <p>
+        <a href="/static-blogs/${blog._id}/articles" class="btn btn-outline-light">
+          ${articles.length} ${1 === articles.length ? 'article' : 'articles'}
+        </a>
+        <span class="text-white-50 small ms-2">
+          Edits reach the live site the next time you publish.
+        </span>
       </p>
 
       <h2 class="h4 mt-5 mb-3">Front page</h2>
@@ -1259,11 +1358,45 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
 
                NOT type="reset" — that would restore the box to whatever the
                server rendered into it, which after a suggestion is the
-               suggestions. "Start over" has to mean empty. -->
+               suggestions. "Start over" has to mean empty.
+
+               BOUND IN A SCRIPT, NOT BY AN onclick ATTRIBUTE, AND THIS IS
+               NOT A STYLE CHOICE. It was an onclick for months and it never
+               once ran: the app's CSP sets script-src-attr to 'none', so
+               the browser refuses inline handlers outright. The button was
+               pressed, nothing happened, and no page in the app said why.
+               Edwin found it. See test-inline-handlers.js. -->
           <button class="btn btn-outline-secondary btn-sm ms-2" type="button"
-                  onclick="document.getElementById('topics').value='';document.getElementById('topics').focus();">
+                  id="ieClearTopics">
             Clear topics
           </button>
+
+          <!-- A CSV, READ HERE AND NEVER UPLOADED.
+               The plugin takes a real upload because WordPress hands it
+               one. This app cannot cheaply: csrfProtect runs app-wide
+               BEFORE any route and reads its token out of req.body, which
+               for multipart/form-data nothing has parsed yet — its own
+               comment says so. A plain form with a hidden _csrf and an
+               enctype is therefore REFUSED, and making it work means
+               posting by script with a header, a multer instance with its
+               own limits, and a local error handler because server.js
+               answers every multipart request with JSON. All of that to
+               put text into a box you can already paste into.
+
+               NO name ATTRIBUTE, AND THAT IS NOT AN OVERSIGHT. This form
+               is urlencoded, and a urlencoded form submits a file input's
+               FILENAME as the field's value. Named, it would post a
+               stray string on every Plan. Unnamed, it is not submitted at
+               all — which is the whole point.
+
+               A LABEL RATHER THAN A BUTTON, so it matches the two beside
+               it; the input itself is hidden because the browser's own
+               file control cannot be styled to. -->
+          <label class="btn btn-outline-light btn-sm ms-2 mb-0" for="topicsCsv">Load a CSV</label>
+          <input type="file" id="topicsCsv" class="d-none"
+                 accept=".csv,text/csv,text/plain">
+
+          <div class="form-text text-white-50" id="topicsCsvNote"></div>
 
           <div class="form-text text-white-50">
             Free. Fill in the page and its search phrase first.
@@ -1280,6 +1413,101 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
             available for them — type those topics yourself.
           </div>
         </div>
+
+        <!-- THE LOADER, AND THE PARSER IT RUNS.
+             csvTopics.js hands over its OWN SOURCE rather than this page
+             keeping a hand-written copy, so there is one parser and
+             test-csv-topics.js tests it. Two copies would be one tested
+             parser and one that is whatever somebody typed, with no way
+             to notice the day they stopped agreeing.
+
+             NOT A BACKSLASH IN SIGHT, deliberately. This script is inside
+             a template literal, where an unrecognised escape quietly
+             becomes the letter after it — a hand-written /\\s+$/ would
+             reach the browser as /s+$/ and a '\\n' as a real line break
+             inside a string. So: String.fromCharCode for the newline,
+             trimEnd instead of a regex. -->
+        <script>
+        (function () {
+        ${browserSource()}
+
+        function ieInitTopicTools() {
+          var input = document.getElementById('topicsCsv');
+          var box = document.getElementById('topics');
+          var note = document.getElementById('topicsCsvNote');
+
+          if (!input || !box) return;
+
+          /* CLEAR TOPICS LIVES HERE NOW. It was an onclick attribute and the
+           * CSP refused to run it — see the note on the button. Bound in the
+           * one script that already holds a reference to the box. */
+          var clear = document.getElementById('ieClearTopics');
+
+          if (clear) {
+            clear.addEventListener('click', function () {
+              box.value = '';
+              if (note) note.textContent = '';
+              box.focus();
+            });
+          }
+
+          var NL = String.fromCharCode(10);
+
+          input.addEventListener('change', function () {
+            var file = input.files && input.files[0];
+            if (!file) return;
+
+            var reader = new FileReader();
+
+            reader.onload = function () {
+              var lines = csvToTopicLines(String(reader.result || ''));
+
+              /* ADDED, NOT SUBSTITUTED — the rule Suggest topics already
+               * follows. Replacing the box would destroy a list somebody
+               * had typed, and Clear topics exists for people who want it
+               * gone. */
+              var current = box.value.trimEnd();
+              box.value = (current ? current + NL : '') + lines.join(NL);
+              box.focus();
+
+              /* WHAT LANDED, SAID OUT LOUD. A file with one usable row
+               * and a file with none look identical in a box that is
+               * already full, and the whole argument for reading it here
+               * is that you can see what you got before you spend
+               * anything. */
+              if (note) {
+                note.textContent = lines.length
+                  ? lines.length + (1 === lines.length ? ' topic' : ' topics') + ' added from ' + file.name
+                  : 'No topics found in ' + file.name;
+              }
+
+              /* CLEARED SO THE SAME FILE CAN BE PICKED TWICE. Without it
+               * the change event does not fire again and the button looks
+               * broken to anyone who edited the file and came back. */
+              input.value = '';
+            };
+
+            reader.onerror = function () {
+              if (note) note.textContent = 'That file could not be read.';
+              input.value = '';
+            };
+
+            reader.readAsText(file);
+          });
+        }
+
+        /* DEFERRED, LIKE THE TWO SCRIPTS EITHER SIDE OF THIS ONE. It works
+         * today because it sits below the box it binds — and this file
+         * already learned, with "Add ticked to my topics", that the
+         * position of a <script> must not be a thing somebody has to know
+         * not to change. */
+        if ('loading' === document.readyState) {
+          document.addEventListener('DOMContentLoaded', ieInitTopicTools);
+        } else {
+          ieInitTopicTools();
+        }
+        })();
+        </script>
 
         <div class="row g-2 mb-4">
           <div class="col-md-4">
@@ -1401,6 +1629,138 @@ async function blogAndCampaigns(req) {
 
   return { blog, campaigns, articles };
 }
+
+/* -------------------------------------------------------------------------
+ * The Articles screen
+ *
+ * Its own page because the list outgrew the blog's. 171 rows on Edwin's
+ * plumbing blog, unpaged, above the campaign form.
+ *
+ * FIFTY A PAGE. Long enough that a blog of ordinary size is one screen and
+ * the paging is never noticed; short enough that the longest blog is a
+ * handful of pages rather than forty.
+ * ---------------------------------------------------------------------- */
+
+const ARTICLES_PER_PAGE = 50;
+
+/**
+ * The page number from a query string, as a number we are willing to use.
+ *
+ * EVERYTHING HERE ARRIVES FROM ANYBODY. `?page=-3` becomes skip(-150), which
+ * Mongo rejects with an error that reaches the customer as "Something went
+ * wrong"; `?page=abc` becomes NaN, which is neither zero nor a number and
+ * skips an undefined amount. Both are one typed character away in the
+ * address bar.
+ *
+ * Math.floor AFTER the guard, so '2.7' lands on 2 rather than being refused:
+ * a fractional page is a nonsense request with an obvious intention.
+ */
+function pageNumber(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.floor(n);
+}
+
+router.get('/static-blogs/:id/articles', requireAuth, async (req, res) => {
+  try {
+    const blog = await ownedBlog(req);
+    if (!blog) return notFound(res);
+
+    const current = pageNumber(req.query && req.query.page);
+    const skip = (current - 1) * ARTICLES_PER_PAGE;
+
+    /* THE COUNT AND THE PAGE TOGETHER. The count is what makes "page 4 of 4"
+     * possible and what the blog page's button reads; neither can be got
+     * from a page of fifty rows. */
+    const [total, articles] = await Promise.all([
+      BlogPost.countDocuments({ site: blog._id }),
+      BlogPost.find({ site: blog._id })
+        .select('title slug')
+        .sort({ createdAt: 1 })
+        .skip(skip)
+        .limit(ARTICLES_PER_PAGE)
+        .lean(),
+    ]);
+
+    /* Math.max(1, …) IS AN EQUIVALENT MUTANT TODAY, recorded rather than
+       tested around. On an empty blog ceil(0/50) is 0, and `pages > 1`
+       hides the paging block either way — nothing a reader can see tells 0
+       from 1. It stays because the day the empty state changes, 0 is what
+       would print as "Page 1 of 0". */
+    const pages = Math.max(1, Math.ceil(total / ARTICLES_PER_PAGE));
+    const name = (blog.business && blog.business.name) || 'Untitled blog';
+
+    /* NUMBERED FROM THE SKIP, NOT FROM THE ROW. Restarting at 1 on page two
+     * would make "the fourth article" mean two different things on two
+     * screens of one blog. */
+    const rows = articles.map((a, i) => `
+      <tr>
+        <td class="rownum">${skip + i + 1}</td>
+        <td>${esc(a.title || a.slug)}</td>
+        <td class="text-white-50 small"><code>/${esc(a.slug)}/</code></td>
+        <td class="text-end">
+          <a href="/static-blogs/${blog._id}/articles/${a._id}/edit"
+             class="btn btn-sm btn-outline-light">Edit</a>
+        </td>
+      </tr>`).join('');
+
+    const list = articles.length
+      ? `<table class="table table-navy table-striped align-middle">
+           <thead><tr><th></th><th>Article</th><th>Address</th><th></th></tr></thead>
+           <tbody>${rows}</tbody>
+         </table>`
+      /* A SENTENCE, NOT AN EMPTY TABLE. Headings over nothing read as a
+         screen that failed to load rather than a blog that has not been
+         written yet. */
+      : `<p class="lead text-white-50">${
+          total
+            ? 'There is nothing on this page. Go back to the first one.'
+            : 'Nothing has been written for this blog yet.'
+        }</p>`;
+
+    /* PREVIOUS AND NEXT ONLY, not a row of numbered pages. Four pages of
+       articles is a thing you step through; it is not a thing you jump
+       around in, and a number strip would be the widest element on the
+       screen for no use anybody has. */
+    const step = (to, label, enabled) => (enabled
+      ? `<a href="/static-blogs/${blog._id}/articles?page=${to}"
+            class="btn btn-outline-light">${label}</a>`
+      : `<span class="btn btn-outline-light disabled">${label}</span>`);
+
+    const paging = pages > 1
+      ? `<div class="d-flex align-items-center gap-2 mt-3">
+           ${step(current - 1, '&larr; Previous', current > 1)}
+           <span class="text-white-50 small">Page ${current} of ${pages}</span>
+           ${step(current + 1, 'Next &rarr;', current < pages)}
+         </div>`
+      : '';
+
+    send(res, page({
+      title: `Articles — ${esc(name)}`,
+      body: `
+        <p><a href="/static-blogs/${blog._id}" class="link-light">&larr; ${esc(name)}</a></p>
+
+        <h1 class="mb-1">Articles</h1>
+        <p class="text-white-50">
+          ${total} ${1 === total ? 'article' : 'articles'} on
+          <strong>${esc(blog.siteUrl || name)}</strong>.
+          Edits reach the live site the next time you publish.
+        </p>
+
+        ${list}
+        ${paging}`,
+    }));
+
+  } catch (err) {
+    log.error('staticBlogs.articles.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: `<h1>We could not list those articles</h1>
+             <a href="/static-blogs/${esc(req.params.id)}" class="btn btn-primary mt-3">Back</a>`,
+    }));
+  }
+});
 
 router.get('/static-blogs/:id', requireAuth, async (req, res) => {
   try {
@@ -1722,6 +2082,32 @@ router.post('/static-blogs/:id/publish', requireAuth, async (req, res) => {
         title: dryRun ? 'Nothing to preview' : 'Not published',
         body: `<h1 class="h2">${dryRun ? 'Nothing to preview' : 'That did not publish'}</h1>
                <p class="lead">${esc(result.error)}</p>
+               ${!dryRun && result.projectMissing
+                 /* THE ONE FAILURE WHERE WAITING IS THE ANSWER, and until
+                  * 19 October the screen could not say so. A campaign died
+                  * on Cloudflare's `[code: 8000000]` — their own "unknown
+                  * error", carrying nothing to act on — and all this page
+                  * offered was two wrangler errors, the second of them
+                  * merely the consequence of the first. Hours later the
+                  * same publish worked with nothing changed.
+                  *
+                  * NO CAUSE IS NAMED, because none is known. Cloudflare
+                  * said "unknown error" and meant it; a sentence here
+                  * blaming a subdomain still being released would be a
+                  * guess in the voice of an explanation. What is certain
+                  * is what survived and what to do next, so that is all
+                  * this says.
+                  *
+                  * AND ONLY WHEN deploy.js SAYS SO. Both halves of that
+                  * judgement — a create that did not succeed and a deploy
+                  * that says the project is missing — are things only
+                  * deploy.js saw. See the note there for why either half
+                  * alone would send somebody off to wait for a permission
+                  * error to heal. */
+                 ? '<p>Nothing was lost: your articles are still written and still '
+                   + 'scheduled. This is usually temporary. Try publishing again in a '
+                   + 'few minutes.</p>'
+                 : ''}
                ${result.output
                  ? `<pre class="p-3 bg-dark text-white-50 small" style="white-space:pre-wrap">${esc(String(result.output).slice(-2000))}</pre>`
                  : ''}
@@ -1757,8 +2143,18 @@ router.post('/static-blogs/:id/publish', requireAuth, async (req, res) => {
       await markPublished({ pages: result.pages, requestId: req.id });
     }
 
-    const rows = result.pages.map(p => `
+    /* NUMBERED, BECAUSE THIRTY-SEVEN ROWS CANNOT BE COUNTED BY EYE. Edwin
+     * published 37 articles and this table listed them bare, so "how many
+     * went up" and "which one is the twentieth" both meant counting down a
+     * screen. The plan table has numbered its slots since it was written;
+     * this one and the Articles list had not caught up.
+     *
+     * THE ROW'S POSITION, NOT THE SLOT INDEX. This is what was deployed in
+     * the order it was deployed. Slot numbers would be three campaigns'
+     * sequences interleaved, so two rows would both be "1". */
+    const rows = result.pages.map((p, i) => `
       <tr>
+        <td class="rownum">${i + 1}</td>
         <td>${esc(p.post.title || p.post.slug)}</td>
         <td class="text-white-50">${esc(p.url)}</td>
         <td class="text-white-50">${p.isHome ? 'front page' : ''}</td>
@@ -1904,8 +2300,8 @@ router.post('/static-blogs/:id/publish', requireAuth, async (req, res) => {
 
         ${warnings}
 
-        <table class="table table-dark align-middle">
-          <thead><tr><th>Article</th><th>Address</th><th></th></tr></thead>
+        <table class="table table-navy align-middle">
+          <thead><tr><th></th><th>Article</th><th>Address</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
 
@@ -2848,7 +3244,7 @@ router.post('/static-blogs/:id/plan', requireAuth, async (req, res) => {
             : `<span class="text-warning">You have ${response.creditsAvailable} — not enough yet.</span>`}
         </p>
 
-        <table class="table table-dark align-middle">
+        <table class="table table-navy align-middle">
           <thead><tr><th></th><th>Topic</th><th>Search phrase</th><th>Publishes</th></tr></thead>
           <tbody>${slots}</tbody>
         </table>

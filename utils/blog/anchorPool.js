@@ -41,7 +41,7 @@
 // A number duplicated in prose is a number that will drift. The fix is not
 // to correct it; it is to stop keeping a second copy.
 
-const { DEFAULT_MIX } = require('./anchors');
+const { DEFAULT_MIX, GENERAL_MIX } = require('./anchors');
 const { isLocalBusiness } = require('./siteKind');
 
 /**
@@ -366,6 +366,28 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
         `a closer look at ${keyword}`,
         `read more about ${keyword}`,
 
+        /* FOUR MORE, ADDED 20 OCTOBER, AND PREFIXES FOR THE REASON ABOVE.
+         *
+         * They exist because `branded` is now worth 0% on a blog and its
+         * share came here: semantic went from wanting 40% of a campaign to
+         * wanting 50%, against a bucket that already could not fill 40%.
+         * Edwin's warning — "only 5 semantic anchor(s) available for 10
+         * needed" on 25 posts — would have become 13 needed for the same
+         * five. Moving a share into a bucket without widening it is not a
+         * fix; it is the same shortfall with a bigger number.
+         *
+         * SUFFIXES WERE CONSIDERED AND REJECTED ON HIS OWN KEYWORDS. He
+         * asked for "a word or two at the end or the beginning". Two of the
+         * nine keywords in the campaign that raised this — "plumber return
+         * to work injury" and "exoskeletons for plumbers" — contain a
+         * preposition, so `suffixable` is false and every appending
+         * template is dropped. A prefix is never dropped, which is why the
+         * five above are prefixes too. */
+        `what to know about ${keyword}`,
+        `the basics of ${keyword}`,
+        `a guide to ${keyword}`,
+        `an overview of ${keyword}`,
+
         /* SKIPPED WHEN THE KEYWORD IS NOT A NOUN PHRASE.
          *
          * This is the only template here that puts a VERB after the keyword,
@@ -431,12 +453,46 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
      */
     branded: unique([
       ...(overrides.branded || []),
-      name || null,
-      // Skipped when the name already names the town.
-      name && town && !containsPhrase(name, town) ? `${name} in ${town}` : null,
-      // Skipped when the name already contains the service.
-      name && !containsPhrase(name, keyword) ? `${name}'s ${keyword}` : null,
-      name ? `the team at ${name}` : null,
+
+      /* EMPTY FOR A SITE THAT IS NOT A BUSINESS — 20 October 2026.
+       *
+       * THE THIRD TIME THIS EXACT MISTAKE WAS FOUND, and the first two are
+       * written up thirty and sixty lines above. `semantic` shipped
+       * "professional carbon offset programs"; `descriptive` shipped "what
+       * the work involves" on a blog about a subject nobody performs. Both
+       * were split into a local branch and a general one. `branded` was
+       * never revisited, so it kept building a company out of a blog:
+       *
+       *     the team at All About Plumbing
+       *     All About Plumbing's plumbing jobsite injuries
+       *
+       * There is no team, nobody is hiring anyone, and the blog does not
+       * HAVE plumbing jobsite injuries.
+       *
+       * IT HID BEHIND ITS OWN SHARE. Branded is 10% of a campaign and the
+       * plain name is first in the list, so a twelve-post campaign spends
+       * its one branded slot on the only honest phrase here. The two that
+       * invent a company are second and third — they need about fifteen
+       * posts before they are reached. Edwin runs twenty-five.
+       *
+       * THE WHOLE BUCKET GOES, not the two bad templates. A blog linking to
+       * its own pillar by its own name is not wrong, but it is not a
+       * BRAND anchor doing what this bucket is for — see GENERAL_MIX in
+       * anchors.js, where the 10% is spent on saying the keyword another
+       * way instead. Edwin's call, 20 October.
+       *
+       * AN EXPLICIT OVERRIDE IS STILL HONOURED, above: a caller that asks
+       * for branded anchors by name has said something this cannot know
+       * better than. With a 0% share nothing will read them, which is the
+       * honest outcome rather than a silent one. */
+      ...(local ? [
+        name || null,
+        // Skipped when the name already names the town.
+        name && town && !containsPhrase(name, town) ? `${name} in ${town}` : null,
+        // Skipped when the name already contains the service.
+        name && !containsPhrase(name, keyword) ? `${name}'s ${keyword}` : null,
+        name ? `the team at ${name}` : null,
+      ] : []),
     ].filter(Boolean)
       // A business named exactly after the target keyword would put an
       // exact-match anchor in the branded bucket, inflating the exact share
@@ -448,8 +504,17 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
   // and flags `reused: true` — but it IS worth knowing about, because reuse
   // means several posts linking with identical text. Reported rather than
   // thrown, since a small campaign legitimately has only one exact phrase.
+  /* THE SPREAD THIS SITE WILL ACTUALLY BE PLANNED WITH, decided here because
+   * this is the one place that already asks whether the site is a business.
+   * It is RETURNED rather than looked up again downstream: campaignPlan.js
+   * hands it to planCampaign.js, so the shortfalls reported below and the
+   * slots allocated later are measured against the same numbers. Two places
+   * choosing a mix is two places to get it wrong, and the symptom would be a
+   * warning about a bucket that is never used. */
+  const mix = local ? DEFAULT_MIX : GENERAL_MIX;
+
   const shortfalls = [];
-  for (const [type, share] of Object.entries(DEFAULT_MIX)) {
+  for (const [type, share] of Object.entries(mix)) {
     // 'exact' is exempt, and not as a convenience. There are only so many ways
     // to write a keyword verbatim, so this bucket is meant to run out and be
     // reused — that is what an exact-match share above a couple of posts
@@ -457,6 +522,13 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
     // that do matter.
     if ('exact' === type) continue;
 
+    /* A BUCKET WITH NO SHARE NEEDS NO GUARD HERE, and there was one until
+     * mutation pointed out that it could never fire: a share of 0 makes
+     * `needed` 0, and no bucket's length is below zero. It read as
+     * protection and protected nothing, which is worse than absent — the
+     * next reader budgets attention for it. The live guard is in the
+     * fallback loop below, where a 0-share bucket WOULD otherwise be filled
+     * with somebody else's phrases. */
     const needed = Math.ceil((share / 100) * count);
     if (pool[type].length < needed) {
       shortfalls.push({ type, have: pool[type].length, needed });
@@ -465,7 +537,17 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
 
   // The one case that IS fatal: an empty bucket makes pickAnchors throw.
   // 'branded' is the realistic one — a site activated without a business name.
-  for (const type of Object.keys(DEFAULT_MIX)) {
+  for (const [type, share] of Object.entries(mix)) {
+    /* A BUCKET WITH NO SHARE IS LEFT EMPTY, AND THAT IS THE POINT.
+     *
+     * pickAnchors only reads a bucket that allocateAnchorTypes named, and a
+     * 0% share is never named — so there is nothing to rescue. Filling it
+     * anyway would hand a blog's `branded` bucket a copy of `semantic`,
+     * which is exactly the outcome dropping branded was meant to prevent,
+     * and it would be invisible: the pool would look populated and the
+     * phrases would be the wrong kind. */
+    if (0 === share) continue;
+
     if (!pool[type].length) {
       // Fall back to the semantic bucket rather than failing the campaign. A
       // branded anchor that says the keyword is worse than one saying the
@@ -474,7 +556,7 @@ function buildAnchorPool({ targetPage = {}, business = {}, count = 1, overrides 
     }
   }
 
-  return { pool, shortfalls };
+  return { pool, shortfalls, mix };
 }
 
 /**

@@ -33,7 +33,7 @@ const Module = require('module');
 const { execFileSync } = require('child_process');
 
 let passed = 0, failed = 0;
-const DECLARED = 111;   // 104 + 3 campaign-date filter + 4 written state, 6 October
+const DECLARED = 121;   // 120 + 1 campaign-name cell layout, 21 October
 
 function test(name, fn) {
   try {
@@ -2285,13 +2285,205 @@ await atest('THE FILTER AND THE PILL CALL IT THE SAME THING', async () => {
   /* The pill carries a title attribute, so the closing > is not adjacent to
    * the class. A regex that assumed it was found nothing and the test failed
    * for its own reasons rather than the code's. */
-  const pill = /<span class="pill [^"]*"[^>]*>\s*([^<]+?)\s*<\/span>/.exec(html);
+  /* AND IT HAS TO BE THE STATE PILL, NOT THE FIRST PILL ON THE PAGE — 21
+   * October. This took the first <span class="pill …"> it found, which was
+   * the state pill only because nothing else on a row was one. The WP/CF
+   * and Pillar/Silo pills then landed in the Site cell, one column to the
+   * left, and this test began reporting that the filter and the pill
+   * disagreed — against a state pill still saying exactly the right word.
+   * "The first of its kind" is a position, not an identity. */
+  const pill = /<span class="pill (?!pill-kind)[^"]*"[^>]*>\s*([^<]+?)\s*<\/span>/.exec(html);
   const option = /<option value="deleted"[^>]*>\s*([^<]+?)\s*<\/option>/.exec(html);
 
   assert.ok(pill && option, 'could not find both the pill and the option');
   assert.strictEqual(option[1], 'Deleted', 'the filter does not say Deleted');
   assert.strictEqual(pill[1], option[1],
     `the pill says "${pill[1]}" and the filter says "${option[1]}"`);
+});
+
+/* ------------------------------------------------------------------ *
+ * WHAT KIND OF THING IS THIS ROW
+ *
+ * Two facts that were in the database and on no screen: where a post was
+ * published, and what shape of campaign wrote it. Asked for by Edwin on
+ * 21 October, looking at a report where 1,066 posts across WordPress sites
+ * and Cloudflare blogs, pillar campaigns and silos, all looked alike.
+ *
+ * NEITHER IS A NEW FIELD. BlogSite.target is an indexed enum that has been
+ * there since static blogs existed, and BlogCampaign.isPillar since pillar
+ * campaigns did. rowsFor() simply never carried them.
+ * ------------------------------------------------------------------ */
+
+const CF_SITE = { _id: 'site-c', siteUrl: 'all-about-plumbing.explr-home.com',
+                  status: 'active', target: 'cloudflare' };
+
+await atest('A ROW KNOWS WHETHER ITS SITE IS WORDPRESS OR CLOUDFLARE', async () => {
+  given({
+    sites: [{ ...SITE_A, target: 'wordpress' }, CF_SITE],
+    campaigns: [
+      campaign({ _id: 'c-wp', site: 'site-a' }),
+      campaign({ _id: 'c-cf', site: 'site-c', name: 'Hydro jetting' }),
+    ],
+  });
+
+  const rows = await rowsFor('u1');
+  const byCampaign = new Map(rows.map(r => [r.campaignId, r]));
+
+  assert.strictEqual(byCampaign.get('c-wp').siteTarget, 'wordpress');
+  assert.strictEqual(byCampaign.get('c-cf').siteTarget, 'cloudflare');
+});
+
+await atest('AND A SITE THAT PREDATES THE FIELD READS AS WORDPRESS', async () => {
+  /* The schema defaults target to 'wordpress' and every site created before
+   * static blogs existed is one. A row carrying undefined would render a
+   * blank pill — a third kind of site that does not exist. */
+  given({ sites: [SITE_A], campaigns: [campaign()] });
+
+  const rows = await rowsFor('u1');
+  assert.strictEqual(rows[0].siteTarget, 'wordpress');
+});
+
+await atest('A ROW KNOWS WHETHER ITS CAMPAIGN IS A PILLAR OR A SILO', async () => {
+  /* "Silo" is this codebase's word for a campaign with a money page —
+   * planCampaign.js and qualityCheck.js both use it — so the pair is
+   * Pillar / Silo rather than Pillar / Not pillar. */
+  given({
+    sites: [SITE_A],
+    campaigns: [
+      campaign({ _id: 'c-silo' }),
+      campaign({ _id: 'c-pillar', name: 'Plumbing injuries', isPillar: true,
+                 targetPage: null }),
+    ],
+  });
+
+  const rows = await rowsFor('u1');
+  const byCampaign = new Map(rows.map(r => [r.campaignId, r]));
+
+  assert.strictEqual(byCampaign.get('c-silo').isPillar, false);
+  assert.strictEqual(byCampaign.get('c-pillar').isPillar, true);
+});
+
+await atest('AND isPillar IS A BOOLEAN, NOT WHATEVER MONGO HAD', async () => {
+  /* undefined on an old document is falsy and would render correctly by
+   * accident — until something does `row.isPillar === false`, or the CSV
+   * ever carries it and prints an empty cell for half the rows. */
+  given({ sites: [SITE_A], campaigns: [campaign({ isPillar: undefined })] });
+
+  const rows = await rowsFor('u1');
+  assert.strictEqual(rows[0].isPillar, false);
+  assert.strictEqual(typeof rows[0].isPillar, 'boolean');
+});
+
+await atest('THE POSTS TAB SHOWS BOTH PILLS ON EVERY ROW', async () => {
+  given({
+    sites: [CF_SITE],
+    campaigns: [campaign({ site: 'site-c', isPillar: true, targetPage: null })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(/<span class="pill [^"]*"[^>]*>\s*CF\s*<\/span>/.test(html),
+    'no CF pill on a Cloudflare blog post');
+  assert.ok(/<span class="pill [^"]*"[^>]*>\s*Pillar\s*<\/span>/.test(html),
+    'no Pillar pill on a pillar campaign post');
+});
+
+await atest('AND THE OTHER TWO VALUES RENDER THE OTHER TWO WORDS', async () => {
+  /* THE HALF THAT MATTERS. A page that prints "CF" and "Pillar" for every
+   * row satisfies the test above perfectly and tells a reader nothing. */
+  given({
+    sites: [{ ...SITE_A, target: 'wordpress' }],
+    campaigns: [campaign({ isPillar: false })],
+  });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(/<span class="pill [^"]*"[^>]*>\s*WP\s*<\/span>/.test(html),
+    'no WP pill on a WordPress post');
+  assert.ok(/<span class="pill [^"]*"[^>]*>\s*Silo\s*<\/span>/.test(html),
+    'no Silo pill on an ordinary campaign');
+  assert.ok(!/>\s*CF\s*</.test(html), 'a WordPress post is labelled CF');
+  assert.ok(!/>\s*Pillar\s*</.test(html), 'a silo campaign is labelled Pillar');
+});
+
+await atest('THE CAMPAIGNS TAB CARRIES THEM TOO', async () => {
+  /* The tab where somebody actually picks a campaign out of eighty-two.
+   * Labelling the posts and not the campaigns would mean the only way to
+   * find out what kind a campaign is would be to open it. */
+  given({
+    sites: [CF_SITE],
+    campaigns: [campaign({ site: 'site-c', isPillar: true, targetPage: null })],
+  });
+
+  const html = (await render('/blog-report', {})).body;
+
+  assert.ok(/<span class="pill [^"]*"[^>]*>\s*CF\s*<\/span>/.test(html),
+    'the campaigns tab does not say where a campaign publishes');
+  assert.ok(/<span class="pill [^"]*"[^>]*>\s*Pillar\s*<\/span>/.test(html),
+    'the campaigns tab does not say what shape a campaign is');
+});
+
+await atest('THE NAME GETS ITS OWN LINE, AND THE PILLS SHARE ONE WITH THE BUTTON', async () => {
+  /* Edwin, 21 October, looking at row 4 of the campaigns tab: "Unclogging
+   * Sewer Line Services" wrapped onto two lines and the Check posts button
+   * tucked itself against the end of the second one, with the pills on a
+   * third row below. Three stacked things in a narrow cell, and the button
+   * landing in a different place on every row depending on where the name
+   * happened to wrap.
+   *
+   * ASSERTED AS AN ORDER, NOT AS CLASS NAMES. What matters is that the
+   * campaign link closes before the strip opens and that both the pills and
+   * the button are inside it — that is the layout. Pinning the flex
+   * utilities would make every restyle read as a regression, which is the
+   * mistake the rownum tests in test-static-blogs.js had to be rescued
+   * from twice. */
+  given({ sites: [CF_SITE], campaigns: [campaign({ site: 'site-c' })] });
+
+  const html = (await render('/blog-report', {})).body;
+
+  const cell = /<td>\s*<a [^>]*class="report-link"[\s\S]*?<\/td>/.exec(html);
+  assert.ok(cell, 'the campaign name cell is not shaped as expected');
+
+  const strip = /<div[^>]*>([\s\S]*?)<\/div>/.exec(cell[0]);
+  assert.ok(strip, 'there is no strip under the campaign name');
+
+  assert.ok(/class="pill pill-kind"/.test(strip[1]),
+    'the pills are not in the strip under the name');
+  assert.ok(/report-check/.test(strip[1]),
+    'Check posts is still on the name line, so it moves with every wrap');
+
+  /* AND THE NAME IS NOT IN IT. A strip that swallowed the link would read
+   * identically to these assertions and put us back where we started. */
+  assert.ok(!/class="report-link"/.test(strip[1]),
+    'the campaign name was pulled into the strip');
+});
+
+await atest('THE KIND PILLS HAVE A STYLE OF THEIR OWN', async () => {
+  /* Four pills in a row all the same grey is a wall, and the state pill is
+   * already one of them. The kind pills get their own class so they can be
+   * dimmer than the state — they label the row, the state reports on it. */
+  given({ sites: [CF_SITE], campaigns: [campaign({ site: 'site-c', isPillar: true, targetPage: null })] });
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+
+  assert.ok(/\.pill-kind\s*\{/.test(html), 'the kind pills have no style of their own');
+  assert.ok(/<span class="pill pill-kind"[^>]*>\s*CF\s*<\/span>/.test(html),
+    'the CF pill does not use the kind style');
+});
+
+await atest('A POST WHOSE SITE IS GONE IS NOT LABELLED AS WORDPRESS', async () => {
+  /* rowsFor() looks a site up by id and tolerates a miss — a campaign whose
+   * BlogSite was deleted still has rows, and the site column renders empty
+   * for them on purpose. Defaulting the pill to WP there would state a fact
+   * nobody knows, on the rows where it is least checkable. */
+  given({ sites: [], campaigns: [campaign()] });
+
+  const rows = await rowsFor('u1');
+  assert.strictEqual(rows[0].siteTarget, '');
+
+  const html = (await render('/blog-report', { view: 'posts' })).body;
+  assert.ok(!/>\s*WP\s*</.test(html), 'a post with no site was labelled WP');
+  assert.ok(!/>\s*CF\s*</.test(html), 'a post with no site was labelled CF');
 });
 
 console.log('');

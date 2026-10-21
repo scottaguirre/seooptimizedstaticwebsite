@@ -43,7 +43,7 @@ const { versionOrNull, readName } = require('../utils/pluginPackage');
 const { baseUrl } = require('../utils/baseUrl');
 const { log } = require('../utils/logger');
 const { withAppHeader } = require('../utils/appHeader');
-const { pageTitle } = require('../utils/pageTitle');
+const { pageTitle, TOOL_WP_BLOGS } = require('../utils/pageTitle');
 const { pingHealth, healthBadge, healthDetail } = require('../utils/blog/pingHealth');
 
 /** The same shell billingRoute and creditsRoute use, so this does not look bolted on. */
@@ -245,14 +245,19 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
                 rather than present-and-refusing — a control that does
                 nothing when pressed is worse than no control. */ ''}
           ${(bySite.get(String(s._id)) || 0) === 0 ? `
+          <!-- data-confirm, NOT onsubmit. The CSP sets script-src-attr
+               'none', so an inline handler here is refused by the browser
+               and the form submits with no prompt at all — which is what
+               this one did, unnoticed, until 19 October. The question is
+               asked by public/js/confirmSubmit.js. -->
           <form action="/blog-sites/${s._id}/delete" method="POST" class="d-inline"
-                onsubmit="return confirm('Remove this licence from the list? It is already revoked and has no campaigns, so nothing is lost. This cannot be undone.');">
+                data-confirm="Remove this licence from the list? It is already revoked and has no campaigns, so nothing is lost. This cannot be undone.">
             ${res.locals.csrfField || ''}
             <button type="submit" class="btn btn-sm btn-outline-secondary">Remove</button>
           </form>` : `
           <span class="small text-dark" title="This licence published posts. Removing it would leave those campaigns with no record of which site they belong to.">kept for its history</span>`}` : `
           <form action="/blog-sites/${s._id}/revoke" method="POST" class="d-inline"
-                onsubmit="return confirm('Revoke this licence? The plugin on that site will stop working immediately.');">
+                data-confirm="Revoke this licence? The plugin on that site will stop working immediately.">
             ${res.locals.csrfField || ''}
             <button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
           </form>`}
@@ -261,10 +266,10 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
     }).join('');
 
     send(res, page({
-      title: 'Blog Automation — Sites',
+      title: `${TOOL_WP_BLOGS} — Sites`,
       body: `
         <div class="d-flex flex-wrap align-items-start gap-3 mb-2">
-          <h1 class="mb-0">Blog Automation</h1>
+          <h1 class="mb-0">${TOOL_WP_BLOGS}</h1>
           <!-- The report answers "what has this actually done for me", which is
                the question this page raises and cannot answer: it counts
                campaigns, and a count is not a record. -->

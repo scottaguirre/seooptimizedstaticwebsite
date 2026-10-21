@@ -984,9 +984,132 @@ test('ALL THREE FILES PARSE', async () => {
   const pages = feedPages();
   const files = feeds.feedFiles({ pages, blog: BLOG });
 
-  assert.deepStrictEqual(Object.keys(files).sort(), ['robots.txt', 'rss.xml', 'sitemap.xml']);
+  assert.deepStrictEqual(Object.keys(files).sort(), ['404.html', 'robots.txt', 'rss.xml', 'sitemap.xml']);
   assert.doesNotThrow(() => parseXml(files['sitemap.xml']), 'the sitemap is not valid XML');
   assert.doesNotThrow(() => parseXml(files['rss.xml']), 'the feed is not valid XML');
+});
+
+test('THERE IS A 404 PAGE, AND WITHOUT IT EVERY WRONG URL IS THE FRONT PAGE', async () => {
+  /* THE BUG THIS EXISTS FOR, 20 October. Edwin opened the address of an
+   * article that is SCHEDULED AND NOT YET PUBLISHED and got the pillar's
+   * front page, served at that address, answering as though it were real.
+   *
+   * Nothing had leaked — the article was not deployed. The cause is
+   * Cloudflare's own rule: with no top-level 404.html it "serves the root
+   * (/) for any incoming path that does not correspond to a static asset".
+   * So EVERY wrong address on every blog we deploy — a typo, a stale link,
+   * a crawler's guess, a future article's slug — answered with the home
+   * page instead of a 404.
+   *
+   * That is a soft 404, and "Soft 404" is one of the commonest rows in
+   * Search Console's "why pages aren't indexed" table. We have 31 pages
+   * not indexed and had not looked at this.
+   *
+   * THE FILE IS THE WHOLE FIX. Cloudflare serves it, with a 404 status,
+   * for anything it cannot find. */
+  const files = feeds.feedFiles({ pages: feedPages(), blog: BLOG });
+  const html = files['404.html'];
+
+  assert.ok(html, 'there is no 404 page, so Cloudflare will serve the front page instead');
+  assert.ok(/<!DOCTYPE html>/i.test(html), 'the 404 page is not a whole document');
+  assert.ok(/<\/html>/i.test(html), 'the 404 page is not closed');
+});
+
+/** theme.js's class names, required at call time like feeds.js does. */
+function themeClasses() {
+  return require('./utils/blog/render/theme').CLASSES;
+}
+
+test('IT SAYS THE PAGE IS NOT THERE, AND OFFERS THE WAY BACK', async () => {
+  /* A 404 that a person cannot act on is a dead end. The one thing it has
+   * to do besides carry the status code is point home. */
+  const html = feeds.feedFiles({ pages: feedPages(), blog: BLOG })['404.html'];
+  const flat = html.replace(/\s+/g, ' ');
+
+  assert.ok(/not here|cannot find|does not exist|isn't here/i.test(flat),
+    'the page never says that the address is wrong');
+
+  /* THE LINK IN THE TEXT, NOT THE ONE IN THE MASTHEAD. Every page on this
+   * blog carries href="/" twice over, in its header and its footer, so
+   * asserting the document contains one proves nothing — deleting the
+   * sentence that offers the way back survived exactly that test. What is
+   * checked is what a person reads after "this is not here". */
+  /* BOUNDED AT THE CLOSING TAG. Slicing from the post class to the end of
+   * the document swallows the FOOTER, which carries href="/" on every page
+   * — so the sharpened assertion passed the same mutant the blunt one did.
+   * Twice in a row, the thing being measured was somewhere else. */
+  const after = flat.split(`class="${themeClasses().post}"`)[1] || '';
+  const body = after.slice(0, after.indexOf('</div>'));
+
+  assert.ok(/<a href="\/">/.test(body),
+    'the 404 text offers no way home — only the masthead does, and nobody reads that as an instruction');
+});
+
+test('AND IT ASKS NOT TO BE INDEXED', async () => {
+  /* Belt and braces next to the status code. A 404 Google has already
+   * fetched is a 404 Google may list; the meta tag costs one line and
+   * removes the argument. */
+  const html = feeds.feedFiles({ pages: feedPages(), blog: BLOG })['404.html'];
+
+  assert.ok(/<meta name="robots" content="[^"]*noindex/i.test(html),
+    'the 404 page does not ask to stay out of the index');
+});
+
+test('IT WEARS THE BLOG\'S OWN STYLESHEET, NOT A BARE BROWSER PAGE', async () => {
+  /* It is served on the customer's domain under their name. An unstyled
+   * wall of Times New Roman reads as a broken site rather than a wrong
+   * address. */
+  const html = feeds.feedFiles({ pages: feedPages(), blog: BLOG })['404.html'];
+  const { CSS_PATH, CLASSES } = require('./utils/blog/render/theme');
+
+  /* ROOT-RELATIVE, AND THIS IS THE ONE PAGE WHERE IT DECIDES THE OUTCOME.
+   *
+   * CSS_PATH is the key in the deploy's file map — "assets/blog.css", no
+   * leading slash — and writing it straight into an href makes the link
+   * relative to wherever the page is being served. Every other page knows
+   * its own depth. THIS one is served at WHATEVER address was wrong: at
+   * /a/b/c/ a relative href resolves to /a/b/c/assets/blog.css, which does
+   * not exist, and the page arrives unstyled.
+   *
+   * Caught by reading the rendered output, not by the first version of
+   * this assertion — which checked that the path appeared anywhere and so
+   * passed on the broken relative form. */
+  assert.ok(html.includes(`href="/${CSS_PATH}"`),
+    `the stylesheet link is not root-relative, so a 404 at any depth loses it`);
+  assert.ok(html.includes(CLASSES.body), 'the 404 page does not use the blog\'s own classes');
+
+  /* IN THE MASTHEAD, NOT JUST THE <title>. The tab is not the page. A 404
+   * with an empty header reads as a site that has fallen over, which is
+   * the impression this file exists to avoid — and asserting on the
+   * document as a whole passed with the masthead emptied, because the
+   * title tag still carried the name. */
+  const afterMasthead = html.split(`class="${CLASSES.masthead}"`)[1] || '';
+  const masthead = afterMasthead.slice(0, afterMasthead.indexOf('</header>'));
+
+  assert.ok(masthead.includes(BLOG.business.name),
+    'the 404 page does not say whose site it is where a reader would look');
+});
+
+test('AND IT IS NOT IN THE SITEMAP OR THE FEED', async () => {
+  /* A 404 listed in a sitemap is an instruction to go and fetch a 404,
+   * which is the opposite of the point. Built from `pages`, neither file
+   * can name it — this is the test that keeps it that way. */
+  const files = feeds.feedFiles({ pages: feedPages(), blog: BLOG });
+
+  assert.ok(!files['sitemap.xml'].includes('404'), 'the sitemap points at the 404 page');
+  assert.ok(!files['rss.xml'].includes('404'), 'the feed points at the 404 page');
+});
+
+test('THE 404 PAGE DOES NOT CHANGE BETWEEN DEPLOYS OF THE SAME BLOG', async () => {
+  /* Direct Upload hashes each file and sends only what it does not already
+   * have. A 404 page carrying a date, a count or anything else that moves
+   * would re-upload on every publish for ever — the same reason the feeds
+   * carry no build stamp. */
+  const once = feeds.feedFiles({ pages: feedPages(), blog: BLOG })['404.html'];
+  const twice = feeds.feedFiles({ pages: feedPages('2027-03-04T09:00:00Z'), blog: BLOG })['404.html'];
+
+  assert.strictEqual(once, twice,
+    'the 404 page changed between two deploys, so it re-uploads every time');
 });
 
 test('AND THEY STILL PARSE WITH AN AMPERSAND AND A QUOTE IN A TITLE', async () => {
@@ -1174,7 +1297,13 @@ test('EVERY LIVE ARTICLE, PLUS THE FEEDS, THE STYLESHEET AND THE BACKUP', async 
 
   assert.strictEqual(out.ok, true, out.error);
 
+  /* 404.html IS IN THE LIST, AND IT HAS TO BE ASSERTED HERE RATHER THAN
+   * ONLY IN THE FEEDS SECTION. feedFiles() returning it proves nothing if
+   * the deploy never sends it — and with no 404.html on the project,
+   * Cloudflare answers every unknown address with the FRONT PAGE. That is
+   * the bug, and this line is the wire. */
   assert.deepStrictEqual(Object.keys(deploy.calls[0].files).sort(), [
+    '404.html',
     '_data/blog.json',
     'assets/blog.css',
     'index.html',
@@ -1377,7 +1506,7 @@ test('A DRY RUN RENDERS AND SENDS NOTHING', async () => {
 
   assert.strictEqual(out.ok, true);
   assert.strictEqual(out.dryRun, true);
-  assert.strictEqual(out.files, 7, 'a dry run does not report what it would send');
+  assert.strictEqual(out.files, 8, 'a dry run does not report what it would send');
   assert.strictEqual(deploy.calls.length, 0, 'a dry run deployed');
 });
 
@@ -1443,7 +1572,7 @@ test('RENDERING IS SEPARATE FROM SENDING', async () => {
   const db = installDb();
   const out = renderSite({ blog: CF_BLOG, campaigns: db.campaigns, posts: db.posts, now: AT });
 
-  assert.strictEqual(Object.keys(out.files).length, 7);
+  assert.strictEqual(Object.keys(out.files).length, 8);
   assert.strictEqual(out.pages.length, 2);
 });
 
@@ -1875,6 +2004,54 @@ test('AND IS null WHEN THERE WAS NO SETUP TO DO', async () => {
   const out = await publishBlog({ blog: CF_BLOG, now: AT, deploy: fakeDeploy() });
 
   assert.strictEqual(out.setup, null, 'an established blog reported setup work');
+});
+
+test('A FAILED DEPLOY CARRIES ITS RETRY VERDICT UP TO THE SCREEN', async () => {
+  /* THE WIRING GAP, FOUND BY MUTATION FOR THE SIXTH TIME IN THIS PROJECT.
+   *
+   * deploy.js decides whether a publish failure is worth retrying and the
+   * screen renders the sentence — but the only thing joining them is one
+   * property on this function's failure return. Every test either side of
+   * it hands the value in directly, so deleting that line broke nothing
+   * and the sentence simply never appeared. The same shape as
+   * cleanupScheduler.js: two correct halves and no wire.
+   *
+   * Hardcoding the property to false would also have passed, which is why
+   * the assertion is on the value and not on the key. */
+  installDb();
+
+  const deploy = fakeDeploy({
+    ok: false,
+    error: 'The deploy to Cloudflare did not finish.',
+    output: 'An unknown error occurred [code: 8000000]\nThe Pages project does not exist.',
+    projectMissing: true,
+  });
+
+  const out = await publishBlog({ blog: CF_BLOG, now: AT, deploy });
+
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.projectMissing, true,
+    'the deploy said a retry was worth making and the screen will never hear it');
+  assert.match(out.output, /8000000/, "Cloudflare's own reason was dropped on the way up");
+});
+
+test('AND REPORTS false RATHER THAN undefined WHEN IT IS NOT WORTH ONE', async () => {
+  /* A deploy that failed for its own reason — a token short a permission,
+   * a zone that is not there — must not reach the screen as an absent
+   * property. false is a verdict; undefined is a shrug, and the screen
+   * cannot tell a shrug from "we never asked". */
+  installDb();
+
+  const deploy = fakeDeploy({
+    ok: false,
+    error: 'The deploy to Cloudflare did not finish.',
+    output: 'Authentication error [code: 10000]',
+  });
+
+  const out = await publishBlog({ blog: CF_BLOG, now: AT, deploy });
+
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.projectMissing, false, 'a non-retryable failure gave no verdict at all');
 });
 
 test('THE ARTICLES STILL CARRY THE DATES THEY WERE GIVEN', async () => {

@@ -890,15 +890,49 @@ async function deployBlog({ blog, files, requestId, run = runWrangler, attach = 
         ? `${setup.createOutput}\n${output}`
         : output;
 
+      /* THE ONE PUBLISH FAILURE A RETRY ACTUALLY FIXES, SAID OUT LOUD.
+       *
+       * 19 October: a 10-article campaign died on `[code: 8000000]` —
+       * Cloudflare's own "unknown error", carrying no detail at all — and
+       * the screen showed two raw wrangler errors with no hint that the
+       * second was merely the consequence of the first. Hours later the
+       * same publish worked, untouched. Waiting was the whole fix, and
+       * nothing on the page said so.
+       *
+       * BOTH HALVES, OR NOTHING. ensureProject() returns created:false for
+       * a refusal AND for a project that was already there, and it refuses
+       * on purpose to tell those apart — so "the create did not succeed"
+       * cannot carry this on its own. The deploy saying the project is
+       * missing cannot either: on an established blog that means somebody
+       * deleted it in the dashboard, which no amount of waiting mends.
+       * Together they mean one thing: the project is genuinely absent,
+       * that is genuinely why the deploy failed, and a retry is genuinely
+       * the right advice.
+       *
+       * A REGEX ON WRANGLER'S OWN SENTENCE, which is the same bargain
+       * urlFrom() makes two screens down. If wrangler rewords it this goes
+       * quiet and the screen falls back to what it showed before — a lost
+       * hint, not a broken publish. */
+      const projectMissing = !!(
+        setup && !setup.created
+        && /pages project[\s\S]{0,200}does not exist/i.test(output)
+      );
+
       log.error('blog.deploy.failed', new Error(`wrangler exited ${result.code}`), {
         requestId,
         siteId: String((blog && blog._id) || ''),
         project,
         files: names.length,
+        projectMissing,
         output: full.slice(-2000),
       });
 
-      return { ok: false, error: 'The deploy to Cloudflare did not finish.', output: full };
+      return {
+        ok: false,
+        error: 'The deploy to Cloudflare did not finish.',
+        output: full,
+        projectMissing,
+      };
     }
 
     /* THE DEPLOYMENT'S OWN ADDRESS, AND THE ONE THAT OUTLIVES IT.

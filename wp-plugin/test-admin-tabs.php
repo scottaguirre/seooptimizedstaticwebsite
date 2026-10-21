@@ -3246,6 +3246,121 @@ test( 'A BYTE ORDER MARK DOES NOT RIDE ALONG IN THE FIRST TOPIC', function () {
 	same( 'Paying off a loan early', $out['rows'][0]['topic'] );
 } );
 
+test( 'AND IT DOES NOT BREAK THE QUOTING ON THE FIRST ROW', function () {
+	/* THE BUG THE TEST ABOVE WAS BLIND TO — 20 October 2026.
+	 *
+	 * That test passes with an UNQUOTED first field, which is the one shape
+	 * where this cannot bite. Edwin's real file starts:
+	 *
+	 *     \xEF\xBB\xBF"How to Start a Local Plumbing Company: Licensing, Insurance, ..."
+	 *
+	 * The mark sits IN FRONT OF the opening quote, so the quote is no longer
+	 * the first character of the field and fgetcsv does not treat the field
+	 * as quoted at all. Every comma inside his title then splits a column:
+	 *
+	 *     topic       "How to Start a Local Plumbing Company: Licensing
+	 *     targetQuery  Insurance
+	 *     linkPhrase   Equipment
+	 *
+	 * The existing strip runs AFTER fgetcsv, on cells[0] — it removes the
+	 * mark and leaves the wreckage, so it reported success on a row that had
+	 * already been shredded.
+	 *
+	 * Only the FIRST row is affected, which is why this went unnoticed: rows
+	 * 13 and 15 of the same file are quoted too and parse perfectly.
+	 *
+	 * An example chosen from the cases where the bug does not bite argues for
+	 * the wrong thing — the same sentence this project wrote about
+	 * bucketCounts(9), one file over. */
+	$out = IE_Admin::parse_topics_csv( ie_csv(
+		"\xEF\xBB\xBF\"How to Start a Local Plumbing Company: Licensing, Insurance, Equipment\",how to start a plumbing company\n"
+		. "Why Profitable Plumbing Jobs Create Cash Flow Problems,plumbing business cash flow\n"
+	) );
+
+	same( 2, count( $out['rows'] ) );
+	same(
+		'How to Start a Local Plumbing Company: Licensing, Insurance, Equipment',
+		$out['rows'][0]['topic']
+	);
+	same( 'how to start a plumbing company', $out['rows'][0]['targetQuery'] );
+	same( '', $out['rows'][0]['linkPhrase'] );
+} );
+
+test( 'A MARKED FILE WITH NO TRAILING NEWLINE KEEPS ITS LAST ROW', function () {
+	/* Both are true of Edwin's file at once, and they are handled in
+	 * different places — the mark before the first row, the missing newline
+	 * after the last. Fixing one while breaking the other would look like a
+	 * fix and lose a topic. */
+	$out = IE_Admin::parse_topics_csv( ie_csv(
+		"\xEF\xBB\xBF\"First, with commas\",one\r\nSecond topic,two\r\nThird topic,three"
+	) );
+
+	same( 3, count( $out['rows'] ) );
+	same( 'First, with commas', $out['rows'][0]['topic'] );
+	same( 'Third topic', $out['rows'][2]['topic'] );
+} );
+
+test( 'THE BUSY LATCH LETS GO WHEN THE PAGE COMES BACK', function () {
+	/* THE STUCK SPINNER — 20 October 2026.
+	 *
+	 * The submit handler sets `busy = true` and nothing ever sets it back.
+	 * That is right while a navigation is under way: a second press would
+	 * spend a second model call on a request already in flight.
+	 *
+	 * It is wrong the moment the page is RESTORED. Press Back after an
+	 * upload and the browser hands you the same page out of its cache, with
+	 * `busy` still true and the spinner still drawn into the button — so
+	 * every later submit is cancelled in the first line of the handler, in
+	 * silence. The form is dead for the rest of that page's life and nothing
+	 * on screen says why. Edwin's words were "stuck spinner".
+	 *
+	 * pageshow FIRES ON AN ORDINARY LOAD TOO, which is what makes it the
+	 * right event: there is no state to work out, only a flag to clear.
+	 *
+	 * ASSERTED ON THE SOURCE, because this is browser JavaScript inside a
+	 * PHP file and this suite has no DOM. That is a weaker test than running
+	 * it, and the honest description of what it buys: it catches the line
+	 * being deleted, not the logic being wrong. */
+	$src = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-admin.php' );
+	$pos = strpos( $src, "var busy = false;" );
+
+	ok( false !== $pos, 'the busy latch is gone — this test needs rewriting, not deleting' );
+
+	$script = substr( $src, $pos, 2600 );
+
+	has( $script, "'pageshow'", 'a restored page keeps its spinner and the form stays dead' );
+
+	/* SCOPED TO THE LISTENER'S OWN BODY, and that is not fussiness.
+	 *
+	 * The first version of this test looked for "busy = false" ANYWHERE in
+	 * the script — which the DECLARATION three lines above satisfies. So
+	 * deleting the reset from inside the listener left the test green, and
+	 * mutation said so. An assertion that a string appears somewhere in a
+	 * file is usually an assertion about the wrong line. */
+	$at = strpos( $script, "'pageshow'" );
+	$listener = substr( $script, $at, 420 );
+
+	has( $listener, 'busy = false', 'the restored page never releases the latch' );
+	has( $listener, 'disabled = false',
+		'the buttons come back disabled, which is the same dead end wearing different clothes' );
+} );
+
+test( 'AND THE BUTTON THAT WAS PRESSED IS NEVER DISABLED', function () {
+	/* THE TRAP THE CODE ALREADY WARNS ABOUT, AND NOTHING CHECKED.
+	 *
+	 * A disabled submit button is left OUT of the POST, so disabling the one
+	 * that was clicked would drop `action=ie_upload_topics` and admin-post
+	 * would have nothing to dispatch on. The comment above the script says
+	 * so in capitals; no test said anything at all, so the comment was the
+	 * only thing standing between that warning and whoever edits it next. */
+	$src = file_get_contents( __DIR__ . '/interlink-engine/includes/class-ie-admin.php' );
+	$pos = strpos( $src, "var busy = false;" );
+	$script = substr( $src, $pos, 2600 );
+
+	has( $script, 'if (all[i] !== b) { all[i].disabled = true; }',
+		'the clicked button may now be disabled, which drops action= from the POST' );
+} );
+
 test( 'MISSING COLUMNS ARE EMPTY, AND SILENT', function () {
 	/* A topic with no keyword is a legitimate half-filled file: for a silo
 	 * campaign the server works the keyword out, and for a pillar one the form

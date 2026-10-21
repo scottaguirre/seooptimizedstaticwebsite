@@ -14,7 +14,7 @@ const { CREDITS_PER_POST } = require('../utils/blogPricing');
 const { log } = require('../utils/logger');
 const { renderAuthPage } = require('../utils/renderAuthPage');
 const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets } = require('../utils/appHeader');
-const { pageTitle } = require('../utils/pageTitle');
+const { pageTitle, TOOL_WP_BLOGS } = require('../utils/pageTitle');
 const { createVerificationToken, hashToken, notExpired } = require('../utils/authTokens');
 const { sendEmail, verificationEmail } = require('../utils/sendEmail');
 const { signupResultPage } = require('../utils/signupResult');
@@ -343,7 +343,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     const blogCard = `
       <div class="card bg-secondary-subtle border-secondary text-dark mb-4">
         <div class="card-body">
-          <h5 class="card-title mb-1">Blog Automation</h5>
+          <h5 class="card-title mb-1">${TOOL_WP_BLOGS}</h5>
           <p class="card-subtitle text-dark mb-0">
             ${connectedSites
               ? `${connectedSites} WordPress site${connectedSites === 1 ? '' : 's'} connected`

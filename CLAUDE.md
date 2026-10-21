@@ -2247,6 +2247,191 @@ back when disputing a bill. Now covered, and the mutation is caught.
 
 ## Outstanding
 
+### QUEUED — fold the campaigns table on a blog's page
+
+Edwin, 21 October, right after the Articles list moved out: *"I was
+thinking that this could be a toggler to show the table campaigns but we
+can do it later."*
+
+The same problem one table along. The Articles list was the urgent one —
+171 rows — but a worked blog accumulates campaigns too, and they sit
+between the timezone form and the front-page picker.
+
+**A fold, not a second screen, and the difference is the point.** Articles
+earned their own page because the list is a destination: you go there to
+edit one. Campaigns are read in place — you glance at them, then use the
+form below. Moving them would put the campaign list and the "Plan a
+campaign" form on different screens, which is worse than the crowding.
+
+**Where it goes:** the `planned` block in `blogPageSpec()`,
+`routes/staticBlogsRoute.js`. A `<details>` element is the whole of it —
+no JavaScript, and it survives the CSP that blocks inline handlers (see
+the inline-handler entry below; that is exactly the trap this avoids).
+
+**Open when there is something to see, shut when it is long.** Probably
+open at five or fewer. A control that hides a blog's only campaign is
+worse than no control.
+
+### QUEUED — the front-page dropdown is still unbounded
+
+Found 21 October, while moving the Articles list onto its own screen.
+
+The blog page's `<select>` for "Which article is the front page?" lists
+**every** article the blog has. On Edwin's plumbing blog that is 171
+`<option>` elements, and it grows forever — the same fault the Articles
+table had, in the control standing next to where that table used to be.
+
+It surfaced as a FAILING TEST against correct code: an assertion that
+"Article 60" no longer appears on the blog page failed, because the
+dropdown still names all 171 even with the table gone.
+
+**Not urgent.** A long `<select>` is ugly and slow to scroll; it is not
+broken, and the query behind it already selects `title slug` only.
+
+**Two things move together when it is fixed:**
+
+- the control itself — a search/typeahead, or a "choose from the Articles
+  screen" link that posts the chosen id back
+- `blogPageSpec()`'s article count. The button reading "171 articles" is
+  driven by `articles.length`, which is honest only because this page
+  loads every article FOR the dropdown. Cap the dropdown and that number
+  silently becomes "how many the dropdown offers" while still reading as
+  "how many exist". The comment above `blogPageSpec` says so; the fix is
+  to take the count from `countDocuments()` in the same commit.
+
+### QUEUED — rename the two blog items in the sidebar
+
+Asked for by Edwin on 20 October, explicitly **not now**. He sent a
+screenshot of the TOOLS nav and wants two labels changed:
+
+    Blog Automation   ->   Build WP blogs
+    Static Blogs      ->   Build Cloudflare Blogs
+
+**Why it is worth doing.** Neither current label says what the thing builds.
+"Static Blogs" in particular is an implementation detail — the blogs are
+static because Cloudflare Pages serves files, which is true and tells a
+customer nothing. The pair also gives no hint that they are two halves of
+one choice: WordPress, or Cloudflare.
+
+**Where the labels live.** `utils/appHeader.js` is the only place the SIDEBAR
+reads from:
+
+    :344   { href: '/blog-sites',   icon: 'bi-journal-text', label: 'Blog Automation' },
+    :353   { href: '/static-blogs', icon: 'bi-cloud',        label: 'Static Blogs' },
+
+**IT IS NOT A TWO-LINE CHANGE, and that is the whole reason it is written
+down rather than done in passing.** Twenty occurrences across the app,
+five test files among them:
+
+- `routes/blogSitesRoute.js:269,272` — the page title and its `<h1>`. A
+  sidebar item that says one thing and a heading that says another is worse
+  than either name alone.
+- `routes/authRoute.js:346` — the dashboard card
+- `routes/blogReportRoute.js:837` — a button back
+- `routes/exportWpThemeRoute.js:298` — "Set up Blog Automation"
+- `routes/pluginDownloadRoute.js:72` — "Back to Blog Automation"
+- `scripts/restore-blog.js:143` — printed advice naming the Static Blogs
+  screen
+- tests: `test-blog-pages.js`, `test-blog-sites-delete.js`,
+  `test-keyword-research.js`, `test-plugin-download.js`,
+  `test-static-blogs.js`
+
+`test-plugin-download.js` asserts the dashboard links to Blog Automation,
+and `test-app-header.js` is the suite that owns the sidebar. **Do the tests
+first**: this is a rename, so every failure should be a string the rename
+was meant to reach, and a suite that stays green through it was asserting
+on the href rather than the label.
+
+**Leave the URLs alone.** `/blog-sites` and `/static-blogs` are bookmarked,
+linked from the plugin's setup text, and in Edwin's own notes. A label is
+cheap to change; a path is not. Same rule as the plugin folder.
+
+### ~~FOR TOMORROW~~ CLOSED 20 October 2026 — the plugin's CSV hang
+
+**Fixed, shipped in plugin 0.53.0, and confirmed by Edwin on a live site.**
+
+What he reported: a CSV of topics uploaded in wp-admin, the spreadsheet had
+only TWO columns, and the plugin got stuck. His guess was that it expected
+three.
+
+**The guess was wrong, and so was the shape of the bug.** The parser was
+already tolerant of a short row — `isset()` on cells 1 and 2, so a missing
+third cell becomes `''`. The column count was never the problem. It was two
+separate faults that looked like one:
+
+1. **A UTF-8 BOM before the opening quote of the first field.** In PHP a BOM
+   in front of `"` means `fgetcsv()` does not see the field as quoted, so
+   commas INSIDE that first cell split it into extra columns. Edwin's titles
+   contain commas, so his first row shattered. Fixed in
+   `class-ie-admin.php` by reading and discarding three bytes before parsing:
+
+       if ( "\xEF\xBB\xBF" !== fread( $handle, 3 ) ) {
+           rewind( $handle );
+       }
+
+2. **The spinner latched.** After the POST the buttons stayed disabled, which
+   is what "stuck" actually looked like on screen. Fixed with a `pageshow`
+   listener that resets `busy = false` and re-enables them — `pageshow`
+   rather than `load`, because the back/forward cache restores the page
+   without firing `load`.
+
+**What settled it was the real file.** Edwin sent the actual CSV; reasoning
+about the code had pointed at the wrong half twice. That is the lesson worth
+keeping from this entry.
+
+**Confirmed working** 20 October: he uploaded a two-column file in wp-admin
+and the topics table filled correctly, with comma-bearing titles intact and
+the third column empty. An empty `linkPhrase` is not a gap — `referTo()` in
+`utils/blog/linkPlan.js` falls back to the keyword.
+
+**Do not "fix" the parser's column handling.** It was never broken, and the
+tolerant `isset()` lines above are the correct behaviour.
+
+### ~~ALSO OPEN~~ CLOSED 20 October 2026 — the branded anchor bucket
+
+**Fixed, deployed, and both of the open questions answered by Edwin.**
+
+The fault, as found: `buildAnchorPool()` in `utils/blog/anchorPool.js` had a
+`local ? ... : ...` branch for `semantic` and for `descriptive` — both split
+after shipping service-business language onto informational blogs — but
+**`branded` had no such branch**. On an `explr-home.com` blog it produced:
+
+    All About Plumbing
+    All About Plumbing's plumbing jobsite injuries
+    the team at All About Plumbing
+
+There is no team and nobody is hiring anyone. 10% of a campaign's links are
+branded and `the team at …` is second in the list, so it appeared from about
+15 posts up — well inside Edwin's 25-post campaigns.
+
+**His answers, which this entry was waiting on:**
+
+- A blog should **not** use its own name as anchor text at all. These are
+  general blogs, not local businesses, so there is no brand to link on.
+- The 10% goes to **`semantic`**, not `descriptive`.
+
+**What shipped:**
+
+- `GENERAL_MIX` in `utils/blog/anchors.js` — `branded: 0`, and its share
+  folded into `semantic`:
+
+      semantic: DEFAULT_MIX.semantic + DEFAULT_MIX.branded,
+
+- The branded bucket in `anchorPool.js` gated on `local`, and the chosen mix
+  returned alongside the pool so the planner cannot silently disagree with it
+- **Edwin's own idea, shipped with it:** four semantic templates that extend
+  the exact match rather than inventing a phrase — `what to know about`,
+  `the basics of`, `a guide to`, `an overview of`. His words: *"just add a
+  word or a couple of words at the end or at the beginning of the exact
+  anchor match."*
+- `test-anchor-pool.js` is at 35 tests covering this
+
+**Still a product decision, not a bug:** campaigns planned BEFORE this fix
+still carry `the team at All About Plumbing` in their stored slots. Anchors
+are chosen at planning time and read back at generation time on purpose, so
+nothing re-derives them. Replanning those campaigns is the only way to clear
+them, and Edwin has not asked for it.
+
 **Cleared on 29 September** — the blog report headline, filtering the blog
 report, fifty campaigns in the plugin, longer posts with spread-out links, and
 `test-admin-tabs.php` (52 passing, in `deploy.sh`). All five are written up in

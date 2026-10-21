@@ -232,10 +232,36 @@ function install(over = {}) {
 
   BlogPost.aggregate = async () => [];
 
-  /* The written articles, which the front-page picker lists. */
+  /* The written articles, which the front-page picker lists and the
+   * Articles screen pages through.
+   *
+   * THE STUB ACTUALLY SLICES, and that is the whole point of it. An earlier
+   * shape ignored .skip() and .limit() and returned every row, which would
+   * have let "page one shows fifty of them" pass against a route that asked
+   * the database for all 171 and printed the lot. A stub that is more
+   * generous than the real thing tests nothing.
+   *
+   * The calls are recorded as well, because WHAT WAS ASKED FOR matters
+   * separately from what came back: a route that fetches everything and
+   * slices in JavaScript renders the right page and still drags a whole
+   * blog's titles out of Mongo on every view. */
   BlogPost.find = (where) => {
     db.postFindWhere = where;
-    return { select: () => ({ sort: () => ({ lean: async () => db.articles }) }) };
+    db.postFindSkip = null;
+    db.postFindLimit = null;
+
+    const chain = {
+      select: () => chain,
+      sort: () => chain,
+      skip: (n) => { db.postFindSkip = n; return chain; },
+      limit: (n) => { db.postFindLimit = n; return chain; },
+      lean: async () => {
+        const from = db.postFindSkip || 0;
+        const to = null === db.postFindLimit ? undefined : from + db.postFindLimit;
+        return db.articles.slice(from, to);
+      },
+    };
+    return chain;
   };
 
   BlogPost.exists = async (where) => {
@@ -614,6 +640,261 @@ test('ONE TOPIC PER LINE, AND BLANK LINES ARE NOT TOPICS', async () => {
   assert.ok(out.html.includes('Signs your water heater is failing'), 'the first topic is missing');
   assert.ok(out.html.includes('water heater repair cost'), 'the pipe-separated search phrase was dropped');
   assert.ok(!/<td>\s*<\/td>/.test(out.html), 'a blank line became a topic');
+});
+
+section('LOADING A CSV OF TOPICS');
+
+test('THE FORM OFFERS A FILE, AND THE FILE IS NEVER UPLOADED', async () => {
+  /* WHY THE FILE IS READ IN THE BROWSER. csrfProtect runs app-wide BEFORE
+   * any route and reads its token out of req.body, which for
+   * multipart/form-data nothing has parsed yet — so a plain upload form
+   * with a hidden _csrf is refused outright. Making one work means posting
+   * by script with a header, a multer instance with its own limits, and a
+   * local error handler because server.js answers every multipart request
+   * with JSON. All of that to put text into a textarea.
+   *
+   * THE TEST THAT MATTERS IS THE NEGATIVE ONE. A file input is harmless;
+   * a form that has quietly become multipart is a form that stops
+   * working. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(/<input[^>]+type="file"/.test(out.html), 'there is no way to choose a CSV');
+  assert.ok(!/enctype\s*=\s*["']multipart/i.test(out.html),
+    'the campaign form became multipart, which csrfProtect refuses');
+  assert.ok(!/name="topics_csv"/.test(out.html),
+    'the file input is named as if it were posted');
+});
+
+test('AND THE PAGE CARRIES THE PARSER THAT IS ACTUALLY TESTED', async () => {
+  /* THE WHOLE ARRANGEMENT IN ONE ASSERTION. csvTopics.js emits its own
+   * source into the page rather than the page keeping a hand-written copy,
+   * so there is one parser and test-csv-topics.js tests it. Drop the
+   * emission and the button still renders, the file still opens, and
+   * nothing happens — which is why this is asserted here and not left to
+   * the sight of a button. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+  const { browserSource } = require('./utils/blog/csvTopics');
+
+  assert.ok(out.html.includes(browserSource()),
+    'the page does not carry the parser, so choosing a file would do nothing');
+});
+
+test('and the topics box is what the loaded lines are written into', async () => {
+  /* The lines land where a typed list lands, so everything downstream —
+   * Plan, Suggest, Clear — is unchanged and there is nothing new to keep
+   * in step. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(/getElementById\('topics'\)/.test(out.html) || /getElementById\("topics"\)/.test(out.html),
+    'the loader does not write into the topics box');
+});
+
+test('AND WHAT REACHES THE BROWSER IS VALID JAVASCRIPT', async () => {
+  /* THE TRAP THIS EXISTS FOR, AND IT IS A QUIET ONE. The loader is written
+   * inside a template literal, where an unrecognised escape becomes the
+   * letter after it: a hand-written /\s+$/ arrives as /s+$/ and a '\n' as
+   * a real line break in the middle of a string. The first is a regex that
+   * silently matches the wrong thing; the second is a syntax error that
+   * kills every script on the page.
+   *
+   * Nothing else here would notice. The button renders, the file opens,
+   * and nothing happens — on a screen whose other buttons still work. So
+   * the rendered script is parsed, which is the only check that can see
+   * it. new Function parses without running, which is what we want: the
+   * body reaches for document and FileReader and neither exists here. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  /* EACH BLOCK CUT AT ITS OWN CLOSING TAG BEFORE ANYTHING IS SEARCHED.
+   *
+   * THIS TEST WAS GREEN FOR THE WRONG REASON FIRST, and mutation is what
+   * said so: a backslash hand-written into the loader survived a suite
+   * that claimed to parse it. The reason is that "topicsCsv" appears on
+   * the page TWICE — once as the file input's id, in the markup, and once
+   * in the script. Splitting on <script> and taking the first chunk
+   * containing the word landed on an EARLIER script's body, which parsed
+   * perfectly well and proved nothing about the loader.
+   *
+   * So each block is searched for something only the loader's body has.
+   *
+   * SPLIT ON THE CLOSING TAG, THEN TAKE THE FIRST OPENING ONE, and that is
+   * how HTML actually works rather than a preference.
+   *
+   * Only </script> ends a script. The text "<script>" inside one is
+   * ordinary content — and the route's comments contain it twice, in the
+   * suggestions block and in the loader, both explaining why a script's
+   * POSITION should not matter. Splitting on the opening tag cut the loader
+   * in half; reaching for the LAST opening tag in a chunk then landed on
+   * one of those comments and cut it again. Each chunk holds exactly one
+   * real script, and its opening tag is the first one in that chunk. */
+  const script = out.html
+    .split('</script>')
+    .filter(chunk => chunk.includes('<script>'))
+    .map(chunk => chunk.slice(chunk.indexOf('<script>') + '<script>'.length))
+    .find(block => block.includes('topicsCsv') && block.includes('FileReader'));
+
+  assert.ok(script, 'the loader script is not on the page at all');
+
+  assert.doesNotThrow(() => new Function(script),
+    'the rendered loader is not valid JavaScript');
+
+  /* AND NOT A STRAY BACKSLASH IN IT. Valid JavaScript is not the same as
+   * CORRECT JavaScript: /s+$/ parses perfectly well. The loader is written
+   * with String.fromCharCode and trimEnd precisely so that no backslash
+   * needs to survive the template literal — and the parser inlined above
+   * it is emitted from source, where its own escapes are safe. This is the
+   * line that notices somebody adding one by hand. */
+  const handWritten = script.slice(script.indexOf('var NL'));
+  assert.ok(!handWritten.includes('\\'),
+    'a backslash was hand-written into a template literal, where it does not survive');
+});
+
+test('AND CLEAR TOPICS IS BOUND IN IT, NOT BY AN onclick', async () => {
+  /* IT WAS AN onclick ATTRIBUTE AND IT NEVER RAN. The app's CSP sets
+   * script-src-attr to 'none', so the browser refused it outright: the
+   * button was pressed, the box kept its contents, and nothing anywhere
+   * said why. Edwin found it by pressing it.
+   *
+   * BOTH HALVES ARE ASSERTED, because mutation showed that neither alone
+   * is enough — deleting the id, or the listener that uses it, left every
+   * other test in this file green. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(out.html.includes('id="ieClearTopics"'),
+    'the Clear topics button has no id, so nothing can bind it');
+
+  const script = out.html
+    .split('</script>')
+    .filter(chunk => chunk.includes('<script>'))
+    .map(chunk => chunk.slice(chunk.indexOf('<script>') + '<script>'.length))
+    .find(block => block.includes('topicsCsv') && block.includes('FileReader'));
+
+  assert.ok(script, 'the loader script is not on the page');
+
+  /* THE SCRIPT IS RUN, NOT PATTERN-MATCHED.
+   *
+   * Asserting that the text contains "ieClearTopics" and "addEventListener"
+   * passed a script in which the button was never bound — both words appear
+   * elsewhere in it. Mutation said so. And a pattern test is the wrong
+   * instrument anyway: what failed in production was not a missing word, it
+   * was a handler that existed and did not run.
+   *
+   * So the rendered source is executed against a fake document, the button
+   * is clicked, and the box is checked. No browser, no network, and it
+   * fails for the reason it is named after. */
+  const nodes = {};
+  const el = (id) => (nodes[id] = {
+    id, value: '', textContent: '', files: null, listeners: {},
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    focus() { this.focused = true; },
+    click() { for (const fn of this.listeners.click || []) fn.call(this, {}); },
+  });
+
+  el('topics');
+  el('topicsCsv');
+  el('topicsCsvNote');
+  el('ieClearTopics');
+
+  const fakeDocument = {
+    readyState: 'complete',
+    getElementById: (id) => nodes[id] || null,
+    addEventListener() {},
+  };
+
+  new Function('document', 'FileReader', script)(fakeDocument, function FileReader() {});
+
+  nodes.topics.value = 'Something I typed\nAnd another line';
+  nodes.topicsCsvNote.textContent = '2 topics added from topics.csv';
+
+  nodes.ieClearTopics.click();
+
+  assert.strictEqual(nodes.topics.value, '', 'pressing Clear topics did not empty the box');
+  assert.strictEqual(nodes.topicsCsvNote.textContent, '',
+    'the box was emptied but it still says topics were added from a file');
+  assert.strictEqual(nodes.topics.focused, true, 'the cursor was not put back in the box');
+
+  /* THE ATTRIBUTE, NOT THE WORD — and that distinction has now caught this
+   * session out four times. The comments explaining why the handler was
+   * moved contain "onclick", and HTML comments ship to the browser, so a
+   * ban on the word fails on the prose that documents the fix. The source
+   * scan in test-inline-handlers.js uses this same shape. */
+  assert.ok(!/\son[a-z]+\s*=\s*["']/i.test(out.html),
+    'an inline handler attribute is back on this page, and the CSP will refuse it');
+});
+
+test('A CSV THAT IS LOADED IS ADDED, NOT SUBSTITUTED FOR WHAT IS THERE', async () => {
+  /* The same rule Suggest topics follows: it ADDS to the list. A loader
+   * that replaced the box would silently destroy a list somebody had
+   * typed, and Clear already exists for people who want it gone. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(!/\.value\s*=\s*lines\.join/.test(out.html),
+    'the loader overwrites the box instead of adding to it');
+});
+
+test('A THIRD FIELD AFTER A SECOND PIPE IS THE LINK PHRASE', async () => {
+  /* WHAT THE CSV LOADER WRITES, and the reason the box grew a third field
+   * at all. The plugin's CSV has carried three columns since it was
+   * written — topic, search phrase, link phrase — and until now this
+   * screen could only read two, so loading a file threw the third away.
+   *
+   * It stays optional. A typed line with one pipe, or none, behaves
+   * exactly as it did: linkPlan falls back to the keyword, which is what
+   * it was changed to do on 19 October. */
+  install();
+
+  const out = await call(handler('post', '/static-blogs/:id/plan'), req({
+    body: {
+      targetUrl: 'https://example.com/water-heater-repair/',
+      targetKeyword: 'water heater repair leander',
+      topics: 'What a repair costs | water heater repair cost | what a repair costs',
+      startDate: '2026-11-03', gapDays: '7', hour: '9',
+    },
+  }));
+
+  assert.strictEqual(out.status, 200, out.html.slice(0, 400));
+
+  /* ASSERTED ON THE SLOT THAT WAS SAVED, NOT ON THE PAGE. The plan screen
+   * shows the topic, the search phrase and the date; the link phrase is
+   * not one of its columns, and createCampaign's response projection drops
+   * it before the page ever sees it. That projection is shared with the
+   * plugin's /api/blog/plan, so widening it to make an assertion easier
+   * would change an API for the sake of a test. What matters is that the
+   * campaign carries the phrase, and the campaign is right here. */
+  assert.strictEqual(db.created_campaign.slots[0].linkPhrase, 'what a repair costs',
+    'the link phrase after the second pipe was thrown away');
+});
+
+test('and a pipe with nothing after it leaves the link phrase unset', async () => {
+  /* A trailing separator is a typing accident, not an instruction to use
+   * an empty anchor. An empty linkPhrase that reached the planner would
+   * render a link with no words in it. */
+  install();
+
+  const out = await call(handler('post', '/static-blogs/:id/plan'), req({
+    body: {
+      targetUrl: 'https://example.com/water-heater-repair/',
+      targetKeyword: 'water heater repair leander',
+      topics: 'What a repair costs | water heater repair cost |\nHow long a tank lasts',
+      startDate: '2026-11-03', gapDays: '7', hour: '9',
+    },
+  }));
+
+  assert.strictEqual(out.status, 200, out.html.slice(0, 400));
+  assert.ok(out.html.includes('water heater repair cost'), 'the search phrase was lost');
+  assert.strictEqual(db.created_campaign.slots[0].linkPhrase, '',
+    'a trailing pipe was stored as a phrase somebody chose');
 });
 
 test('a topic with no phrase after the pipe uses itself', async () => {
@@ -1855,6 +2136,76 @@ test('the result names every article and where it landed', async () => {
   assert.ok(out.html.includes(PUBLISHED.url), 'there is no link to the live site');
 });
 
+/**
+ * The row numbers on a rendered page, in document order.
+ *
+ * THREE TESTS BELOW MATCHED `<td class="text-end text-white-50">` EXACTLY,
+ * and all three broke on 21 October when those two utility classes were
+ * replaced by the shared `.rownum` — a pure rename that changed nothing a
+ * reader could see. The tests were right about what they wanted and wrong
+ * about how they asked: an exact class attribute is a copy of a styling
+ * decision, so every restyle reads as a regression.
+ *
+ * This matches the ROLE instead, and tolerates other classes beside it.
+ */
+function rowNumbersIn(html) {
+  return [...html.matchAll(
+    /<td[^>]*class="[^"]*\brownum\b[^"]*"[^>]*>\s*(\d+)\s*<\/td>/g)].map(m => m[1]);
+}
+
+test('AND IT NUMBERS THEM, BECAUSE THIRTY-SEVEN ROWS CANNOT BE COUNTED BY EYE', async () => {
+  /* Edwin published 37 articles and the page listed them unnumbered — so
+   * "how many went up" and "which one is the twentieth" both meant
+   * counting down a screen. The plan table has numbered its slots since it
+   * was written; this one and the Articles list had not caught up.
+   *
+   * THE NUMBERS ARE THE ROW'S POSITION, not the slot index. This list is
+   * what was deployed in the order it was deployed, and a campaign's slot
+   * numbers would be three different sequences interleaved. */
+  install();
+  stubPublish(PUBLISHED);
+
+  const out = await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode: 'publish' } }));
+
+  const numbers = rowNumbersIn(out.html);
+
+  assert.deepStrictEqual(numbers, ['1', '2'], 'the published articles are not numbered from one');
+});
+
+test('and the numbering counts rows even when the first article is the front page', async () => {
+  /* The front page is an article like any other and holds position one.
+   * Numbering that skipped it, or restarted after it, would make every
+   * later number disagree with the row it sits beside. */
+  install();
+  stubPublish({ ...PUBLISHED, pages: [
+    { isHome: true, url: 'https://leanderwaterheaters.com/', post: { slug: 'a', title: 'A' } },
+    { isHome: false, url: 'https://leanderwaterheaters.com/b/', post: { slug: 'b', title: 'B' } },
+    { isHome: false, url: 'https://leanderwaterheaters.com/c/', post: { slug: 'c', title: 'C' } },
+  ] });
+
+  const out = await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode: 'publish' } }));
+
+  const numbers = rowNumbersIn(out.html);
+
+  assert.deepStrictEqual(numbers, ['1', '2', '3'], 'the front page broke the sequence');
+});
+
+test('AND THE ARTICLES LIST IS NUMBERED TOO', async () => {
+  /* The same list, in the other place it is read. Numbering one and not
+   * the other is worse than numbering neither: the two disagree about what
+   * "the fourth article" means.
+   *
+   * Pointed at /articles on 21 October, where the list now lives. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  const numbers = rowNumbersIn(out.html);
+
+  assert.deepStrictEqual(numbers, ['1', '2'], 'the Articles list is not numbered from one');
+  assert.ok(out.html.includes('First one'), 'the articles themselves went missing');
+});
+
 test('A FAILED DEPLOY SHOWS WHY, RATHER THAN A BLANK PAGE', async () => {
   install();
   stubPublish({
@@ -1870,6 +2221,70 @@ test('A FAILED DEPLOY SHOWS WHY, RATHER THAN A BLANK PAGE', async () => {
   assert.ok(out.html.includes('did not finish'), 'the failure has no message');
   assert.ok(out.html.includes('8000007'), "wrangler's reason is not shown, so nobody can act on it");
   assert.deepStrictEqual(db.siteUpdates, [], 'a failed deploy was recorded as a success');
+
+  /* AND IT DOES NOT TELL HIM TO WAIT. This failure is not the retryable
+   * one, and "try again in a few minutes" offered here would be advice to
+   * sit out a problem that never mends itself. The sentence has to be
+   * absent by default, not present by default — see the two tests
+   * below. */
+  assert.ok(!/try publishing again/i.test(out.html),
+    'an ordinary deploy failure was told to wait a few minutes');
+});
+
+test('A PROJECT THAT COULD NOT BE CREATED IS TOLD TO TRY AGAIN', async () => {
+  /* 19 October. A 10-article campaign died on Cloudflare's `[code:
+   * 8000000]` — an "unknown error" with no detail — and the screen showed
+   * two raw wrangler errors, the second of them only a consequence of the
+   * first. There was no way to tell from the page whether to wait, fix a
+   * token, or call Cloudflare. Hours later the identical publish worked
+   * with nothing changed: waiting was the entire fix.
+   *
+   * THE SENTENCE IS THE FEATURE, so the test is on the sentence. What it
+   * must say is that nothing was lost — which is true, because
+   * markPublished only runs on a success and nothing is redated on a
+   * failure — and that a retry is worth making. */
+  install();
+  stubPublish({
+    ok: false,
+    error: 'The deploy to Cloudflare did not finish.',
+    output: 'An unknown error occurred [code: 8000000]\nThe Pages project does not exist.',
+    projectMissing: true,
+    pages: [], missing: [], files: 0,
+  });
+
+  const out = await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode: 'publish' } }));
+  const flat = out.html.replace(/\s+/g, ' ');
+
+  assert.strictEqual(out.status, 400);
+  assert.ok(/nothing was lost/i.test(flat), 'it does not say the articles survived');
+  assert.ok(/still written and still scheduled/i.test(flat),
+    'it does not say what state the articles are in');
+  assert.ok(/try publishing again in a few minutes/i.test(flat),
+    'it does not say what to do, which is the whole point of the sentence');
+
+  /* THE RAW OUTPUT STAYS. The sentence is a hint, not a replacement for
+   * what Cloudflare said — and on the night this happened the codes were
+   * the only thing worth having. */
+  assert.ok(out.html.includes('8000000'), "Cloudflare's own reason was hidden behind the hint");
+  assert.deepStrictEqual(db.siteUpdates, [], 'a failed deploy was recorded as a success');
+});
+
+test('AND A PREVIEW NEVER CARRIES IT, BECAUSE NOTHING WAS DEPLOYED', async () => {
+  /* A dry run does not reach Cloudflare, so it has no project to fail to
+   * create. If this sentence ever shows up on a preview, the flag is being
+   * read from somewhere it cannot have come from. */
+  install();
+  stubPublish({
+    ok: false,
+    error: 'Nothing is due to be published yet.',
+    projectMissing: true,
+    pages: [], missing: [], files: 0,
+  });
+
+  const out = await call(handler('post', '/static-blogs/:id/publish'), req({ body: { mode: 'preview' } }));
+
+  assert.ok(!/try publishing again/i.test(out.html),
+    'a preview that deployed nothing blamed Cloudflare for a project');
 });
 
 test('AND ARTICLES MISSING A LINK ARE NAMED, NOT WITHHELD', async () => {
@@ -2808,14 +3223,18 @@ test('AND AN ARTICLE IS LOADED SCOPED TO THE BLOG, NOT CHECKED AFTERWARDS', asyn
     'the article was loaded without scoping it to the blog');
 });
 
-test('THE BLOG PAGE LINKS TO EACH ARTICLE\'S EDITOR', async () => {
-  /* An editor nothing links to is an editor nobody finds. Before this
-   * list the only thing naming an article was the front-page dropdown,
-   * which selects one and opens nothing. */
+test('THERE IS A WAY TO EACH ARTICLE\'S EDITOR, NOW ONE SCREEN FURTHER OUT', async () => {
+  /* An editor nothing links to is an editor nobody finds. Before a list
+   * existed the only thing naming an article was the front-page dropdown,
+   * which selects one and opens nothing.
+   *
+   * THE CLAIM IS UNCHANGED; THE SCREEN MOVED — 21 October. This asserted
+   * against the blog page, where the list used to be. The list is on
+   * /articles now, so the same assertion belongs there: a test that
+   * follows a feature is honest, a test deleted because it went red is
+   * not. */
   install();
-  const out = await call(handler('get', '/static-blogs/:id'));
-
-  assert.ok(out.html.includes('/articles/'), 'there is no way to reach an article');
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
 
   /* The fixture titles have no characters that escaping would change, so
    * a plain includes() is honest here — and asserting on the raw title
@@ -2825,6 +3244,13 @@ test('THE BLOG PAGE LINKS TO EACH ARTICLE\'S EDITOR', async () => {
     assert.ok(out.html.includes(`/articles/${a._id}/edit`),
       `${a.title} has no edit link`);
   }
+
+  /* AND THE BLOG PAGE STILL REACHES IT. The chain is what matters: the
+   * blog page is where somebody starts, so breaking its link to /articles
+   * strands every editor again, one level further back than before. */
+  const blogPage = await call(handler('get', '/static-blogs/:id'));
+  assert.ok(new RegExp(`href="/static-blogs/${BLOG_ID}/articles"`).test(blogPage.html),
+    'the blog page no longer reaches the articles screen');
 });
 
 section('DELETING A BLOG');
@@ -3501,6 +3927,513 @@ test('AN ARTICLE TITLE WITH HTML IN IT DOES NOT BECOME HTML', async () => {
 
   assert.ok(!out.html.includes('<img src=x'), 'an article title was rendered as markup');
   assert.ok(!out.html.includes('onmouseover="y'), 'a slug broke out of the option value');
+});
+
+section('THE TABLES LOOK LIKE THE REST OF THE APP, AND THEIR ROWS ARE NUMBERED');
+
+/** Every <table> tag in a rendered page. */
+function tablesIn(html) {
+  return html.match(/<table[^>]*>/g) || [];
+}
+
+test('NO TABLE ON THESE SCREENS IS STILL BOOTSTRAP table-dark', async () => {
+  /* table-dark paints #212529 — a near-black picked for a white page. On
+   * this app's #082d5b it is a black box sitting ON the navy instead of
+   * being part of it, and Static Blogs was the last screen wearing it. The
+   * blog report and keyword research already use the transparent palette;
+   * .table-navy in appHeaderAssets() is now the one copy of it.
+   *
+   * BOTH SCREENS, because they are one screen to a reader and half-done
+   * looks worse than not started. */
+  install();
+
+  for (const [name, out] of [
+    ['the blog list', await call(handler('get', '/static-blogs'))],
+    ['a blog page',   await call(handler('get', '/static-blogs/:id'))],
+  ]) {
+    for (const tag of tablesIn(out.html)) {
+      assert.ok(!/\btable-dark\b/.test(tag),
+        `${name} still has a table-dark table: ${tag}`);
+    }
+  }
+});
+
+test('AND THEY CARRY table-navy, SO THEY ARE STYLED AT ALL', async () => {
+  /* THE OTHER HALF, AND WITHOUT IT THE TEST ABOVE IS A TRAP. Deleting
+   * table-dark and putting nothing in its place passes it perfectly, and
+   * leaves a white-on-navy Bootstrap default table — unreadable, and
+   * arguably worse than the black box. */
+  install({ campaigns: [{ _id: '507f1f77bcf86cd799439051', site: BLOG_ID, user: USER_ID,
+                          name: 'A campaign', status: 'draft', slots: [{ index: 0 }] }] });
+
+  /* THE BLOG PAGE NEEDS A CAMPAIGN TO HAVE A TABLE AT ALL — and that is the
+   * correction this test needed on 21 October, not a weakening of it. With
+   * the article list moved out, a blog with no campaigns renders no table,
+   * and "rendered no table at all" fired on a page that was right.
+   *
+   * The fixture now guarantees one, so the assertion stays strict: a screen
+   * with nothing to style is not evidence that styling works. */
+  for (const [name, out] of [
+    ['the blog list',     await call(handler('get', '/static-blogs'))],
+    ['a blog page',       await call(handler('get', '/static-blogs/:id'))],
+    ['the articles page', await call(handler('get', '/static-blogs/:id/articles'))],
+  ]) {
+    const tables = tablesIn(out.html);
+    assert.ok(tables.length, `${name} rendered no table at all`);
+
+    for (const tag of tables) {
+      assert.ok(/\btable-navy\b/.test(tag),
+        `${name} has an unstyled table: ${tag}`);
+    }
+  }
+});
+
+test('THE BLOG LIST NUMBERS ITS BLOGS', async () => {
+  /* Asked for by Edwin on 20 October, with the campaigns below. A list you
+   * refer to out loud needs a handle — "the fourth one" has to mean
+   * something, and it cannot while the rows are only named. */
+  install({
+    blogs: [
+      { _id: BLOG_ID, user: USER_ID, target: 'cloudflare', status: 'active',
+        siteUrl: 'leanderwaterheaters.com', business: { name: 'Leander Water Heaters' } },
+      { _id: '507f1f77bcf86cd799439044', user: USER_ID, target: 'cloudflare', status: 'active',
+        siteUrl: 'allaboutconcrete.example', business: { name: 'All About Concrete' } },
+      { _id: '507f1f77bcf86cd799439045', user: USER_ID, target: 'cloudflare', status: 'active',
+        siteUrl: 'allaboutroofing.example', business: { name: 'All About Roofing' } },
+    ],
+  });
+
+  const out = await call(handler('get', '/static-blogs'));
+
+  /* THE NUMBER AGAINST ITS OWN ROW, not "a 1, a 2 and a 3 appear somewhere".
+   * Credit balances, post counts and years are all digits, and a test that
+   * only counts them passes on a page that numbers nothing. */
+  for (const [n, name] of [[1, 'Leander Water Heaters'],
+                           [2, 'All About Concrete'],
+                           [3, 'All About Roofing']]) {
+    const row = new RegExp(
+      `<td[^>]*class="[^"]*\\brownum\\b[^"]*"[^>]*>\\s*${n}\\s*</td>[\\s\\S]{0,400}?${name}`);
+    assert.ok(row.test(out.html), `blog ${n} (${name}) is not numbered ${n}`);
+  }
+});
+
+test('AND THE NUMBERS FOLLOW THE ORDER ON SCREEN, THEY ARE NOT THE IDS', async () => {
+  /* The obvious wrong fix is to print something the row already has. The
+   * list is sorted newest-first, so the number has to come from the
+   * position in THAT order — not from the blog, which knows nothing about
+   * where it landed. */
+  install({
+    blogs: [
+      { _id: BLOG_ID, user: USER_ID, target: 'cloudflare', status: 'active',
+        siteUrl: 'b.example', business: { name: 'Second Alphabetically' } },
+      { _id: '507f1f77bcf86cd799439044', user: USER_ID, target: 'cloudflare', status: 'active',
+        siteUrl: 'a.example', business: { name: 'First Alphabetically' } },
+    ],
+  });
+
+  const out = await call(handler('get', '/static-blogs'));
+  const numbers = [...out.html.matchAll(
+    /<td[^>]*class="[^"]*\brownum\b[^"]*"[^>]*>\s*(\d+)\s*<\/td>/g)].map(m => m[1]);
+
+  assert.deepStrictEqual(numbers, ['1', '2'],
+    `the blog list numbered its rows ${numbers.join(', ')}`);
+});
+
+test('THE CAMPAIGNS ON A BLOG ARE NUMBERED TOO', async () => {
+  install({
+    campaigns: [
+      { _id: '507f1f77bcf86cd799439051', site: BLOG_ID, user: USER_ID,
+        name: 'Autumn water heaters', status: 'draft', slots: [{ index: 0 }] },
+      { _id: '507f1f77bcf86cd799439052', site: BLOG_ID, user: USER_ID,
+        name: 'Hydro jetting', status: 'draft', slots: [{ index: 0 }, { index: 1 }] },
+    ],
+  });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  for (const [n, name] of [[1, 'Autumn water heaters'], [2, 'Hydro jetting']]) {
+    const row = new RegExp(
+      `<td[^>]*class="[^"]*\\brownum\\b[^"]*"[^>]*>\\s*${n}\\s*</td>[\\s\\S]{0,400}?${name}`);
+    assert.ok(row.test(out.html), `campaign ${n} (${name}) is not numbered ${n}`);
+  }
+});
+
+test('A HEADER CELL IS ADDED FOR THE NUMBER COLUMN', async () => {
+  /* A <td> more than there are <th> shifts every heading one column left,
+   * so "Domain" ends up over the blog names. It renders without complaint
+   * and reads as nonsense, which is exactly the kind of thing nobody
+   * notices in a screenshot. */
+  install();
+
+  for (const [name, out] of [
+    ['the blog list', await call(handler('get', '/static-blogs'))],
+    ['a blog page',   await call(handler('get', '/static-blogs/:id'))],
+  ]) {
+    for (const table of out.html.match(/<table[\s\S]*?<\/table>/g) || []) {
+      const head = /<thead[\s\S]*?<\/thead>/.exec(table);
+      const body = /<tbody[\s\S]*?<\/tbody>/.exec(table);
+      if (!head || !body) continue;
+
+      const firstRow = /<tr>([\s\S]*?)<\/tr>/.exec(body[0]);
+      if (!firstRow) continue;   // an empty table has nothing to line up
+
+      const ths = (head[0].match(/<th\b/g) || []).length;
+      const tds = (firstRow[1].match(/<td\b/g) || []).length;
+
+      assert.strictEqual(ths, tds,
+        `${name}: a table has ${ths} headings over ${tds} cells, so the headings are shifted`);
+    }
+  }
+});
+
+section('THE CAMPAIGNS TABLE FOLDS ONCE THERE ARE TOO MANY TO SCAN');
+
+/** A blog carrying `n` planned campaigns. */
+function manyCampaigns(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    _id: `507f1f77bcf86cd7994${String(500 + i).padStart(5, '0')}`,
+    site: BLOG_ID,
+    user: USER_ID,
+    name: `Campaign ${i + 1}`,
+    status: 'draft',
+    slots: [{ index: 0 }],
+  }));
+}
+
+/** The <details> wrapper around the campaigns table, if there is one. */
+function campaignsFold(html) {
+  return /<details[^>]*>[\s\S]*?<\/details>/.exec(html);
+}
+
+test('A FEW CAMPAIGNS ARE SHOWN, NOT HIDDEN BEHIND A CONTROL', async () => {
+  /* A control that hides a blog's only campaign is worse than no control:
+   * it costs a click to learn there was nothing to see. Edwin asked for a
+   * toggle because his blogs have many; a blog with three is the case the
+   * toggle must not make worse. */
+  install({ campaigns: manyCampaigns(3) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+  const fold = campaignsFold(out.html);
+
+  assert.ok(out.html.includes('Campaign 1'), 'the campaigns vanished');
+
+  if (fold) {
+    assert.ok(/<details[^>]*\bopen\b/.test(fold[0]),
+      'a three-campaign blog opens folded shut');
+  }
+});
+
+test('AND MANY ARE FOLDED AWAY', async () => {
+  /* The reason it exists. The table sits between the timezone form and the
+   * front-page picker, so a worked blog pushes both off the screen — the
+   * same crowding the Articles list caused, one table along. */
+  install({ campaigns: manyCampaigns(12) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+  const fold = campaignsFold(out.html);
+
+  assert.ok(fold, 'twelve campaigns are still printed whole');
+  assert.ok(!/<details[^>]*\bopen\b/.test(fold[0]),
+    'the fold is open, so it folds nothing');
+});
+
+test('THE SUMMARY SAYS HOW MANY ARE INSIDE', async () => {
+  /* A closed fold labelled "Campaigns" tells a reader nothing about
+   * whether to open it. The count is the whole of its usefulness. */
+  install({ campaigns: manyCampaigns(12) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+  const summary = /<summary[^>]*>([\s\S]*?)<\/summary>/.exec(out.html);
+
+  assert.ok(summary, 'the fold has no summary, so it cannot be opened by label');
+  assert.ok(/\b12\b/.test(summary[1]),
+    `the summary does not say how many: "${summary[1].trim()}"`);
+});
+
+test('THE TABLE IS STILL IN THE PAGE, NOT FETCHED WHEN OPENED', async () => {
+  /* <details> hides its contents; it does not withhold them. That is the
+   * point of choosing it: no JavaScript, no second request, and it works
+   * under the CSP that blocks inline handlers — which is exactly what broke
+   * the Clear topics button on 20 October. */
+  install({ campaigns: manyCampaigns(12) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(out.html.includes('Campaign 12'),
+    'the last campaign is not in the page, so the fold is doing more than folding');
+});
+
+test('AND IT CARRIES NO INLINE HANDLER', async () => {
+  /* THE TRAP THIS DESIGN AVOIDS, asserted rather than assumed. helmet sets
+   * script-src-attr to 'none' by default, so an onclick toggle renders,
+   * looks right, and does nothing at all — silently, with the failure only
+   * visible in the console. */
+  install({ campaigns: manyCampaigns(12) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+  const fold = campaignsFold(out.html);
+
+  assert.ok(!/\son[a-z]+\s*=\s*["']/.test(fold[0]),
+    'the fold uses an inline handler, which the CSP blocks');
+});
+
+test('A BLOG WITH NO CAMPAIGNS STILL SAYS SO', async () => {
+  install({ campaigns: [] });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(out.html.includes('No campaigns yet'), 'the empty state went missing');
+  assert.strictEqual(campaignsFold(out.html), null,
+    'an empty blog was given a fold to open');
+});
+
+section('THE ARTICLES HAVE THEIR OWN SCREEN, BECAUSE 171 ROWS IS NOT A LIST');
+
+/** A blog with `n` written articles, ids and titles distinct. */
+function manyArticles(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    _id: `507f1f77bcf86cd7994${String(390 + i).padStart(5, '0')}`,
+    title: `Article ${i + 1}`,
+    slug: `article-${i + 1}`,
+  }));
+}
+
+test('THE BIG TABLE IS GONE FROM THE BLOG PAGE', async () => {
+  /* Edwin's plumbing blog reached 171 articles and the table was rendered
+   * whole, above the campaign form and the front-page picker — the two
+   * things anybody actually opens that page for. The list had no limit and
+   * no paging; it was written as a way INTO the editor, and grew into a
+   * report nobody designed. */
+  install({ articles: manyArticles(171) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  /* ASSERTED ON THE TABLE, NOT ON A TITLE — and the first version got that
+   * wrong in a way worth recording.
+   *
+   * It checked that "Article 60" was absent from the page, and FAILED
+   * against a correct implementation: the front-page dropdown lists every
+   * article as an <option>, so all 171 titles are still in the HTML and
+   * always were. The table is gone; the titles are not, because a second
+   * control on the same page legitimately names them.
+   *
+   * That is also the finding. The dropdown is still unbounded — 171
+   * <option> elements — which is a separate job from this one, and is in
+   * CLAUDE.md rather than fixed here. */
+  const rows = [...out.html.matchAll(/<a[^>]+href="[^"]*\/articles\/[a-f0-9]{24}\/edit"/g)];
+  assert.strictEqual(rows.length, 0,
+    `the blog page is still printing an article table (${rows.length} edit links)`);
+});
+
+test('AND IS REPLACED BY A COUNT AND A WAY THROUGH', async () => {
+  /* THE HALF THAT MAKES THE DELETION SAFE. Removing the table and leaving
+   * nothing would strand every article: the front-page dropdown names them
+   * and opens nothing, which is the exact state this list was built to fix
+   * in the first place. */
+  install({ articles: manyArticles(171) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  /* THE HREF MUST END THERE. This first asserted `.includes('/articles')`
+   * and PASSED before the screen existed, because every Edit button on the
+   * old table was a link to /articles/<id>/edit. A substring of a URL is
+   * not a link to it. */
+  assert.ok(new RegExp(`href="/static-blogs/${BLOG_ID}/articles"`).test(out.html),
+    'there is no link to the articles screen');
+
+  /* THE COUNT READ OUT OF THE BUTTON, NOT FOUND ON THE PAGE.
+   *
+   * This asserted /\b171\b/ against the whole document and SURVIVED a
+   * mutant that printed 172: the front-page dropdown carries an option
+   * reading "Article 171", so the digits were on the page either way. The
+   * second time in this session a loose match passed because the page
+   * happened to contain the string somewhere else. */
+  const button = new RegExp(
+    `href="/static-blogs/${BLOG_ID}/articles"[^>]*>\\s*([\\s\\S]*?)</a>`).exec(out.html);
+  assert.ok(button, 'there is no articles button to read a count from');
+  assert.strictEqual(button[1].trim(), '171 articles',
+    `the button reads "${button[1].trim()}"`);
+});
+
+test('ONE ARTICLE IS AN ARTICLE, NOT 1 ARTICLES', async () => {
+  install({ articles: manyArticles(1) });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+  const button = new RegExp(
+    `href="/static-blogs/${BLOG_ID}/articles"[^>]*>\\s*([\\s\\S]*?)</a>`).exec(out.html);
+
+  assert.strictEqual(button[1].trim(), '1 article');
+});
+
+test('THE SCREEN LISTS ONE PAGE OF THEM, NOT ALL OF THEM', async () => {
+  install({ articles: manyArticles(171) });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.strictEqual(out.status, 200);
+  assert.ok(out.html.includes('Article 1'), 'the first article is missing');
+  assert.ok(out.html.includes('Article 50'), 'the page is shorter than one page');
+  assert.ok(!/Article 51\b/.test(out.html), 'the page ran past its own size');
+});
+
+test('AND IT ASKS THE DATABASE FOR ONE PAGE, NOT FOR THE BLOG', async () => {
+  /* Slicing in JavaScript renders an identical screen and still pulls every
+   * title out of Mongo on every view — which is the cost the paging exists
+   * to avoid, and the one thing a rendered-HTML assertion cannot see. */
+  install({ articles: manyArticles(171) });
+
+  await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.strictEqual(db.postFindLimit, 50, 'the query has no limit on it');
+  assert.strictEqual(db.postFindSkip, 0, 'the first page should skip nothing');
+});
+
+test('THE NUMBERS CARRY ON ACROSS PAGES, THEY DO NOT RESTART', async () => {
+  /* Page two beginning at 1 again would make "the fourth article" mean two
+   * different things on two screens of one blog — the same reasoning that
+   * put numbers on the publish result and the Articles list together. */
+  install({ articles: manyArticles(171) });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'), req({ query: { page: '2' } }));
+
+  assert.strictEqual(db.postFindSkip, 50, 'page two did not skip the first page');
+
+  const numbers = rowNumbersIn(out.html);
+  assert.strictEqual(numbers[0], '51', `page two starts its numbering at ${numbers[0]}`);
+  assert.strictEqual(numbers[numbers.length - 1], '100');
+});
+
+test('THE PAGE COUNT ROUNDS UP, SO THE LAST FEW ARE NOT LOST', async () => {
+  /* 171 articles at 50 a page is 3.42 pages, and the twenty-one on page
+   * four are the ones a floor() would strand: reachable only by typing
+   * ?page=4 into the address bar, with the screen itself insisting there
+   * are three. Mutation found this untested — "Page 1 of 3" and "Page 1 of
+   * 4" both satisfied every assertion here. */
+  install({ articles: manyArticles(171) });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.ok(/Page\s+1\s+of\s+4\b/.test(out.html),
+    'the article screen miscounts its own pages');
+});
+
+test('AND A BLOG THAT FITS ON ONE PAGE IS NOT OFFERED PAGING AT ALL', async () => {
+  install({ articles: manyArticles(12) });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.ok(!/Page\s+\d+\s+of/.test(out.html),
+    'a twelve-article blog is being shown page controls');
+});
+
+test('NEXT IS DEAD ON THE LAST PAGE, AND PREVIOUS ON THE FIRST', async () => {
+  /* A live Next on the last page goes to a page that renders "there is
+   * nothing on this page" — a dead end the screen led you into, which is
+   * worse than the empty page arrived at by typing a number. Both
+   * directions, because the same mistake is one character away at each
+   * end. */
+  install({ articles: manyArticles(171) });
+
+  const first = await call(handler('get', '/static-blogs/:id/articles'));
+  assert.ok(/<span[^>]*\bdisabled\b[^>]*>\s*&larr; Previous/.test(first.html),
+    'Previous is live on the first page');
+  assert.ok(/<a [^>]*href="[^"]*page=2"/.test(first.html),
+    'Next does not go anywhere from the first page');
+
+  const last = await call(handler('get', '/static-blogs/:id/articles'), req({ query: { page: '4' } }));
+  assert.ok(/<span[^>]*\bdisabled\b[^>]*>\s*Next/.test(last.html),
+    'Next is live on the last page, and leads to an empty one');
+  assert.ok(/<a [^>]*href="[^"]*page=3"/.test(last.html),
+    'Previous does not go anywhere from the last page');
+});
+
+test('A PAGE PAST THE END IS EMPTY, NOT AN ERROR', async () => {
+  install({ articles: manyArticles(171) });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'), req({ query: { page: '99' } }));
+
+  assert.strictEqual(out.status, 200, 'walking off the end broke the screen');
+});
+
+test('AND A NONSENSE PAGE NUMBER NEVER REACHES THE QUERY', async () => {
+  /* skip(-50) throws in Mongo, and `page=abc` makes NaN, which skips an
+   * amount of rows that is neither zero nor a number. Both arrive from the
+   * query string, which is to say from anybody. */
+  install({ articles: manyArticles(171) });
+
+  for (const page of ['0', '-3', 'abc', '', '1e9999', '2.7']) {
+    await call(handler('get', '/static-blogs/:id/articles'), req({ query: { page } }));
+
+    assert.ok(Number.isInteger(db.postFindSkip) && db.postFindSkip >= 0,
+      `page=${JSON.stringify(page)} produced skip ${db.postFindSkip}`);
+  }
+});
+
+test('EVERY ROW STILL OPENS ITS EDITOR', async () => {
+  install({ articles: manyArticles(3) });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  for (const a of db.articles) {
+    assert.ok(out.html.includes(`/static-blogs/${BLOG_ID}/articles/${a._id}/edit`),
+      `no way into ${a.title}`);
+  }
+});
+
+test('THE SCREEN IS SCOPED TO THE SIGNED-IN ACCOUNT', async () => {
+  /* The rule the whole file is built on, and a new handler is exactly where
+   * it gets forgotten. Asserted on WHAT WAS ASKED: a handler that loads by
+   * id and compares afterwards passes a "did it 404" test and leaks on the
+   * next early return somebody adds. */
+  install({ articles: manyArticles(3) });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.strictEqual(String(db.findOneWhere.user), String(USER_ID),
+    'the blog was loaded without scoping to the account');
+  assert.strictEqual(db.findOneWhere.target, 'cloudflare',
+    'a WordPress site can be driven through the articles screen');
+  assert.ok(out.html);
+});
+
+test('AND SOMEBODY ELSE\'S BLOG IS NOT HERE', async () => {
+  install({ articles: manyArticles(3) });
+  db.blogs.length = 0;          // the scoped query finds nothing
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.strictEqual(out.status, 404);
+});
+
+test('THE ARTICLES ARE ASKED FOR BY SITE, NOT BY ANYTHING GUESSABLE', async () => {
+  install({ articles: manyArticles(3) });
+
+  await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.strictEqual(String(db.postFindWhere.site), String(BLOG_ID),
+    'the article query is not scoped to this blog');
+});
+
+test('AN ARTICLE TITLE WITH HTML IN IT DOES NOT BECOME HTML HERE EITHER', async () => {
+  /* The same guard the blog page has. A new screen rendering the same rows
+   * is a new place for the same hole. */
+  install({ articles: [{ _id: '507f1f77bcf86cd799439031',
+                         title: '<img src=x onerror=alert(1)>',
+                         slug: 'x" onmouseover="y' }] });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.ok(!out.html.includes('<img src=x'), 'an article title was rendered as markup');
+  assert.ok(!out.html.includes('onmouseover="y'), 'a slug broke out of its cell');
+});
+
+test('A BLOG WITH NO ARTICLES SAYS SO RATHER THAN SHOWING AN EMPTY TABLE', async () => {
+  install({ articles: [] });
+
+  const out = await call(handler('get', '/static-blogs/:id/articles'));
+
+  assert.strictEqual(out.status, 200);
+  assert.ok(!/<tbody>\s*<\/tbody>/.test(out.html), 'an empty table was rendered');
 });
 
 /* ======================================================================= */

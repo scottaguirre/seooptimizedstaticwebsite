@@ -200,7 +200,88 @@ Sitemap: ${origin(blog)}/sitemap.xml
 }
 
 /**
- * All three, keyed by the path they are served at.
+ * The page Cloudflare serves for an address that is not there.
+ *
+ * WITHOUT THIS FILE, EVERY WRONG URL IS THE FRONT PAGE. Cloudflare's own
+ * rule: with no top-level 404.html it "serves the root (/) for any incoming
+ * path that does not correspond to a static asset". So a typo, a stale
+ * link, a crawler's guess — and, the way this was found, the address of an
+ * article that is SCHEDULED AND NOT YET PUBLISHED — all answered with the
+ * pillar's home page, at that address, as though it were real.
+ *
+ * Nothing leaked: the unpublished article was never deployed. What was
+ * wrong is that the site said "here it is" instead of "there is nothing
+ * here", which is a SOFT 404 — and "Soft 404" is one of the commonest rows
+ * in Search Console's "why pages aren't indexed" table.
+ *
+ * Found on 20 October by Edwin opening a future article's address.
+ *
+ * NO CLOCK, NO COUNTS, NOTHING THAT MOVES — the same rule the three files
+ * above follow. Direct Upload hashes each file and sends only what it does
+ * not already have, so anything changing here would re-upload on every
+ * publish, for ever, to say nothing new.
+ *
+ * noindex AS WELL AS THE STATUS CODE. Cloudflare serves this with a real
+ * 404, which is the part that matters; the meta tag costs one line and
+ * removes the argument about a 404 that was fetched before it was a 404.
+ *
+ * IT IS NOT IN THE SITEMAP OR THE FEED, and nothing here has to arrange
+ * that: both are built from `pages`, which is what the renderer decided is
+ * live. A sitemap naming a 404 is an instruction to go and fetch one.
+ */
+function notFoundHtml({ blog = {} } = {}) {
+  /* THE SAME CLASSES AND STYLESHEET AS EVERY OTHER PAGE. This is served on
+   * the customer's own domain under their own name, and an unstyled wall of
+   * Times New Roman reads as a broken site rather than a wrong address.
+   *
+   * REQUIRED HERE RATHER THAN AT THE TOP. theme.js is the only import this
+   * otherwise-pure file would have, and it is needed by one function of the
+   * four. */
+  const { CSS_PATH, CLASSES } = require('./theme');
+
+  const name = (blog.business && blog.business.name) || '';
+
+  /* THE XML ESCAPER DOES FOR HTML HERE, and that is worth a sentence
+   * because the comment at the top of this file says the two are not
+   * interchangeable. It is true in the other direction: HTML's named
+   * entities are mostly not XML's, so an HTML escaper cannot write XML.
+   * All five of XML's ARE valid HTML, so this one can write both — and the
+   * only thing interpolated below is a business name. */
+  const safe = xml(name);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found${name ? ` — ${safe}` : ''}</title>
+<meta name="robots" content="noindex, follow">
+<link rel="stylesheet" href="/${CSS_PATH}">
+</head>
+<body class="${CLASSES.body}">
+<header class="${CLASSES.masthead}">
+<a class="${CLASSES.home}" href="/">${safe}</a>
+</header>
+<main>
+<article>
+<h1>That page is not here</h1>
+<div class="${CLASSES.post}">
+<p>The address you followed does not match anything on this blog. It may
+have been mistyped, or the article may not have been published yet.</p>
+<p><a href="/">Go to the front page</a> and start from there.</p>
+</div>
+</article>
+</main>
+<footer class="${CLASSES.footer}">
+<a href="/">${safe}</a>
+</footer>
+</body>
+</html>
+`;
+}
+
+/**
+ * All four, keyed by the path they are served at.
  *
  * The same shape the deploy wants: a map of path to contents, so adding a
  * file is one entry here rather than a change at the call site too.
@@ -210,7 +291,11 @@ function feedFiles({ pages = [], blog = {} } = {}) {
     'sitemap.xml': sitemapXml({ pages, blog }),
     'rss.xml': rssXml({ pages, blog }),
     'robots.txt': robotsTxt({ blog }),
+    '404.html': notFoundHtml({ blog }),
   };
 }
 
-module.exports = { feedFiles, sitemapXml, rssXml, robotsTxt, xml, rfc822, isoDate, newestFirst };
+module.exports = {
+  feedFiles, sitemapXml, rssXml, robotsTxt, notFoundHtml,
+  xml, rfc822, isoDate, newestFirst,
+};

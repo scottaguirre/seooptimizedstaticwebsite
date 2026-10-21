@@ -67,4 +67,38 @@ function pageTitle(name) {
   return `${page}${TITLE_SEPARATOR}${APP_NAME}`;
 }
 
-module.exports = { pageTitle, APP_NAME, TITLE_SEPARATOR };
+/**
+ * What the two blog tools are called, in ONE place each.
+ *
+ * HERE FOR THE REASON APP_NAME IS HERE. These are names that appear on a
+ * sidebar, a page title, two <h1>s, a dashboard card, two buttons and a
+ * line printed by a script — eight files, and a name in eight files is a
+ * name that gets renamed in six of them. That is not a worry, it is this
+ * app's own history: it was SEO Site Generator, then Fast Website
+ * Generator, and each rename left strings behind in files nobody thought
+ * to search.
+ *
+ * AND IN THIS FILE RATHER THAN IN appHeader, for the boundary that file's
+ * own header explains: pluginDownloadRoute and exportWpThemeRoute want a
+ * four-word label, not the logged-in header. A page that only wants a name
+ * should only have to take a name.
+ *
+ * RENAMED 21 OCTOBER 2026, on Edwin's instruction. They were "Blog
+ * Automation" and "Static Blogs". Neither said what the thing BUILDS, and
+ * "Static" was an implementation detail — the blogs are static because
+ * Cloudflare Pages serves files, which is true and tells a customer
+ * nothing. The new pair also says out loud that they are two halves of one
+ * choice: WordPress, or Cloudflare.
+ *
+ * THE URLS DID NOT MOVE AND MUST NOT. /blog-sites and /static-blogs are
+ * bookmarked, linked from the plugin's setup text, and written down in
+ * Edwin's own notes. A label is cheap to change; a path is not. Same rule
+ * as the plugin's folder name.
+ */
+const TOOL_WP_BLOGS = 'Build WP blogs';
+const TOOL_CF_BLOGS = 'Build Cloudflare Blogs';
+
+module.exports = {
+  pageTitle, APP_NAME, TITLE_SEPARATOR,
+  TOOL_WP_BLOGS, TOOL_CF_BLOGS,
+};

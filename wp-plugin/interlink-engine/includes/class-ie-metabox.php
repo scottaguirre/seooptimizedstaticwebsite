@@ -67,7 +67,12 @@ class IE_Metabox {
 
 		add_meta_box(
 			'ie-seo-meta',
-			__( 'Search result — Interlink Engine', 'interlink-engine' ),
+			// The product name, which a customer reads. The text domain beside
+			// it is the plugin's IDENTIFIER and stays 'interlink-engine'
+			// forever — it must match the folder WordPress loads the plugin
+			// from and the .mo filenames, so renaming it silently breaks
+			// every translation.
+			__( 'Search result — Three Comets', 'interlink-engine' ),
 			array( __CLASS__, 'render' ),
 			$post_type,
 			'normal',

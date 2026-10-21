@@ -392,6 +392,206 @@ test('the header supplies its own colour, so both headers look the same', () => 
   assert.ok(/#082d5b/i.test(css), css);
 });
 
+/* ===================================================================== *
+ * WHAT THE TWO BLOG TOOLS ARE CALLED
+ *
+ * Renamed 21 October on Edwin's instruction: "Blog Automation" -> "Build WP
+ * blogs", "Static Blogs" -> "Build Cloudflare Blogs".
+ *
+ * Neither old label said what the thing BUILDS, and "Static" was an
+ * implementation detail — the blogs are static because Cloudflare Pages
+ * serves files, which is true and tells a customer nothing. The new pair
+ * also says they are two halves of one choice.
+ *
+ * THE URLS DO NOT MOVE. /blog-sites and /static-blogs are bookmarked, linked
+ * from the plugin's setup text and written in Edwin's own notes. A label is
+ * cheap to change; a path is not.
+ * ===================================================================== */
+
+const { TOOL_WP_BLOGS, TOOL_CF_BLOGS } = require('./utils/pageTitle');
+
+/**
+ * A source file with its comments removed, for scanning the strings a
+ * CUSTOMER can see.
+ *
+ * COMMENTS COME OFF, AND THE REASON IS A SCAR. A ban on the word `onclick`
+ * failed earlier this month on the comment explaining why the onclick had
+ * been removed, and a CSS rule check passed on a stylesheet it had skipped
+ * entirely because every rule was preceded by a comment. The old names are
+ * all over this codebase's prose, correctly — they are its history.
+ *
+ * Only whole-line comments are stripped, never a trailing `//`: a line
+ * carrying `https://example.com` would lose everything after the scheme,
+ * and a scan that silently shortens its own input reports clean because it
+ * never looked.
+ */
+function codeOnly(file) {
+  const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
+
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter(line => !/^\s*(\/\/|\*)/.test(line))
+    .join('\n');
+}
+
+test('THE SIDEBAR CALLS THEM WHAT EDWIN CALLS THEM', () => {
+  const html = appSidebar('/');
+
+  assert.ok(html.includes(TOOL_WP_BLOGS), `the sidebar does not say "${TOOL_WP_BLOGS}"`);
+  assert.ok(html.includes(TOOL_CF_BLOGS), `the sidebar does not say "${TOOL_CF_BLOGS}"`);
+
+  assert.ok(!html.includes('Blog Automation'), 'the sidebar still says Blog Automation');
+  assert.ok(!html.includes('Static Blogs'), 'the sidebar still says Static Blogs');
+});
+
+test('AND THE URLS UNDERNEATH ARE UNTOUCHED', () => {
+  /* THE HALF THAT MAKES THE RENAME SAFE. A rename that also moved the paths
+   * would break every bookmark, the plugin's own setup text and Edwin's
+   * notes — and would pass every assertion above. */
+  const html = appSidebar('/');
+
+  assert.ok(html.includes('href="/blog-sites"'), '/blog-sites moved');
+  assert.ok(html.includes('href="/static-blogs"'), '/static-blogs moved');
+});
+
+test('NO SCREEN STILL SHOWS A CUSTOMER THE OLD NAMES', () => {
+  /* THE WHOLE POINT OF DOING THIS AS ONE JOB. The labels appear in eleven
+   * files — a page title, two <h1>s, a dashboard card, two "back to"
+   * buttons and a printed line in a script — and a sidebar that says one
+   * thing over a heading that says another is worse than either name alone.
+   *
+   * Comments are excluded: the old names are the codebase's history and
+   * belong in its prose. */
+  const screens = [
+    'utils/appHeader.js',
+    'routes/blogSitesRoute.js',
+    'routes/blogReportRoute.js',
+    'routes/authRoute.js',
+    'routes/exportWpThemeRoute.js',
+    'routes/pluginDownloadRoute.js',
+    'routes/staticBlogsRoute.js',
+    'scripts/restore-blog.js',
+  ];
+
+  for (const file of screens) {
+    const code = codeOnly(file);
+
+    for (const old of ['Blog Automation', 'Static Blogs', 'Static blogs']) {
+      assert.ok(!code.includes(old),
+        `${file} still shows a customer "${old}"`);
+    }
+  }
+});
+
+test('AND THE NAMES COME FROM ONE PLACE, NOT EIGHT COPIES', () => {
+  /* The product has been renamed twice before and each rename left strings
+   * behind in files nobody thought to search — the reason APP_NAME lives in
+   * pageTitle.js at all. These two are now in the same position: a tool
+   * named in eight files is a tool that will be renamed in six of them.
+   *
+   * ASSERTED BY READING THE SOURCE, because a page that happens to render
+   * the right words today is not the same as a page that cannot drift. */
+  for (const file of ['utils/appHeader.js', 'routes/blogSitesRoute.js',
+                      'routes/authRoute.js', 'routes/exportWpThemeRoute.js',
+                      'routes/pluginDownloadRoute.js', 'routes/blogReportRoute.js',
+                      'routes/staticBlogsRoute.js']) {
+    const code = codeOnly(file);
+
+    assert.ok(/TOOL_(WP|CF)_BLOGS/.test(code),
+      `${file} types a tool name out by hand instead of importing it`);
+  }
+});
+
+test('THE TWO NAMES ARE DIFFERENT, AND NEITHER IS EMPTY', () => {
+  /* A guard against the cheapest way to pass everything above: define both
+   * constants as '' and every "does not include the old name" assertion is
+   * satisfied by a sidebar with no labels at all. */
+  assert.ok(TOOL_WP_BLOGS && TOOL_CF_BLOGS, 'a tool name is empty');
+  assert.notStrictEqual(TOOL_WP_BLOGS, TOOL_CF_BLOGS,
+    'both blog tools are called the same thing');
+});
+
+/**
+ * The CSS rules in a block of header assets, as { selectors, body }.
+ *
+ * COMMENTS COME OFF FIRST. Every rule in appHeaderAssets() is introduced by
+ * a long comment explaining why it exists, and a brace-splitting parser that
+ * does not strip them reads the comment as part of the next selector — which
+ * is how the "not a rule on every table" test below once passed on a
+ * stylesheet that did exactly that.
+ *
+ * Crude on purpose: no at-rules or nesting are used here, and a real CSS
+ * parser as a test dependency would be a larger thing to trust than the
+ * twenty lines it checks.
+ */
+function rulesIn(css) {
+  const style = /<style>([\s\S]*?)<\/style>/.exec(css);
+  assert.ok(style, 'the header assets carry no <style> block at all');
+
+  const stripped = style[1].replace(/\/\*[\s\S]*?\*\//g, '');
+
+  return [...stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m => ({
+    selectors: m[1].split(',').map(s => s.trim()).filter(Boolean),
+    body: m[2],
+  }));
+}
+
+test('THE NAVY TABLE PALETTE IS SHARED, NOT COPIED A THIRD TIME', () => {
+  /* .table-navy — the look the blog report and the keyword research table
+   * already wear, named once so a fourth screen does not get a fourth copy.
+   *
+   * The blog report's own <style> says it was "lifted from the keyword
+   * research table so the two read as one app". That is two copies of the
+   * same twelve declarations, and Static Blogs was about to become a third.
+   * It lives here because every logged-in page draws this header — the same
+   * reasoning written above .btn-outline-success. */
+  /* READ AS RULES, NOT SEARCHED AS TEXT — 21 October.
+   *
+   * This test first asserted /\.table-navy/ against the whole string, and a
+   * mutant that renamed the OPENING rule to `.table-nope` SURVIVED it: the
+   * two descendant rules below still carry the old name, so the substring
+   * was still there while the palette itself had gone. Searching a stylesheet
+   * for a word proves the word is present, which is not the claim. */
+  const rules = rulesIn(appHeaderAssets());
+
+  const palette = rules.find(r => r.selectors.includes('.table-navy'));
+  assert.ok(palette, 'there is no .table-navy rule — the shared palette is gone');
+
+  for (const prop of ['--bs-table-bg', '--bs-table-color',
+                      '--bs-table-striped-bg', '--bs-table-hover-bg',
+                      '--bs-table-border-color']) {
+    assert.ok(palette.body.includes(prop), `.table-navy no longer sets ${prop}`);
+  }
+
+  assert.ok(/--bs-table-bg:\s*transparent/.test(palette.body),
+    'the table paints its own background again, so it reads as a black box on the navy');
+
+  assert.ok(rules.some(r => r.selectors.includes('.table-navy .rownum')),
+    'the row-number column has no styling, so every list numbers itself differently');
+});
+
+test('IT IS A CLASS, NOT A RULE ON EVERY TABLE', () => {
+  /* THE BUG THIS PREVENTS, and it would have been invisible to me.
+   *
+   * Blog Automation draws its sites table inside bg-light text-dark — a
+   * WHITE card, deliberately. A bare rule on .table here would paint that
+   * table's text white on white and delete the page, and nothing in the
+   * Static Blogs work would have gone anywhere near it.
+   *
+   * THIS TEST ALSO SURVIVED ITS OWN MUTANT ONCE. The first version split the
+   * stylesheet on braces and skipped any chunk beginning with a comment —
+   * and EVERY rule in this file is preceded by one, so it skipped the lot
+   * and passed on a stylesheet that styled every table in the app. Comments
+   * are stripped before parsing now, in rulesIn(). */
+  for (const rule of rulesIn(appHeaderAssets())) {
+    for (const selector of rule.selectors) {
+      assert.ok(!/^(table|\.table)$/.test(selector),
+        `"${selector}" styles every table in the app, including the white card on /blog-sites`);
+    }
+  }
+});
+
 test('Bootstrap CSS is NOT re-included', () => {
   // Both pages that use this already load it; twice is a wasted request.
   assert.ok(!/bootstrap@[\d.]+\/dist\/css/.test(appHeaderAssets()), appHeaderAssets());
