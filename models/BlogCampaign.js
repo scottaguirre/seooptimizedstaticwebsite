@@ -85,6 +85,53 @@ const slotSchema = new mongoose.Schema({
   // still make sense when post 5 finally exists.
   linkPhrase: { type: String, default: '' },
 
+  /**
+   * How this post is written — where it opens and how it is organised — as
+   * distinct from what it is about.
+   *
+   * Rotated by slot index at planning time so consecutive posts on a blog do
+   * not share a shape. Every post on every blog came out of one brief, and
+   * across 171 articles on one domain that stops being a house style and
+   * becomes "repeated structure across many URLs", which is the phrase in
+   * Google's scaled content abuse policy.
+   *
+   * STORED, NOT RECOMPUTED, for the reason moneyAnchor is: a campaign can be
+   * replanned after an edit, and a post already written must not disagree
+   * with the slot it came from.
+   *
+   * NOT AN ENUM. The ids live in utils/blog/angles.js and that list will
+   * grow; a schema enum would mean a migration every time somebody adds a
+   * treatment, and a document saved under an id this copy of the code does
+   * not know is handled already — briefFor() returns null and the post is
+   * written from the plain brief.
+   *
+   * EMPTY ON EVERY CAMPAIGN PLANNED BEFORE 21 OCTOBER 2026. Those posts are
+   * already written; nothing backfills them.
+   */
+  angle: { type: String, default: '' },
+
+  /**
+   * How long this post is, in how many sections — a band id from
+   * utils/blog/shapes.js.
+   *
+   * The companion to `angle`, and the half a machine can measure. Until 21
+   * October 2026 every post ever written asked for 1000-1300 words in 4-6
+   * sections, because that line in the prompt was a constant.
+   *
+   * READ BY THE WRITER AND BY THE CHECKER BOTH, which is why it is stored
+   * rather than derived twice. qualityCheck fails a post under its band's
+   * floor with the code `short`, `short` is in REWRITE_WORTHY, and
+   * blogGenerator retries a rewrite-worthy failure — so a writer and a
+   * checker working from different bands means every short post is written
+   * twice and ships red anyway.
+   *
+   * EMPTY ON EVERY CAMPAIGN PLANNED BEFORE 21 OCTOBER 2026, including the
+   * 552 posts scheduled and unwritten that day. boundsFor('') returns the
+   * old numbers exactly, so those posts come out as they always would have.
+   * Nothing backfills them.
+   */
+  shape: { type: String, default: '' },
+
   // The requested slug. NOT the published one — WordPress appends -2 to a
   // slug already in use, and publishedUrl below records what it actually did.
   slug: { type: String, default: '' },

@@ -29,6 +29,8 @@
 // piece that moves to production unchanged.
 
 const { allocateAnchorTypes, pickAnchors, DEFAULT_MIX } = require('./anchors');
+const { angleFor } = require('./angles');
+const { shapeFor } = require('./shapes');
 
 /**
  * WordPress-compatible slug.
@@ -197,6 +199,28 @@ function planCampaign(input) {
       // How other posts refer to this one in a sentence. Distinct from the
       // title on purpose — see campaign.example.js.
       linkPhrase: t.linkPhrase || null,
+
+      /* HOW THIS POST IS WRITTEN, as distinct from what it is about.
+       *
+       * Rotated by position so consecutive posts on the blog do not share a
+       * shape. See angles.js for why it is assigned here rather than read
+       * off the topic — the short version is that suggestTopics has emitted
+       * an `angle` all along and the UI dropped it on both products, and
+       * that most topics are typed or uploaded and never had one.
+       *
+       * OUTSIDE THE isPillar BRANCH, deliberately. The anchor allocation
+       * above is skipped for a pillar campaign, and a per-slot field added
+       * to the wrong side of that `if` would leave every Cloudflare pillar
+       * post unangled — which is the exact population this was built for.
+       */
+      angle: angleFor(i),
+
+      /* HOW LONG, in how many sections. Rotated on a cycle coprime with the
+       * angles' so the two do not march in step — see shapes.js. Beside the
+       * angle rather than near it by accident: both are "what kind of post
+       * is this", both are stored because a replan must not change a post
+       * already written, and both are outside the isPillar branch. */
+      shape: shapeFor(i),
 
       // The ONE search this post is meant to win. Two posts chasing the same
       // query split their strength; a post chasing the service page's query

@@ -42,10 +42,12 @@ const { checkPost, linkSpread } = require('./utils/blog/qualityCheck');
 const { worthRewriting, REWRITE_WORTHY } = require('./utils/blog/qualityCheck');
 const { checkTopicSet, withoutOuterArticles } = require('./utils/blog/qualityCheck');
 const { findFiller, OPENERS_ONLY } = require('./utils/blog/qualityCheck');
+const { SHAPES, boundsFor } = require('./utils/blog/shapes');
+const { buildPrompt } = require('./utils/blog/writePost');
 
 let passed = 0;
 let failed = 0;
-const DECLARED = 42;
+const DECLARED = 47;   // 42 + 5 length bands, 21 October
 
 function test(name, fn) {
   try {
@@ -252,11 +254,145 @@ test('a post at the length asked for passes', () => {
 
 test('the prompt asks for the length the check enforces', () => {
   /* A prompt and a checker disagreeing about the target is how a post ends up
-   * failing a rule nobody asked it to follow. */
-  const prompt = read('utils/blog/writePost.js');
+   * failing a rule nobody asked it to follow.
+   *
+   * REWRITTEN 21 OCTOBER, AND THE REWRITE IS THE POINT. This used to grep
+   * writePost.js for the literal "1000-1300 words" — which proved the string
+   * was in the file, not that the checker agreed with it. The length is now
+   * a band read off the slot, so the literal is gone and the old assertion
+   * would have failed against a correct build.
+   *
+   * It now does what it always claimed: renders a real prompt for each band
+   * and checks the floor underneath it. Comparing the two live values cannot
+   * pass on a file that merely mentions a number. */
+  for (const shape of [...SHAPES, { id: 'no-such-band' }, { id: '' }]) {
+    const prompt = buildPrompt({ ...SLOT, topic: 'A topic', shape: shape.id },
+      { business: { name: 'Hill Country Plumbing' },
+        targetPage: { title: 'Water Heater Repair', url: 'https://x.example/whr' } });
 
-  assert.match(prompt, /1000-1300 words/, 'the prompt no longer asks for 1000-1300 words');
-  assert.match(prompt, /4-6 sections/);
+    const bounds = boundsFor(shape.id);
+
+    assert.ok(prompt.includes(`${bounds.words.min}-${bounds.words.max} words`),
+      `band "${shape.id}": the prompt does not ask for ${bounds.words.min}-${bounds.words.max} words`);
+    assert.ok(prompt.includes(`${bounds.sections.min}-${bounds.sections.max} sections`),
+      `band "${shape.id}": the prompt does not ask for ${bounds.sections.min}-${bounds.sections.max} sections`);
+
+    assert.ok(bounds.floor < bounds.words.min,
+      `band "${shape.id}": the floor is at or above the length asked for`);
+  }
+});
+
+test('A SHORT-BAND POST IS NOT FAILED FOR BEING SHORT', () => {
+  /* THE WHOLE REASON THE CHECKER HAD TO MOVE WITH THE PROMPT.
+   *
+   * The floor was 850, tuned to the one old band. Ask a slot for 700-950
+   * words and the post comes back at 800, and the old checker fails it as
+   * `short` — which is in REWRITE_WORTHY, so blogGenerator rewrites it, to
+   * the same 700-950 instruction, and fails it again. Two model calls per
+   * short post, on every campaign, and the post ships red anyway.
+   *
+   * The fixture is deliberately between the short band's floor and the old
+   * one: it must pass as `short` and fail as `standard`, which is the only
+   * arrangement that proves the floor actually moved. */
+  const shortPost = post({
+    sections: [
+      { heading: null, paragraphs: [body(10) + `Call ${MONEY}.`] },
+      { heading: 'More', paragraphs: [body(10) + `This follows ${PREV}.`] },
+      { heading: 'Last', paragraphs: [body(10) + `There is ${NEXT}.`] },
+    ],
+  });
+
+  const asShort = checkPost(shortPost, { ...SLOT, shape: 'short' });
+  const asStandard = checkPost(shortPost, { ...SLOT, shape: 'standard' });
+
+  assert.ok(asShort.stats.words > 600 && asShort.stats.words < 850,
+    `fixture is ${asShort.stats.words} words — it must sit between the two floors to prove anything`);
+
+  assert.ok(!asShort.codes.includes('short'),
+    `a post written to the short band was failed as short at ${asShort.stats.words} words`);
+  assert.ok(asStandard.codes.includes('short'),
+    'the same post passed the standard band, so the floor did not move at all');
+});
+
+test('AND A LONG-BAND POST IS HELD TO A HIGHER FLOOR', () => {
+  /* The other direction, which a floor that only ever went down would fail.
+   * A 1,000-word post is a fine standard post and a failed long one. */
+  const midPost = wellSpread();
+
+  const asStandard = checkPost(midPost, { ...SLOT, shape: 'standard' });
+  const asLong = checkPost(midPost, { ...SLOT, shape: 'long' });
+
+  assert.ok(!asStandard.codes.includes('short'), 'the fixture is not a valid standard post');
+  assert.ok(asLong.codes.includes('short'),
+    `${asStandard.stats.words} words passed as a long post, so the long floor is not being read`);
+});
+
+test('AN UNSHAPED SLOT IS CHECKED EXACTLY AS IT ALWAYS WAS', () => {
+  /* THE 552 ALREADY SCHEDULED, on the checker side. They have no shape,
+   * they will be written and checked by this build, and a floor that moved
+   * under them would fail posts that were correct yesterday — at two model
+   * calls each. */
+  const bounds = boundsFor(undefined);
+
+  assert.strictEqual(bounds.floor, 850);
+  assert.strictEqual(bounds.longAt, 1800);
+
+  const shortPost = post({
+    sections: [
+      { heading: null, paragraphs: [body(10) + `Call ${MONEY}.`] },
+      { heading: 'More', paragraphs: [body(10) + `This follows ${PREV}.`] },
+      { heading: 'Last', paragraphs: [body(10) + `There is ${NEXT}.`] },
+    ],
+  });
+
+  assert.ok(checkPost(shortPost, SLOT).codes.includes('short'),
+    'a slot with no shape is no longer held to the old floor');
+});
+
+test('AND THE CHECKER ACTUALLY READS THAT THRESHOLD', () => {
+  /* ADDED BECAUSE MUTATION WALKED THROUGH. Replacing `bounds.longAt` with a
+   * hardcoded 1800 inside qualityCheck SURVIVED — because the test below
+   * reads boundsFor() and never puts a long post through checkPost(). It
+   * asserted the data was right, not that anything used it: the wiring gap
+   * in miniature, inside a test written to catch wiring gaps.
+   *
+   * The fixture sits between the two thresholds: clean as a long post,
+   * warned as a standard one. Nothing else distinguishes a threshold that
+   * moved from one that did not. */
+  const big = post({
+    sections: [
+      { heading: null, paragraphs: [body(22) + `Call ${MONEY}.`] },
+      { heading: 'What it costs', paragraphs: [body(22) + `This follows ${PREV}.`] },
+      { heading: 'What comes next', paragraphs: [body(22) + `There is ${NEXT}.`] },
+      { heading: 'Before you call', paragraphs: [body(22)] },
+    ],
+  });
+
+  const asLong = checkPost(big, { ...SLOT, shape: 'long' });
+  const asStandard = checkPost(big, { ...SLOT, shape: 'standard' });
+  const padded = v => v.warnings.some(w => /long enough to be padded/.test(w));
+
+  assert.ok(asLong.stats.words > 1800 && asLong.stats.words < 2400,
+    `fixture is ${asLong.stats.words} words — it must sit between the two thresholds to prove anything`);
+
+  assert.ok(!padded(asLong),
+    `a post written to the long band was warned for padding at ${asLong.stats.words} words`);
+  assert.ok(padded(asStandard),
+    'the same post was clean as a standard post, so the checker is not reading the band');
+});
+
+test('THE PADDING WARNING MOVES WITH THE BAND TOO', () => {
+  /* It warned over 1800, tuned to the same single band. A long post asked
+   * for at 1500-1900 would warn on every one it produced — a report full of
+   * amber for posts written exactly as instructed, which is how a warning
+   * stops meaning anything. */
+  const standard = boundsFor('standard');
+  const long = boundsFor('long');
+
+  assert.ok(long.longAt > long.words.max,
+    'a long post written as asked would be warned for padding');
+  assert.ok(long.longAt > standard.longAt,
+    'the long band warns at the same point as the standard one');
 });
 
 /* ------------------------------------------------------------------ *

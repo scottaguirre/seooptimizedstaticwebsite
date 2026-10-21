@@ -140,6 +140,22 @@ function planForCampaign(input) {
     topic: s.topic,
     targetQuery: s.targetQuery || '',
     linkPhrase: s.linkPhrase || '',
+
+    /* CARRIED ONTO THE STORED SLOT, and this line is the whole reason the
+     * field exists at all. planCampaign assigns an angle; this function maps
+     * the plan onto the BlogCampaign schema field by field, and a field it
+     * does not name is a field that exists until the moment it is saved.
+     *
+     * That is precisely how suggestTopics' own `angle` was lost for months:
+     * emitted, documented in this function's JSDoc as an input, and never
+     * written down. The ninth wiring gap in this project. */
+    angle: s.angle || '',
+
+    /* AND THE SAME FOR THE SHAPE. Two fields, one line each, and the line is
+     * the only thing standing between "the planner assigns it" and "the
+     * writer never hears about it". */
+    shape: s.shape || '',
+
     slug: s.slug,
 
     /* EMPTY STRING, NOT A PLACEHOLDER PHRASE. The schema defaults these to ''

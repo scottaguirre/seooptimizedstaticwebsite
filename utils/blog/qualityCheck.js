@@ -15,6 +15,7 @@
  * keywordCoverage.js requires nothing itself, so this file is still loadable
  * in a unit test — which is the property that let REWRITE_WORTHY move here. */
 const { keywordCoverage } = require('./keywordCoverage');
+const { boundsFor } = require('./shapes');
 
 /* -------------------------------------------------------------------------
  * Phrases that mark filler
@@ -280,12 +281,25 @@ const FILLER = [
       warnings.push('meta description restates the title');
     }
   
-    /* MOVED WITH THE PROMPT, which now asks for 1000-1300 words in 4-6
-     * sections. A floor of 550 against a 1000-word target is not a floor, it
-     * is a formality: a post could come back at half the length asked for and
-     * pass clean. */
-    if (stats.words < 850) { fail('short', `only ${stats.words} words`); }
-    if (stats.words > 1800) warnings.push(`${stats.words} words — long enough to be padded`);
+    /* MOVED WITH THE PROMPT, which now asks for a LENGTH BAND off the slot
+     * rather than one fixed range. A floor of 550 against a 1000-word target
+     * is not a floor, it is a formality — and a floor of 850 against a
+     * 700-word target is worse than a formality, it is a bill.
+     *
+     * `short` is in REWRITE_WORTHY, so blogGenerator retries it. A checker
+     * holding a short-band post to the standard floor would fail it, rewrite
+     * it to the same instruction, fail it again, and ship it red: two model
+     * calls for every short post in every campaign. The writer and the
+     * checker read the same boundsFor(), from the same stored band, for
+     * exactly that reason.
+     *
+     * A SLOT WITH NO BAND GETS 850 AND 1800 — yesterday's numbers to the
+     * word. 552 posts were scheduled and unwritten the day this shipped and
+     * nothing backfills them. */
+    const bounds = boundsFor(slot.shape);
+
+    if (stats.words < bounds.floor) { fail('short', `only ${stats.words} words`); }
+    if (stats.words > bounds.longAt) warnings.push(`${stats.words} words — long enough to be padded`);
   
     const headings = (post.sections || []).filter(s => s.heading).length;
     if (headings < 2) warnings.push(`only ${headings} subheading(s)`);

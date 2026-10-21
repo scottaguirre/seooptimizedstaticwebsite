@@ -2247,6 +2247,123 @@ back when disputing a bill. Now covered, and the mutation is caught.
 
 ## Outstanding
 
+### NEXT — blogs on a pool of domains, across several Cloudflare accounts
+
+Agreed with Edwin on 21 October, for 22 October. This is "product B" from
+the earlier backlog, and the shape he settled on.
+
+**WHAT HE WANTS A CUSTOMER TO SEE.** A text box and a dropdown:
+
+    [ hvac ] . [ clientdomain.com ▾ ]     Create
+
+That is the whole interaction. No Cloudflare credentials, no CNAME to
+paste, no registrar. He manages the DNS for all 20 domains, so when the
+zone is on the same Cloudflare account as the Pages project, **Cloudflare
+writes the DNS record itself** and the customer does nothing at all.
+
+**WHY SUBDOMAINS ONLY, AND IT IS NOT A PREFERENCE.** Cloudflare Pages will
+attach a SUBDOMAIN whose zone is anywhere — the owner adds a CNAME to
+`<project>.pages.dev` at their own provider. An APEX domain must be a zone
+on the same account, with its nameservers pointed at Cloudflare. Offering
+apex means taking over a client's nameservers; decide once that we do not.
+
+**WHY TWENTY ACCOUNTS.** Cloudflare caps **100 Pages projects per account**
+and the docs say it is not routinely increased. One blog is one project.
+Edwin wants the headroom up front rather than a migration at 80.
+
+  - He is well under 100 today — 20 clients at a few blogs each is ~60.
+    This is bought headroom, not a present constraint.
+  - **ASK CLOUDFLARE FIRST.** Agencies do run multiple accounts, but
+    opening twenty specifically to get past a per-account limit is worth a
+    direct question rather than an assumption, and they have a
+    partner/tenant arrangement built for exactly this shape. Not verified;
+    do not build around twenty logins before he has asked.
+
+**THE ACCOUNT IS CHOSEN BY THE DOMAIN, NEVER ROUND-ROBIN.** The Pages
+project must sit on the same account as the zone or the automatic DNS
+stops and we are writing CNAMEs across accounts by hand — which is the one
+thing this design exists to avoid. So:
+
+    Domain { domain, cloudflareAccountId, tokenRef, label, enabled }
+
+and every blog on that domain lands on that account, for ever.
+
+#### The real work: credentials stop being global
+
+The dropdown is an afternoon. THIS is the job, and it touches the path
+that publishes live sites.
+
+`process.env.CF_ACCOUNT_ID` and `CF_API_TOKEN` are read in **eight places**
+across two files:
+
+    utils/blog/cloudflare/deploy.js    childEnv()   x2
+                                       scrub()      x2
+                                       cfApi()      x2
+                                       two /accounts/ path builders
+    utils/blog/cloudflare/redirects.js the account() path builder
+
+Each becomes a parameter. The seam already exists and is better than it
+looks: `deployBlog({ blog, ... })` ALREADY takes the blog, so the
+credentials can be resolved once from `blog` at the top and passed down.
+
+Exports that need the extra argument: `cfApi`, `childEnv`, `scrub`,
+`findZone`, `listZones`, `ensureProject`, `attachDomain`, `detachDomain`,
+`ensureDnsRecord`, `removeDnsRecord`, `pointDomainAtProject`,
+`releaseDomain`, `deleteProject`, and `redirects.js`'s account path.
+
+Only two files call in from outside — `render/publishBlog.js` and
+`routes/staticBlogsRoute.js` — so the blast radius is small.
+
+**`scrub()` IS THE SECURITY-CRITICAL ONE AND IT IS EASY TO MISS.** It
+redacts secrets out of anything that might be logged or thrown, and it
+does it by reading the env. Hand it per-account credentials and the
+instant it is still reading `process.env` it redacts the WRONG token —
+so a live token reaches a log file in cleartext, silently, in exactly the
+failure path where output gets dumped. Do this one first, test it first,
+and assert on a token that is NOT the env one.
+
+#### Order of work
+
+1. **`scrub()` takes its secrets as an argument.** Alone, with its own
+   tests, before anything else moves. Assert that a token passed in is
+   redacted and that one left in the env is not mistaken for it.
+2. **`cfApi()` takes credentials.** Everything else goes through it.
+3. **`childEnv()` takes them.** This is what wrangler runs with.
+4. The remaining helpers, one at a time, each still green.
+5. **A `credsFor(blog)` resolver** — the only place that decides which
+   account a blog belongs to, and the only place that reads a token store.
+6. **`Domain` model + the dropdown**, which is the easy end.
+
+**LEGACY FIRST, AS WITH `shape` AND `angle`.** Every existing blog has no
+account id. `credsFor()` must return the env credentials for those, to the
+letter, and there must be a test saying so before step 1 lands. Edwin has
+live blogs on the current account; they must keep deploying unchanged.
+
+#### What leads
+
+`test-cloudflare-deploy.js` — 67 tests, and it already sets and restores
+`process.env.CF_*` around its cases (lines ~116 and ~297), including one
+that deletes them to prove the no-credentials path. That env-juggling is
+what has to become argument-passing, and those tests are the spec for it.
+
+`test-static-blogs.js` (198) covers the create flow the dropdown replaces.
+
+#### Open, and his call
+
+  - **Where the twenty tokens live.** One `.env` with twenty names does
+    not scale and is twenty secrets in one file. Earlier note stands: a
+    Cloudflare token for this product must be stored REVERSIBLY (encrypted
+    at rest), unlike licence keys which are hashed.
+  - **Project name uniqueness** is per account, not global. Two clients
+    can now both have `hvac-blog` on different accounts. Check
+    `projectNameFor()` does not assume otherwise.
+  - **`CF_REDIRECT_LIST`** names a list inside an account. Twenty accounts
+    means twenty lists, or the redirect feature is per-account too.
+  - **The content risk moves to the client's domain.** A blog at
+    `blog.clientdomain.com` is part of that business's site for ranking.
+    That is the upside, and it is also why the angle/shape work shipped
+    first.
+
 ### QUEUED — fold the campaigns table on a blog's page
 
 Edwin, 21 October, right after the Articles list moved out: *"I was

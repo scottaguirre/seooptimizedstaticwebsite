@@ -544,6 +544,331 @@ function callsItsNeighbour(fields) {
   return buildLinkPlan(neighbourNamed(fields), 0).slot.nextAnchor;
 }
 
+/* ------------------------------------------------------- the post's angle
+ *
+ * HOW a post is written, as opposed to what it is about. Every post on a
+ * blog came out of one brief — 1000-1300 words, 4-6 sections, open unheaded,
+ * no conclusion, paragraphs of two to four sentences — so 171 of them share
+ * a skeleton. Each instruction is good; run 171 times they are a
+ * fingerprint, and "repeated structure across many URLs" is the phrase in
+ * Google's own scaled-content policy.
+ *
+ * ASSIGNED HERE, NOT CARRIED FROM THE TOPIC. suggestTopics already asks the
+ * model for an `angle` and has since it was written — and it is dropped at
+ * the UI, on both products: the Cloudflare screen flattens a suggestion to
+ * "topic | keyword" into a textarea, and the plugin's table has the same
+ * three columns. It reached nothing. Typed and CSV topics never had one at
+ * all, which is most of them.
+ *
+ * So it is rotated by slot index, which is what
+ * createLocationPagesPrompt.js has done for location pages all along —
+ * "Vary the heading style too, so every page's H1 isn't the same formula."
+ *
+ * TREATMENTS, NOT SUBJECTS. A rotated "cost" angle lands on a topic with
+ * nothing to do with cost. Location pages get away with subject angles
+ * because every town page covers the same service; blog topics do not.
+ * These say how to open and organise, which fits almost anything.
+ */
+
+const { TREATMENTS, angleFor } = require('./utils/blog/angles');
+
+test('EVERY SLOT IS GIVEN AN ANGLE', () => {
+  const plan = planForCampaign({
+    topics: TOPICS, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  for (const slot of plan.slots) {
+    assert.ok(slot.angle, `slot ${slot.index} has no angle`);
+    assert.ok(TREATMENTS.some(t => t.id === slot.angle),
+      `slot ${slot.index} has an angle nothing recognises: ${slot.angle}`);
+  }
+});
+
+test('AND CONSECUTIVE POSTS DO NOT SHARE ONE', () => {
+  /* THE WHOLE POINT. An assignment that gave every slot the same angle, or
+   * picked at random and happened to repeat, would satisfy "every slot has
+   * an angle" and leave the blog exactly as uniform as it was. A reader
+   * going down the list must not meet the same shape twice running. */
+  const plan = planForCampaign({
+    topics: TOPICS, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  const angles = plan.slots.map(s => s.angle);
+
+  for (let i = 1; i < angles.length; i++) {
+    assert.notStrictEqual(angles[i], angles[i - 1],
+      `slots ${i - 1} and ${i} are both "${angles[i]}"`);
+  }
+});
+
+test('A CAMPAIGN LONGER THAN THE LIST USES ALL OF THEM', () => {
+  /* 25-post campaigns are Edwin's normal size and the list is shorter than
+   * that, so it has to cycle — the question is whether it cycles through
+   * all of them or gets stuck on the first few. */
+  const many = Array.from({ length: 25 }, (_, i) => ({
+    topic: `Topic ${i + 1}`,
+    targetQuery: `query number ${i + 1}`,
+  }));
+
+  const plan = planForCampaign({
+    topics: many, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  const used = new Set(plan.slots.map(s => s.angle));
+  assert.strictEqual(used.size, TREATMENTS.length,
+    `25 posts used only ${used.size} of ${TREATMENTS.length} angles`);
+});
+
+test('A TYPED TOPIC WITH NO ANGLE OF ITS OWN STILL GETS ONE', () => {
+  /* The case that matters most, because it is most of them. Edwin's topics
+   * arrive from a CSV or are typed into a box; neither has ever carried an
+   * angle, and an implementation that read one off the topic would do
+   * nothing at all for the blogs that already exist. */
+  const plan = planForCampaign({
+    topics: [{ topic: 'Hydro jetting and old cast iron', targetQuery: 'hydro jetting old pipes' }],
+    targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  assert.ok(plan.slots[0].angle, 'a typed topic was planned with no angle');
+});
+
+test('A PILLAR CAMPAIGN GETS ANGLES TOO', () => {
+  /* The pillar branch skips the whole anchor allocation, which is where a
+   * new per-slot field is most easily added to the wrong side of an `if`.
+   * Those posts are on a Cloudflare blog, which is the uniformity case. */
+  const plan = planForCampaign({
+    topics: TOPICS, business: BUSINESS, isPillar: true,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  for (const slot of plan.slots) {
+    assert.ok(slot.angle, `pillar slot ${slot.index} has no angle`);
+  }
+});
+
+test('THE ANGLE SURVIVES ONTO THE STORED CAMPAIGN', () => {
+  /* THE WIRING GAP, WHICH THIS PROJECT HAS NOW HIT NINE TIMES: both halves
+   * correct, no wire between them. campaignPlan() maps the plan onto the
+   * BlogCampaign schema field by field, and a field it does not name is a
+   * field that exists until the moment it is saved.
+   *
+   * That is exactly how `angle` was lost in the first place. */
+  const stored = planForCampaign({
+    topics: TOPICS, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  assert.ok(stored.slots.every(s => s.angle),
+    'the angle is gone by the time the campaign is stored');
+});
+
+test('angleFor IS STABLE, SO A REPLAN DOES NOT RESHUFFLE A BLOG', () => {
+  /* Not random. A campaign replanned after an edit would otherwise hand
+   * every post a different treatment, and a post already written would
+   * disagree with the slot it came from. */
+  assert.strictEqual(angleFor(0), angleFor(0));
+  assert.strictEqual(angleFor(7), angleFor(7));
+  assert.notStrictEqual(angleFor(0), angleFor(1));
+});
+
+/* ------------------------------------------------------- the post's shape
+ *
+ * HOW LONG, in how many sections. The other half of the sameness problem,
+ * and the half a machine can see most cheaply: an angle changes the prose,
+ * but every post was still 1000-1300 words in 4-6 sections because that
+ * line in writePost.js is a constant.
+ *
+ * A human blog of 171 posts has a 600-word answer and a 2,000-word
+ * walkthrough. Ours had one measurement, 171 times.
+ *
+ * THE CHECKER MOVES WITH IT OR THIS COSTS MONEY. qualityCheck fails a post
+ * under 850 words with the code `short`, `short` is in REWRITE_WORTHY, and
+ * blogGenerator retries a rewrite-worthy failure — so a 700-word post asked
+ * for at 700 words would be written twice, charged twice, and still ship
+ * red. The band has to be stored on the slot and read by BOTH, exactly as
+ * moneyAnchor is.
+ */
+
+const { SHAPES, shapeFor, boundsFor } = require('./utils/blog/shapes');
+
+test('EVERY SLOT IS GIVEN A SHAPE', () => {
+  const plan = planForCampaign({
+    topics: TOPICS, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  for (const slot of plan.slots) {
+    assert.ok(slot.shape, `slot ${slot.index} has no shape`);
+    assert.ok(SHAPES.some(s => s.id === slot.shape),
+      `slot ${slot.index} has a shape nothing recognises: ${slot.shape}`);
+  }
+});
+
+test('A CAMPAIGN USES MORE THAN ONE LENGTH', () => {
+  /* The entire point. An assignment that handed every slot "standard" would
+   * satisfy the test above and leave the blog exactly as uniform as it was —
+   * which is the state this is being changed from. */
+  const many = Array.from({ length: 25 }, (_, i) => ({
+    topic: `Topic ${i + 1}`, targetQuery: `query number ${i + 1}`,
+  }));
+
+  const plan = planForCampaign({
+    topics: many, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  const used = new Set(plan.slots.map(s => s.shape));
+  assert.strictEqual(used.size, SHAPES.length,
+    `25 posts used only ${used.size} of ${SHAPES.length} shapes`);
+});
+
+test('SHAPE AND ANGLE DO NOT MARCH IN STEP', () => {
+  /* A FINGERPRINT OF ITS OWN, and the easy mistake here.
+   *
+   * If both rotated on the same cycle length, every "mistake" post would be
+   * the same length as every other "mistake" post, for ever — swapping one
+   * pattern for a slightly larger one. The two cycles are coprime so the
+   * pairing keeps moving.
+   *
+   * Asserted on the pairs rather than on the cycle lengths: the property is
+   * "an angle appears at more than one length", not any particular arithmetic
+   * that happens to deliver it today. */
+  const many = Array.from({ length: 35 }, (_, i) => ({
+    topic: `Topic ${i + 1}`, targetQuery: `query number ${i + 1}`,
+  }));
+
+  const plan = planForCampaign({
+    topics: many, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  const lengthsByAngle = new Map();
+  for (const s of plan.slots) {
+    if (!lengthsByAngle.has(s.angle)) lengthsByAngle.set(s.angle, new Set());
+    lengthsByAngle.get(s.angle).add(s.shape);
+  }
+
+  for (const [angle, shapes] of lengthsByAngle) {
+    assert.ok(shapes.size > 1,
+      `every "${angle}" post is the same length (${[...shapes]}), which is a new pattern`);
+  }
+});
+
+test('THE SHAPE SURVIVES ONTO THE STORED CAMPAIGN', () => {
+  /* The wiring gap, checked at the one line that closes it. campaignPlan()
+   * maps the plan onto the schema field by field, and a field it does not
+   * name exists only until the moment it is saved. */
+  const stored = planForCampaign({
+    topics: TOPICS, targetPage: TARGET, business: BUSINESS,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  assert.ok(stored.slots.every(s => s.shape),
+    'the shape is gone by the time the campaign is stored');
+});
+
+test('A PILLAR CAMPAIGN GETS SHAPES TOO', () => {
+  const plan = planForCampaign({
+    topics: TOPICS, business: BUSINESS, isPillar: true,
+    schedule: { everyDays: 7, startAt: new Date('2026-11-02T09:00:00Z') },
+  });
+
+  for (const slot of plan.slots) {
+    assert.ok(slot.shape, `pillar slot ${slot.index} has no shape`);
+  }
+});
+
+test('shapeFor IS STABLE, SO A REPLAN DOES NOT RESIZE A BLOG', () => {
+  assert.strictEqual(shapeFor(0), shapeFor(0));
+  assert.strictEqual(shapeFor(11), shapeFor(11));
+});
+
+test('EVERY SHAPE IS INTERNALLY COHERENT', () => {
+  /* A band whose floor sits above its own minimum would fail every post
+   * written to it — the exact double-charge this work exists to avoid, with
+   * the fault inside the fix. */
+  for (const s of SHAPES) {
+    assert.ok(s.id, 'a shape has no id');
+
+    assert.ok(s.words.min < s.words.max, `${s.id}: word range is backwards`);
+    assert.ok(s.sections.min <= s.sections.max, `${s.id}: section range is backwards`);
+
+    assert.ok(s.floor < s.words.min,
+      `${s.id}: the checker's floor (${s.floor}) is at or above the length asked for (${s.words.min}), so every post fails`);
+    assert.ok(s.longAt > s.words.max,
+      `${s.id}: the padding warning (${s.longAt}) fires on a post written exactly as asked`);
+
+    /* AT LEAST TWO SUBHEADINGS, because the first section is the unheaded
+     * opening and qualityCheck warns under two. A band asking for 2 sections
+     * would warn on every post it produced. */
+    assert.ok(s.sections.min >= 3,
+      `${s.id}: ${s.sections.min} sections leaves fewer than two subheadings`);
+  }
+});
+
+test('THE BANDS ACTUALLY DIFFER FROM ONE ANOTHER', () => {
+  const mins = SHAPES.map(s => s.words.min);
+  assert.strictEqual(new Set(mins).size, SHAPES.length,
+    'two bands ask for the same length, so there is only one band');
+});
+
+test('boundsFor FALLS BACK TO TODAY\'S NUMBERS FOR AN UNSHAPED SLOT', () => {
+  /* 552 POSTS ARE ALREADY SCHEDULED UNDER THE OLD RULES and nothing
+   * backfills them. They have no shape, they will be written by this build,
+   * and they must come out exactly as they would have yesterday — 1000-1300
+   * words, 4-6 sections, floor 850, padding warning at 1800.
+   *
+   * This is the test that makes the change safe to deploy, not the ones
+   * above it. */
+  const old = boundsFor(undefined);
+
+  assert.strictEqual(old.words.min, 1000);
+  assert.strictEqual(old.words.max, 1300);
+  assert.strictEqual(old.sections.min, 4);
+  assert.strictEqual(old.sections.max, 6);
+  assert.strictEqual(old.floor, 850);
+  assert.strictEqual(old.longAt, 1800);
+
+  assert.deepStrictEqual(boundsFor('no-such-band'), old,
+    'a shape from a newer build does not fall back to the old rules');
+});
+
+test('briefFor RETURNS null FOR AN ANGLE IT DOES NOT KNOW', () => {
+  /* ADDED BECAUSE MUTATION FOUND THE CLAIM UNCHECKED. The JSDoc on briefFor
+   * says "NULL RATHER THAN A DEFAULT", at some length, and returning '' from
+   * it SURVIVED every test — because the only caller treats both as falsy
+   * and omits the block either way.
+   *
+   * Equivalent today, then. But a documented return type that nothing
+   * verifies is the same shape of thing as a comment promising a guard the
+   * line below does not have, which this codebase has now been bitten by
+   * three times this week. Either check it or stop claiming it. */
+  const { briefFor } = require('./utils/blog/angles');
+
+  assert.strictEqual(briefFor('interpretive-dance'), null);
+  assert.strictEqual(briefFor(''), null);
+  assert.strictEqual(briefFor(undefined), null);
+
+  assert.strictEqual(typeof briefFor(TREATMENTS[0].id), 'string');
+});
+
+test('AND EVERY TREATMENT HAS SOMETHING TO SAY TO THE WRITER', () => {
+  /* A list of ids with no instructions behind them would pass every test
+   * above and change not one word of any post. */
+  for (const t of TREATMENTS) {
+    assert.ok(t.id, 'a treatment has no id');
+    assert.ok(t.brief && t.brief.length > 20,
+      `treatment "${t.id}" has no usable brief: ${JSON.stringify(t.brief)}`);
+  }
+
+  assert.strictEqual(new Set(TREATMENTS.map(t => t.id)).size, TREATMENTS.length,
+    'two treatments share an id');
+});
+
 test('A NEIGHBOUR IS CALLED BY ITS KEYWORD WHEN NOTHING BETTER EXISTS', () => {
   /* THE BUG THIS FIXES. Every static blog reaches here: parseTopics collects
    * a topic and a query and no linkPhrase, so the chain used to fall past

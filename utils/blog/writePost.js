@@ -14,6 +14,8 @@
 
 const path = require('path');
 const { businessBlock } = require('./businessBlock');
+const { briefFor } = require('./angles');
+const { boundsFor } = require('./shapes');
 
 /* THE PROMPT ASKS FOR EXACTLY WHAT THE CHECKER MEASURES, by taking the word
  * list from the function that does the measuring. qualityCheck.js runs
@@ -343,6 +345,20 @@ function buildPrompt(slot, ctx) {
    *
    * See businessBlock.js. Deciding it there also ended the second copy of
    * this template, which lived in suggestTopics.js and was wrong identically. */
+  /* THE LENGTH BAND THIS POST IS WRITTEN TO.
+   *
+   * It was a constant on the line below for the life of this file, which is
+   * why 171 articles on one blog shared a word count and a section count.
+   * boundsFor() reads the band off the slot, and returns yesterday's exact
+   * numbers for a slot that has none — the 552 posts already scheduled when
+   * this shipped must come out as they always would have.
+   *
+   * THE CHECKER READS THE SAME FUNCTION. qualityCheck fails a post under its
+   * band's floor as `short`, and `short` is rewrite-worthy, so a writer and a
+   * checker disagreeing about the band means every short post is written
+   * twice and ships red anyway. */
+  const bounds = boundsFor(slot.shape);
+
   const block = businessBlock(business);
 
   return `${systemFor(ctx)}
@@ -377,8 +393,19 @@ THE MAIN KEYWORD OF THIS POST
   sentence where it belongs. Not twice, and not none. Link phrases do not
   count towards it — this has to be a sentence of your own.
 ` : ''}
+${briefFor(slot.angle) ? `
+HOW TO WRITE THIS ONE
+  ${briefFor(slot.angle)}
+
+  This is the SHAPE of the post, not its subject. The topic above is still
+  the topic.
+
+  IF IT GENUINELY DOES NOT SUIT THIS TOPIC, take the nearest approach that
+  does and write that instead. Do not bend the facts to fit the instruction,
+  and do not write a worse post to obey it.
+` : ''}
 LENGTH
-  1000-1300 words, in 4-6 sections.
+  ${bounds.words.min}-${bounds.words.max} words, in ${bounds.sections.min}-${bounds.sections.max} sections.
 
 REQUIRED CONCRETENESS
   At least six specific details across the post — part names, temperatures,

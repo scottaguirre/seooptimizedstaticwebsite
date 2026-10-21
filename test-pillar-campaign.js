@@ -339,6 +339,146 @@ test('BUILDPROMPT DOES NOT THROW WITHOUT A MONEY PAGE', () => {
   assert.ok(prompt.length > 500);
 });
 
+/* ------------------------------------------------------------------
+ * THE ANGLE REACHES THE WRITER
+ *
+ * The planner assigning a treatment and the prompt never mentioning it is
+ * the same wiring gap that lost suggestTopics' own `angle` for months —
+ * both halves correct, no wire between. Tested here because this is the
+ * suite that drives buildPrompt directly.
+ * ------------------------------------------------------------------ */
+
+const { TREATMENTS, briefFor } = require('./utils/blog/angles');
+const { SHAPES } = require('./utils/blog/shapes');
+
+test('AN ANGLED SLOT PUTS ITS BRIEF IN THE PROMPT', () => {
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+  const prompt = buildPrompt({ ...slot, angle: 'mistake' }, ctx);
+
+  assert.ok(prompt.includes(briefFor('mistake')),
+    'the treatment brief is not in the prompt, so the angle changes nothing');
+});
+
+test('AND A DIFFERENT ANGLE PUTS A DIFFERENT BRIEF IN IT', () => {
+  /* THE HALF THAT MATTERS. A prompt that pasted the same paragraph whatever
+   * the slot said would satisfy the test above perfectly and leave every
+   * post identical — which is the entire problem being solved. */
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+
+  const a = buildPrompt({ ...slot, angle: 'mistake' }, ctx);
+  const b = buildPrompt({ ...slot, angle: 'comparison' }, ctx);
+
+  assert.notStrictEqual(a, b, 'two different angles produced the same prompt');
+  assert.ok(b.includes(briefFor('comparison')), 'the second brief is missing');
+  assert.ok(!b.includes(briefFor('mistake')), 'the second prompt carries the first brief');
+});
+
+test('EVERY TREATMENT PRODUCES A PROMPT THE WRITER CAN USE', () => {
+  /* One bad entry in the list would break one post in seven, which is the
+   * kind of thing that surfaces as "some posts read oddly" months later. */
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+
+  for (const t of TREATMENTS) {
+    const prompt = buildPrompt({ ...slot, angle: t.id }, ctx);
+    assert.ok(prompt.includes(t.brief), `treatment "${t.id}" never reaches the prompt`);
+  }
+});
+
+test('A SLOT WITH NO ANGLE IS WRITTEN FROM THE PLAIN BRIEF', () => {
+  /* EVERY CAMPAIGN PLANNED BEFORE 21 OCTOBER. They are stored with no angle
+   * and nothing backfills them, so the prompt must come out whole rather
+   * than carrying a heading with nothing under it — an empty label is a
+   * claim that the value exists, which is the lesson the business block in
+   * this same file was written from. */
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+  const prompt = buildPrompt(slot, ctx);
+
+  assert.ok(prompt.length > 500, 'an unangled slot produced no prompt');
+  assert.ok(!/HOW TO WRITE THIS ONE/.test(prompt),
+    'an unangled slot got an empty angle heading');
+});
+
+test('AND SO IS A SLOT WHOSE ANGLE THIS BUILD DOES NOT RECOGNISE', () => {
+  /* A campaign planned by a newer build, or a treatment removed from the
+   * list. briefFor() returns null and the post falls back to the plain
+   * brief — a post written from no treatment is better than one written
+   * from a heading with nothing after it. */
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+  const prompt = buildPrompt({ ...slot, angle: 'interpretive-dance' }, ctx);
+
+  assert.ok(prompt.length > 500);
+  assert.ok(!/HOW TO WRITE THIS ONE/.test(prompt),
+    'an unknown angle got an empty angle heading');
+});
+
+test('A SHAPED SLOT ASKS FOR ITS OWN LENGTH', () => {
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+  const prompt = buildPrompt({ ...slot, shape: 'short' }, ctx);
+
+  assert.ok(/700-950 words/.test(prompt), 'the short band is not in the prompt');
+  assert.ok(/3-4 sections/.test(prompt), 'the short band\'s section count is not in the prompt');
+  assert.ok(!/1000-1300/.test(prompt), 'the prompt still asks for the old length as well');
+});
+
+test('AND A DIFFERENT SHAPE ASKS FOR A DIFFERENT LENGTH', () => {
+  /* The half that matters, again. A prompt printing the same numbers
+   * whatever the slot said would pass the test above and leave 171 posts
+   * the same length — which is the whole problem. */
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+
+  const short = buildPrompt({ ...slot, shape: 'short' }, ctx);
+  const long = buildPrompt({ ...slot, shape: 'long' }, ctx);
+
+  assert.ok(/1500-1900 words/.test(long), 'the long band is not in the prompt');
+  assert.ok(/6-8 sections/.test(long));
+  assert.notStrictEqual(short, long, 'two bands produced the same prompt');
+});
+
+test('EVERY BAND PRODUCES A PROMPT THAT ASKS FOR IT', () => {
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+
+  for (const s of SHAPES) {
+    const prompt = buildPrompt({ ...slot, shape: s.id }, ctx);
+
+    assert.ok(prompt.includes(`${s.words.min}-${s.words.max} words`),
+      `band "${s.id}" never reaches the prompt`);
+    assert.ok(prompt.includes(`${s.sections.min}-${s.sections.max} sections`),
+      `band "${s.id}" asks for no section count`);
+  }
+});
+
+test('AN UNSHAPED SLOT ASKS FOR EXACTLY WHAT IT ALWAYS DID', () => {
+  /* THE 552 ALREADY SCHEDULED. They have no shape and nothing backfills
+   * them, so they must be written to yesterday's numbers to the word — the
+   * one assertion here that makes this safe to deploy rather than
+   * interesting. */
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+  const prompt = buildPrompt(slot, ctx);
+
+  assert.ok(/1000-1300 words, in 4-6 sections/.test(prompt),
+    'an already-scheduled post would now be written to a different length');
+});
+
+test('AND SO DOES A SLOT WHOSE BAND THIS BUILD DOES NOT KNOW', () => {
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+  const prompt = buildPrompt({ ...slot, shape: 'novella' }, ctx);
+
+  assert.ok(/1000-1300 words, in 4-6 sections/.test(prompt),
+    'an unknown band produced something other than the old numbers');
+});
+
+test('THE ANGLE IS OFFERED, NOT IMPOSED', () => {
+  /* A rotated treatment can land on a topic it does not suit. Forced, the
+   * model either ignores the instruction or writes something false to obey
+   * it; given an out, it picks the nearest honest fit. An instruction a
+   * writer cannot follow truthfully is worse than no instruction. */
+  const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
+  const prompt = buildPrompt({ ...slot, angle: 'cost' }, ctx);
+
+  assert.ok(/does not (suit|fit)|nearest|closest/i.test(prompt),
+    'the writer is given no way out of an angle that does not fit the topic');
+});
+
 test('the prompt asks for no money link, and still asks for both ring links', () => {
   const { slot, ctx } = buildLinkPlan(pillarCampaign(pillarPlan), 1);
   const prompt = buildPrompt(slot, ctx);
