@@ -125,6 +125,738 @@ function withEnv(fn) {
 
 /* ======================================================================= */
 
+section('REDACTION TAKES ITS SECRETS AS AN ARGUMENT');
+
+/* THE FIRST STEP OF MOVING OFF ONE GLOBAL CLOUDFLARE ACCOUNT, and it goes
+ * first because it is the one that fails dangerously.
+ *
+ * Blogs are moving onto a pool of ten accounts, one per client domain, so
+ * the token in play depends on which blog is being deployed. scrub() is
+ * what keeps a token out of anything logged or thrown — and it finds the
+ * token by reading process.env.
+ *
+ * Leave it reading the env while the rest of the system passes per-account
+ * credentials, and it redacts the WRONG token: a live credential reaches a
+ * log file in cleartext, silently, in exactly the path where output gets
+ * dumped because something already went wrong.
+ *
+ * So scrub() is told what to hide. The env stays as the fallback, because
+ * every blog that exists today has no account of its own.
+ */
+
+const OTHER_TOKEN = 'cf-token-belonging-to-another-account';
+const OTHER_ACCOUNT = '99998888777766665555444433332222';
+
+test('A TOKEN PASSED IN IS REDACTED', async () => {
+  await withEnv(async () => {
+    const out = cf.scrub(`wrangler said: ${OTHER_TOKEN} failed`,
+      { token: OTHER_TOKEN, account: OTHER_ACCOUNT });
+
+    assert.ok(!out.includes(OTHER_TOKEN), 'the token passed in reached the output');
+    assert.match(out, /redacted/);
+  });
+});
+
+test('AND SO IS THE ACCOUNT ID PASSED IN', async () => {
+  await withEnv(async () => {
+    const out = cf.scrub(`project on ${OTHER_ACCOUNT}`,
+      { token: OTHER_TOKEN, account: OTHER_ACCOUNT });
+
+    assert.ok(!out.includes(OTHER_ACCOUNT), 'the account id passed in reached the output');
+  });
+});
+
+test('THE ENV TOKEN IS NOT MISTAKEN FOR THE ONE IN USE', async () => {
+  /* THE WHOLE POINT, AND THE FAILURE THIS STEP EXISTS TO PREVENT.
+   *
+   * A scrub() still reading the env redacts the env's token happily — and
+   * leaves the per-account one, which is the one actually in the output,
+   * untouched. The result looks redacted. It passes a casual eye. It is
+   * the opposite of what happened. */
+  await withEnv(async () => {
+    const out = cf.scrub(
+      `env=${TOKEN} inuse=${OTHER_TOKEN}`,
+      { token: OTHER_TOKEN, account: OTHER_ACCOUNT });
+
+    assert.ok(!out.includes(OTHER_TOKEN),
+      'the credential actually in use was left in the text');
+  });
+});
+
+test('AND THE ENV IS STILL USED WHEN NOTHING IS PASSED', async () => {
+  /* EVERY BLOG THAT EXISTS TODAY. They have no account of their own and
+   * nothing backfills them, so the old behaviour has to survive exactly —
+   * this is the test that makes the whole change safe to deploy. */
+  await withEnv(async () => {
+    const out = cf.scrub(`wrangler said: ${TOKEN} and ${ACCOUNT}`);
+
+    assert.ok(!out.includes(TOKEN), 'the env token is no longer redacted');
+    assert.ok(!out.includes(ACCOUNT), 'the env account id is no longer redacted');
+  });
+});
+
+test('A SHORT OR MISSING SECRET IS NOT TREATED AS ONE', async () => {
+  /* The existing guard, kept: redacting a six-character string would
+   * replace every occurrence of a common fragment in the output, which
+   * destroys the error message this function exists to preserve. */
+  await withEnv(async () => {
+    const out = cf.scrub('the project named abc could not be found',
+      { token: 'abc', account: '' });
+
+    assert.strictEqual(out, 'the project named abc could not be found');
+  });
+});
+
+test('SCRUB SURVIVES BEING GIVEN NOTHING AT ALL', async () => {
+  /* It is called from catch blocks. A scrub() that throws turns a reported
+   * Cloudflare failure into an unhandled one, which is a worse day than
+   * the failure it was called about. */
+  assert.strictEqual(cf.scrub(null), '');
+  assert.strictEqual(cf.scrub(undefined, {}), '');
+  assert.strictEqual(cf.scrub('plain text', null), 'plain text');
+});
+
+/* ======================================================================= */
+
+section('THE API CALL TAKES ITS CREDENTIALS');
+
+/* STEP TWO. Every Cloudflare REST call in this codebase goes through
+ * cfApi() — fifteen call sites across deploy.js and redirects.js — so this
+ * is the widest single change and the one that makes per-account work
+ * possible at all.
+ *
+ * THE CALLERS ARE NOT TOUCHED YET, DELIBERATELY. They pass no credentials
+ * and fall through to the environment, exactly as today. That keeps this
+ * step deployable on its own: nothing changes behaviour, and the seam
+ * exists for the helpers to start using one at a time.
+ */
+
+const CREDS = { token: OTHER_TOKEN, account: OTHER_ACCOUNT };
+
+/** A fetch stub that records what it was asked to do. */
+function recordingFetch(answer = { success: true, result: {} }) {
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: true, status: 200, json: async () => answer };
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+test('THE TOKEN IT IS GIVEN IS THE ONE ON THE WIRE', async () => {
+  /* The assertion the whole pool design rests on. A cfApi() still reading
+   * the env would send the WRONG account's token — and Cloudflare would
+   * answer, with the wrong account's data, rather than failing. */
+  await withEnv(async () => {
+    const fetchImpl = recordingFetch();
+
+    await cf.cfApi('/zones?name=x.example', { fetchImpl, creds: CREDS });
+
+    const sent = fetchImpl.calls[0].init.headers.Authorization;
+    assert.strictEqual(sent, `Bearer ${OTHER_TOKEN}`,
+      `it sent ${sent} instead of the credentials it was given`);
+  });
+});
+
+test('AND THE ENV TOKEN IS USED WHEN IT IS GIVEN NONE', async () => {
+  /* Every blog that exists today, and every caller not yet converted. */
+  await withEnv(async () => {
+    const fetchImpl = recordingFetch();
+
+    await cf.cfApi('/zones?name=x.example', { fetchImpl });
+
+    assert.strictEqual(fetchImpl.calls[0].init.headers.Authorization, `Bearer ${TOKEN}`);
+  });
+});
+
+test('CREDENTIALS PASSED IN WORK WITH NO ENVIRONMENT AT ALL', async () => {
+  /* THE STATE THE SERVER ENDS UP IN once every blog carries an account and
+   * the fallback is removed from .env. If cfApi only works when the env
+   * happens to be populated, the pool is not actually independent of it —
+   * it just looks that way while both are present. */
+  const before = { t: process.env.CF_API_TOKEN, a: process.env.CF_ACCOUNT_ID };
+  delete process.env.CF_API_TOKEN;
+  delete process.env.CF_ACCOUNT_ID;
+
+  try {
+    const fetchImpl = recordingFetch();
+    const out = await cf.cfApi('/zones', { fetchImpl, creds: CREDS });
+
+    assert.strictEqual(out.ok, true, `it refused: ${out.error}`);
+    assert.strictEqual(fetchImpl.calls[0].init.headers.Authorization, `Bearer ${OTHER_TOKEN}`);
+  } finally {
+    if (before.t === undefined) delete process.env.CF_API_TOKEN; else process.env.CF_API_TOKEN = before.t;
+    if (before.a === undefined) delete process.env.CF_ACCOUNT_ID; else process.env.CF_ACCOUNT_ID = before.a;
+  }
+});
+
+test('HALF A CREDENTIAL IS NO CREDENTIAL', async () => {
+  /* A Domain row saved with an account id and no token is the obvious way
+   * this goes wrong in production, and a request sent with `Bearer
+   * undefined` would come back as an authentication error that reads like
+   * a revoked token rather than a missing one. */
+  await withEnv(async () => {
+    const fetchImpl = recordingFetch();
+
+    const out = await cf.cfApi('/zones', { fetchImpl, creds: { account: OTHER_ACCOUNT } });
+
+    assert.strictEqual(out.ok, false);
+    assert.match(out.error, /credential/i);
+    assert.strictEqual(fetchImpl.calls.length, 0,
+      'it sent a request with no token rather than refusing');
+  });
+});
+
+test('AN ERROR IS SCRUBBED WITH THE CREDENTIALS THAT WERE USED', async () => {
+  /* THE TWO STEPS MEETING, and the reason step one came first.
+   *
+   * Cloudflare does not echo a token, so this is belt and braces — but it
+   * is the belt and braces that matters: cfApi's own error path is where a
+   * token would reach a log, and scrubbing it against the ENV's token
+   * while the per-account one sits in the message is the exact failure
+   * step one was ordered first to prevent. */
+  await withEnv(async () => {
+    const fetchImpl = async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({
+        success: false,
+        errors: [{ code: 10000, message: `Bad token ${OTHER_TOKEN}` }],
+      }),
+    });
+
+    const out = await cf.cfApi('/zones', { fetchImpl, creds: CREDS });
+
+    assert.strictEqual(out.ok, false);
+    assert.ok(!out.error.includes(OTHER_TOKEN),
+      'the credential actually in use reached the error message');
+    assert.match(out.error, /redacted/);
+  });
+});
+
+test('A LIST ANSWER CARRIES CLOUDFLARE\'S result_info THROUGH', async () => {
+  /* Added for verifyAccount(), which reports how full an account is on the
+   * admin screen.
+   *
+   * Cloudflare's list endpoints PAGE. An account holding 140 Pages projects
+   * answers with 25 of them and result_info.total_count: 140. Counting
+   * `result.length` would put "25 / 100" on that screen — which reads as 75
+   * free slots that do not exist, and the refusal would land on a customer
+   * pressing Create.
+   *
+   * The whole of result_info is passed rather than total_count alone: it is
+   * Cloudflare's shape, this function's job is to hand it over unchanged,
+   * and picking one field here is a second place to edit the day something
+   * needs `page` or `per_page`. */
+  await withEnv(async () => {
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: [{ name: 'one' }, { name: 'two' }],
+        result_info: { page: 1, per_page: 25, count: 2, total_count: 140 },
+      }),
+    });
+
+    const out = await cf.cfApi('/accounts/x/pages/projects', { fetchImpl, creds: CREDS });
+
+    assert.strictEqual(out.ok, true);
+    assert.ok(out.info, 'result_info was dropped — a count can only be a page size now');
+    assert.strictEqual(out.info.total_count, 140);
+    assert.strictEqual(out.result.length, 2, 'the result itself changed shape');
+  });
+});
+
+test('AND AN ANSWER WITHOUT ONE IS UNCHANGED', async () => {
+  /* Most endpoints do not page. `info` being undefined there is the point:
+   * every existing caller reads `result` and nothing else, so this had to
+   * be additive. */
+  await withEnv(async () => {
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, result: { id: 'zone-1' } }),
+    });
+
+    const out = await cf.cfApi('/zones/zone-1', { fetchImpl, creds: CREDS });
+
+    assert.strictEqual(out.ok, true);
+    assert.strictEqual(out.info, undefined);
+    assert.deepStrictEqual(out.result, { id: 'zone-1' });
+  });
+});
+
+test('AND A THROWN ERROR IS SCRUBBED THE SAME WAY', async () => {
+  /* The other exit. A network failure carries whatever the client put in
+   * the message, and node has been known to include request detail. */
+  await withEnv(async () => {
+    const fetchImpl = async () => { throw new Error(`connect failed using ${OTHER_TOKEN}`); };
+
+    const out = await cf.cfApi('/zones', { fetchImpl, creds: CREDS });
+
+    assert.strictEqual(out.ok, false);
+    assert.ok(!out.error.includes(OTHER_TOKEN), 'the token reached the thrown message');
+  });
+});
+
+/* ======================================================================= */
+
+section('WHAT WRANGLER IS RUN WITH');
+
+/* STEP THREE. cfApi() covers the REST calls; this covers the other half —
+ * wrangler is a child process, and it reads its credentials out of the
+ * environment it is handed.
+ *
+ * THE NAMES CHANGE HERE. Our .env calls them CF_*, wrangler reads
+ * CLOUDFLARE_*. That mapping is the whole reason this function exists, and
+ * it is why a per-account deploy has to go through it rather than setting
+ * process.env and hoping.
+ */
+
+test('THE CREDENTIALS IT IS GIVEN ARE THE ONES WRANGLER GETS', async () => {
+  await withEnv(async () => {
+    const env = cf.childEnv({ token: OTHER_TOKEN, account: OTHER_ACCOUNT });
+
+    assert.strictEqual(env.CLOUDFLARE_API_TOKEN, OTHER_TOKEN);
+    assert.strictEqual(env.CLOUDFLARE_ACCOUNT_ID, OTHER_ACCOUNT);
+  });
+});
+
+test('AND THE ENVIRONMENT IS USED WHEN IT IS GIVEN NONE', async () => {
+  await withEnv(async () => {
+    const env = cf.childEnv();
+
+    assert.strictEqual(env.CLOUDFLARE_API_TOKEN, TOKEN);
+    assert.strictEqual(env.CLOUDFLARE_ACCOUNT_ID, ACCOUNT);
+  });
+});
+
+test('HALF A CREDENTIAL THROWS RATHER THAN RUNNING WRANGLER WITH IT', async () => {
+  /* THE SAME PAIRING RULE cfApi() HAS, and for a sharper reason. wrangler
+   * handed an account id and the SERVER'S token would authenticate as one
+   * account and deploy at another — and unlike a REST call, this one
+   * creates projects and uploads files. A deploy landing in the wrong
+   * customer's account is not an error message, it is a site in the wrong
+   * place with nothing to say so.
+   *
+   * It throws rather than returning, because every caller is inside the
+   * deploy path's try/catch and a thrown credential problem is reported;
+   * a silently wrong environment is not. */
+  await withEnv(async () => {
+    assert.throws(() => cf.childEnv({ account: OTHER_ACCOUNT }), /credential/i);
+    assert.throws(() => cf.childEnv({ token: OTHER_TOKEN }), /credential/i);
+  });
+});
+
+test('IT STILL HANDS THE CHILD NOTHING ELSE', async () => {
+  /* The property the existing deploy test asserts, restated against the
+   * new argument. This process holds the Mongo URI, the OpenAI key and the
+   * Stripe secret; a child that was handed process.env would be a hole
+   * that has nothing to do with which Cloudflare account is in play. */
+  await withEnv(async () => {
+    const env = cf.childEnv({ token: OTHER_TOKEN, account: OTHER_ACCOUNT });
+
+    assert.deepStrictEqual(Object.keys(env).sort(), [
+      'CI', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'HOME', 'PATH',
+      'WRANGLER_SEND_METRICS',
+    ]);
+  });
+});
+
+test('AND IT STILL REFUSES WHEN THERE ARE NO CREDENTIALS ANYWHERE', async () => {
+  /* The existing behaviour, unchanged: a server with no Cloudflare set up
+   * at all should say so rather than running wrangler with an empty token
+   * and reporting whatever Cloudflare says about it. */
+  const before = { t: process.env.CF_API_TOKEN, a: process.env.CF_ACCOUNT_ID };
+  delete process.env.CF_API_TOKEN;
+  delete process.env.CF_ACCOUNT_ID;
+
+  try {
+    assert.throws(() => cf.childEnv(), /not set on this server|credential/i);
+  } finally {
+    if (before.t === undefined) delete process.env.CF_API_TOKEN; else process.env.CF_API_TOKEN = before.t;
+    if (before.a === undefined) delete process.env.CF_ACCOUNT_ID; else process.env.CF_ACCOUNT_ID = before.a;
+  }
+});
+
+/* ======================================================================= */
+
+section('THE HELPERS CARRY THE CREDENTIALS THROUGH');
+
+/* STEP FOUR. cfApi() and childEnv() take credentials; now the dozen
+ * functions between them and the caller have to pass them along.
+ *
+ * MECHANICAL, AND THAT IS EXACTLY WHY IT IS TESTED ONE BY ONE. Every one
+ * of these is a place to forget an argument, and a forgotten argument does
+ * not fail — it falls back to the environment and the call succeeds
+ * against the WRONG ACCOUNT. There is no error to notice.
+ *
+ * ASSERTED ON WHAT WENT OVER THE WIRE, because the only visible difference
+ * between "passed through" and "silently fell back" is the bearer token on
+ * the request. A test that checks the return value sees a success either
+ * way.
+ */
+
+/** What Authorization headers a fetch stub was handed. */
+function tokensSentTo(fetchImpl) {
+  return fetchImpl.calls.map(c => c.init.headers.Authorization);
+}
+
+/** A fetch stub answering whatever each call needs, and recording all of it. */
+function poolFetch() {
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push({ url, init });
+
+    if (url.includes('/zones?')) {
+      return { ok: true, status: 200,
+        json: async () => ({ success: true, result: [{ id: 'zone-1', name: 'acmehvac.com' }] }) };
+    }
+    if (url.includes('/dns_records')) {
+      return { ok: true, status: 200, json: async () => ({ success: true, result: [] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ success: true, result: {} }) };
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+test('findZone USES THE CREDENTIALS IT IS GIVEN', async () => {
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    await cf.findZone({ domain: 'hvac.acmehvac.com', fetchImpl, creds: CREDS });
+
+    for (const sent of tokensSentTo(fetchImpl)) {
+      assert.strictEqual(sent, `Bearer ${OTHER_TOKEN}`,
+        'a zone lookup fell back to the server account');
+    }
+  });
+});
+
+test('listZones DOES TOO', async () => {
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    await cf.listZones({ fetchImpl, creds: CREDS });
+
+    assert.deepStrictEqual(tokensSentTo(fetchImpl), [`Bearer ${OTHER_TOKEN}`]);
+  });
+});
+
+test('attachDomain DOES, AND AIMS AT THE RIGHT ACCOUNT', async () => {
+  /* TWO THINGS, AND THE SECOND IS THE ONE THAT BITES. The token says who
+   * we are; the ACCOUNT ID IN THE PATH says whose Pages project we are
+   * touching. attachDomain built that path from process.env directly, so
+   * a converted token with an unconverted path would authenticate as the
+   * client and then ask about a project in OUR account. */
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    await cf.attachDomain({ project: 'p', domain: 'hvac.acmehvac.com', fetchImpl, creds: CREDS });
+
+    assert.deepStrictEqual(tokensSentTo(fetchImpl), [`Bearer ${OTHER_TOKEN}`]);
+    assert.ok(fetchImpl.calls[0].url.includes(OTHER_ACCOUNT),
+      `the request went to ${fetchImpl.calls[0].url} — the wrong account's path`);
+    assert.ok(!fetchImpl.calls[0].url.includes(ACCOUNT),
+      'the server account id is still in the path');
+  });
+});
+
+test('detachDomain DOES, AND AIMS AT THE RIGHT ACCOUNT', async () => {
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    await cf.detachDomain({ project: 'p', domain: 'hvac.acmehvac.com', fetchImpl, creds: CREDS });
+
+    assert.deepStrictEqual(tokensSentTo(fetchImpl), [`Bearer ${OTHER_TOKEN}`]);
+    assert.ok(fetchImpl.calls[0].url.includes(OTHER_ACCOUNT));
+    assert.ok(!fetchImpl.calls[0].url.includes(ACCOUNT));
+  });
+});
+
+test('ensureDnsRecord DOES', async () => {
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    await cf.ensureDnsRecord({
+      zoneId: 'zone-1', name: 'hvac.acmehvac.com', target: 'p.pages.dev',
+      fetchImpl, creds: CREDS,
+    });
+
+    for (const sent of tokensSentTo(fetchImpl)) {
+      assert.strictEqual(sent, `Bearer ${OTHER_TOKEN}`, 'a DNS write fell back to the server account');
+    }
+  });
+});
+
+test('removeDnsRecord DOES', async () => {
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    await cf.removeDnsRecord({
+      zoneId: 'zone-1', name: 'hvac.acmehvac.com', expected: 'p.pages.dev',
+      fetchImpl, creds: CREDS,
+    });
+
+    for (const sent of tokensSentTo(fetchImpl)) {
+      assert.strictEqual(sent, `Bearer ${OTHER_TOKEN}`);
+    }
+  });
+});
+
+/* A redirect/release stub that RECORDS WHAT IT WAS HANDED.
+ *
+ * THE TWO TESTS BELOW USED ONE THAT DID NOT — `async () => ({ ok: true })`,
+ * ignoring its arguments — AND THAT IS HOW THE BUG BELOW SURVIVED THEM.
+ *
+ * The redirect step is stubbed because deploy.js requires redirects.js
+ * lazily to break a cycle, and a test should not reach through a module
+ * cache to get at it. Stubbing it is right. Stubbing it and then never
+ * asking what it was called with is what turned a test named "EVERY STEP IT
+ * TAKES" into a test of two steps out of three.
+ *
+ * Found 23 October 2026, after Edwin's pages.dev address did not redirect.
+ */
+function recordingStep(answer = { ok: true }) {
+  const calls = [];
+  const fn = async (args) => { calls.push(args); return answer; };
+  fn.calls = calls;
+  return fn;
+}
+
+test('pointDomainAtProject CARRIES THEM THROUGH EVERY STEP IT TAKES', async () => {
+  /* THE COMPOSITE, AND THE ONE MOST LIKELY TO LEAK. It attaches the
+   * domain, writes the pages.dev redirect, finds the zone and writes the
+   * DNS record — four steps, and forgetting the argument on any one of them
+   * sends that step to the server's account while the others go to the
+   * client's. The blog half works, which is worse than not working.
+   *
+   * IT WAS FORGOTTEN ON THE REDIRECT STEP, AND THIS TEST WATCHED IT HAPPEN.
+   * Every blog on a pool account had its pages.dev redirect written into
+   * the SERVER'S Bulk Redirect list, where it can do nothing: the lists are
+   * account-scoped and the .pages.dev hostname belongs to the project's own
+   * account. Edwin found it by clicking the address and not being
+   * redirected. */
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    const redirect = recordingStep();
+
+    await cf.pointDomainAtProject({
+      project: 'p', domain: 'hvac.acmehvac.com', target: 'p.pages.dev',
+      fetchImpl, creds: CREDS, redirect,
+    });
+
+    assert.ok(fetchImpl.calls.length >= 2, 'it did not make the calls it was meant to');
+
+    for (const sent of tokensSentTo(fetchImpl)) {
+      assert.strictEqual(sent, `Bearer ${OTHER_TOKEN}`,
+        'one step of pointDomainAtProject used the server account');
+    }
+    for (const { url } of fetchImpl.calls) {
+      assert.ok(!url.includes(ACCOUNT), `${url} carries the server account id`);
+    }
+
+    /* THE STEP THAT WAS STUBBED AND NEVER LOOKED AT. */
+    assert.strictEqual(redirect.calls.length, 1, 'the pages.dev redirect was not attempted');
+    assert.deepStrictEqual(redirect.calls[0].creds, CREDS,
+      'the pages.dev redirect was written to the SERVER account');
+  });
+});
+
+test('releaseDomain DOES TOO', async () => {
+  /* The mirror, and it matters as much. releasePagesDev with the wrong
+   * credentials removes an entry from the server's list — so the blog's
+   * real entry survives its own deletion, on an account nobody will think
+   * to look at, pointing at a domain that no longer serves anything. */
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+    const release = recordingStep();
+
+    await cf.releaseDomain({
+      project: 'p', domain: 'hvac.acmehvac.com', expected: 'p.pages.dev',
+      fetchImpl, creds: CREDS, release,
+    });
+
+    for (const { init, url } of fetchImpl.calls) {
+      assert.strictEqual(init.headers.Authorization, `Bearer ${OTHER_TOKEN}`);
+      assert.ok(!url.includes(ACCOUNT), `${url} carries the server account id`);
+    }
+
+    assert.strictEqual(release.calls.length, 1, 'the redirect was never released');
+    assert.deepStrictEqual(release.calls[0].creds, CREDS,
+      'it tried to release the redirect from the SERVER account');
+  });
+});
+
+test('AND THE REDIRECT STEP IS STILL TOLD WHICH PROJECT AND DOMAIN', async () => {
+  /* The credentials are the half that was missing; these two are the half
+   * that was already right, and an assertion on `creds` alone would not
+   * notice if a fix dropped them. */
+  await withEnv(async () => {
+    const redirect = recordingStep();
+
+    await cf.pointDomainAtProject({
+      project: 'blog-acmehvac-com', domain: 'hvac.acmehvac.com', target: 'p.pages.dev',
+      fetchImpl: poolFetch(), creds: CREDS, redirect,
+    });
+
+    assert.strictEqual(redirect.calls[0].project, 'blog-acmehvac-com');
+    assert.strictEqual(redirect.calls[0].domain, 'hvac.acmehvac.com');
+  });
+});
+
+test('AND WITH NO CREDENTIALS THE REDIRECT STEP STILL GETS NONE', async () => {
+  /* The fallback, here as everywhere else. Every blog that predates the
+   * pool has no account of its own, and `creds: undefined` is how
+   * redirects.js is told to use the environment. Passing a half-built
+   * object instead would make cfApi refuse. */
+  await withEnv(async () => {
+    const redirect = recordingStep();
+
+    await cf.pointDomainAtProject({
+      project: 'p', domain: 'hvac.acmehvac.com', target: 'p.pages.dev',
+      fetchImpl: poolFetch(), redirect,
+    });
+
+    assert.strictEqual(redirect.calls.length, 1);
+    assert.strictEqual(redirect.calls[0].creds, undefined,
+      'it invented credentials for a blog that has none');
+  });
+});
+
+test('AND EVERY ONE OF THEM STILL FALLS BACK TO THE ENVIRONMENT', async () => {
+  /* EVERY BLOG THAT EXISTS TODAY AND EVERY CALLER NOT YET CONVERTED.
+   * Passing no credentials has to behave exactly as it did before any of
+   * this started — this is the assertion that makes step four deployable
+   * rather than a flag day. */
+  await withEnv(async () => {
+    const fetchImpl = poolFetch();
+
+    await cf.findZone({ domain: 'acmehvac.com', fetchImpl });
+    await cf.listZones({ fetchImpl });
+    await cf.attachDomain({ project: 'p', domain: 'd.example.com', fetchImpl });
+    await cf.detachDomain({ project: 'p', domain: 'd.example.com', fetchImpl });
+
+    for (const sent of tokensSentTo(fetchImpl)) {
+      assert.strictEqual(sent, `Bearer ${TOKEN}`, 'the env fallback is gone');
+    }
+    for (const { url } of fetchImpl.calls) {
+      if (url.includes('/accounts/')) {
+        assert.ok(url.includes(ACCOUNT), `${url} lost the env account id`);
+      }
+    }
+  });
+});
+
+/* ======================================================================= */
+
+section('THE DEPLOY ITSELF TAKES THE CREDENTIALS');
+
+/* THE LAST OF THE PLUMBING, and the one that actually puts files
+ * somewhere. deployBlog() runs wrangler, creates the project on first
+ * publish, and points the domain at it — three things that each need to
+ * happen in the SAME account, and nothing downstream can tell if one of
+ * them went elsewhere.
+ *
+ * STILL NO CALLER PASSES ANYTHING. credsFor(blog) is the next step; until
+ * then every path falls through to the environment exactly as today.
+ */
+
+test('WRANGLER IS RUN IN THE ACCOUNT THE DEPLOY WAS GIVEN', async () => {
+  await withEnv(async () => {
+    const run = recorder();
+
+    await cf.deployBlog({
+      blog: FRESH_BLOG, files: FILES, run, attach: attacher(), creds: CREDS,
+    });
+
+    for (const call of run.calls) {
+      assert.strictEqual(call.opts.env.CLOUDFLARE_API_TOKEN, OTHER_TOKEN,
+        'a wrangler child was handed the server token');
+      assert.strictEqual(call.opts.env.CLOUDFLARE_ACCOUNT_ID, OTHER_ACCOUNT,
+        'a wrangler child was handed the server account');
+    }
+  });
+});
+
+test('AND THE DOMAIN IS POINTED USING THEM TOO', async () => {
+  /* THE HALF THAT WOULD HALF-WORK. The project is created in the client's
+   * account by wrangler, and the custom domain is attached through the
+   * REST API — forget the credentials on that second call and the project
+   * exists in one account while the attach is attempted in another.
+   * Cloudflare reports a missing project, about a project that was created
+   * thirty seconds earlier. */
+  await withEnv(async () => {
+    const attach = attacher();
+
+    await cf.deployBlog({
+      blog: FRESH_BLOG, files: FILES, run: recorder(), attach, creds: CREDS,
+    });
+
+    assert.ok(attach.calls.length, 'the domain was never pointed at the project');
+    assert.deepStrictEqual(attach.calls[0].creds, CREDS,
+      'the attach was made with the server credentials');
+  });
+});
+
+test('AND WRANGLER OUTPUT IS SCRUBBED WITH THEM', async () => {
+  /* wrangler does not print the token, and this is the belt and braces
+   * that matters: the deploy's output is logged and returned to the
+   * screen. Scrubbed against the ENV token while the per-account one is in
+   * the text is the failure step one was ordered first to prevent — and
+   * every wrangler call in this function had a scrub() reading the env
+   * until now. */
+  await withEnv(async () => {
+    const run = async () => ({
+      code: 1, stdout: `deploy failed using ${OTHER_TOKEN}`, stderr: '',
+    });
+
+    const out = await cf.deployBlog({
+      blog: FRESH_BLOG, files: FILES, run, attach: attacher(), creds: CREDS,
+    });
+
+    assert.ok(!JSON.stringify(out).includes(OTHER_TOKEN),
+      'the credential in use reached the deploy result');
+  });
+});
+
+test('ensureProject SCRUBS WITH THE CREDENTIALS IT WAS GIVEN', async () => {
+  await withEnv(async () => {
+    const run = async () => ({ code: 1, stdout: `create failed: ${OTHER_TOKEN}`, stderr: '' });
+
+    const out = await cf.ensureProject({ project: 'p', env: {}, run, creds: CREDS });
+
+    assert.ok(!out.output.includes(OTHER_TOKEN), 'the token reached the create output');
+  });
+});
+
+test('deleteProject DOES TOO', async () => {
+  await withEnv(async () => {
+    const run = async () => ({ code: 1, stdout: `delete failed: ${OTHER_TOKEN}`, stderr: '' });
+
+    const out = await cf.deleteProject({ project: 'p', env: {}, run, creds: CREDS });
+
+    assert.ok(!out.output.includes(OTHER_TOKEN), 'the token reached the delete output');
+  });
+});
+
+test('AND A DEPLOY WITH NO CREDENTIALS STILL USES THE ENVIRONMENT', async () => {
+  /* Every blog that exists today, and every caller until credsFor lands.
+   * This is the assertion that makes the step deployable on its own. */
+  await withEnv(async () => {
+    const run = recorder();
+    const attach = attacher();
+
+    await cf.deployBlog({ blog: FRESH_BLOG, files: FILES, run, attach });
+
+    for (const call of run.calls) {
+      assert.strictEqual(call.opts.env.CLOUDFLARE_API_TOKEN, TOKEN);
+      assert.strictEqual(call.opts.env.CLOUDFLARE_ACCOUNT_ID, ACCOUNT);
+    }
+    assert.strictEqual(attach.calls[0].creds, undefined,
+      'an unconverted caller started sending credentials from somewhere');
+  });
+});
+
+/* ======================================================================= */
+
 section('THE FILES THAT GO UP');
 
 test('every rendered file is written, at its own path', async () => {
@@ -569,11 +1301,16 @@ test('THE DOMAIN IS ATTACHED, AND IT IS THE BLOG\'S OWN', async () => {
      * does not always grant the subdomain a project's name asks for, and
      * a CNAME derived from the name would be right until the first
      * collision and then point at somebody else's site. */
-    assert.deepStrictEqual(attach.calls[0], {
-      project: 'leanderwaterheaters-com',
-      domain: 'leanderwaterheaters.com',
-      target: 'leanderwaterheaters.pages.dev',
-    });
+    /* THE THREE FIELDS IT MEANS, NOT THE WHOLE OPTION BAG — 22 October.
+     * This was a deepStrictEqual and it broke the moment deployBlog gained
+     * a `creds` option, reporting a mismatch of `creds: undefined` against
+     * entirely correct code. An exact-shape assertion on an options object
+     * makes every future argument a false failure. */
+    const { project, domain, target } = attach.calls[0];
+
+    assert.strictEqual(project, 'leanderwaterheaters-com');
+    assert.strictEqual(domain, 'leanderwaterheaters.com');
+    assert.strictEqual(target, 'leanderwaterheaters.pages.dev');
   });
 });
 

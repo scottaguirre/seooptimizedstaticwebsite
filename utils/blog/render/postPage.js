@@ -88,6 +88,30 @@ function esc(value) {
 }
 
 /**
+ * The Search Console verification tags for a blog, if it has any.
+ *
+ * BUILT HERE, NEVER ECHOED. What the customer pasted was a whole <meta>
+ * element; verificationTags.js reduced it to a token and refused anything
+ * that was not token-shaped. This writes the element around the value, and
+ * escapes it on the way — two independent defences, because the parser is
+ * one validation somebody relaxes and this is a published page on somebody
+ * else's domain.
+ *
+ * ON EVERY PAGE, NOT ONLY THE FRONT ONE. Google checks the property URL,
+ * which is the front page — but this blog's front page is whichever ARTICLE
+ * the picker points at. Keyed off isHome, the verification would move when
+ * that selection changed, and Google re-checks periodically: the property
+ * would go quietly unverified days later with nothing on screen to say why.
+ */
+function verificationMeta(blog) {
+  const tags = (blog && blog.verificationTags) || [];
+
+  return tags
+    .map(token => `<meta name="google-site-verification" content="${esc(token)}">`)
+    .join('\n');
+}
+
+/**
  * JSON for a <script> block.
  *
  * JSON.stringify ALONE IS NOT ENOUGH, and the test caught it. An HTML
@@ -285,7 +309,7 @@ ${description ? `<meta name="description" content="${esc(description)}">\n` : ''
 <meta property="og:type" content="article">
 <meta property="og:title" content="${esc(title)}">
 ${description ? `<meta property="og:description" content="${esc(description)}">\n` : ''}<meta property="og:url" content="${esc(url)}">
-<link rel="stylesheet" href="/assets/blog.css">
+${verificationMeta(blog) ? `${verificationMeta(blog)}\n` : ''}<link rel="stylesheet" href="/assets/blog.css">
 <link rel="alternate" type="application/rss+xml" title="${esc(blogName)}" href="/rss.xml">
 <script type="application/ld+json">${jsonForScript(schema)}</script>
 </head>

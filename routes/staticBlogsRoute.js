@@ -65,6 +65,12 @@ const {
   findZone, listZones, suggestZoneFix,
 } = require('../utils/blog/cloudflare/deploy');
 const { approveCampaign } = require('../utils/blog/approveCampaign');
+const { parseVerificationTags } = require('../utils/blog/verificationTags');
+const {
+  credsFor, recountAccount, accountCapacity,
+} = require('../utils/blog/cloudflare/accounts');
+const CloudflareAccount = require('../models/CloudflareAccount');
+const Domain = require('../models/Domain');
 
 /* THE SAME CONVERSION THE SCHEDULER USES, not a second one. A start date
  * resolved here by different arithmetic than publishDates() resolves the
@@ -424,6 +430,11 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
 
     const byId = new Map(counts.map(c => [String(c._id), c.n]));
 
+    /* THE DOMAINS ON OFFER. Disabled ones are left out rather than shown
+     * greyed: a client who has left is not a choice somebody should have
+     * to understand, and their existing blogs go on deploying regardless. */
+    const pool = await Domain.find({ enabled: true }).sort({ domain: 1 }).lean();
+
     /* NUMBERED FROM THE POSITION, NOT FROM THE BLOG. The sort above is
        newest-first, so the only thing that knows a row is "the fourth one"
        is where it landed in THIS list. Nothing on the document could say
@@ -464,10 +475,33 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
             <input class="form-control" id="name" name="name" required maxlength="200"
                    placeholder="Leander Water Heaters">
           </div>
-          <div class="col-md-4">
-            <label class="form-label" for="domain">Domain</label>
-            <input class="form-control" id="domain" name="domain" required maxlength="253"
-                   placeholder="leanderwaterheaters.com">
+          <!-- A PREFIX AND A LIST, NOT A DOMAIN TO TYPE — 22 October.
+               The customer picks one of the domains we host and types the
+               word in front of it. They never see Cloudflare, a credential
+               or a CNAME: the zone is already on the account the Pages
+               project is created in, so Cloudflare writes the DNS record
+               itself.
+
+               THE FREE-TEXT FIELD IS GONE, DELIBERATELY. Keeping it would
+               have meant a second route through creation — a blog with no
+               account, falling back to the server's credentials, needing
+               the old zone-check-and-warn flow — for a case the admin
+               screen covers in one form. -->
+          <div class="col-md-5">
+            <label class="form-label" for="prefix">Address</label>
+            <div class="input-group">
+              <input class="form-control" id="prefix" name="prefix" required maxlength="63"
+                     placeholder="hvac" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9-]*"
+                     aria-describedby="addressHelp">
+              <span class="input-group-text">.</span>
+              <select class="form-select" name="domain" required aria-label="Domain">
+                ${pool.map(d => `<option value="${esc(d.domain)}">${esc(d.domain)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-text text-white-50" id="addressHelp">
+              Letters, numbers and hyphens. No dots &mdash; the part after
+              the dot is the domain you picked.
+            </div>
           </div>
 
           <!-- ASKED AT THE START, not buried in a settings screen. It
@@ -516,32 +550,98 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
  * Creating one
  * ---------------------------------------------------------------------- */
 
+/**
+ * A prefix typed by a customer, as a hostname label.
+ *
+ * IT BECOMES TWO THINGS — the first label of a hostname, and part of a
+ * Cloudflare Pages project name — so anything that is not a plain DNS label
+ * either gets rejected by Cloudflare or, worse, accepted and served at an
+ * address nobody expected. A dot is the dangerous one: "blog.news" would
+ * quietly produce a third level nobody asked for.
+ *
+ * `www` IS REFUSED rather than normalised away. A blog at www.acmehvac.com
+ * is a claim on the client's main site, not a blog, and the customer who
+ * typed it meant something else.
+ *
+ * Returns '' for anything unusable.
+ */
+function normalisePrefix(raw) {
+  const text = String(raw == null ? '' : raw).trim().toLowerCase();
+
+  if (!text || text.length > 63) return '';
+  if ('www' === text) return '';
+
+  /* A DNS LABEL: letters, digits and inner hyphens. No dots, no leading or
+   * trailing hyphen — the last of which Cloudflare accepts in a project
+   * name and refuses in a hostname, so it would fail halfway through
+   * creating a blog rather than before. */
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(text)) return '';
+
+  return text;
+}
+
 router.post('/static-blogs', requireAuth, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim().slice(0, 200);
-    const domain = BlogSite.normaliseSiteUrl(req.body.domain);
+    const prefix = normalisePrefix(req.body.prefix);
 
-    if (!name || !domain) {
+    if (!name || !prefix) {
       return send(res, page({
         status: 400,
         title: 'Add a blog',
-        body: `<h1>A blog needs a name and a domain</h1>
+        body: `<h1>A blog needs a name and an address</h1>
+               <p class="lead">
+                 The address is a single word — letters, numbers and hyphens
+                 — in front of the domain you picked.
+               </p>
                <a href="/static-blogs" class="btn btn-primary mt-3">Back</a>`,
       }));
     }
 
-    /* NORMALISED BEFORE THE CHECK, not after. 'https://Blog.Example.com/'
-     * and 'blog.example.com' are one domain, and a uniqueness test against
-     * the raw strings would happily store both — then two blogs would deploy
-     * over each other and the second would look like it had eaten the first. */
-    const clash = await BlogSite.findOne({ user: req.user._id, siteUrl: domain });
+    /* THE DOMAIN MUST BE ONE OF OURS, AND IT IS CHECKED RATHER THAN
+     * TRUSTED. The form is a dropdown, so an unknown domain only arrives
+     * on a posted request — which is to say, from anybody. Without this
+     * the blog would be created with no Cloudflare account and would then
+     * deploy into OURS.
+     *
+     * The `enabled` check is the same door: a domain taken off the list
+     * when a client left must not come back through a replayed form. */
+    const pick = await Domain.findOne({ domain: String(req.body.domain || '').trim().toLowerCase() });
+
+    if (!pick || false === pick.enabled) {
+      return send(res, page({
+        status: 400,
+        title: 'Not a domain we host',
+        body: `<h1 class="h3">That domain is not available</h1>
+               <p class="lead">Pick one from the list.</p>
+               <a href="/static-blogs" class="btn btn-primary mt-3">Back</a>`,
+      }));
+    }
+
+    const domain = `${prefix}.${pick.domain}`;
+
+    /* ACROSS EVERY ACCOUNT, BY THE WHOLE HOSTNAME — and both halves of that
+     * changed on 22 October.
+     *
+     * It used to ask whether THIS customer had a blog whose domain was
+     * acmehvac.com, which was wrong in both directions once the domains
+     * became a shared pool. It blocked one customer from having two
+     * prefixes on a domain, which is the whole design. And it failed to
+     * block two customers taking the SAME prefix, because it never looked
+     * past their own blogs — whichever published last would have
+     * overwritten the other, with nothing on either screen to say so.
+     *
+     * UNSCOPED, so the refusal can be about a blog the person cannot see.
+     * That is worth the awkward wording: the alternative is letting them
+     * create something that silently destroys somebody else's. */
+    const clash = await BlogSite.findOne({ siteUrl: domain });
 
     if (clash) {
       return send(res, page({
         status: 400,
-        title: 'Already added',
-        body: `<h1>You already have a blog on ${esc(domain)}</h1>
-               <p class="lead">Two blogs on one domain would publish over each other.</p>
+        title: 'Already taken',
+        body: `<h1 class="h3">${esc(domain)} is already in use</h1>
+               <p class="lead">Pick a different word in front of the domain.</p>
                <a href="/static-blogs" class="btn btn-primary mt-3">Back to your blogs</a>`,
       }));
     }
@@ -559,6 +659,81 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
         body: `<h1>You have reached the limit of ${limit} blogs</h1>
                <a href="/static-blogs" class="btn btn-primary mt-3">Back</a>`,
       }));
+    }
+
+    /* IS THERE ROOM ON THAT CLOUDFLARE ACCOUNT?
+     *
+     * Cloudflare caps Pages projects at 100 per account and says the limit
+     * is not routinely raised. One blog is one project.
+     *
+     * Until now nothing noticed. The customer filled in the form, pressed
+     * Create, and CLOUDFLARE refused — which is a refusal in the form of a
+     * wrangler stack trace, arriving in front of the one person who can do
+     * nothing about it. The blog is half-made by then and the message names
+     * none of this.
+     *
+     * ASKED LIVE, NOT READ OFF THE ROW. `CloudflareAccount.projects` is a
+     * snapshot for the admin screen and can be weeks old; a refusal built
+     * on a stale number refuses people who have room. This is one request
+     * about one account at the only moment where being wrong has a price.
+     *
+     * AND A CHECK THAT CANNOT RUN LETS THEM THROUGH. A revoked token, an
+     * outage, a rate limit — all come back ok:false, and refusing on that
+     * basis would turn a transient Cloudflare problem into "you cannot
+     * create a blog", for somebody who has done nothing wrong and can see
+     * nothing to fix. The worst case of letting it through is the error
+     * that happened before any of this existed. Same rule as the zone
+     * check below: a failure to ask is not an answer. */
+    if (pick.account) {
+      const owner = await CloudflareAccount.findById(pick.account);
+      const room = owner ? await recountAccount(owner) : { ok: false };
+
+      if (room.ok) {
+        /* accountCapacity CLAMPS AT ZERO, so an account filled past 100 by
+         * something other than this app reads as full rather than as
+         * negative room. A `=== 100` test here would wave those through. */
+        if (accountCapacity({ projects: room.projects }).left <= 0) {
+          log.info('staticBlogs.accountFull', {
+            requestId: req.id,
+            userId: String(req.user._id),
+            domain: pick.domain,
+            projects: room.projects,
+          });
+
+          return send(res, page({
+            status: 400,
+            title: 'That domain is full',
+            body: `<h1 class="h3">${esc(pick.domain)} has no room left</h1>
+                   <p class="lead">
+                     Cloudflare allows 100 blogs per account and this one is
+                     full. Pick a different domain from the list, or ask us
+                     to add another.
+                   </p>
+                   <a href="/static-blogs" class="btn btn-primary mt-3">Back</a>`,
+          }));
+        }
+
+        /* THE COUNT WE JUST PAID A ROUND TRIP FOR, WRITTEN DOWN.
+         *
+         * Creating a blog is the moment that number changes, so this is
+         * exactly when it is worth recording — it keeps the admin screen
+         * honest between manual refreshes, for free.
+         *
+         * WRAPPED, BECAUSE IT IS HOUSEKEEPING. The customer is here to
+         * create a blog; a failed write to a number on an admin screen
+         * must not be the thing that stops them. */
+        try {
+          await CloudflareAccount.updateOne(
+            { _id: owner._id },
+            { $set: { projects: room.projects, projectsCountedAt: new Date() } }
+          );
+        } catch (err) {
+          log.error('staticBlogs.countWrite.failed', err, {
+            requestId: req.id,
+            domain: pick.domain,
+          });
+        }
+      }
     }
 
     /* NO LICENCE KEY AND NO SECRET, and that is the whole difference between
@@ -580,6 +755,12 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
       siteUrl: domain,
       timezone,
       business: { name },
+
+      /* BOUND TO THE DOMAIN'S ACCOUNT, ONCE, HERE. Not looked up again at
+       * deploy time: a Domain row can be re-pointed later, and resolving
+       * live would silently move an existing blog's deploys to an account
+       * where its Pages project does not exist. */
+      cloudflareAccount: pick.account,
     });
 
     log.info('staticBlogs.created', {
@@ -614,10 +795,50 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
      * token without Zone:Read, also comes back ok:false — saying "that
      * domain is not in your account" then would be a confident lie. Only
      * the noZone branch warns. */
-    const zone = await findZone({ domain });
+    /* ASKED OF THE ACCOUNT THE BLOG IS ON, WHICH IS NOT NECESSARILY OURS.
+     *
+     * EDWIN HIT THIS THE FIRST TIME HE USED THE POOL — 22 October. He added
+     * a Cloudflare account for `site-book.net`, created a blog on it, and
+     * this screen told him no domain in his Cloudflare account matched.
+     *
+     * The blog was perfect. The CHECK was wrong: findZone with no `creds`
+     * falls back to the environment, so it had asked his OLD explr-home.com
+     * account whether it owned site-book.net.
+     *
+     * THE SAME WIRING GAP THREE TIMES IN ONE SESSION. findZone and listZones
+     * were both taught about per-account credentials; this caller was not
+     * updated, and nothing failed — an optional credentials argument does
+     * not complain when it is forgotten. It just answers about somewhere
+     * else. A false warning here is worse than no warning, because the
+     * lesson it teaches is "that alarm is always wrong, click past it".
+     *
+     * RESOLVED IN A try/catch BECAUSE THE BLOG ALREADY EXISTS. credsFor
+     * throws for an account that is gone, disabled, or whose token will not
+     * decrypt — deliberately, because falling back would deploy into the
+     * wrong account. But letting that throw escape HERE would turn a
+     * created blog into a 500 page.
+     *
+     * So an unresolvable credential skips the check, which is the rule the
+     * comment above already states: a failure to ask is not a failure to
+     * match. The credential problem surfaces at the first publish, named,
+     * from credsFor itself. */
+    let creds;
+    let canCheck = true;
+
+    try {
+      creds = await credsFor(blog);
+    } catch (err) {
+      canCheck = false;
+      log.error('staticBlogs.zoneCheck.credentials', err, {
+        requestId: req.id,
+        siteId: String(blog._id),
+      });
+    }
+
+    const zone = canCheck ? await findZone({ domain, creds }) : { ok: false };
 
     if (!zone.ok && zone.noZone) {
-      const owned = await listZones();
+      const owned = await listZones({ creds });
       const { suggestion } = owned.ok ? suggestZoneFix({ domain, zones: owned.names }) : {};
 
       log.info('staticBlogs.domainNotInAccount', {
@@ -1194,6 +1415,38 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
           Edits reach the live site the next time you publish.
         </span>
       </p>
+
+      <!-- SEARCH CONSOLE, AND THE FIELD TAKES WHAT IS ON THE CLIPBOARD.
+           Google shows a whole <meta> element, so that is what arrives
+           here. parseVerificationTags() pulls the value out and the
+           renderer builds its own tag around it — customer markup never
+           reaches a published page. See utils/blog/verificationTags.js. -->
+      <h2 class="h4 mt-5 mb-3">Google Search Console</h2>
+
+      <form method="post" action="/static-blogs/${blog._id}/verification" class="mb-4">
+        ${form.csrfField || ''}
+
+        <label class="form-label" for="verificationTags">
+          Verification tag
+        </label>
+        <textarea class="form-control font-monospace" id="verificationTags"
+                  name="verificationTags" rows="3" spellcheck="false"
+                  placeholder="&lt;meta name=&quot;google-site-verification&quot; content=&quot;...&quot; /&gt;"
+                  >${esc((blog.verificationTags || []).join('\n'))}</textarea>
+
+        <div class="form-text text-white-50">
+          In Search Console choose <strong>URL prefix</strong>, then
+          <strong>HTML tag</strong>, and paste what it gives you here. One
+          per line if more than one person needs to verify this blog.
+          <!-- THE SUPPORT TICKET THIS SENTENCE PREVENTS: they paste the
+               tag, press Verify immediately, and it fails, because the
+               live site has not been rebuilt yet. -->
+          <strong>Save, then publish</strong> — the tag only reaches the
+          live site when you publish.
+        </div>
+
+        <button class="btn btn-outline-light mt-2" type="submit">Save</button>
+      </form>
 
       <h2 class="h4 mt-5 mb-3">Front page</h2>
 
@@ -2469,13 +2722,45 @@ router.post('/static-blogs/:id/delete', requireAuth, async (req, res) => {
         .replace(/^https:\/\//, '')
         .replace(/\/$/, '');
 
-      released = await releaseDomain({
-        project: blog.project,
-        domain: blog.siteUrl,
-        expected: expected || undefined,
-      });
+      /* WHICH CLOUDFLARE ACCOUNT, RESOLVED BEFORE ANYTHING IS TOUCHED.
+       *
+       * This path is more dangerous to get wrong than the deploy.
+       * releaseDomain() detaches a hostname and deletes a DNS record —
+       * pointed at the wrong account it either does nothing, or finds
+       * something of the same name and removes it. Project names are
+       * derived from the domain, and two accounts can host blogs on
+       * domains that look alike.
+       *
+       * A BLOG THAT NAMES AN UNREADABLE ACCOUNT IS NOT TORN DOWN REMOTELY.
+       * The local rows still go — the customer asked for the blog to be
+       * deleted and the credentials are our problem, not theirs — but
+       * nothing is detached or deleted at Cloudflare, and the log says
+       * why. Falling back here would aim a delete at the server account. */
+      let creds;
 
-      project = await deleteProject({ project: blog.project, env: childEnv() });
+      try {
+        creds = await credsFor(blog);
+      } catch (err) {
+        log.error('staticBlogs.delete.credentials', err, {
+          requestId: req.id,
+          siteId: String(blog._id),
+          project: blog.project,
+        });
+
+        released = { skipped: true, error: err.message };
+        project = { ok: false, output: err.message };
+      }
+
+      if (!released) {
+        released = await releaseDomain({
+          project: blog.project,
+          domain: blog.siteUrl,
+          expected: expected || undefined,
+          creds,
+        });
+
+        project = await deleteProject({ project: blog.project, env: childEnv(creds), creds });
+      }
 
       log.info('staticBlogs.projectDeleted', {
         requestId: req.id,
@@ -2596,6 +2881,58 @@ router.post('/static-blogs/:id/delete', requireAuth, async (req, res) => {
  * that silently applies to some things and not others is worse than one
  * that applies to nothing.
  * ---------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------
+ * The Search Console verification tag
+ *
+ * Each customer watches their own blog from their own Search Console, so
+ * the token belongs to the blog rather than to us. A Domain property
+ * verified on our side — one DNS TXT record covering every subdomain —
+ * would verify these blogs to US and to nobody else.
+ * ---------------------------------------------------------------------- */
+
+router.post('/static-blogs/:id/verification', requireAuth, async (req, res) => {
+  try {
+    const blog = await ownedBlog(req);
+    if (!blog) return notFound(res);
+
+    /* ONE IDEA OF WHAT A TOKEN IS, AND IT LIVES IN verificationTags.js.
+     *
+     * The temptation here is a quick regex on req.body — and then the route
+     * and the module disagree about what is acceptable, which is how a
+     * value the parser would have refused ends up on every page of a
+     * published site. This is the only door the value comes in through; it
+     * goes through the same parser the module was written for. */
+    const tags = parseVerificationTags(req.body.verificationTags);
+
+    /* AN EMPTY LIST IS SAVED, NOT IGNORED. Clearing the field is how
+     * somebody removes a verification, so a blank submission is an
+     * instruction rather than a mistake to be guarded against. */
+    await BlogSite.updateOne({ _id: blog._id }, { $set: { verificationTags: tags } });
+
+    /* THE TOKENS ARE NOT LOGGED. They are not secrets — they are published
+     * in the page source — but they identify a customer's Search Console
+     * property, and a log line is the wrong place for somebody else's
+     * account identifiers. The count says what happened. */
+    log.info('staticBlogs.verificationSet', {
+      requestId: req.id,
+      siteId: String(blog._id),
+      from: (blog.verificationTags || []).length,
+      to: tags.length,
+    });
+
+    res.redirect(`/static-blogs/${blog._id}`);
+
+  } catch (err) {
+    log.error('staticBlogs.verification.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: `<h1>We could not save that</h1>
+             <a href="/static-blogs/${esc(req.params.id)}" class="btn btn-primary mt-3">Back</a>`,
+    }));
+  }
+});
 
 router.post('/static-blogs/:id/timezone', requireAuth, async (req, res) => {
   try {

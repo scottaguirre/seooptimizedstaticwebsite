@@ -228,6 +228,59 @@ const blogSiteSchema = new mongoose.Schema({
    */
   timezone: { type: String, default: 'UTC' },
 
+  /**
+   * Google Search Console verification tokens, for this blog's own pages.
+   *
+   * WHY IT BELONGS TO THE BLOG AND NOT TO US. Each customer monitors their
+   * own blog from their own Search Console, so the token is theirs. A
+   * Domain property verified on our side — one DNS TXT record covering
+   * every subdomain — would verify the blogs to US and to nobody else,
+   * which is the opposite of what this is for.
+   *
+   * A LIST, BECAUSE GOOGLE MATCHES ANY ONE OF THEM. Two Search Console
+   * properties can own one site, so a customer's token and an agency's can
+   * sit on the same page: they see their blog, we see an indexing problem
+   * before they report it.
+   *
+   * TOKENS, NOT TAGS. What arrives in the field is the whole <meta> element
+   * Google puts on the clipboard; parseVerificationTags() in
+   * utils/blog/verificationTags.js pulls the value out and refuses anything
+   * that is not token-shaped. The renderer builds the tag itself, so
+   * customer-supplied markup never reaches a published page.
+   *
+   * EMPTY ON EVERY BLOG THAT EXISTS TODAY, and that is a working state
+   * rather than a gap: a blog nobody has verified simply renders no tag.
+   */
+  verificationTags: { type: [String], default: () => [] },
+
+  /**
+   * The Cloudflare account this blog's Pages project lives on.
+   *
+   * SET ONCE, AT CREATION, FROM THE DOMAIN THAT WAS CHOSEN — and stored
+   * rather than looked up again at deploy time, for a reason worth stating.
+   * A Domain row can be re-pointed at a different account later. Resolving
+   * through it on every deploy would silently move an existing blog's
+   * deploys to an account where its project does not exist, and Cloudflare
+   * would report a missing project for a blog that has been live for
+   * months.
+   *
+   * EMPTY MEANS THE SERVER'S OWN ACCOUNT, which is every blog created
+   * before 22 October 2026. credsFor() returns undefined for those and the
+   * whole chain falls back to CF_ACCOUNT_ID / CF_API_TOKEN exactly as it
+   * always did. Nothing backfills them.
+   *
+   * A BLOG THAT NAMES AN ACCOUNT NEVER FALLS BACK. If the account is gone,
+   * disabled, or its token will not decrypt, the deploy stops. See
+   * utils/blog/cloudflare/accounts.js for why that is not a convenience
+   * worth having.
+   */
+  cloudflareAccount: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'CloudflareAccount',
+    default: null,
+    index: true,
+  },
+
   // The active theme's PHP function prefix, e.g. 'local_business_theme'.
   // The plugin writes meta descriptions to '<prefix>_page_description' so the
   // theme's own SEO output picks them up; the server needs to know it to

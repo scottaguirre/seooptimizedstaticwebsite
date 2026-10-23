@@ -14,6 +14,7 @@ const distDir = path.join(__dirname, 'dist');
 const formRoute = require('./routes/formRoute');
 const authRoute = require('./routes/authRoute');
 const adminRoute = require('./routes/adminRoute');
+const blogDomainsRoute = require('./routes/blogDomainsRoute');
 const creditsRoute = require('./routes/creditsRoute');
 const suggestServicesRoute = require('./routes/suggestServicesRoute');
 const suggestLocationsRoute = require('./routes/suggestLocationsRoute');
@@ -363,6 +364,12 @@ app.use('/', requireAuth, suggestLocationsRoute); // /api/suggest-locations
 app.use('/', requireAuth, keywordVolumesRoute);   // /api/keyword-volumes
 app.use('/', requireAuth, keywordResearchRoute); // /keyword-research, /api/keyword-ideas
 app.use('/', requireAuth, adminRoute);        // /admin section
+
+/* THE CLOUDFLARE POOL, behind requireAuth here and requireAdmin on every
+ * route of its own. Two guards rather than one because this screen holds
+ * live API tokens for ten customers' Cloudflare accounts, and requireAuth
+ * alone is something every signed-up customer has. */
+app.use('/', requireAuth, blogDomainsRoute);
 app.use('/', requireAuth, formRoute);         // /
 app.use('/', requireAuth, generateRoute);     // /generate
 app.use('/', requireAuth, productionRoute);   // /production

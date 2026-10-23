@@ -2364,7 +2364,178 @@ what has to become argument-passing, and those tests are the spec for it.
     That is the upside, and it is also why the angle/shape work shipped
     first.
 
-### QUEUED — fold the campaigns table on a blog's page
+### CLOSED 22 October 2026 — the zone check was asking the WRONG ACCOUNT
+
+**The first thing Edwin hit the first time he used the pool, and the third
+wiring gap of the same session.**
+
+He added a second Cloudflare account for `site-book.net`, added the domain
+against it, created
+`cutting-edge-plumbing-techniques.site-book.net` — and the screen told him
+**"No domain in your Cloudflare account matches"**.
+
+The blog was perfect. The CHECK was wrong:
+
+    const zone = await findZone({ domain });      // no creds
+    const owned = await listZones();              // no creds
+
+`findZone` and `listZones` both take an optional `creds`. Neither got one,
+so `cfApi` fell back to the environment and asked the OLD explr-home.com
+account whether it owned `site-book.net`. Of course it did not.
+
+**THE SHAPE, AGAIN: an optional credentials argument does not complain when
+you forget it. It answers about somewhere else.** Both halves were correct
+— the helpers had been taught about per-account credentials, the blog was
+bound to the right account one line earlier — and nothing wired them
+together. Same as `angle` reaching the UI on neither product; same as
+`creds` missing from `findRedirectList`.
+
+**A false warning here is worse than no warning.** It fires at the one
+moment the screen exists to make somebody doubt their domain, it would have
+fired on EVERY blog created on EVERY pool domain, and the lesson it teaches
+is "that alarm is always wrong, click past it" — which is precisely the
+alarm being disabled by habit instead of by decision.
+
+**The fix**, in the create handler:
+
+- `credsFor(blog)` resolved into a `try/catch` — **the blog already exists
+  by this point**, so letting that throw escape would turn a created blog
+  into a 500 page
+- `findZone({ domain, creds })` and `listZones({ creds })`
+- an unresolvable credential SKIPS the check rather than warning, which is
+  the rule the comment above it already stated: *a failure to ask is not a
+  failure to match*
+
+**Four tests, and the first one is the only shape that could have caught
+it:** it asserts on `zones.findCalls[0].creds` — WHAT WENT OVER THE WIRE —
+because the return value is identical whether the right account was asked
+or the wrong one. Six mutants, six killed, including re-introducing the bug.
+
+Checked every other caller of `findZone`/`listZones` across `routes/` and
+`utils/`: there are none. This was the only one.
+
+### QUEUED — the "did you mean" suggestion is still mostly dead code
+
+`suggestZoneFix()` in `utils/blog/cloudflare/deploy.js`, and the branch in
+`staticBlogsRoute.js` that renders it, exist for one incident: Edwin typed
+`all-bout-hvac-explr-home.com` meaning `all-about-hvac.explr-home.com` —
+one dot became a hyphen, and the app found out only at publish time, after
+a campaign was approved and three articles were written and charged for.
+
+**THAT TYPO CAN NO LONGER BE MADE.** The domain comes from a dropdown. What
+a customer types is the prefix, and a mistyped prefix is still a perfectly
+valid hostname under a zone we own, so the lookup finds it.
+
+**The zone check itself STAYS**, and since 22 October it asks the right
+account (above). It catches a real admin mistake: a domain added to the
+pool against an account whose zone list does not include it.
+
+**What should still go** is the Levenshtein-style suggestion and its
+wording — "Did you mean …?" — which can only ever suggest the domain the
+customer already picked from a list. It is now at least drawn from the
+correct account's zones, so it is harmless rather than actively
+misleading; it is still code nobody can explain.
+
+**Better still:** move the zone check to the admin screen, at the moment a
+domain is ADDED to the pool. It is an admin mistake, caught on an admin
+screen, instead of on every customer's create form for the rest of time.
+`test-static-blogs.js` has the coverage to move with it.
+
+### CLOSED 22 October 2026 — the admin form stored whatever you gave it
+
+**Two failures, one screen, both found by Edwin using it for the first
+time.**
+
+**One: the page was reachable only by typing the URL.** `/admin/blog-domains`
+shipped with nothing linking to it from anywhere. Edwin found it because he
+was told the address. That is the exact failure `appSidebar()`'s own comment
+warns about — *a tool that is not linked from somewhere a customer looks is
+a tool nobody uses* — committed again a month later by the person who had
+just read the warning.
+
+Fixed with a **Blog domains** item in the Admin dropdown, which lives in
+`public/js/currentUserInfo.js` inside the block already gated on `isAdmin`.
+`test-app-header.js` now RUNS that script for each role against a fake
+`/api/me` rather than scanning its source — because whether a link sits
+inside the `isAdmin` block is behaviour, and a regex over the source cannot
+tell a link inside that block from one just above it. The customer test is
+the half that matters: moving the `<li>` one line up still satisfies "an
+admin can see it" while handing every customer a door that answers 403.
+
+**Two: the form accepted anything.** Edwin opened it and his browser, reading
+"text field followed by password field" as a login, autofilled his EMAIL
+ADDRESS into the account ID and a SAVED PASSWORD into the token. The handler
+had no shape check and no verification: it would have sealed that password,
+stored it, redirected, and shown a tidy new row. **The first sign of trouble
+would have been a deploy failing weeks later with a raw Cloudflare error
+naming neither the form nor the row** — the same shape as the per-field
+credential fallback caught in `cfApi()`: the wrong value stored
+successfully, discovered a long way from where it was entered.
+
+Four changes:
+
+- **`verifyAccount()`** in `utils/blog/cloudflare/accounts.js`. The
+  credentials are used ONCE, before anything is written. It proves the
+  account ID is real, the token authenticates, and the token works ON THAT
+  ACCOUNT — which is the dangerous case, because a valid token for a
+  DIFFERENT account authenticates perfectly and would publish a client's
+  blog into somebody else's account. **It does NOT prove the token can
+  write**; Cloudflare offers Pages as Read or Edit and a read-only token
+  passes this and fails at the first deploy. The form says so rather than
+  implying a guarantee it cannot make.
+- **`cfApi` now returns `info`** (Cloudflare's `result_info`), which is what
+  makes a trustworthy count possible. Additive and undefined on endpoints
+  that do not page.
+- **A loose shape check**, `looksLikeAccountId()`. It rejects an `@`, a
+  space, a dot or a slash and nothing else. **Deliberately loose: Cloudflare
+  does not publish the account ID format**, and a strict 32-hex regex built
+  on a guess would one day refuse a real ID with no way around it — locking
+  out an admin who has no other route in. The cheap guard answers the
+  obvious mistakes instantly; Cloudflare settles the rest.
+- **`autocomplete="new-password"`, not `"off"`.** The field WAS `off` and
+  Chrome filled it anyway — browsers deliberately ignore `off` on password
+  fields because sites used it to defeat password managers. `new-password`
+  is the one value that is honoured. The account ID field is closed too,
+  because a browser fills the PAIR.
+
+Plus `public/js/passwordToggle.js` on the page, which finds every password
+field and adds a show/hide eye: an API token is forty characters of noise
+that sometimes has to be typed by hand off another screen, and without a
+way to read it back the only way to find a typo is to submit and be refused.
+
+**The refusal is scrubbed again at the route**, even though `cfApi` already
+scrubs its own errors. Not because `cfApi` forgot — because THAT is the line
+that turns the value into HTML, and a page whose safety depends on a
+function three modules away continuing to behave is a page one refactor from
+rendering a live Cloudflare token.
+
+### QUEUED — an account's project count is written once and never again
+
+**Half closed on 22 October.** `verifyAccount()` has to list the account's
+Pages projects to prove the token works on it, so the count is already in
+hand when a row is created — it is stored there with `projectsCountedAt`
+rather than left at a placeholder `0`. It reads `result_info.total_count`,
+not `result.length`: Cloudflare's list endpoints page, and counting the
+page would report 25 projects on an account holding 140, which on that
+screen reads as 75 free slots that do not exist.
+
+Two things are still missing and they are separate:
+
+- **A refresh.** The number is true on the day the account is added and
+  stale forever after. A button on the admin screen that re-counts each
+  account and updates `projectsCountedAt`. Cached rather than live because
+  the screen lists every account and a live count is one round trip a row.
+- **A refusal.** Nothing stops a customer creating the 101st blog on an
+  account. Cloudflare rejects it, and right now that surfaces as a wrangler
+  error on the customer's screen rather than as "that domain is full, pick
+  another".
+
+### ~~QUEUED~~ CLOSED 21 October 2026 — fold the campaigns table
+
+**Done.** `<details>` in the `planned` block of `blogPageSpec()`, open at
+`FOLD_ABOVE = 5` or fewer. Everything below is the reasoning, kept because
+the "why a fold and not a second screen" argument applies to the next table
+somebody wants to move.
 
 Edwin, 21 October, right after the Articles list moved out: *"I was
 thinking that this could be a toggler to show the table campaigns but we
@@ -2416,10 +2587,16 @@ broken, and the query behind it already selects `title slug` only.
   "how many exist". The comment above `blogPageSpec` says so; the fix is
   to take the count from `countDocuments()` in the same commit.
 
-### QUEUED — rename the two blog items in the sidebar
+### ~~QUEUED~~ CLOSED 21 October 2026 — rename the two blog items
+
+**Done.** The labels live in `utils/pageTitle.js` as `TOOL_WP_BLOGS` and
+`TOOL_CF_BLOGS` — one source of truth, imported by `appHeader.js` and by
+every page that names either tool, so the next rename is two constants
+rather than twenty strings. That was the actual work; the rename itself was
+the easy half.
 
 Asked for by Edwin on 20 October, explicitly **not now**. He sent a
-screenshot of the TOOLS nav and wants two labels changed:
+screenshot of the TOOLS nav and wanted two labels changed:
 
     Blog Automation   ->   Build WP blogs
     Static Blogs      ->   Build Cloudflare Blogs

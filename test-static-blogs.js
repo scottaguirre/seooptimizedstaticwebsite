@@ -100,6 +100,75 @@ cloudflareModule.releaseDomain = async (opts) => {
   return cloudflare.release;
 };
 
+/* AND THE ACCOUNT RESOLVER, BEFORE THE ROUTER, FOR THE SIXTH TIME IN THIS
+ * FILE. The route destructures credsFor at load like everything else here.
+ *
+ * It answers from the blog it is given, so a test can say "this blog is on
+ * a pool account" by setting one field on the fixture rather than by
+ * standing up two collections. */
+const POOL_CREDS = { token: 'tok-client-3', account: 'acct-id-3' };
+
+/* AND THE DOMAIN POOL, BEFORE THE ROUTER, FOR THE SEVENTH TIME IN THIS
+ * FILE. The create screen reads it for its dropdown and the create handler
+ * reads it to decide whether a posted domain is one of ours. */
+const DomainModel = require('./models/Domain');
+
+DomainModel.find = (where = {}) => ({
+  sort: () => ({
+    lean: async () => (db.pool || []).filter(d =>
+      undefined === where.enabled || d.enabled === where.enabled),
+  }),
+});
+
+DomainModel.findOne = async (where = {}) =>
+  (db.pool || []).find(d => d.domain === where.domain) || null;
+
+const accountsModule = require('./utils/blog/cloudflare/accounts');
+
+accountsModule.credsFor = async (blog) => {
+  const id = blog && blog.cloudflareAccount;
+
+  if (!id) return undefined;
+  if ('acct-broken' === String(id)) {
+    throw new Error('The Cloudflare account for this blog is disabled (Client 3).');
+  }
+
+  return POOL_CREDS;
+};
+
+/* AND THE CAPACITY CHECK, BEFORE THE ROUTER, FOR THE EIGHTH TIME IN THIS
+ * FILE.
+ *
+ * Cloudflare caps Pages projects at 100 per account and one blog is one
+ * project. Before this, nothing noticed: the customer filled in the form,
+ * pressed Create, and Cloudflare refused — in front of the one person who
+ * could do nothing about it, in language they could not read.
+ *
+ * ASKED LIVE rather than read off the account row, because the stored count
+ * is a snapshot and the moment it matters is this one. One request, one
+ * account, at the only point where being wrong costs anything.
+ *
+ * `room` is what recountAccount will answer. Defaulted to "plenty of space",
+ * which is the quiet path, so every existing creation test goes on behaving
+ * exactly as it did. */
+const capacity = { room: { ok: true, projects: 4 }, calls: [] };
+
+accountsModule.recountAccount = async (acct) => {
+  capacity.calls.push(acct && String(acct._id));
+  return capacity.room;
+};
+
+const CloudflareAccountModel = require('./models/CloudflareAccount');
+
+CloudflareAccountModel.findById = async (id) =>
+  ('acct-gone' === String(id) ? null : { _id: id, label: 'Client 3', accountId: 'a'.repeat(32) });
+
+const accountWrites = [];
+CloudflareAccountModel.updateOne = async (where, update) => {
+  accountWrites.push({ where, update });
+  return { acknowledged: true };
+};
+
 /* AND THE ZONE LOOKUP, BEFORE THE ROUTER, FOR THE FIFTH TIME IN THIS FILE.
  *
  * AND BELOW cloudflareModule, OBVIOUSLY — the first draft of this block
@@ -114,10 +183,11 @@ const zones = {
   find: { ok: true, id: 'z1', name: 'explr-home.com' },
   list: { ok: true, names: ['explr-home.com'] },
   findCalls: [],
+  listCalls: [],
 };
 
 cloudflareModule.findZone = async (opts) => { zones.findCalls.push(opts); return zones.find; };
-cloudflareModule.listZones = async () => zones.list;
+cloudflareModule.listZones = async (opts) => { zones.listCalls.push(opts); return zones.list; };
 
 
 /* childEnv throws when the credentials are absent, which they are in a
@@ -190,6 +260,13 @@ function install(over = {}) {
       { _id: '507f1f77bcf86cd799439032', title: 'Second one', slug: 'second-one' },
     ],
     siteUpdates: [],
+    /* A DEFAULT POOL, so the creation tests have something to pick from.
+     * The free-text domain field went on 22 October: a blog is created by
+     * typing a prefix and choosing one of these. */
+    pool: [
+      { _id: 'dom-lwh', domain: 'leanderwaterheaters.com', account: 'acct-3', enabled: true },
+      { _id: 'dom-explr', domain: 'explr-home.com', account: 'acct-3', enabled: true },
+    ],
     postFindWhere: null,
     postExistsWhere: null,
   }, over);
@@ -440,7 +517,7 @@ test('a Cloudflare blog is created with no licence key and no secret', async () 
   install({ blogs: [] });
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'Leander Water Heaters', domain: 'https://LeanderWaterHeaters.com/' },
+    body: { name: 'Leander Water Heaters', prefix: 'blog', domain: 'leanderwaterheaters.com' },
   }));
 
   assert.strictEqual(db.created.target, 'cloudflare');
@@ -450,28 +527,34 @@ test('a Cloudflare blog is created with no licence key and no secret', async () 
   assert.ok(out.redirected, 'the browser was not sent anywhere afterwards');
 });
 
-test('THE DOMAIN IS NORMALISED BEFORE IT IS STORED', async () => {
-  /* 'https://LeanderWaterHeaters.com/' and 'leanderwaterheaters.com' are one
-   * domain. Stored raw, the duplicate check below would miss, and two blogs
-   * would deploy over each other. */
+test('THE HOSTNAME IS NORMALISED BEFORE IT IS STORED', async () => {
+  /* Stored raw, the duplicate check below would miss and two blogs would
+   * deploy over each other.
+   *
+   * THE DOMAIN IS NO LONGER TYPED — it comes from the pool already
+   * normalised, so the half a customer can get wrong is the prefix. */
   install({ blogs: [] });
 
   await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', domain: 'https://LeanderWaterHeaters.com/' },
+    body: { name: 'X', prefix: '  BLOG ', domain: 'leanderwaterheaters.com' },
   }));
 
-  assert.strictEqual(db.created.siteUrl, 'leanderwaterheaters.com');
+  assert.strictEqual(db.created.siteUrl, 'blog.leanderwaterheaters.com');
 });
 
-test('and the same domain twice is refused', async () => {
-  install();
+test('and the same hostname twice is refused', async () => {
+  /* The fixture blog is on leanderwaterheaters.com itself; a second blog
+   * at the same address would publish over it. */
+  install({ blogs: [{ _id: BLOG_ID, user: USER_ID, target: 'cloudflare', status: 'active',
+                      siteUrl: 'blog.leanderwaterheaters.com',
+                      business: { name: 'Leander Water Heaters' } }] });
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'Again', domain: 'https://www.leanderwaterheaters.com' },
+    body: { name: 'Again', prefix: 'blog', domain: 'leanderwaterheaters.com' },
   }));
 
   assert.strictEqual(out.status, 400);
-  assert.strictEqual(db.created, null, 'a second blog was created on the same domain');
+  assert.strictEqual(db.created, null, 'a second blog was created on the same hostname');
 });
 
 test('A DOMAIN THIS ACCOUNT DOES NOT HOST IS FLAGGED BEFORE ANYTHING IS WRITTEN', async () => {
@@ -486,7 +569,7 @@ test('A DOMAIN THIS ACCOUNT DOES NOT HOST IS FLAGGED BEFORE ANYTHING IS WRITTEN'
   zones.list = { ok: true, names: ['explr-home.com'] };
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'All About HVAC', domain: 'all-bout-hvac-explr-home.com' },
+    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
   }));
 
   assert.ok(!out.redirected, 'it redirected past the warning');
@@ -494,18 +577,26 @@ test('A DOMAIN THIS ACCOUNT DOES NOT HOST IS FLAGGED BEFORE ANYTHING IS WRITTEN'
     'the screen does not say the domain is unreachable');
 });
 
-test('AND IT SUGGESTS THE DOMAIN THAT WAS PROBABLY MEANT', async () => {
+test('AND IT NAMES THE DOMAIN THAT WAS LOOKED FOR', async () => {
+  /* THE "DID YOU MEAN" SUGGESTION IS ALL BUT DEAD — 22 October. It existed
+   * for Edwin typing `all-bout-hvac-explr-home.com`, one dot turned into a
+   * hyphen. The domain now comes from a dropdown, so that typo cannot be
+   * made; what is left is an ADMIN mistake, a pool domain added against an
+   * account whose zone list does not include it.
+   *
+   * The suggestion machinery is left in place because it is harmless and
+   * tested, but it is worth removing deliberately rather than leaving as
+   * code nobody can explain. Noted in CLAUDE.md. */
   install({ blogs: [] });
   zones.find = { ok: false, noZone: true, error: 'no' };
   zones.list = { ok: true, names: ['explr-home.com'] };
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'All About HVAC', domain: 'all-bout-hvac-explr-home.com' },
+    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
   }));
 
-  assert.ok(out.html.includes('all-bout-hvac.explr-home.com'),
-    'it does not offer the corrected domain');
-  assert.ok(/Did you mean/i.test(out.html));
+  assert.ok(out.html.includes('all-about-hvac.explr-home.com'),
+    'the screen does not say which hostname could not be found');
 });
 
 test('BUT THE BLOG IS STILL CREATED, BECAUSE IT WARNS RATHER THAN BLOCKS', async () => {
@@ -516,11 +607,11 @@ test('BUT THE BLOG IS STILL CREATED, BECAUSE IT WARNS RATHER THAN BLOCKS', async
   zones.find = { ok: false, noZone: true, error: 'no' };
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'Elsewhere', domain: 'blog.somewhere-else.com' },
+    body: { name: 'Elsewhere', prefix: 'elsewhere', domain: 'explr-home.com' },
   }));
 
   assert.ok(db.created, 'the blog was refused rather than flagged');
-  assert.strictEqual(db.created.siteUrl, 'blog.somewhere-else.com');
+  assert.strictEqual(db.created.siteUrl, 'elsewhere.explr-home.com');
   assert.ok(/Carry on with this domain/i.test(out.html), 'there is no way past the warning');
 
   /* 200, NOT 400. The blog WAS created; this page is a heads-up, not a
@@ -535,7 +626,7 @@ test('AND A MATCHING DOMAIN GOES STRAIGHT THROUGH, AS IT DID BEFORE', async () =
   zones.find = { ok: true, id: 'z1', name: 'explr-home.com' };
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'All About HVAC', domain: 'all-about-hvac.explr-home.com' },
+    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
   }));
 
   assert.ok(out.redirected, 'a perfectly good domain was interrupted by a warning');
@@ -551,7 +642,7 @@ test('AND A LOOKUP THAT COULD NOT RUN DOES NOT CLAIM THE DOMAIN IS WRONG', async
   zones.find = { ok: false, error: 'No Cloudflare credentials.' };
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', domain: 'all-about-hvac.explr-home.com' },
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
   }));
 
   assert.ok(out.redirected, 'a failed lookup was reported as a bad domain');
@@ -567,18 +658,319 @@ test('AND IT STILL WARNS WHEN THE ZONE LIST CANNOT BE READ', async () => {
   zones.list = { ok: false, error: 'nope' };
 
   const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', domain: 'all-bout-hvac-explr-home.com' },
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
   }));
 
   assert.ok(/No domain in your Cloudflare account matches/i.test(out.html));
   assert.ok(!/Did you mean/i.test(out.html), 'it suggested something it could not know');
 });
 
+/* ─────────── THE CHECK HAS TO ASK THE ACCOUNT THE BLOG IS ON ───────────
+ *
+ * EDWIN HIT THIS THE FIRST TIME HE USED THE POOL — 22 October.
+ *
+ * He added a second Cloudflare account for `site-book.net`, added the domain
+ * against it, created `cutting-edge-plumbing-techniques.site-book.net`, and
+ * the screen told him no domain in his Cloudflare account matched it.
+ *
+ * The blog was perfect. The CHECK was wrong: `findZone({ domain })` with no
+ * credentials falls back to the environment, so it had asked his OLD
+ * explr-home.com account whether it owned site-book.net. Of course it did not.
+ *
+ * THE SAME WIRING GAP, THREE TIMES IN ONE SESSION. findZone and listZones
+ * were both taught about per-account credentials. This caller was not
+ * updated, and nothing failed — a function whose credentials argument is
+ * optional does not complain when you forget it. It just answers about
+ * somewhere else.
+ *
+ * A false warning is not harmless here. It appears at the one moment the
+ * screen exists to make somebody doubt their domain, and it would have fired
+ * on EVERY blog created on EVERY pool domain. The lesson taken from it is
+ * worse than the warning: "that alarm is always wrong, click past it". */
+
+test('THE ZONE CHECK ASKS THE ACCOUNT THE BLOG IS ACTUALLY ON', async () => {
+  install({ blogs: [] });
+  zones.findCalls.length = 0;
+  zones.find = { ok: true, id: 'z1', name: 'explr-home.com' };
+
+  await call(handler('post', '/static-blogs'), req({
+    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.strictEqual(zones.findCalls.length, 1, 'the zone was not looked up at all');
+
+  /* THE ASSERTION IS ON WHAT WENT OVER THE WIRE, not on what came back,
+   * and that is the only thing that catches this. The return value is
+   * identical whether the right account or the wrong one was asked. */
+  assert.deepStrictEqual(zones.findCalls[0].creds, POOL_CREDS,
+    'the check asked the environment\'s account, not the blog\'s');
+});
+
+test('AND SO DOES THE ZONE LIST BEHIND THE SUGGESTION', async () => {
+  /* The other half, and the quieter one. listZones() on the wrong account
+   * returns the wrong account's domains — so "Did you mean …?" would offer
+   * a domain from somewhere else entirely, which is worse than offering
+   * nothing. */
+  install({ blogs: [] });
+  zones.listCalls.length = 0;
+  zones.find = { ok: false, noZone: true, error: 'no' };
+  zones.list = { ok: true, names: ['explr-home.com'] };
+
+  await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.strictEqual(zones.listCalls.length, 1, 'the zone list was never read');
+  assert.ok(zones.listCalls[0] && zones.listCalls[0].creds,
+    'the suggestion would be drawn from the wrong account\'s domains');
+  assert.deepStrictEqual(zones.listCalls[0].creds, POOL_CREDS);
+});
+
+test('A BLOG ON NO POOL ACCOUNT STILL ASKS WITH NOTHING, WHICH MEANS THE ENVIRONMENT', async () => {
+  /* The fallback has to survive. A Domain row with no account is the
+   * server's own account, and passing `creds: undefined` is how cfApi is
+   * told so. Passing a half-built object instead would make it refuse. */
+  install({
+    blogs: [],
+    pool: [{ _id: 'dom-own', domain: 'explr-home.com', account: null, enabled: true }],
+  });
+  zones.findCalls.length = 0;
+  zones.find = { ok: true, id: 'z1', name: 'explr-home.com' };
+
+  await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.strictEqual(zones.findCalls.length, 1);
+  assert.strictEqual(zones.findCalls[0].creds, undefined,
+    'it invented credentials for a blog that has none');
+});
+
+test('AND A CREDENTIAL THAT CANNOT BE RESOLVED SKIPS THE CHECK RATHER THAN BREAKING', async () => {
+  /* credsFor THROWS for an account that is gone, disabled, or whose token
+   * will not decrypt — deliberately, because falling back would deploy
+   * into the wrong account.
+   *
+   * But by this point the blog has ALREADY BEEN CREATED. Letting that throw
+   * escape turns a created blog into a 500, and the person is left looking
+   * at an error page for a blog that exists.
+   *
+   * So it is caught, and the check is skipped. Which is the rule the
+   * comment above the check already states: a failure to ask is not a
+   * failure to match. The credential problem surfaces at the first publish,
+   * named, from credsFor itself. */
+  install({
+    blogs: [],
+    pool: [{ _id: 'dom-bad', domain: 'explr-home.com', account: 'acct-broken', enabled: true }],
+  });
+  zones.findCalls.length = 0;
+  zones.find = { ok: false, noZone: true, error: 'no' };
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.notStrictEqual(out.status, 500, 'an unusable account took the creation down');
+  assert.ok(db.created, 'the blog was lost');
+  assert.strictEqual(zones.findCalls.length, 0,
+    'it asked anyway, with credentials it could not resolve');
+  assert.ok(out.redirected, 'it warned on the strength of a check it never ran');
+});
+
+/* ──────────── ONE HUNDRED PAGES PROJECTS AND NOT ONE MORE ────────────
+ *
+ * Cloudflare caps Pages projects at 100 per account and says the limit is
+ * not routinely raised. One blog is one project.
+ *
+ * Before this, the app did not know. A customer on a full account typed a
+ * prefix, picked a domain, pressed Create — and Cloudflare refused. What
+ * reached the screen was a raw wrangler error: unreadable, unactionable,
+ * and landing on the one person who could do nothing about it.
+ *
+ * The check is LIVE, not read from `CloudflareAccount.projects`. That
+ * stored number is a snapshot for the admin screen and can be weeks old;
+ * this is the one moment where being wrong has a cost, and it is one
+ * request about one account.
+ */
+
+function freshCapacity(over = {}) {
+  capacity.room = over.room || { ok: true, projects: 4 };
+  capacity.calls.length = 0;
+  accountWrites.length = 0;
+}
+
+test('A FULL ACCOUNT IS REFUSED BEFORE THE BLOG IS CREATED', async () => {
+  install({ blogs: [] });
+  freshCapacity({ room: { ok: true, projects: 100 } });
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.created, null, 'a blog was created on a full account');
+});
+
+test('AND THE REFUSAL SAYS WHAT TO DO ABOUT IT', async () => {
+  /* THE WHOLE POINT. The old behaviour also refused — Cloudflare did it —
+   * but what reached the customer was a wrangler stack trace. A refusal
+   * nobody can act on is only marginally better than a broken blog. */
+  install({ blogs: [] });
+  freshCapacity({ room: { ok: true, projects: 100 } });
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.ok(out.html.includes('explr-home.com'), 'it does not say which domain is full');
+  assert.ok(/full/i.test(out.html), 'it does not say the domain is full');
+  assert.ok(/another|different|pick/i.test(out.html), 'it does not say to pick another');
+});
+
+test('AND IT IS OVER THE LIMIT, NOT MERELY NEAR IT, THAT REFUSES', async () => {
+  /* nearlyFull fires at 85 and is a WARNING for the admin screen. Refusing
+   * a customer at 86 would throw away fourteen perfectly good blogs. */
+  install({ blogs: [] });
+  freshCapacity({ room: { ok: true, projects: 99 } });
+
+  await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.ok(db.created, 'an account with one slot left was refused');
+});
+
+test('AND AN ACCOUNT ALREADY OVER THE LIMIT IS REFUSED TOO', async () => {
+  /* The count comes from Cloudflare, and an account filled by something
+   * other than this app can be past 100. A `=== 100` check would wave
+   * those straight through. */
+  install({ blogs: [] });
+  freshCapacity({ room: { ok: true, projects: 137 } });
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.created, null);
+});
+
+test('A CHECK THAT COULD NOT RUN DOES NOT BLOCK THE CUSTOMER', async () => {
+  /* THE HALF THAT STOPS THIS BEING WORSE THAN NOTHING, and it is the same
+   * rule the zone check follows: a failure to ask is not an answer.
+   *
+   * A revoked token, a Cloudflare outage, a rate limit — all come back
+   * ok:false. Refusing on that basis would turn a transient Cloudflare
+   * problem into "you cannot create a blog", for a customer who has done
+   * nothing wrong and can see nothing to fix.
+   *
+   * Letting it through costs, at worst, the error that happened before
+   * this feature existed. */
+  install({ blogs: [] });
+  freshCapacity({ room: { ok: false, error: 'Invalid API Token [code: 1000]' } });
+
+  const out = await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.ok(db.created, 'a Cloudflare outage stopped a blog being created');
+  assert.ok(out.redirected || 200 === out.status, 'it refused on a check it never ran');
+
+  /* AND IT WROTE NOTHING DOWN — the assertion that makes the `room.ok`
+   * guard visible at all.
+   *
+   * MUTATION FOUND THIS. Changing `if (room.ok)` to `if (true)` passed
+   * every test above: a failed check has no `projects`, so the capacity
+   * arithmetic reads it as 0 used, decides there is room, and lets the
+   * customer through — the same outcome, for entirely the wrong reason.
+   *
+   * What it ALSO does is store `projects: undefined`, clobbering a count
+   * that was correct with one that is nothing. The inner try/catch around
+   * that write — there so a bookkeeping failure never costs a customer
+   * their blog — swallowed the evidence. */
+  assert.strictEqual(accountWrites.length, 0,
+    'it wrote a count it never managed to obtain');
+});
+
+test('AND NEITHER DOES AN ACCOUNT ROW THAT HAS GONE', async () => {
+  /* Same rule, one layer earlier: the Domain row names an account that is
+   * no longer there. credsFor will refuse this at deploy time, named and
+   * explained. It is not this form's job to guess. */
+  install({
+    blogs: [],
+    pool: [{ _id: 'dom-x', domain: 'explr-home.com', account: 'acct-gone', enabled: true }],
+  });
+  freshCapacity();
+
+  await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.ok(db.created, 'a missing account row stopped the blog being created');
+  assert.strictEqual(accountWrites.length, 0, 'it wrote to an account that is not there');
+});
+
+test('A DOMAIN ON NO POOL ACCOUNT IS NOT CHECKED AT ALL', async () => {
+  /* The server's own account, which is every blog that predates the pool.
+   * There is nothing to look up and no row to count. */
+  install({
+    blogs: [],
+    pool: [{ _id: 'dom-own', domain: 'explr-home.com', account: null, enabled: true }],
+  });
+  freshCapacity();
+
+  await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.strictEqual(capacity.calls.length, 0, 'it counted an account that does not exist');
+  assert.ok(db.created);
+});
+
+test('THE COUNT IT JUST PAID FOR IS KEPT', async () => {
+  /* A round trip to Cloudflare was spent to learn this number. Throwing it
+   * away would leave the admin screen stale until somebody presses the
+   * button — and every blog created is the moment that number changes, so
+   * this is exactly when it is worth writing down. */
+  install({ blogs: [] });
+  freshCapacity({ room: { ok: true, projects: 12 } });
+
+  await call(handler('post', '/static-blogs'), req({
+    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+  }));
+
+  assert.strictEqual(accountWrites.length, 1, 'the fresh count was discarded');
+  assert.strictEqual(accountWrites[0].update.$set.projects, 12);
+  assert.ok(accountWrites[0].update.$set.projectsCountedAt instanceof Date);
+});
+
+test('AND A FAILED WRITE NEVER COSTS THE CUSTOMER THEIR BLOG', async () => {
+  /* Storing the count is housekeeping. The customer is here to create a
+   * blog, and a Mongo hiccup updating a number on an admin screen must not
+   * be the thing that stops them. */
+  install({ blogs: [] });
+  freshCapacity();
+
+  const was = CloudflareAccountModel.updateOne;
+  CloudflareAccountModel.updateOne = async () => { throw new Error('mongo is having a day'); };
+
+  try {
+    const out = await call(handler('post', '/static-blogs'), req({
+      body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
+    }));
+
+    assert.ok(db.created, 'a bookkeeping write took the creation down with it');
+    assert.notStrictEqual(out.status, 500);
+  } finally {
+    CloudflareAccountModel.updateOne = was;
+  }
+});
+
 test('a blog with no name or no domain is refused', async () => {
   install({ blogs: [] });
 
-  assert.strictEqual((await call(handler('post', '/static-blogs'), req({ body: { name: '', domain: 'x.com' } }))).status, 400);
-  assert.strictEqual((await call(handler('post', '/static-blogs'), req({ body: { name: 'X', domain: '' } }))).status, 400);
+  assert.strictEqual((await call(handler('post', '/static-blogs'), req({ body: { name: '', prefix: 'blog', domain: 'explr-home.com' } }))).status, 400);
+  assert.strictEqual((await call(handler('post', '/static-blogs'), req({ body: { name: 'X', prefix: '', domain: 'explr-home.com' } }))).status, 400);
   assert.strictEqual(db.created, null);
 });
 
@@ -636,7 +1028,7 @@ test('ONE TOPIC PER LINE, AND BLANK LINES ARE NOT TOPICS', async () => {
     },
   }));
 
-  assert.strictEqual(out.status, 200, `planning failed: ${out.html.slice(0, 400)}`);
+  assert.strictEqual(out.status, 200, `planning failed: ${(/<h1[^>]*>([^<]+)/.exec(out.html)||[])[1]}`);
   assert.ok(out.html.includes('Signs your water heater is failing'), 'the first topic is missing');
   assert.ok(out.html.includes('water heater repair cost'), 'the pipe-separated search phrase was dropped');
   assert.ok(!/<td>\s*<\/td>/.test(out.html), 'a blank line became a topic');
@@ -863,7 +1255,7 @@ test('A THIRD FIELD AFTER A SECOND PIPE IS THE LINK PHRASE', async () => {
     },
   }));
 
-  assert.strictEqual(out.status, 200, out.html.slice(0, 400));
+  assert.strictEqual(out.status, 200, (/<h1[^>]*>([^<]+)/.exec(out.html)||[])[1]);
 
   /* ASSERTED ON THE SLOT THAT WAS SAVED, NOT ON THE PAGE. The plan screen
    * shows the topic, the search phrase and the date; the link phrase is
@@ -891,7 +1283,7 @@ test('and a pipe with nothing after it leaves the link phrase unset', async () =
     },
   }));
 
-  assert.strictEqual(out.status, 200, out.html.slice(0, 400));
+  assert.strictEqual(out.status, 200, (/<h1[^>]*>([^<]+)/.exec(out.html)||[])[1]);
   assert.ok(out.html.includes('water heater repair cost'), 'the search phrase was lost');
   assert.strictEqual(db.created_campaign.slots[0].linkPhrase, '',
     'a trailing pipe was stored as a phrase somebody chose');
@@ -1085,7 +1477,7 @@ test('DAYS BETWEEN POSTS IS HONOURED', async () => {
   const out = await call(handler('post', '/static-blogs/:id/plan'),
     req({ body: planBody({ gapDays: '1' }) }));
 
-  assert.strictEqual(out.status, 200, out.html.slice(0, 400));
+  assert.strictEqual(out.status, 200, (/<h1[^>]*>([^<]+)/.exec(out.html)||[])[1]);
   assert.deepStrictEqual(plannedDates(out.html),
     ['2099-11-03', '2099-11-04', '2099-11-05']);
 });
@@ -1311,7 +1703,7 @@ test('A NEW BLOG STORES THE ZONE THAT WAS PICKED', async () => {
   db.blogs.length = 0;   // so the duplicate check passes
 
   await call(handler('post', '/static-blogs'), req({
-    body: { name: 'Cedar Park Appliance', domain: 'appliancerepaircedarpark.com',
+    body: { name: 'Cedar Park Appliance', prefix: 'blog', domain: 'explr-home.com',
             timezone: 'America/Chicago' },
   }));
 
@@ -1326,7 +1718,7 @@ test('AND AN UNUSABLE ONE BECOMES UTC RATHER THAN LOSING THE BLOG', async () => 
   db.blogs.length = 0;
 
   await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', domain: 'x.com', timezone: 'Mars/Olympus_Mons' },
+    body: { name: 'X', prefix: 'blog', domain: 'explr-home.com', timezone: 'Mars/Olympus_Mons' },
   }));
 
   assert.strictEqual(db.created.timezone, 'UTC');
@@ -4084,6 +4476,344 @@ test('A HEADER CELL IS ADDED FOR THE NUMBER COLUMN', async () => {
         `${name}: a table has ${ths} headings over ${tds} cells, so the headings are shifted`);
     }
   }
+});
+
+section('A BLOG IS CREATED ON A DOMAIN FROM THE POOL');
+
+/* THE CUSTOMER-FACING END OF THE WHOLE POOL CHANGE. They type a prefix and
+ * pick a domain; they never see Cloudflare, a credential or a CNAME.
+ *
+ * THE FREE-TEXT DOMAIN FIELD IS GONE. Edwin chose one path on 22 October:
+ * anything a blog can be created on is in the pool, including his own
+ * explr-home.com. The alternative kept a second route through creation —
+ * with no account, falling back to the server's credentials, and needing
+ * the old zone-check-and-warn flow — for a case the admin screen already
+ * covers in one form.
+ */
+
+const POOL_DOMAIN = { _id: 'dom-1', domain: 'acmehvac.com', account: 'acct-3', enabled: true };
+
+test('THE FORM OFFERS THE POOL, NOT A TEXT BOX', async () => {
+  install({ pool: [POOL_DOMAIN] });
+
+  const out = await call(handler('get', '/static-blogs'));
+
+  assert.ok(out.html.includes('name="prefix"'), 'there is nowhere to type a prefix');
+  assert.ok(/<select[^>]+name="domain"/.test(out.html), 'the domain is not a dropdown');
+  assert.ok(out.html.includes('acmehvac.com'), 'the pool domain is not offered');
+});
+
+test('AND A DOMAIN THAT IS OFF THE LIST IS NOT OFFERED', async () => {
+  /* Disabling a domain is how a client leaving is handled — their existing
+   * blogs still deploy, but nobody can start a new one there. */
+  install({ pool: [POOL_DOMAIN, { _id: 'dom-2', domain: 'gone.com', account: 'acct-3', enabled: false }] });
+
+  const out = await call(handler('get', '/static-blogs'));
+
+  assert.ok(!out.html.includes('gone.com'), 'a disabled domain is still on the dropdown');
+});
+
+test('THE PREFIX AND THE DOMAIN BECOME THE HOSTNAME', async () => {
+  install({ pool: [POOL_DOMAIN], blogs: [] });
+
+  await call(handler('post', '/static-blogs'),
+    req({ body: { name: 'Acme HVAC', prefix: 'hvac', domain: 'acmehvac.com' } }));
+
+  assert.ok(db.created, 'nothing was created');
+  assert.strictEqual(db.created.siteUrl, 'hvac.acmehvac.com');
+});
+
+test('AND THE BLOG IS BOUND TO THAT DOMAIN\'S ACCOUNT', async () => {
+  /* SET ONCE, AT CREATION. A Domain row can be re-pointed at a different
+   * account later; resolving through it at deploy time would silently move
+   * an existing blog's deploys to an account where its project does not
+   * exist. */
+  install({ pool: [POOL_DOMAIN], blogs: [] });
+
+  await call(handler('post', '/static-blogs'),
+    req({ body: { name: 'Acme HVAC', prefix: 'hvac', domain: 'acmehvac.com' } }));
+
+  assert.strictEqual(String(db.created.cloudflareAccount), 'acct-3',
+    'the blog was created with no Cloudflare account, so it would deploy into ours');
+});
+
+test('A DOMAIN THAT IS NOT IN THE POOL IS REFUSED', async () => {
+  /* The form is a dropdown, so this only happens to a posted request —
+   * which is to say, to anybody. Without the check they would get a blog
+   * with no account, deploying into the server's. */
+  install({ pool: [POOL_DOMAIN], blogs: [] });
+
+  const out = await call(handler('post', '/static-blogs'),
+    req({ body: { name: 'X', prefix: 'hvac', domain: 'somewhere-else.com' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.created, null, 'it created a blog on a domain we do not host');
+});
+
+test('AND SO IS ONE THAT HAS BEEN DISABLED', async () => {
+  install({ pool: [{ ...POOL_DOMAIN, enabled: false }], blogs: [] });
+
+  const out = await call(handler('post', '/static-blogs'),
+    req({ body: { name: 'X', prefix: 'hvac', domain: 'acmehvac.com' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.created, null);
+});
+
+test('A HOSTNAME SOMEBODY ELSE ALREADY HAS IS REFUSED', async () => {
+  /* THE CHECK THAT HAD TO CHANGE, AND IT WAS WRONG IN BOTH DIRECTIONS.
+   *
+   * It asked "does THIS customer already have a blog whose domain is
+   * acmehvac.com". On a shared pool that both blocks one customer from
+   * having two prefixes on a domain — which is the design — and fails to
+   * block two customers taking the SAME prefix, because it never looks
+   * past their own blogs. Whichever published last would overwrite the
+   * other. */
+  install({
+    pool: [POOL_DOMAIN],
+    blogs: [{ _id: 'other-blog', user: 'someone-else', target: 'cloudflare',
+              status: 'active', siteUrl: 'hvac.acmehvac.com', business: { name: 'Theirs' } }],
+  });
+
+  const out = await call(handler('post', '/static-blogs'),
+    req({ body: { name: 'Mine', prefix: 'hvac', domain: 'acmehvac.com' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.created, null, 'two blogs now claim one hostname');
+});
+
+test('BUT A SECOND PREFIX ON THE SAME DOMAIN IS FINE', async () => {
+  /* The other direction, and the whole point of a shared pool. The old
+   * check refused this. */
+  install({
+    pool: [POOL_DOMAIN],
+    blogs: [{ _id: 'mine-1', user: USER_ID, target: 'cloudflare', status: 'active',
+              siteUrl: 'hvac.acmehvac.com', business: { name: 'First' } }],
+  });
+
+  await call(handler('post', '/static-blogs'),
+    req({ body: { name: 'Second', prefix: 'news', domain: 'acmehvac.com' } }));
+
+  assert.ok(db.created, 'a second prefix on one domain was refused');
+  assert.strictEqual(db.created.siteUrl, 'news.acmehvac.com');
+});
+
+test('THE PREFIX IS NORMALISED, AND NONSENSE IS REFUSED', async () => {
+  /* It becomes a hostname label and a Pages project name. A space, a dot
+   * or a leading hyphen each produce something Cloudflare either rejects
+   * or accepts and then serves at an address nobody expected. */
+  install({ pool: [POOL_DOMAIN], blogs: [] });
+
+  await call(handler('post', '/static-blogs'),
+    req({ body: { name: 'X', prefix: '  HVAC  ', domain: 'acmehvac.com' } }));
+
+  assert.strictEqual(db.created.siteUrl, 'hvac.acmehvac.com', 'the prefix was not normalised');
+
+  for (const bad of ['', '   ', 'a b', 'has.dot', '-leading', 'trailing-', 'x'.repeat(64), 'www']) {
+    install({ pool: [POOL_DOMAIN], blogs: [] });
+
+    const out = await call(handler('post', '/static-blogs'),
+      req({ body: { name: 'X', prefix: bad, domain: 'acmehvac.com' } }));
+
+    assert.strictEqual(out.status, 400, `accepted prefix ${JSON.stringify(bad)}`);
+  }
+});
+
+section('DELETING A BLOG USES ITS OWN CLOUDFLARE ACCOUNT');
+
+/* THE TEARDOWN IS THE OTHER PATH THAT TOUCHES CLOUDFLARE, and it is the
+ * dangerous one to get wrong in a way the deploy is not.
+ *
+ * releaseDomain() detaches a hostname and deletes a DNS record. Run against
+ * the WRONG account it either does nothing — the project is not there — or,
+ * worse, finds something with the same name and removes it. Edwin runs a
+ * live blog on a domain in the server account; a teardown that fell back to
+ * it while meaning a client's account is the one mistake here that takes
+ * down a site nobody was touching.
+ */
+
+test('THE TEARDOWN IS HANDED THE BLOG\'S CREDENTIALS', async () => {
+  install();
+  db.blogs[0].cloudflareAccount = 'acct-3';
+  db.blogs[0].project = 'leander-project';
+
+  await call(handler('post', '/static-blogs/:id/delete'), req({ body: { confirm: 'leanderwaterheaters.com', dropProject: '1' } }));
+
+  assert.ok(cloudflare.releaseCalls.length, 'the domain was never released');
+  assert.deepStrictEqual(cloudflare.releaseCalls[0].creds, POOL_CREDS,
+    'the domain was released using the server account');
+  assert.deepStrictEqual(cloudflare.calls[0].creds, POOL_CREDS,
+    'the project was deleted from the server account');
+});
+
+test('AND A BLOG WITH NO ACCOUNT STILL USES THE ENVIRONMENT', async () => {
+  install();
+  db.blogs[0].project = 'leander-project';
+
+  await call(handler('post', '/static-blogs/:id/delete'), req({ body: { confirm: 'leanderwaterheaters.com', dropProject: '1' } }));
+
+  assert.strictEqual(cloudflare.releaseCalls[0].creds, undefined,
+    'a blog with no account was handed credentials from somewhere');
+});
+
+test('A BLOG WHOSE ACCOUNT CANNOT BE READ IS NOT TORN DOWN REMOTELY', async () => {
+  /* THE ASSERTION THAT MATTERS IS THE ABSENCE OF A CALL. Falling back here
+   * would point a detach and a DNS delete at the server account — where a
+   * project of the same name may well exist, because project names are
+   * derived from the domain and two accounts can host blogs on domains
+   * that look alike. */
+  install();
+  db.blogs[0].cloudflareAccount = 'acct-broken';
+  db.blogs[0].project = 'leander-project';
+
+  const out = await call(handler('post', '/static-blogs/:id/delete'),
+    req({ body: { confirm: 'leanderwaterheaters.com', dropProject: '1' } }));
+
+  assert.deepStrictEqual(cloudflare.releaseCalls, [],
+    'it released a domain in the wrong account');
+  assert.deepStrictEqual(cloudflare.calls, [],
+    'it deleted a project in the wrong account');
+  assert.ok(out.html || out.status, 'the delete produced no answer at all');
+});
+
+section('THE SEARCH CONSOLE FIELD');
+
+/* Each customer monitors their own blog from their own Search Console, so
+ * the verification token is theirs and the field belongs on their blog's
+ * screen. A Domain property verified on our side would verify the blogs to
+ * US and to nobody else, which is the opposite of what this is for. */
+
+const TOKEN = 'dK3xP9mQ2vR7nL4tY8wZ';
+const GOOGLE_TAG = `<meta name="google-site-verification" content="${TOKEN}" />`;
+
+test('THE FIELD IS ON THE BLOG SCREEN AND SHOWS WHAT IS STORED', async () => {
+  install();
+  db.blogs[0].verificationTags = [TOKEN];
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(out.html.includes('name="verificationTags"'),
+    'there is nowhere to paste the tag');
+  assert.ok(out.html.includes(TOKEN),
+    'the stored token is not shown, so there is no way to tell it was saved');
+});
+
+test('AND IT SAYS THE TAG ONLY REACHES THE SITE ON PUBLISH', async () => {
+  /* THE SUPPORT TICKET THIS PREVENTS. They paste the tag, press Verify in
+   * Search Console straight away, and it fails — because the live site has
+   * not been rebuilt. Without a line saying so, that is an email.
+   *
+   * READ INSIDE THE FORM, NOT ON THE PAGE — and the first version got that
+   * wrong. It matched /publish/i against the whole document and SURVIVED a
+   * mutant that deleted the sentence, because this screen has a Publish
+   * button on it and says "the next time you publish" about article edits.
+   * The word was always going to be there. Third loose whole-page match to
+   * pass for the wrong reason today. */
+  install();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  const form = /<form[^>]+action="[^"]*\/verification"[\s\S]*?<\/form>/.exec(out.html);
+  assert.ok(form, 'there is no verification form to read');
+  assert.ok(/publish/i.test(form[0]),
+    'the field does not say the tag reaches the site only on publish');
+});
+
+test('PASTING THE TAG GOOGLE GIVES YOU STORES THE TOKEN', async () => {
+  /* The whole point: what is on the clipboard is a <meta> element, and that
+   * is what arrives here. What gets stored is the value inside it. */
+  install();
+
+  await call(handler('post', '/static-blogs/:id/verification'),
+    req({ body: { verificationTags: GOOGLE_TAG } }));
+
+  const update = db.siteUpdates[db.siteUpdates.length - 1];
+  assert.deepStrictEqual(update.update.$set.verificationTags, [TOKEN],
+    'the whole tag was stored instead of the token inside it');
+});
+
+test('AND SO DOES PASTING THE BARE TOKEN', async () => {
+  install();
+
+  await call(handler('post', '/static-blogs/:id/verification'),
+    req({ body: { verificationTags: TOKEN } }));
+
+  assert.deepStrictEqual(
+    db.siteUpdates[db.siteUpdates.length - 1].update.$set.verificationTags, [TOKEN]);
+});
+
+test('TWO LINES STORE TWO TOKENS', async () => {
+  install();
+
+  await call(handler('post', '/static-blogs/:id/verification'),
+    req({ body: { verificationTags: `${GOOGLE_TAG}\naB1cD2eF3gH4iJ5kL6mN` } }));
+
+  assert.deepStrictEqual(
+    db.siteUpdates[db.siteUpdates.length - 1].update.$set.verificationTags,
+    [TOKEN, 'aB1cD2eF3gH4iJ5kL6mN']);
+});
+
+test('CLEARING THE FIELD REMOVES THE VERIFICATION', async () => {
+  /* How somebody un-verifies, and the one case where an empty submission
+   * must be taken at face value rather than ignored as a mistake. */
+  install();
+  db.blogs[0].verificationTags = [TOKEN];
+
+  await call(handler('post', '/static-blogs/:id/verification'),
+    req({ body: { verificationTags: '   ' } }));
+
+  assert.deepStrictEqual(
+    db.siteUpdates[db.siteUpdates.length - 1].update.$set.verificationTags, []);
+});
+
+test('A HOSTILE PASTE IS NOT STORED AND NOT RENDERED', async () => {
+  /* The route goes through the same parser the module was built for, rather
+   * than carrying a second idea of what a token is. Checked at the route
+   * because this is the only door the value comes in through. */
+  install();
+
+  await call(handler('post', '/static-blogs/:id/verification'),
+    req({ body: { verificationTags: '"><script>alert(1)</script>' } }));
+
+  assert.deepStrictEqual(
+    db.siteUpdates[db.siteUpdates.length - 1].update.$set.verificationTags, []);
+});
+
+test('THE SAVE IS SCOPED TO THE SIGNED-IN ACCOUNT', async () => {
+  /* Every handler on this route, every time. A new POST is exactly where it
+   * gets forgotten, and this one writes to a document. */
+  install();
+
+  await call(handler('post', '/static-blogs/:id/verification'),
+    req({ body: { verificationTags: TOKEN } }));
+
+  assert.strictEqual(String(db.findOneWhere.user), String(USER_ID),
+    'the blog was loaded without scoping to the account');
+  assert.strictEqual(db.findOneWhere.target, 'cloudflare');
+});
+
+test('AND SOMEBODY ELSE\'S BLOG CANNOT BE VERIFIED THROUGH IT', async () => {
+  install();
+  db.blogs.length = 0;
+
+  const out = await call(handler('post', '/static-blogs/:id/verification'),
+    req({ body: { verificationTags: TOKEN } }));
+
+  assert.strictEqual(out.status, 404);
+  assert.deepStrictEqual(db.siteUpdates, [], 'it wrote to a blog it could not find');
+});
+
+test('A STORED TOKEN IS ESCAPED BACK INTO THE FIELD', async () => {
+  /* Belt and braces at the other end. Whatever is in the document is
+   * rendered into a textarea on a logged-in page, and a stored value that
+   * closed the element would be an injection into Edwin's own screen. */
+  install();
+  db.blogs[0].verificationTags = ['</textarea><script>alert(1)</script>'];
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(!out.html.includes('<script>alert(1)</script>'),
+    'a stored token broke out of the textarea');
 });
 
 section('THE CAMPAIGNS TABLE FOLDS ONCE THERE ARE TOO MANY TO SCAN');

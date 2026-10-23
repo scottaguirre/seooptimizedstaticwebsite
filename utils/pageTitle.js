@@ -98,7 +98,24 @@ function pageTitle(name) {
 const TOOL_WP_BLOGS = 'Build WP blogs';
 const TOOL_CF_BLOGS = 'Build Cloudflare Blogs';
 
+/**
+ * The report over both of them.
+ *
+ * ADDED TO THE SIDEBAR 23 OCTOBER 2026, on Edwin's instruction, and given a
+ * constant on the way in rather than a sixth hard-coded label.
+ *
+ * It had exactly one entry point: a small green button in the top-right
+ * corner of the Build WP blogs page. So the report on EVERY blog — WordPress
+ * and Cloudflare both — was reachable only from one of the two tools it
+ * reports on, and only if you noticed a button that looks like a page
+ * action. From Build Cloudflare Blogs there was no way to it at all.
+ *
+ * That is the failure appSidebar()'s own comment describes, in its milder
+ * form: not unreachable, just somewhere nobody looks.
+ */
+const TOOL_BLOG_REPORT = 'Blog Report';
+
 module.exports = {
   pageTitle, APP_NAME, TITLE_SEPARATOR,
-  TOOL_WP_BLOGS, TOOL_CF_BLOGS,
+  TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT,
 };

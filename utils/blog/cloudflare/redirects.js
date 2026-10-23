@@ -73,9 +73,22 @@ const POLL_MS = Number(process.env.CF_LIST_POLL_MS) || 1000;
 /* THE ACCOUNT PREFIX, SPELLED THE WAY deploy.js SPELLS IT. cfApi() takes a
  * path and prepends the API base and nothing else — it does not substitute
  * an account id, and the first draft of this file assumed it did. Every
- * call would have gone to a literal "${account()}/..." and come back
+ * call would have gone to a literal "${account(creds)}/..." and come back
  * as a Cloudflare error about a malformed account. */
-const account = () => `/accounts/${encodeURIComponent(process.env.CF_ACCOUNT_ID || '')}`;
+/* TAKES THE CREDENTIALS IN PLAY — 22 October, when blogs moved onto a pool
+ * of Cloudflare accounts.
+ *
+ * A RULES LIST LIVES INSIDE AN ACCOUNT, and that is the part of this change
+ * with a consequence outside the code: there is no shared blog_pages_dev
+ * spanning the pool. Every account in it needs its own list, with that
+ * name, created by hand.
+ *
+ * That is survivable rather than a launch blocker because findRedirectList
+ * reports a miss instead of throwing: a blog whose account has no list
+ * still deploys and still works, it just also answers on pages.dev. The
+ * accounts can be set up one at a time. */
+const account = (creds) =>
+  `/accounts/${encodeURIComponent((creds && creds.account) || process.env.CF_ACCOUNT_ID || '')}`;
 
 /**
  * The account's redirect list, by name.
@@ -85,8 +98,8 @@ const account = () => `/accounts/${encodeURIComponent(process.env.CF_ACCOUNT_ID 
  * works — it just also answers on pages.dev, which is where we started. The
  * caller logs it and carries on.
  */
-async function findRedirectList({ name = LIST_NAME, fetchImpl = fetch } = {}) {
-  const found = await cfApi(`${account()}/rules/lists`, { fetchImpl });
+async function findRedirectList({ name = LIST_NAME, fetchImpl = fetch, creds } = {}) {
+  const found = await cfApi(`${account(creds)}/rules/lists`, { fetchImpl, creds });
 
   if (!found.ok) return { ok: false, error: found.error };
 
@@ -122,7 +135,7 @@ async function findRedirectList({ name = LIST_NAME, fetchImpl = fetch } = {}) {
  * at Cloudflare and will almost certainly finish; we simply stop watching.
  * Said plainly rather than reported as an error.
  */
-async function waitForOperation({ id, fetchImpl = fetch, now = Date.now, sleep } = {}) {
+async function waitForOperation({ id, fetchImpl = fetch, now = Date.now, sleep, creds } = {}) {
   if (!id) return { ok: true, note: 'Cloudflare reported no operation to wait for.' };
 
   const pause = sleep || (ms => new Promise(r => setTimeout(r, ms)));
@@ -130,8 +143,8 @@ async function waitForOperation({ id, fetchImpl = fetch, now = Date.now, sleep }
 
   for (;;) {
     const status = await cfApi(
-      `${account()}/rules/lists/bulk_operations/${encodeURIComponent(id)}`,
-      { fetchImpl }
+      `${account(creds)}/rules/lists/bulk_operations/${encodeURIComponent(id)}`,
+      { fetchImpl, creds }
     );
 
     if (!status.ok) return { ok: false, error: status.error };
@@ -153,10 +166,10 @@ async function waitForOperation({ id, fetchImpl = fetch, now = Date.now, sleep }
 }
 
 /** Every item in the list, so an entry can be found or checked. */
-async function listItems({ listId, fetchImpl = fetch } = {}) {
+async function listItems({ listId, fetchImpl = fetch, creds } = {}) {
   const got = await cfApi(
-    `${account()}/rules/lists/${encodeURIComponent(listId)}/items`,
-    { fetchImpl }
+    `${account(creds)}/rules/lists/${encodeURIComponent(listId)}/items`,
+    { fetchImpl, creds }
   );
 
   if (!got.ok) return { ok: false, error: got.error };
@@ -183,14 +196,15 @@ async function listItems({ listId, fetchImpl = fetch } = {}) {
  *   status_code           301. A permanent move is the point: a 302 tells
  *                         Google to keep indexing the pages.dev copy.
  */
-async function addRedirect({ listId, source, target, fetchImpl = fetch, wait = waitForOperation } = {}) {
+async function addRedirect({ listId, source, target, fetchImpl = fetch, wait = waitForOperation, creds } = {}) {
   if (!listId || !source || !target) return { ok: false, error: 'Nothing to redirect.' };
 
   const added = await cfApi(
-    `${account()}/rules/lists/${encodeURIComponent(listId)}/items`,
+    `${account(creds)}/rules/lists/${encodeURIComponent(listId)}/items`,
     {
       method: 'POST',
       fetchImpl,
+      creds,
       body: [{
         redirect: {
           source_url: String(source),
@@ -207,7 +221,7 @@ async function addRedirect({ listId, source, target, fetchImpl = fetch, wait = w
 
   if (!added.ok) return { ok: false, error: added.error };
 
-  const settled = await wait({ id: (added.result || {}).operation_id, fetchImpl });
+  const settled = await wait({ id: (added.result || {}).operation_id, fetchImpl, creds });
 
   if (!settled.ok) return { ok: false, error: settled.error };
 
@@ -224,10 +238,10 @@ async function addRedirect({ listId, source, target, fetchImpl = fetch, wait = w
  * and the one nobody thought of is the one that deletes a live site's
  * redirect. An entry that fails either test is reported and left alone.
  */
-async function removeRedirect({ listId, source, expected, fetchImpl = fetch, wait = waitForOperation } = {}) {
+async function removeRedirect({ listId, source, expected, fetchImpl = fetch, wait = waitForOperation, creds } = {}) {
   if (!listId || !source) return { ok: false, error: 'Nothing to remove.' };
 
-  const got = await listItems({ listId, fetchImpl });
+  const got = await listItems({ listId, fetchImpl, creds });
   if (!got.ok) return { ok: false, error: got.error };
 
   /* COMPARED AFTER NORMALISING, NOT AS TYPED — 19 October, found in
@@ -269,13 +283,13 @@ async function removeRedirect({ listId, source, expected, fetchImpl = fetch, wai
   }
 
   const gone = await cfApi(
-    `${account()}/rules/lists/${encodeURIComponent(listId)}/items`,
-    { method: 'DELETE', fetchImpl, body: { items: [{ id: item.id }] } }
+    `${account(creds)}/rules/lists/${encodeURIComponent(listId)}/items`,
+    { method: 'DELETE', fetchImpl, creds, body: { items: [{ id: item.id }] } }
   );
 
   if (!gone.ok) return { ok: false, error: gone.error };
 
-  const settled = await wait({ id: (gone.result || {}).operation_id, fetchImpl });
+  const settled = await wait({ id: (gone.result || {}).operation_id, fetchImpl, creds });
 
   if (!settled.ok) return { ok: false, error: settled.error };
 
@@ -290,14 +304,14 @@ async function removeRedirect({ listId, source, expected, fetchImpl = fetch, wai
  * to tidy that up is a blog that is not on the internet. The result is
  * reported so the screen can say what happened, and that is all.
  */
-async function redirectPagesDev({ project, domain, requestId, fetchImpl = fetch } = {}) {
+async function redirectPagesDev({ project, domain, requestId, fetchImpl = fetch, creds } = {}) {
   const source = `${String(project || '')}.pages.dev`;
   const target = `https://${String(domain || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
 
-  const list = await findRedirectList({ fetchImpl });
+  const list = await findRedirectList({ fetchImpl, creds });
   if (!list.ok) return { ok: false, error: list.error };
 
-  const added = await addRedirect({ listId: list.id, source, target, fetchImpl });
+  const added = await addRedirect({ listId: list.id, source, target, fetchImpl, creds });
 
   log.info('blog.redirect.pagesDev', {
     requestId,
@@ -312,14 +326,14 @@ async function redirectPagesDev({ project, domain, requestId, fetchImpl = fetch 
 }
 
 /** The mirror, for teardown. Same contract: reports, never throws. */
-async function releasePagesDev({ project, domain, requestId, fetchImpl = fetch } = {}) {
+async function releasePagesDev({ project, domain, requestId, fetchImpl = fetch, creds } = {}) {
   const source = `${String(project || '')}.pages.dev`;
   const expected = `https://${String(domain || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
 
-  const list = await findRedirectList({ fetchImpl });
+  const list = await findRedirectList({ fetchImpl, creds });
   if (!list.ok) return { ok: false, error: list.error };
 
-  const removed = await removeRedirect({ listId: list.id, source, expected, fetchImpl });
+  const removed = await removeRedirect({ listId: list.id, source, expected, fetchImpl, creds });
 
   log.info('blog.redirect.released', {
     requestId,

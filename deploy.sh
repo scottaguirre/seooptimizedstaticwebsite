@@ -152,7 +152,11 @@ for suite in \
   test-blog-api.js \
   test-blog-pages.js \
   test-service-names.js \
-  test-plugin-download.js
+  test-plugin-download.js \
+  test-verification-tags.js \
+  test-secret-box.js \
+  test-cloudflare-accounts.js \
+  test-blog-domains.js
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.

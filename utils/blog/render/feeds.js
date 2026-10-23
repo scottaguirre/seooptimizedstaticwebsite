@@ -256,7 +256,9 @@ function notFoundHtml({ blog = {} } = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Page not found${name ? ` — ${safe}` : ''}</title>
 <meta name="robots" content="noindex, follow">
-<link rel="stylesheet" href="/${CSS_PATH}">
+${((blog && blog.verificationTags) || [])
+  .map(token => `<meta name="google-site-verification" content="${xml(token)}">`)
+  .join('\n')}${((blog && blog.verificationTags) || []).length ? '\n' : ''}<link rel="stylesheet" href="/${CSS_PATH}">
 </head>
 <body class="${CLASSES.body}">
 <header class="${CLASSES.masthead}">

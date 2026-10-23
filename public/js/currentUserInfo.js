@@ -73,6 +73,29 @@ document.addEventListener('DOMContentLoaded', async () => {
                 User management
               </a>
             </li>
+
+            <!-- ADDED 22 October, because the page it points at shipped with
+                 nothing linking to it anywhere in the app. It was reachable
+                 only by typing /admin/blog-domains, which meant that for
+                 anyone who had not been told the URL, the Cloudflare account
+                 pool did not exist.
+
+                 That is the same failure appSidebar()'s own comment warns
+                 about, committed again a month later.
+
+                 IT BELONGS INSIDE the isAdmin block. The route has its own
+                 requireAdmin and that is the real gate — but a link rendered
+                 for every customer is a signpost to a 403, and this menu is
+                 the only thing standing between them and it.
+
+                 test-app-header.js runs this script for an admin AND for a
+                 customer and checks both halves. -->
+            <li>
+              <a class="dropdown-item" href="/admin/blog-domains">
+                Blog domains
+              </a>
+            </li>
+
             <li>
               <a class="dropdown-item" href="/dashboard">
                 My dashboard

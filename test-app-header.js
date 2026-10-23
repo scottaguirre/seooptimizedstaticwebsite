@@ -38,6 +38,25 @@ function test(name, fn) {
   catch (err) { console.log(`  FAIL  ${name}\n        ${err.message}`); failed++; }
 }
 
+/* ASYNC TESTS, which this file had no way to run until the Admin menu needed
+ * one. currentUserInfo.js awaits /api/me before it renders anything, so the
+ * only way to see what it ACTUALLY puts in the header is to run it and wait.
+ *
+ * Asserting on the file's source text instead would have been simpler and
+ * would have missed the thing that matters: whether a link sits inside the
+ * `if (isAdmin)` block is BEHAVIOUR, and a regex over the source cannot tell
+ * a link inside that block from one just above it.
+ *
+ * Collected here and awaited before the summary at the foot of the file, so
+ * they report after the synchronous ones. */
+const pending = [];
+function testAsync(name, fn) {
+  pending.push((async () => {
+    try { await fn(); console.log(`  ok    ${name}`); passed++; }
+    catch (err) { console.log(`  FAIL  ${name}\n        ${err.message}`); failed++; }
+  })());
+}
+
 const read = rel => fs.readFileSync(path.join(__dirname, rel), 'utf8');
 
 const CSRF = '<input type="hidden" name="_csrf" value="tok">';
@@ -408,7 +427,7 @@ test('the header supplies its own colour, so both headers look the same', () => 
  * cheap to change; a path is not.
  * ===================================================================== */
 
-const { TOOL_WP_BLOGS, TOOL_CF_BLOGS } = require('./utils/pageTitle');
+const { TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT } = require('./utils/pageTitle');
 
 /**
  * A source file with its comments removed, for scanning the strings a
@@ -443,6 +462,56 @@ test('THE SIDEBAR CALLS THEM WHAT EDWIN CALLS THEM', () => {
 
   assert.ok(!html.includes('Blog Automation'), 'the sidebar still says Blog Automation');
   assert.ok(!html.includes('Static Blogs'), 'the sidebar still says Static Blogs');
+});
+
+test('THE BLOG REPORT IS IN THE TOOLS COLUMN', () => {
+  /* ADDED 23 OCTOBER, on Edwin's instruction.
+   *
+   * It had ONE entry point: a small green button in the top-right corner of
+   * the Build WP blogs page. So the report covering EVERY blog — WordPress
+   * and Cloudflare both — was reachable only from one of the two tools it
+   * reports on, and only if you read a button that looks like a page action
+   * as navigation. From Build Cloudflare Blogs there was no route to it.
+   *
+   * The milder form of the failure appSidebar()'s own comment describes:
+   * not unreachable, just somewhere nobody looks. */
+  const html = appSidebar('/');
+
+  assert.ok(html.includes('href="/blog-report"'), 'the sidebar has no Blog Report');
+  assert.ok(html.includes(TOOL_BLOG_REPORT), `the sidebar does not say "${TOOL_BLOG_REPORT}"`);
+});
+
+test('AND IT SITS AFTER KEYWORD RESEARCH, WHERE EDWIN ASKED FOR IT', () => {
+  /* THE POSITION IS THE REQUEST, not a detail of it — so it is asserted by
+   * ORDER rather than by presence.
+   *
+   * "The sidebar contains /blog-report" passes with the item last, first, or
+   * anywhere else. The reason it belongs here is that the column reads as a
+   * sequence: build a site, find the words, build the blogs, read how they
+   * are doing. The report is the result of the two tools below it, so it
+   * cannot sit above the research that feeds them or below the dashboard
+   * that ends the list. */
+  const html = withoutComments(appSidebar('/'));
+  const links = [...html.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
+
+  const research = links.indexOf('/keyword-research');
+  const report = links.indexOf('/blog-report');
+
+  assert.notStrictEqual(research, -1, 'Keyword Research left the sidebar');
+  assert.notStrictEqual(report, -1, 'Blog Report is not in the sidebar');
+  assert.strictEqual(report, research + 1,
+    `Blog Report is at ${report}, Keyword Research at ${research} — not immediately after it`);
+});
+
+test('AND IT MARKS ITSELF WHEN YOU ARE ON IT', () => {
+  /* Every other item does. One that does not leaves the whole column
+   * looking unselected on its own page, which reads as "you are nowhere". */
+  const html = appSidebar('/blog-report');
+  const link = html.match(/<a href="\/blog-report"[\s\S]*?<\/a>/);
+
+  assert.ok(link, 'the Blog Report link is gone');
+  assert.ok(/aria-current="page"/.test(link[0]),
+    'the Blog Report item is not marked on its own page');
 });
 
 test('AND THE URLS UNDERNEATH ARE UNTOUCHED', () => {
@@ -1096,7 +1165,106 @@ test('the CSS is a template literal and carries no backticks', () => {
   assert.strictEqual(ticks, 2, `${ticks} backticks — a comment has one in it`);
 });
 
-console.log('');
-console.log(`  ${passed} passed, ${failed} failed`);
-console.log('');
-process.exit(failed === 0 ? 0 : 1);
+/* ───────────────────────────── THE ADMIN MENU ─────────────────────────────
+ *
+ * /admin/blog-domains shipped with NOTHING linking to it. Edwin found the
+ * page by being told the URL, which is the same failure appSidebar()'s own
+ * comment warns about, committed by the person who had just read the warning.
+ *
+ * The fix was a link in the Admin dropdown. The risk the fix carries is the
+ * mirror image: a link rendered for EVERY signed-in user, which is a signpost
+ * to a 403 for every customer who clicks it.
+ *
+ * So both directions are tested, and the admin one is scoped to the dropdown
+ * rather than searched for across the whole header — a link emitted just
+ * outside the <ul> would satisfy "the href is somewhere in there" while
+ * appearing nowhere a person could click.
+ */
+
+/**
+ * Run currentUserInfo.js as a browser would, for a given role, and return
+ * what it puts in #user-actions.
+ *
+ * The script fills two elements from /api/me and returns silently when either
+ * is missing, so both are supplied; `fetch` and `console` are stubbed because
+ * the script closes over the globals and there is no DOM here.
+ */
+async function headerActionsFor(role) {
+  const script = read('public/js/currentUserInfo.js');
+
+  let ready = null;
+  const info = { textContent: '', innerHTML: '' };
+  const actions = { innerHTML: '' };
+  const errors = [];
+
+  const doc = {
+    addEventListener: (name, fn) => { if (name === 'DOMContentLoaded') ready = fn; },
+    getElementById: id =>
+      id === 'user-info' ? info : id === 'user-actions' ? actions : null,
+  };
+
+  const fakeFetch = async () => ({
+    ok: true,
+    json: async () => ({ email: 'someone@example.com', role, credits: 10 }),
+  });
+
+  new Function('document', 'fetch', 'console', script)(
+    doc, fakeFetch, { error: (...a) => errors.push(a.join(' ')) }
+  );
+
+  assert.ok(ready, 'the script no longer runs on DOMContentLoaded');
+  await ready();
+
+  // The script swallows its own exceptions, which would otherwise surface
+  // here as an empty header and a confusing assertion failure.
+  assert.deepStrictEqual(errors, [], `the script threw: ${errors.join('; ')}`);
+
+  return actions.innerHTML;
+}
+
+/** The Admin dropdown's item list, or null if there is no Admin menu at all. */
+const adminMenu = html => (html.match(/<ul class="dropdown-menu[\s\S]*?<\/ul>/) || [null])[0];
+
+testAsync('AN ADMIN IS OFFERED BLOG DOMAINS, INSIDE THE ADMIN MENU', async () => {
+  const menu = adminMenu(await headerActionsFor('admin'));
+
+  assert.ok(menu, 'there is no Admin dropdown');
+  assert.ok(menu.includes('href="/admin/blog-domains"'),
+    'Blog domains is not an item in the Admin menu');
+  assert.ok(menu.includes('href="/admin"'),
+    'User management went missing from the Admin menu');
+});
+
+testAsync('AND SO IS A SUPERADMIN', async () => {
+  // Two roles reach the same branch. A check narrowed to one of them would
+  // lock Edwin's own account out of the page it exists for.
+  const menu = adminMenu(await headerActionsFor('superadmin'));
+
+  assert.ok(menu && menu.includes('href="/admin/blog-domains"'),
+    'a superadmin is not offered Blog domains');
+});
+
+testAsync('A CUSTOMER IS OFFERED NONE OF IT', async () => {
+  /* THE HALF THAT IS EASY TO GET WRONG. Moving the <li> one line up, out of
+   * the `if (isAdmin)` block, still satisfies the test above — the link is
+   * there, it is in a <ul>, an admin can click it. It just also renders for
+   * every customer, pointing at a page that answers 403.
+   *
+   * requireAdmin on the route is the real gate and is tested elsewhere. This
+   * is about not offering people a door that is locked. */
+  const html = await headerActionsFor('user');
+
+  assert.ok(!html.includes('/admin/blog-domains'),
+    'a customer is shown the Blog domains link');
+  assert.ok(!html.includes('/admin"'),
+    'a customer is shown the User management link');
+  assert.ok(html.includes('/buy-credits'),
+    'the customer header lost Buy Credits — the stub is wrong, not the code');
+});
+
+Promise.all(pending).then(() => {
+  console.log('');
+  console.log(`  ${passed} passed, ${failed} failed`);
+  console.log('');
+  process.exit(failed === 0 ? 0 : 1);
+});

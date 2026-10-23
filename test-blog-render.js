@@ -2073,6 +2073,170 @@ test('THE ARTICLES STILL CARRY THE DATES THEY WERE GIVEN', async () => {
     'the future-dated article lost the date it was planned for');
 });
 
+section('THE SEARCH CONSOLE VERIFICATION TAG');
+
+/* The customer pastes the tag Google gives them, parseVerificationTags()
+ * reduces it to a token, and the page carries a tag WE build. Google fetches
+ * the property URL — the front page — and looks for it there.
+ *
+ * ON EVERY PAGE, NOT JUST THE FRONT ONE, AND THAT IS THE DESIGN DECISION.
+ * This blog's front page is whichever ARTICLE the front-page picker points
+ * at, served at the root. Keying the tag off isHome would mean verification
+ * silently moves when that selection changes — and Google re-checks
+ * periodically, so the property would quietly become unverified days later
+ * with nothing on screen to explain it. Seventy bytes a page buys that
+ * whole class of bug away. */
+
+const VERIFIED = { ...BLOG, verificationTags: ['dK3xP9mQ2vR7nL4tY8wZ'] };
+
+function verificationTagsIn(html) {
+  return [...html.matchAll(
+    /<meta name="google-site-verification" content="([^"]*)">/g)].map(m => m[1]);
+}
+
+test('a blog with no token renders no tag at all', () => {
+  const { html } = render();
+  assert.ok(!/google-site-verification/.test(html),
+    'an unverified blog is carrying a verification tag');
+});
+
+test('AND THE TAG IS IN THE HEAD, WHERE GOOGLE LOOKS FOR IT', () => {
+  /* A meta tag after </head> is ignored by the verifier, and the page looks
+   * perfectly fine — which is the kind of failure nobody diagnoses. */
+  const { html } = render({}, { blog: VERIFIED });
+
+  const head = /<head>([\s\S]*?)<\/head>/.exec(html);
+  assert.ok(head, 'the page has no head');
+  assert.deepStrictEqual(verificationTagsIn(head[1]), ['dK3xP9mQ2vR7nL4tY8wZ']);
+});
+
+test('ON AN ORDINARY ARTICLE AS WELL AS ON THE FRONT PAGE', () => {
+  /* The front page is an article like any other and the selection can
+   * change. Both, or the verification moves with a dropdown. */
+  const front = render({}, { blog: VERIFIED, isHome: true });
+  const inner = render({}, { blog: VERIFIED, isHome: false });
+
+  assert.deepStrictEqual(verificationTagsIn(front.html), ['dK3xP9mQ2vR7nL4tY8wZ']);
+  assert.deepStrictEqual(verificationTagsIn(inner.html), ['dK3xP9mQ2vR7nL4tY8wZ']);
+});
+
+test('TWO TOKENS RENDER TWO TAGS, SO A CLIENT AND AN AGENCY BOTH VERIFY', () => {
+  const { html } = render({}, {
+    blog: { ...BLOG, verificationTags: ['dK3xP9mQ2vR7nL4tY8wZ', 'aB1cD2eF3gH4iJ5kL6mN'] },
+  });
+
+  assert.deepStrictEqual(verificationTagsIn(html),
+    ['dK3xP9mQ2vR7nL4tY8wZ', 'aB1cD2eF3gH4iJ5kL6mN']);
+});
+
+test('A HOSTILE TOKEN CANNOT BREAK OUT OF THE ATTRIBUTE', () => {
+  /* THE SECOND OF TWO DEFENCES, AND IT IS NOT REDUNDANT.
+   *
+   * verificationTags.js refuses a value like this, so in a correct build it
+   * never reaches here. But the stored array is just strings in a document,
+   * and the parser is one validation somebody relaxes "because it was
+   * rejecting a valid token". This is a published page on somebody else's
+   * domain; the escaping has to hold on its own. */
+  const { html } = render({}, {
+    blog: { ...BLOG, verificationTags: ['"><script>alert(1)</script>'] },
+  });
+
+  assert.ok(!html.includes('<script>alert(1)</script>'),
+    'a stored token escaped its attribute and became markup');
+  assert.ok(/<head>[\s\S]*<\/head>/.test(html), 'the head did not survive');
+});
+
+test('AND THE 404 PAGE CARRIES IT TOO', () => {
+  /* Not required — it is noindex, and Google checks the property URL. It
+   * costs nothing and means every file the generator writes agrees about
+   * what site this is. */
+  const html = feeds.notFoundHtml({ blog: VERIFIED });
+
+  assert.deepStrictEqual(verificationTagsIn(html), ['dK3xP9mQ2vR7nL4tY8wZ']);
+});
+
+section('A BLOG DEPLOYS INTO ITS OWN CLOUDFLARE ACCOUNT');
+
+/* THE KEYSTONE. Everything under utils/blog/cloudflare/ can take
+ * credentials; this is the line that decides a blog HAS any.
+ *
+ * publishBlog is the only path that puts files on the internet, so it is
+ * the only place a blog's account can be resolved once and handed down. It
+ * resolves, it does not guess: credsFor() returns undefined for a blog with
+ * no account — which is every blog that exists today — and throws if a blog
+ * names one that cannot be used.
+ */
+
+test('THE DEPLOY IS HANDED THE BLOG\'S OWN CREDENTIALS', async () => {
+  installDb();
+  const deploy = fakeDeploy();
+
+  await publishBlog({
+    blog: { ...CF_BLOG, cloudflareAccount: 'acct-3' },
+    now: AT,
+    deploy,
+    resolve: async () => ({ token: 'tok-client-3', account: 'acct-id-3' }),
+  });
+
+  assert.deepStrictEqual(deploy.calls[0].creds,
+    { token: 'tok-client-3', account: 'acct-id-3' },
+    'the deploy was made with the server credentials');
+});
+
+test('AND A BLOG WITH NO ACCOUNT IS DEPLOYED WITH NONE', async () => {
+  /* Which is how the environment fallback in cfApi() and childEnv() is
+   * reached — every blog that existed before the pool did. */
+  installDb();
+  const deploy = fakeDeploy();
+
+  await publishBlog({ blog: CF_BLOG, now: AT, deploy, resolve: async () => undefined });
+
+  assert.strictEqual(deploy.calls[0].creds, undefined,
+    'a blog with no account was handed credentials from somewhere');
+});
+
+test('A BLOG WHOSE ACCOUNT CANNOT BE READ IS NOT DEPLOYED AT ALL', async () => {
+  /* THE WHOLE POINT OF RESOLVING BEFORE DEPLOYING.
+   *
+   * If this reported an error but still called deploy, the blog would go
+   * up in whatever account the environment names — which is ours. The
+   * assertion that matters is not the error, it is that NOTHING WAS
+   * DEPLOYED. */
+  installDb();
+  const deploy = fakeDeploy();
+
+  const out = await publishBlog({
+    blog: { ...CF_BLOG, cloudflareAccount: 'acct-gone' },
+    now: AT,
+    deploy,
+    resolve: async () => { throw new Error('The Cloudflare account for this blog is disabled (Client 3).'); },
+  });
+
+  assert.strictEqual(out.ok, false, 'it reported success');
+  assert.strictEqual(deploy.calls.length, 0,
+    'it deployed anyway, into whichever account the environment names');
+  assert.match(out.error, /Client 3/, 'the error does not say which account');
+});
+
+test('AND A DRY RUN DOES NOT NEED AN ACCOUNT TO BE READABLE', async () => {
+  /* A dry run renders the files and deploys nothing, so it is the one way
+   * to look at a blog whose account is broken. Refusing it would take away
+   * the tool somebody would use to work out what went wrong. */
+  installDb();
+  const deploy = fakeDeploy();
+
+  const out = await publishBlog({
+    blog: { ...CF_BLOG, cloudflareAccount: 'acct-gone' },
+    now: AT,
+    dryRun: true,
+    deploy,
+    resolve: async () => { throw new Error('gone'); },
+  });
+
+  assert.strictEqual(out.ok, true, 'a dry run was refused over a credential it never uses');
+  assert.strictEqual(deploy.calls.length, 0, 'a dry run deployed something');
+});
+
 /* ======================================================================= */
 
 (async () => {

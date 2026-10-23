@@ -49,7 +49,18 @@ function cfFetch(routes) {
     const method = options.method || 'GET';
     const body = options.body ? JSON.parse(options.body) : undefined;
 
-    calls.push({ url, method, body });
+    /* THE AUTHORIZATION HEADER IS RECORDED, AND MUTATION IS WHY — 22
+     * October. The pool tests below asserted only on URLs, so dropping
+     * `creds` from findRedirectList's cfApi options SURVIVED: the path was
+     * built from account(creds) and was perfectly right, while the request
+     * went out with the SERVER'S token.
+     *
+     * Right path, wrong token, is the worst shape this can take — it
+     * authenticates as us against the customer's account, and Cloudflare
+     * answers with a permissions error that reads like a misconfigured
+     * token rather than a mixed-up credential. A URL assertion cannot see
+     * it. */
+    calls.push({ url, method, body, headers: options.headers || {} });
 
     for (const [m, part, answer] of routes) {
       if (m === method && String(url).includes(part)) {
@@ -458,6 +469,104 @@ test('AND DELETING A BLOG TAKES THE REDIRECT BACK OUT', async () => {
 
   assert.strictEqual(calls.length, 1, 'a deleted blog leaves its redirect in the shared list');
   assert.ok(out.pagesDev, 'the teardown result does not say what happened to it');
+});
+
+/* ======================================================================= */
+
+section('THE REDIRECT LIST BELONGS TO AN ACCOUNT');
+
+/* STEP FOUR, CONTINUED — redirects.js has its own copy of the account
+ * prefix and five call sites of its own.
+ *
+ * AND A CONSEQUENCE THE REST OF THE POOL WORK DOES NOT HAVE. A Cloudflare
+ * rules list lives INSIDE an account. There is no shared `blog_pages_dev`
+ * spanning ten accounts — each account needs its own list, created by hand
+ * with that name, or the lookup misses.
+ *
+ * A MISS IS ALREADY SURVIVABLE AND THAT IS WHY THIS IS SAFE. findRedirectList
+ * reports rather than throwing: a blog whose account has no list still
+ * deploys and still works, it just also answers on pages.dev. So the ten
+ * accounts can be set up one at a time rather than all before launch.
+ */
+
+const POOL = { token: 'tok-for-client-three', account: 'cccc3333dddd4444eeee5555ffff6666' };
+
+test('THE LIST IS LOOKED UP IN THE ACCOUNT IT IS GIVEN', async () => {
+  const fetchImpl = healthy([]);
+
+  await findRedirectList({ fetchImpl, creds: POOL });
+
+  assert.ok(fetchImpl.calls[0].url.includes(POOL.account),
+    `it looked in ${fetchImpl.calls[0].url} rather than the client's account`);
+  assert.ok(!fetchImpl.calls[0].url.includes('acc123'),
+    'the server account id is still in the path');
+
+  /* AND THE TOKEN, NOT ONLY THE PATH. A right path with the server's token
+   * authenticates as us against the customer's account. */
+  assert.strictEqual(fetchImpl.calls[0].headers.Authorization, `Bearer ${POOL.token}`,
+    'the list was looked up with the server token');
+});
+
+test('AND IN THE ENVIRONMENT\'S ACCOUNT WHEN IT IS GIVEN NONE', async () => {
+  const fetchImpl = healthy([]);
+
+  await findRedirectList({ fetchImpl });
+
+  assert.ok(fetchImpl.calls[0].url.includes('acc123'),
+    'the env fallback is gone, so every blog that exists today loses its redirect');
+});
+
+test('redirectPagesDev CARRIES THEM THROUGH BOTH OF ITS CALLS', async () => {
+  /* Two steps — find the list, then add to it — and forgetting the
+   * argument on the second sends the WRITE to the server's account while
+   * the lookup went to the client's. The list id would not even exist
+   * there, so the failure reads as a missing list rather than as a
+   * credential mix-up. */
+  const fetchImpl = healthy([]);
+
+  await redirectPagesDev({
+    project: 'hvac-acmehvac-com', domain: 'hvac.acmehvac.com', fetchImpl, creds: POOL,
+  });
+
+  assert.ok(fetchImpl.calls.length >= 2, 'it did not make the calls it was meant to');
+
+  for (const { url, headers } of fetchImpl.calls) {
+    assert.ok(!url.includes('acc123'), `${url} went to the server account`);
+    assert.strictEqual(headers.Authorization, `Bearer ${POOL.token}`,
+      `${url} was sent with the server token`);
+  }
+});
+
+test('releasePagesDev DOES TOO', async () => {
+  const fetchImpl = healthy([
+    { id: 'i1', redirect: { source_url: 'hvac-acmehvac-com.pages.dev',
+      target_url: 'https://hvac.acmehvac.com' } },
+  ]);
+
+  await releasePagesDev({
+    project: 'hvac-acmehvac-com', domain: 'hvac.acmehvac.com', fetchImpl, creds: POOL,
+  });
+
+  for (const { url, headers } of fetchImpl.calls) {
+    assert.ok(!url.includes('acc123'), `${url} went to the server account`);
+    assert.strictEqual(headers.Authorization, `Bearer ${POOL.token}`,
+      `${url} was sent with the server token`);
+  }
+});
+
+test('A POOL ACCOUNT WITH NO LIST IS REPORTED, NOT THROWN', async () => {
+  /* THE PROPERTY THAT MAKES TEN ACCOUNTS SET UP ONE AT A TIME POSSIBLE.
+   * Each account needs its own blog_pages_dev list, created by hand. Until
+   * it exists, the blog must still deploy — it simply also answers on its
+   * pages.dev address, which is where every blog started. */
+  const fetchImpl = cfFetch([['GET', '/rules/lists', []]]);
+
+  const out = await redirectPagesDev({
+    project: 'p', domain: 'hvac.acmehvac.com', fetchImpl, creds: POOL,
+  });
+
+  assert.strictEqual(out.ok, false);
+  assert.ok(out.error, 'it failed without saying why');
 });
 
 /* ======================================================================= */

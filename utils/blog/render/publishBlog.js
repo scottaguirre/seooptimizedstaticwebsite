@@ -40,6 +40,7 @@ const { feedFiles } = require('./feeds');
 const { CSS, CSS_PATH } = require('./theme');
 const { blogJsonFile } = require('./blogJson');
 const { deployBlog, projectNameFor } = require('../cloudflare/deploy');
+const { credsFor } = require('../cloudflare/accounts');
 const { log } = require('../../logger');
 
 /**
@@ -139,7 +140,7 @@ function renderSite({ blog, campaigns, posts, now = new Date(), includeScheduled
  */
 async function publishBlog({
   blog, now = new Date(), requestId, dryRun = false, includeScheduled = false,
-  deploy = deployBlog,
+  deploy = deployBlog, resolve = credsFor,
 } = {}) {
   if (!blog || 'cloudflare' !== blog.target) {
     return { ok: false, error: 'This is not a Cloudflare blog.', files: 0, pages: [] };
@@ -180,7 +181,32 @@ async function publishBlog({
     return { ok: true, dryRun: true, files: Object.keys(files).length, pages, missing };
   }
 
-  const result = await deploy({ blog, files, requestId });
+  /* WHICH CLOUDFLARE ACCOUNT THIS BLOG BELONGS TO, resolved once, here.
+   *
+   * AFTER THE DRY-RUN RETURN, deliberately. A dry run renders the files and
+   * deploys nothing, so it is the one way to look at a blog whose account
+   * is broken — refusing it would take away the tool somebody would use to
+   * work out what went wrong.
+   *
+   * BEFORE THE DEPLOY, AND THE ORDER IS THE POINT. credsFor() throws when a
+   * blog names an account that cannot be used. Reporting that error but
+   * calling deploy() anyway would put the customer's blog up in whichever
+   * account the ENVIRONMENT names — ours — with a project created there and
+   * their domain attached to it. Nothing in the result would say so. */
+  let creds;
+
+  try {
+    creds = await resolve(blog);
+  } catch (err) {
+    log.error('blog.publish.credentials', err, {
+      requestId,
+      siteId: String(blog._id),
+    });
+
+    return { ok: false, error: err.message, files: 0, pages, missing };
+  }
+
+  const result = await deploy({ blog, files, requestId, creds });
 
   if (!result.ok) {
     /* projectMissing IS CARRIED, NOT RE-DERIVED. deploy.js is the only

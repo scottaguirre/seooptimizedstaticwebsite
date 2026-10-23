@@ -39,7 +39,9 @@
 
 // The product's name. It lives in its own module so a SIGNED-OUT page can
 // brand its tab without importing the logged-in header — see pageTitle.js.
-const { APP_NAME, TOOL_WP_BLOGS, TOOL_CF_BLOGS } = require('./pageTitle');
+const {
+  APP_NAME, TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT,
+} = require('./pageTitle');
 
 /**
  * Stylesheets and CSS the header needs, for the <head>.
@@ -396,6 +398,21 @@ function appSidebar(current = '') {
     // used to. It is the END the other tools are means to.
     { href: '/', icon: 'bi-magic', label: 'Build a Website', cta: true },
     { href: '/keyword-research', icon: 'bi-search', label: 'Keyword Research' },
+
+    /* ADDED 23 October, on Edwin's instruction, and HERE rather than at the
+     * end because the column reads as a sequence: build a site, find the
+     * words, build the blogs, read how they are doing.
+     *
+     * It had one entry point before this — a small green button in the
+     * top-right corner of the Build WP blogs page. So the report covering
+     * EVERY blog, WordPress and Cloudflare both, was reachable only from one
+     * of the two tools it reports on, and only if you read a page action as
+     * navigation. From Build Cloudflare Blogs there was no route to it.
+     *
+     * The milder form of the failure this list's own comment describes:
+     * not unreachable, just somewhere nobody looks. */
+    { href: '/blog-report', icon: 'bi-clipboard-data', label: TOOL_BLOG_REPORT },
+
     { href: '/blog-sites', icon: 'bi-journal-text', label: TOOL_WP_BLOGS },
 
     /* ADDED THE DAY THE SCREEN SHIPPED, and only because Edwin asked where

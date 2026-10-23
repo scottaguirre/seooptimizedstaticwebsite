@@ -136,12 +136,26 @@ async function writeSite(root, files) {
  * wrangler reads CLOUDFLARE_*. Mapping in one place beats a second set of
  * variables that can drift out of step with the first.
  */
-function childEnv() {
-  const token = process.env.CF_API_TOKEN;
-  const account = process.env.CF_ACCOUNT_ID;
+function childEnv(creds) {
+  /* THE SAME PAIRING RULE cfApi() FOLLOWS, and for a sharper reason.
+   *
+   * wrangler handed an account id and the SERVER'S token would
+   * authenticate as one account and deploy at another — and unlike a REST
+   * call, this one creates projects and uploads files. A deploy landing in
+   * the wrong customer's account is not an error message; it is a site in
+   * the wrong place with nothing on either side to say so.
+   *
+   * So the credentials passed in are used whole, or the environment is
+   * used whole. Never a field from each. */
+  const given = creds && (creds.token || creds.account);
+
+  const token = given ? creds.token : process.env.CF_API_TOKEN;
+  const account = given ? creds.account : process.env.CF_ACCOUNT_ID;
 
   if (!token || !account) {
-    throw new Error('CF_API_TOKEN and CF_ACCOUNT_ID are not set on this server');
+    throw new Error(given
+      ? 'Incomplete Cloudflare credentials for this blog: both an account id and a token are needed'
+      : 'CF_API_TOKEN and CF_ACCOUNT_ID are not set on this server');
   }
 
   return {
@@ -164,10 +178,38 @@ function childEnv() {
  * the version that one day does — in an error, in a debug line, in a
  * stack. By then nobody will be reading this file.
  */
-function scrub(text) {
+function scrub(text, creds) {
   let out = String(text == null ? '' : text);
 
-  for (const secret of [process.env.CF_API_TOKEN, process.env.CF_ACCOUNT_ID]) {
+  /* THE CREDENTIALS ACTUALLY IN USE, NOT WHATEVER IS IN THE ENVIRONMENT.
+   *
+   * Blogs are moving onto a pool of Cloudflare accounts, one per client
+   * domain, so the token in play depends on which blog is being deployed.
+   * A scrub() reading process.env would redact the env's token — which is
+   * not the one in the text — and leave the live one in place. The output
+   * LOOKS redacted. That is worse than not redacting at all, because
+   * nobody looks twice at a line containing [redacted].
+   *
+   * THE ENV IS THE FALLBACK AND HAS TO STAY. Every blog that exists today
+   * has no account of its own and nothing backfills them, so a call with
+   * no credentials must behave exactly as this function always did.
+   *
+   * ONE SET OR THE OTHER, NOT BOTH — AND THAT IS A TASTE CALL, NOT A SAFETY
+   * ONE. Mutation testing proved it: redacting the env credentials AS WELL
+   * as the ones passed in survives every test here, and it is arguably the
+   * safer version — if credsFor() ever hands back the wrong account, the
+   * env token would still be scrubbed.
+   *
+   * The narrow set is kept anyway, because the fallback is meant to end.
+   * Once every blog carries an account, redacting the env too would hide a
+   * resolver returning nothing: output would come out clean while the
+   * deploy quietly used the wrong credentials. Belt and braces that masks
+   * a misconfiguration is not belt and braces. */
+  const secrets = creds && (creds.token || creds.account)
+    ? [creds.token, creds.account]
+    : [process.env.CF_API_TOKEN, process.env.CF_ACCOUNT_ID];
+
+  for (const secret of secrets) {
     if (secret && secret.length > 6) out = out.split(secret).join('[redacted]');
   }
 
@@ -326,7 +368,7 @@ function runWrangler(args, { env, cwd, timeout = DEPLOY_TIMEOUT_MS, entry } = {}
  * is the OUTPUT, so a genuine create failure can be shown alongside the
  * deploy failure it caused rather than vanishing.
  */
-async function ensureProject({ project, env, run = runWrangler, entry }) {
+async function ensureProject({ project, env, run = runWrangler, entry, creds }) {
   const result = await run(
     ['pages', 'project', 'create', project, '--production-branch=main'],
     { env, entry }
@@ -334,7 +376,7 @@ async function ensureProject({ project, env, run = runWrangler, entry }) {
 
   return {
     created: 0 === result.code,
-    output: scrub(`${result.stdout}\n${result.stderr}`),
+    output: scrub(`${result.stdout}\n${result.stderr}`, creds),
   };
 }
 
@@ -357,12 +399,12 @@ async function ensureProject({ project, env, run = runWrangler, entry }) {
  * waits for a confirmation that will never come, and the job sits there
  * until the timeout kills it. The confirmation happened on a web page.
  */
-async function deleteProject({ project, env, run = runWrangler } = {}) {
+async function deleteProject({ project, env, run = runWrangler, creds } = {}) {
   if (!project) return { ok: false, output: 'No project name.' };
 
   const result = await run(['pages', 'project', 'delete', project, '--yes'], { env });
 
-  return { ok: 0 === result.code, output: scrub(`${result.stdout}\n${result.stderr}`) };
+  return { ok: 0 === result.code, output: scrub(`${result.stdout}\n${result.stderr}`, creds) };
 }
 
 /**
@@ -385,9 +427,51 @@ async function deleteProject({ project, env, run = runWrangler } = {}) {
  * different things to do next, and flattening them into one message is
  * exactly how an afternoon goes missing — see CF_ACCOUNT_ID, 17 October.
  */
-async function cfApi(pathAndQuery, { method = 'GET', body, fetchImpl = fetch } = {}) {
-  const account = process.env.CF_ACCOUNT_ID;
-  const token = process.env.CF_API_TOKEN;
+/**
+ * The /accounts/<id> prefix, for the credentials this call is using.
+ *
+ * IT WAS process.env.CF_ACCOUNT_ID, INLINE, IN TWO PLACES. The token says
+ * WHO WE ARE; this says WHOSE Pages project we are touching, and the two
+ * have to name the same account. A converted token with an unconverted
+ * path authenticates as the client and then asks about a project in ours —
+ * which Cloudflare answers with a 404 that reads like a missing project.
+ */
+function accountPath(creds) {
+  const id = (creds && creds.account) || process.env.CF_ACCOUNT_ID || '';
+  return `/accounts/${encodeURIComponent(id)}`;
+}
+
+async function cfApi(pathAndQuery, { method = 'GET', body, fetchImpl = fetch, creds } = {}) {
+  /* THE CREDENTIALS FOR THIS CALL, WHICH ARE NOT NECESSARILY THE SERVER'S.
+   *
+   * Blogs are moving onto a pool of Cloudflare accounts, one per client
+   * domain, so the account a request belongs to is a property of the BLOG
+   * rather than of this process. Every REST call in this codebase goes
+   * through here, which is why this is the seam.
+   *
+   * THE ENV IS THE FALLBACK AND IT IS LOAD-BEARING TODAY. Every blog that
+   * exists has no account of its own, and every caller in this file still
+   * passes nothing — so an absent `creds` must behave exactly as this
+   * function always did. The helpers convert one at a time.
+   *
+   * THE FALLBACK IS A PAIR, NOT TWO FIELDS — and the first version of this
+   * got it wrong, which the test caught before it left the room.
+   *
+   * Written per-field as `creds.token || process.env.CF_API_TOKEN`, a
+   * Domain row carrying an account id and no token would send the SERVER'S
+   * token against the CLIENT'S account. Not a failure: a request
+   * authenticated as one account and aimed at another. Cloudflare answers
+   * that with a permissions error at best, and at worst it succeeds
+   * against whatever the server's token can reach.
+   *
+   * So either the credentials passed in are used whole, or the environment
+   * is used whole. Half a credential refuses before the request, with a
+   * message saying which — `Bearer undefined` comes back from Cloudflare
+   * reading like a revoked token rather than a missing one. */
+  const given = creds && (creds.token || creds.account);
+
+  const account = given ? creds.account : process.env.CF_ACCOUNT_ID;
+  const token = given ? creds.token : process.env.CF_API_TOKEN;
 
   if (!account || !token) return { ok: false, error: 'No Cloudflare credentials.' };
 
@@ -411,13 +495,25 @@ async function cfApi(pathAndQuery, { method = 'GET', body, fetchImpl = fetch } =
         .map(e => `${e.message}${e.code ? ` [code: ${e.code}]` : ''}`)
         .join('; ');
 
-      return { ok: false, error: scrub(said || `Cloudflare answered ${response.status}.`) };
+      return { ok: false, error: scrub(said || `Cloudflare answered ${response.status}.`, { token, account }) };
     }
 
-    return { ok: true, result: answer.result };
+    /* `info` IS CLOUDFLARE'S result_info, AND IT IS WHY A COUNT CAN BE
+     * TRUSTED. Their list endpoints page, so `result.length` is the size of
+     * the page that came back and not the size of the collection — 25
+     * projects reported on an account holding 140.
+     *
+     * Added for verifyAccount(), which reports how full an account is on the
+     * admin screen. A count that silently understates is worse than none: it
+     * reads as room that is not there, right up until a customer presses
+     * Create and Cloudflare refuses.
+     *
+     * Additive, and undefined on the endpoints that do not page, so every
+     * existing caller is unaffected. */
+    return { ok: true, result: answer.result, info: answer.result_info };
 
   } catch (err) {
-    return { ok: false, error: scrub(err.message || 'The request to Cloudflare failed.') };
+    return { ok: false, error: scrub(err.message || 'The request to Cloudflare failed.', { token, account }) };
   }
 }
 
@@ -441,14 +537,14 @@ async function cfApi(pathAndQuery, { method = 'GET', body, fetchImpl = fetch } =
  * normal way to run a blog; it just means the DNS record is somebody
  * else's job, and the screen says so.
  */
-async function findZone({ domain, fetchImpl = fetch } = {}) {
+async function findZone({ domain, fetchImpl = fetch, creds } = {}) {
   const labels = String(domain || '').trim().toLowerCase().split('.').filter(Boolean);
   if (labels.length < 2) return { ok: false, error: 'That is not a domain name.' };
 
   for (let i = 0; i <= labels.length - 2; i += 1) {
     const candidate = labels.slice(i).join('.');
 
-    const answer = await cfApi(`/zones?name=${encodeURIComponent(candidate)}`, { fetchImpl });
+    const answer = await cfApi(`/zones?name=${encodeURIComponent(candidate)}`, { fetchImpl, creds });
 
     /* A PERMISSION FAILURE STOPS THE WALK. Without Zone:Read every
      * candidate fails identically, and grinding through all of them to
@@ -475,8 +571,8 @@ async function findZone({ domain, fetchImpl = fetch } = {}) {
  * the path where everything is fine. Its whole job is to turn "no zone
  * matches" into "no zone matches, and here is the one you probably meant".
  */
-async function listZones({ fetchImpl = fetch } = {}) {
-  const answer = await cfApi('/zones?per_page=50', { fetchImpl });
+async function listZones({ fetchImpl = fetch, creds } = {}) {
+  const answer = await cfApi('/zones?per_page=50', { fetchImpl, creds });
 
   if (!answer.ok) return { ok: false, error: answer.error };
 
@@ -555,12 +651,12 @@ function suggestZoneFix({ domain, zones } = {}) {
  * that silently repointed it would be the worst bug in this codebase. The
  * mismatch is reported instead.
  */
-async function ensureDnsRecord({ zoneId, name, target, fetchImpl = fetch } = {}) {
+async function ensureDnsRecord({ zoneId, name, target, fetchImpl = fetch, creds } = {}) {
   if (!zoneId || !name || !target) return { ok: false, error: 'Nothing to point at.' };
 
   const existing = await cfApi(
     `/zones/${encodeURIComponent(zoneId)}/dns_records?name=${encodeURIComponent(name)}`,
-    { fetchImpl }
+    { fetchImpl, creds }
   );
 
   if (!existing.ok) return { ok: false, error: existing.error };
@@ -584,6 +680,7 @@ async function ensureDnsRecord({ zoneId, name, target, fetchImpl = fetch } = {})
   const made = await cfApi(`/zones/${encodeURIComponent(zoneId)}/dns_records`, {
     method: 'POST',
     fetchImpl,
+    creds,
     body: { type: 'CNAME', name, content: target, proxied: true, ttl: 1 },
   });
 
@@ -623,13 +720,12 @@ async function ensureDnsRecord({ zoneId, name, target, fetchImpl = fetch } = {})
  * for ever — see ensureDnsRecord(), which is the other half and the half
  * that was missing.
  */
-async function attachDomain({ project, domain, fetchImpl = fetch } = {}) {
+async function attachDomain({ project, domain, fetchImpl = fetch, creds } = {}) {
   if (!project || !domain) return { ok: false, error: 'No project or domain.' };
 
   const answer = await cfApi(
-    `/accounts/${encodeURIComponent(process.env.CF_ACCOUNT_ID || '')}`
-      + `/pages/projects/${encodeURIComponent(project)}/domains`,
-    { method: 'POST', body: { name: domain }, fetchImpl }
+    `${accountPath(creds)}/pages/projects/${encodeURIComponent(project)}/domains`,
+    { method: 'POST', body: { name: domain }, fetchImpl, creds }
   );
 
   if (!answer.ok) return answer;
@@ -654,9 +750,9 @@ async function attachDomain({ project, domain, fetchImpl = fetch } = {}) {
  * matters is that the screen says so instead of claiming success.
  */
 async function pointDomainAtProject({
-  project, domain, target, fetchImpl = fetch, redirect = null,
+  project, domain, target, fetchImpl = fetch, redirect = null, creds,
 } = {}) {
-  const attached = await attachDomain({ project, domain, fetchImpl });
+  const attached = await attachDomain({ project, domain, fetchImpl, creds });
 
   /* THE pages.dev REDIRECT, REQUIRED LAZILY, AND THAT IS NOT LAZINESS.
    *
@@ -675,14 +771,31 @@ async function pointDomainAtProject({
    * redirect lives in an account-level list and has nothing to do with
    * this domain's zone — a blog whose DNS is somebody else's problem still
    * wants its pages.dev address pointed home. */
-  const pagesDev = await sendRedirect({ project, domain, fetchImpl });
+  /* `creds` — MISSING UNTIL 23 OCTOBER, AND IT COST THE WHOLE FEATURE.
+   *
+   * Bulk Redirect lists are ACCOUNT-SCOPED, and a `.pages.dev` hostname is
+   * served by the account its Pages project lives on. Writing the entry
+   * with the server's credentials put every pool blog's redirect in the
+   * server's list — where it is not wrong, it is simply somewhere the
+   * traffic never passes. Perfectly valid, completely inert.
+   *
+   * Nothing complained. redirectPagesDev never fails a deploy by design
+   * ("a blog with no redirect is a working blog with a duplicate-content
+   * problem"), and the write itself SUCCEEDS — against the wrong account.
+   * Edwin found it by clicking a .pages.dev address and not being
+   * redirected.
+   *
+   * THE SAME SHAPE AS THE ZONE CHECK FIXED THE DAY BEFORE. An optional
+   * credentials argument does not complain when you forget it; it quietly
+   * acts on somewhere else. */
+  const pagesDev = await sendRedirect({ project, domain, fetchImpl, creds });
 
-  const zone = await findZone({ domain, fetchImpl });
+  const zone = await findZone({ domain, fetchImpl, creds });
   if (!zone.ok) {
     return { attached, pagesDev, dns: { ok: false, error: zone.error }, url: `https://${domain}/` };
   }
 
-  const dns = await ensureDnsRecord({ zoneId: zone.id, name: domain, target, fetchImpl });
+  const dns = await ensureDnsRecord({ zoneId: zone.id, name: domain, target, fetchImpl, creds });
 
   return { attached, pagesDev, dns, zone: zone.name, url: `https://${domain}/` };
 }
@@ -703,14 +816,13 @@ async function pointDomainAtProject({
  * is why `all-about-roofing-explr-home-com` survived its delete while the
  * earlier projects, whose domains were still pending, did not.
  */
-async function detachDomain({ project, domain, fetchImpl = fetch } = {}) {
+async function detachDomain({ project, domain, fetchImpl = fetch, creds } = {}) {
   if (!project || !domain) return { ok: false, error: 'No project or domain.' };
 
   return cfApi(
-    `/accounts/${encodeURIComponent(process.env.CF_ACCOUNT_ID || '')}`
-      + `/pages/projects/${encodeURIComponent(project)}`
+    `${accountPath(creds)}/pages/projects/${encodeURIComponent(project)}`
       + `/domains/${encodeURIComponent(domain)}`,
-    { method: 'DELETE', fetchImpl }
+    { method: 'DELETE', fetchImpl, creds }
   );
 }
 
@@ -740,12 +852,12 @@ async function detachDomain({ project, domain, fetchImpl = fetch } = {}) {
  * the deploy may never have got that far. Either way there is nothing to
  * do and nothing to report as broken.
  */
-async function removeDnsRecord({ zoneId, name, expected, fetchImpl = fetch } = {}) {
+async function removeDnsRecord({ zoneId, name, expected, fetchImpl = fetch, creds } = {}) {
   if (!zoneId || !name) return { ok: false, error: 'Nothing to remove.' };
 
   const found = await cfApi(
     `/zones/${encodeURIComponent(zoneId)}/dns_records?name=${encodeURIComponent(name)}`,
-    { fetchImpl }
+    { fetchImpl, creds }
   );
 
   if (!found.ok) return { ok: false, error: found.error };
@@ -765,7 +877,7 @@ async function removeDnsRecord({ zoneId, name, expected, fetchImpl = fetch } = {
 
   const gone = await cfApi(
     `/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(record.id)}`,
-    { method: 'DELETE', fetchImpl }
+    { method: 'DELETE', fetchImpl, creds }
   );
 
   if (!gone.ok) return { ok: false, error: gone.error };
@@ -792,9 +904,9 @@ async function removeDnsRecord({ zoneId, name, expected, fetchImpl = fetch } = {
  * step reports itself and the caller decides what to say.
  */
 async function releaseDomain({
-  project, domain, expected, fetchImpl = fetch, release = null,
+  project, domain, expected, fetchImpl = fetch, release = null, creds,
 } = {}) {
-  const detached = await detachDomain({ project, domain, fetchImpl });
+  const detached = await detachDomain({ project, domain, fetchImpl, creds });
 
   /* Lazily required for the same reason as in pointDomainAtProject above. */
   const dropRedirect = release
@@ -804,12 +916,18 @@ async function releaseDomain({
    * not need one. A blog on a domain this account does not host would
    * otherwise leave its entry in the shared list for ever — and that list
    * is the one thing here every blog shares. */
-  const pagesDev = await dropRedirect({ project, domain, fetchImpl });
+  /* `creds` — THE MIRROR OF THE OMISSION ABOVE, AND THE WORSE HALF.
+   *
+   * Releasing from the wrong account removes nothing and reports success,
+   * so a deleted blog's redirect SURVIVES ITS OWN DELETION — sitting in the
+   * real account's list, pointing at a domain that no longer serves
+   * anything, on an account nobody has a reason to look at. */
+  const pagesDev = await dropRedirect({ project, domain, fetchImpl, creds });
 
-  const zone = await findZone({ domain, fetchImpl });
+  const zone = await findZone({ domain, fetchImpl, creds });
   if (!zone.ok) return { detached, pagesDev, dns: { ok: false, error: zone.error } };
 
-  const dns = await removeDnsRecord({ zoneId: zone.id, name: domain, expected, fetchImpl });
+  const dns = await removeDnsRecord({ zoneId: zone.id, name: domain, expected, fetchImpl, creds });
 
   return { detached, pagesDev, dns, zone: zone.name };
 }
@@ -829,7 +947,7 @@ async function releaseDomain({
  * its files behind would fill the disk one blog at a time, and the disk on
  * this box is also where every generated website lives.
  */
-async function deployBlog({ blog, files, requestId, run = runWrangler, attach = pointDomainAtProject } = {}) {
+async function deployBlog({ blog, files, requestId, run = runWrangler, attach = pointDomainAtProject, creds } = {}) {
   const project = blog && blog.project ? String(blog.project) : projectNameFor(blog);
   const names = Object.keys(files || {});
 
@@ -843,7 +961,18 @@ async function deployBlog({ blog, files, requestId, run = runWrangler, attach = 
     await writeSite(root, files);
 
     const started = Date.now();
-    const env = childEnv();
+    /* THE ACCOUNT THIS BLOG BELONGS TO, not the server's.
+     *
+     * Three things have to land in the SAME account — the project wrangler
+     * creates, the files it uploads, and the custom domain attached over
+     * the REST API — and nothing downstream can tell when one of them went
+     * elsewhere. A project created in the client's account and an attach
+     * aimed at ours comes back as "project not found", about a project
+     * created thirty seconds earlier.
+     *
+     * Undefined until credsFor(blog) lands, which is the whole env
+     * fallback working as intended. */
+    const env = childEnv(creds);
 
     /* THE FIRST DEPLOY SETS THE BLOG UP; EVERY LATER ONE JUST DEPLOYS.
      *
@@ -870,7 +999,7 @@ async function deployBlog({ blog, files, requestId, run = runWrangler, attach = 
     let setup = null;
 
     if (firstTime) {
-      const made = await ensureProject({ project, env, run });
+      const made = await ensureProject({ project, env, run, creds });
       setup = { created: made.created, createOutput: made.output };
     }
 
@@ -879,7 +1008,7 @@ async function deployBlog({ blog, files, requestId, run = runWrangler, attach = 
       { env, cwd: root }
     );
 
-    const output = scrub(`${result.stdout}\n${result.stderr}`);
+    const output = scrub(`${result.stdout}\n${result.stderr}`, creds);
 
     if (0 !== result.code) {
       /* THE CREATE'S OUTPUT TOO, WHEN THERE WAS ONE. A deploy that fails
@@ -980,7 +1109,7 @@ async function deployBlog({ blog, files, requestId, run = runWrangler, attach = 
       const domain = String((blog && blog.siteUrl) || '');
       const target = url.replace(/^https:\/\//, '').replace(/\/$/, '');
 
-      const pointed = await attach({ project, domain, target });
+      const pointed = await attach({ project, domain, target, creds });
       setup = Object.assign({}, setup, pointed);
 
       log.info('blog.deploy.firstTime', {
