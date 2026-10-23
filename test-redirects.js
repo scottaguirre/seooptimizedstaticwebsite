@@ -31,7 +31,7 @@ process.env.CF_API_TOKEN = process.env.CF_API_TOKEN || 'tok123';
 
 const {
   findRedirectList, addRedirect, removeRedirect, waitForOperation,
-  redirectPagesDev, releasePagesDev,
+  redirectPagesDev, releasePagesDev, ensureRedirectList, ensureRedirectRule,
 } = require('./utils/blog/cloudflare/redirects');
 
 /* ------------------------------------------------------------------ fakes */
@@ -124,16 +124,36 @@ test('AND A LIST OF THE WRONG KIND IS NOT IT', async () => {
   assert.ok(/No redirect list/.test(out.error));
 });
 
-test('AND A MISSING LIST SAYS HOW TO MAKE ONE', async () => {
-  /* The rule and the list are created by hand, once. Somebody hitting this
-   * has not done that yet, and "not found" would send them to read code. */
+test('AND A MISSING LIST IS FLAGGED AS MISSING, NOT MERELY FAILED', async () => {
+  /* `noList` IS WHAT ensureRedirectList() CREATES THROUGH, so this is the
+   * difference between "this account has no list" and "I could not ask".
+   *
+   * It used to say "create it in the dashboard under Bulk Redirects" — a
+   * sentence that was right for exactly as long as a human made the list.
+   * Since 23 October the app makes it, and advice nobody needs is advice
+   * that sends somebody to do a job already done. */
   const fetchImpl = healthy([], { lists: [] });
 
   const out = await findRedirectList({ name: 'blog_pages_dev', fetchImpl });
 
   assert.strictEqual(out.ok, false);
-  assert.ok(/dashboard/i.test(out.error), 'it does not say where to create it');
-  assert.ok(/Bulk Redirects/i.test(out.error));
+  assert.strictEqual(out.noList, true, 'a genuine miss is not marked as one');
+  assert.ok(/blog_pages_dev/.test(out.error), 'it does not say which list is missing');
+});
+
+test('BUT A FAILURE TO ASK IS NOT MARKED AS A MISS', async () => {
+  /* THE ASSERTION THE CREATE PATH RESTS ON. A revoked token and an outage
+   * both come back ok:false; creating a list on the strength of either
+   * would be a POST fired at an account we could not read, answering a
+   * question nobody answered. Same shape as findZone's noZone. */
+  const fetchImpl = cfFetch([
+    ['GET', '/rules/lists', { __status: 403, __message: 'Invalid API Token', __code: 1000 }],
+  ]);
+
+  const out = await findRedirectList({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.ok, false);
+  assert.ok(!out.noList, 'an unanswered question was reported as "no such list"');
 });
 
 test('THE DEFAULT NAME IS ONE CLOUDFLARE WILL ACCEPT', async () => {
@@ -357,6 +377,210 @@ test('AND THE MATCH IGNORES CASE', async () => {
   });
 
   assert.strictEqual(out.removed, true);
+});
+
+section('SETTING AN ACCOUNT UP, WITHOUT A TRIP TO THE DASHBOARD');
+
+/* WHY THIS EXISTS — 23 October.
+ *
+ * Every Cloudflare account in the pool needs its own redirect list and its
+ * own rule; both are account-scoped and neither can be shared. That meant
+ * ten accounts, ten trips to the dashboard, and one chance each to forget.
+ *
+ * FORGETTING IS SILENT. A blog whose account has no list still deploys and
+ * still works — it just also answers on pages.dev, which is the duplicate
+ * the list exists to remove. Nothing on any screen says so until somebody
+ * clicks the pages.dev address and notices.
+ *
+ * Edwin did exactly that, twice, on two different accounts.
+ */
+
+/** Routes for an account with no list and no redirect ruleset yet. */
+function emptyAccount(over = {}) {
+  return cfFetch([
+    ['GET', '/rules/lists', []],
+    ['POST', '/rules/lists', over.made === undefined ? { id: 'new-list' } : over.made],
+    ['GET', '/rulesets/phases/http_request_redirect/entrypoint',
+      over.entry || { __status: 404, __message: 'ruleset not found', __code: 1001 }],
+    ['POST', '/rulesets/', { id: 'rs-new' }],
+    ['POST', '/rulesets', { id: 'rs-new' }],
+    ['GET', '/bulk_operations/', { status: 'completed' }],
+    ['POST', '/rules/lists/new-list/items', { operation_id: 'op1' }],
+  ]);
+}
+
+test('A MISSING LIST IS CREATED, WITH THE KIND CLOUDFLARE NEEDS', async () => {
+  const fetchImpl = emptyAccount();
+
+  const out = await ensureRedirectList({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.ok, true, `it failed: ${out.error}`);
+  assert.strictEqual(out.id, 'new-list');
+  assert.strictEqual(out.created, true, 'it did not say it had made one');
+
+  const post = fetchImpl.calls.find(c => 'POST' === c.method && c.url.includes('/rules/lists'));
+
+  assert.ok(post, 'no list was created');
+  assert.strictEqual(post.body.name, 'blog_pages_dev');
+
+  /* 'redirect' IS NOT A DEFAULT. An account can hold IP and ASN lists, and
+   * a list of the wrong kind cannot hold a redirect — findRedirectList
+   * checks the kind, so a list made without it would not even be found
+   * again by the function that just made it. */
+  assert.strictEqual(post.body.kind, 'redirect');
+});
+
+test('AN EXISTING LIST IS USED, NOT DUPLICATED', async () => {
+  const fetchImpl = healthy();
+
+  const out = await ensureRedirectList({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.id, 'list1');
+  assert.ok(!out.created, 'it claimed to have made a list that was already there');
+  assert.ok(!fetchImpl.calls.some(c => 'POST' === c.method && c.url.includes('/rules/lists')),
+    'it created a second list beside the one that was already there');
+});
+
+test('AND NOTHING IS CREATED WHEN THE ACCOUNT COULD NOT BE READ', async () => {
+  /* THE GUARD THE WHOLE CREATE PATH RESTS ON. A revoked token comes back
+   * ok:false exactly as a missing list does; POSTing on that basis means
+   * creating a list inside an account we have no answer from. */
+  const fetchImpl = cfFetch([
+    ['GET', '/rules/lists', { __status: 403, __message: 'Invalid API Token', __code: 1000 }],
+  ]);
+
+  const out = await ensureRedirectList({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.ok, false);
+  assert.ok(!fetchImpl.calls.some(c => 'POST' === c.method),
+    'it created a list in an account it could not read');
+});
+
+test('A CREATE THAT ANSWERS WITHOUT AN ID IS A FAILURE', async () => {
+  /* Returning ok here sends the caller on to POST items at
+   * /rules/lists/undefined/items, which fails a long way from the cause. */
+  const fetchImpl = emptyAccount({ made: {} });
+
+  const out = await ensureRedirectList({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.ok, false);
+  assert.ok(/id/i.test(out.error), `it did not say what was missing: ${out.error}`);
+});
+
+test('THE RULE IS CREATED WITH THE RULESET WHEN THE PHASE IS EMPTY', async () => {
+  /* The ordinary case on a fresh account: the redirect phase has no
+   * ruleset at all until something puts a rule in it. */
+  const fetchImpl = emptyAccount();
+
+  const out = await ensureRedirectRule({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.ok, true, `it failed: ${out.error}`);
+
+  const post = fetchImpl.calls.find(c => 'POST' === c.method && /\/rulesets$/.test(c.url.split('?')[0]));
+
+  assert.ok(post, 'no ruleset was created');
+  assert.strictEqual(post.body.phase, 'http_request_redirect');
+  assert.strictEqual(post.body.kind, 'root');
+  assert.strictEqual(post.body.rules[0].action, 'redirect');
+  assert.strictEqual(post.body.rules[0].action_parameters.from_list.name, 'blog_pages_dev');
+  assert.ok(/\$blog_pages_dev/.test(post.body.rules[0].expression),
+    `the rule does not reference the list: ${post.body.rules[0].expression}`);
+});
+
+test('AND ADDED TO AN EXISTING RULESET WITHOUT REPLACING WHAT IS IN IT', async () => {
+  /* THE ASSERTION THAT KEEPS THIS FROM BEING AN INCIDENT.
+   *
+   * Cloudflare's PUT on a ruleset REPLACES every rule in it. On an account
+   * that may be a client's, sending back a list built from what we happen
+   * to have read deletes every other redirect rule they have the moment
+   * that read is incomplete.
+   *
+   * POST /rules adds one and leaves the rest alone. This test exists to
+   * make a future PUT impossible to introduce quietly. */
+  const theirs = { id: 'r-theirs', action: 'redirect', description: 'something of their own' };
+
+  const fetchImpl = cfFetch([
+    ['GET', '/rulesets/phases/http_request_redirect/entrypoint',
+      { id: 'rs1', rules: [theirs] }],
+    ['POST', '/rulesets/rs1/rules', { id: 'rs1' }],
+  ]);
+
+  const out = await ensureRedirectRule({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.ok, true, `it failed: ${out.error}`);
+
+  assert.ok(!fetchImpl.calls.some(c => 'PUT' === c.method),
+    'it replaced the whole ruleset instead of adding one rule');
+
+  const post = fetchImpl.calls.find(c => 'POST' === c.method);
+
+  assert.ok(post.url.includes('/rulesets/rs1/rules'), `it posted to ${post.url}`);
+  assert.strictEqual(post.body.action, 'redirect', 'it posted a list of rules, not one rule');
+});
+
+test('AND A RULESET THAT ALREADY POINTS AT THE LIST IS LEFT ALONE', async () => {
+  /* Otherwise every publish on a hand-built account adds another rule
+   * beside the one already working. */
+  const mine = {
+    id: 'r-mine',
+    action: 'redirect',
+    action_parameters: { from_list: { name: 'blog_pages_dev', key: 'http.request.full_uri' } },
+  };
+
+  const fetchImpl = cfFetch([
+    ['GET', '/rulesets/phases/http_request_redirect/entrypoint', { id: 'rs1', rules: [mine] }],
+  ]);
+
+  const out = await ensureRedirectRule({ name: 'blog_pages_dev', fetchImpl });
+
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.already, true);
+  assert.ok(!fetchImpl.calls.some(c => 'GET' !== c.method), 'it added a second rule for the same list');
+});
+
+test('A WHOLE ACCOUNT SETS ITSELF UP ON THE FIRST PUBLISH', async () => {
+  /* THE POINT OF ALL OF IT. No list, no ruleset, nobody has opened the
+   * Cloudflare dashboard — and the blog's pages.dev address redirects. */
+  const fetchImpl = emptyAccount();
+
+  const out = await redirectPagesDev({
+    project: 'all-about-lemon-law-site-book-net',
+    domain: 'all-about-lemon-law.site-book.net',
+    fetchImpl,
+  });
+
+  assert.strictEqual(out.ok, true, `it failed: ${out.error}`);
+
+  assert.ok(fetchImpl.calls.some(c => 'POST' === c.method && c.url.includes('/rules/lists') && !c.url.includes('/items')),
+    'the list was not created');
+  assert.ok(fetchImpl.calls.some(c => 'POST' === c.method && /\/rulesets$/.test(c.url.split('?')[0])),
+    'the rule was not created');
+
+  const item = fetchImpl.calls.find(c => 'POST' === c.method && c.url.includes('/items'));
+
+  assert.ok(item, 'the redirect itself was never added');
+  assert.strictEqual(item.body[0].redirect.source_url, 'all-about-lemon-law-site-book-net.pages.dev');
+  assert.strictEqual(item.body[0].redirect.target_url, 'https://all-about-lemon-law.site-book.net');
+});
+
+test('AND A LIST MADE WITHOUT ITS RULE IS A FAILURE, NOT A QUIET SUCCESS', async () => {
+  /* A list with no rule does nothing at all. Reporting ok here would mean
+   * an account set up entirely by this code is set up wrong — silently, in
+   * exactly the way this change exists to stop. */
+  const fetchImpl = cfFetch([
+    ['GET', '/rules/lists', []],
+    ['POST', '/rules/lists', { id: 'new-list' }],
+    ['GET', '/rulesets/phases/http_request_redirect/entrypoint',
+      { __status: 403, __message: 'Mass URL Redirects Write missing', __code: 10000 }],
+    ['POST', '/rulesets', { __status: 403, __message: 'Mass URL Redirects Write missing', __code: 10000 }],
+  ]);
+
+  const out = await redirectPagesDev({ project: 'p', domain: 'blog.example.com', fetchImpl });
+
+  assert.strictEqual(out.ok, false);
+  assert.ok(/rule/i.test(out.error), `it does not say the rule is what failed: ${out.error}`);
+  assert.ok(!fetchImpl.calls.some(c => c.url.includes('/items')),
+    'it added a redirect to a list that can never fire');
 });
 
 section('WHAT THE DEPLOY AND THE DELETE ACTUALLY CALL');

@@ -293,7 +293,16 @@ function install(over = {}) {
      * createCampaign asks .select().lean() for prior anchors. A stub that
      * only knew one of them made the planner throw, and the route turned
      * that into a 500 — which looked exactly like a broken route. */
-    const rows = async () => (where && where['targetPage.url'] ? [] : db.campaigns);
+    const rows = async () => {
+      if (where && where['targetPage.url']) return [];
+
+      /* isPillar IS HONOURED, because the front-page handler asks for the
+       * pillar campaigns to validate against. A stub that returned every
+       * campaign would let a money-page article pass the check. */
+      if (where && true === where.isPillar) return db.campaigns.filter(c => c.isPillar);
+
+      return db.campaigns;
+    };
     return {
       sort: () => ({ select: () => ({ lean: rows }) }),
       select: () => ({ lean: rows }),
@@ -333,9 +342,18 @@ function install(over = {}) {
       skip: (n) => { db.postFindSkip = n; return chain; },
       limit: (n) => { db.postFindLimit = n; return chain; },
       lean: async () => {
+        /* THE CAMPAIGN FILTER IS HONOURED, because the front-page picker
+         * asks for pillar articles only and a stub that ignored the filter
+         * would let the dropdown "pass" while offering all 171. */
+        const ids = where && where.campaign && where.campaign.$in;
+
+        const pool = ids
+          ? db.articles.filter(a => ids.some(id => String(id) === String(a.campaign)))
+          : db.articles;
+
         const from = db.postFindSkip || 0;
         const to = null === db.postFindLimit ? undefined : from + db.postFindLimit;
-        return db.articles.slice(from, to);
+        return pool.slice(from, to);
       },
     };
     return chain;
@@ -343,8 +361,13 @@ function install(over = {}) {
 
   BlogPost.exists = async (where) => {
     db.postExistsWhere = where;
+
+    const ids = where.campaign && where.campaign.$in;
+
     return db.articles.some(a =>
-      a.slug === where.slug && String(db.blogs[0]._id) === String(where.site)) || null;
+      a.slug === where.slug
+      && String(db.blogs[0]._id) === String(where.site)
+      && (!ids || ids.some(id => String(id) === String(a.campaign)))) || null;
   };
 
   BlogSite.updateOne = async (where, update) => {
@@ -964,6 +987,151 @@ test('AND A FAILED WRITE NEVER COSTS THE CUSTOMER THEIR BLOG', async () => {
   } finally {
     CloudflareAccountModel.updateOne = was;
   }
+});
+
+/* ─────────── THE FRONT PAGE COMES FROM A PILLAR CAMPAIGN ───────────
+ *
+ * Edwin, 23 October: *"I want only pillar articles to be eligible to be the
+ * front page."* It is how he already works — the pillar campaign is the
+ * first thing he builds on a blog and the front page is set from it — and
+ * the picker was the only part of the app that did not know.
+ *
+ * It fixes the unbounded dropdown as a side effect. 171 <option> elements
+ * became roughly 30, the page stops fetching every article to draw a
+ * select, and the control stops growing with the blog.
+ *
+ * WHICH FORCES THE ARTICLE COUNT TO MOVE IN THE SAME COMMIT. The button
+ * reading "171 articles" was `articles.length`, honest only because the
+ * page happened to load every article FOR THE DROPDOWN. Narrow the dropdown
+ * and that number silently becomes "how many the dropdown offers" while
+ * still reading as "how many exist". The comment above blogPageSpec() has
+ * said so since the Articles screen shipped.
+ */
+
+const PILLAR = { _id: 'c-pillar', name: 'Main pillar', status: 'completed', slots: [{}], isPillar: true };
+const ORDINARY = { _id: 'c-money', name: 'Water heaters', status: 'active', slots: [{}], isPillar: false };
+
+/* The default fixture's two articles, placed in a pillar campaign.
+ *
+ * THE FRONT-PAGE TESTS BELOW NEEDED THIS once the picker narrowed to
+ * pillar campaigns: with the bare default — no campaigns at all — there is
+ * nothing eligible, so there is no picker to assert on and nothing to
+ * save. The tests were not wrong; their fixture no longer described a blog
+ * that can have a front page chosen. */
+function installPillarDefaults() {
+  install({
+    campaigns: [PILLAR],
+    articles: [
+      { _id: '507f1f77bcf86cd799439031', title: 'First one', slug: 'first-one', campaign: 'c-pillar' },
+      { _id: '507f1f77bcf86cd799439032', title: 'Second one', slug: 'second-one', campaign: 'c-pillar' },
+    ],
+  });
+}
+
+function installPillar() {
+  install({
+    campaigns: [PILLAR, ORDINARY],
+    articles: [
+      { _id: '507f1f77bcf86cd799439041', title: 'Pillar one', slug: 'pillar-one', campaign: 'c-pillar' },
+      { _id: '507f1f77bcf86cd799439042', title: 'Pillar two', slug: 'pillar-two', campaign: 'c-pillar' },
+      { _id: '507f1f77bcf86cd799439043', title: 'Money one', slug: 'money-one', campaign: 'c-money' },
+    ],
+  });
+}
+
+/** The <select> the front-page form is built around. */
+function homeSelect(html) {
+  const form = html.match(/<form[^>]*\/home"[\s\S]*?<\/form>/);
+  if (!form) return null;
+
+  return (form[0].match(/<select[\s\S]*?<\/select>/) || [null])[0];
+}
+
+test('THE FRONT-PAGE PICKER OFFERS PILLAR ARTICLES ONLY', async () => {
+  installPillar();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const select = homeSelect(out.html);
+
+  assert.ok(select, 'the front-page picker is gone');
+  assert.ok(select.includes('pillar-one'), 'a pillar article is not offered');
+  assert.ok(select.includes('pillar-two'), 'a pillar article is not offered');
+
+  /* SCOPED TO THE SELECT, not searched across the page. "money-one"
+   * appears in the Articles link and anywhere else the slug is printed, so
+   * a whole-page assertion would pass for the wrong reason — which this
+   * file has been caught by three times. */
+  assert.ok(!select.includes('money-one'),
+    'an article from an ordinary campaign is offered as the front page');
+});
+
+test('AND THE ARTICLE COUNT STILL COUNTS EVERY ARTICLE', async () => {
+  /* THE HALF THAT MAKES THE NARROWING SAFE, and the whole reason the two
+   * changes are one commit.
+   *
+   * The button was articles.length. With the dropdown narrowed to pillars
+   * that is 2, on a blog holding 3 — a plausible number in the right place
+   * that nobody would question, one click from an Articles screen saying
+   * something else. */
+  installPillar();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.ok(/>\s*3 articles\s*</.test(out.html),
+    'the Articles button counts what the dropdown offers, not what exists');
+});
+
+test('A BLOG WITH NO PILLAR CAMPAIGN SAYS SO INSTEAD OF OFFERING NOTHING', async () => {
+  /* An empty <select> is a control that looks broken. The blog still has a
+   * front page — the oldest published article — and saying that is more
+   * use than a box with one entry in it. */
+  install({
+    campaigns: [ORDINARY],
+    articles: [{ _id: '507f1f77bcf86cd799439043', title: 'Money one', slug: 'money-one', campaign: 'c-money' }],
+  });
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.strictEqual(homeSelect(out.html), null, 'it offered an empty dropdown');
+  assert.ok(/pillar campaign/i.test(out.html), 'it does not say why there is nothing to pick');
+  assert.ok(/oldest/i.test(out.html), 'it does not say what the front page is meanwhile');
+});
+
+test('AND SAVING A NON-PILLAR ARTICLE IS REFUSED', async () => {
+  /* THE ENFORCEMENT. The picker is a <select>, so in a browser the value
+   * is always one of the options — which is exactly why the handler cannot
+   * trust it. A POST is a POST. */
+  installPillar();
+
+  const out = await call(handler('post', '/static-blogs/:id/home'),
+    req({ params: { id: BLOG_ID }, body: { homeSlug: 'money-one' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.ok(!db.siteUpdates.some(u => u.update && u.update.$set && 'homeSlug' in u.update.$set),
+    'a non-pillar article was stored as the front page');
+});
+
+test('AND SAVING A PILLAR ONE IS ACCEPTED', async () => {
+  installPillar();
+
+  const out = await call(handler('post', '/static-blogs/:id/home'),
+    req({ params: { id: BLOG_ID }, body: { homeSlug: 'pillar-two' } }));
+
+  assert.ok(out.redirected, `it refused a pillar article: ${out.status}`);
+  assert.ok(db.siteUpdates.some(u => u.update.$set.homeSlug === 'pillar-two'),
+    'the choice was not stored');
+});
+
+test('AND "OLDEST PUBLISHED ARTICLE" IS STILL A CHOICE', async () => {
+  /* Empty means "whichever is oldest", which is also what an unset blog
+   * does. Tightening the validation must not make clearing it impossible. */
+  installPillar();
+
+  const out = await call(handler('post', '/static-blogs/:id/home'),
+    req({ params: { id: BLOG_ID }, body: { homeSlug: '' } }));
+
+  assert.ok(out.redirected, 'it refused to clear the front page');
+  assert.ok(db.siteUpdates.some(u => '' === u.update.$set.homeSlug));
 });
 
 test('a blog with no name or no domain is refused', async () => {
@@ -4211,7 +4379,7 @@ test('THE PICKER LISTS THIS BLOG\'S ARTICLES, AND THE CURRENT CHOICE IS SELECTED
    * domain. The choice is on the BLOG rather than on a campaign, because a
    * blog can have several campaigns and a per-campaign flag would let two
    * of them claim the root with nothing to decide between them. */
-  install();
+  installPillarDefaults();
   db.blogs[0].homeSlug = 'second-one';
 
   const out = await call(handler('get', '/static-blogs/:id'));
@@ -4236,7 +4404,7 @@ test('THE PICKER LISTS THIS BLOG\'S ARTICLES, AND THE CURRENT CHOICE IS SELECTED
 });
 
 test('and it is scoped to this blog', async () => {
-  install();
+  installPillarDefaults();
   await call(handler('get', '/static-blogs/:id'));
 
   assert.strictEqual(String(db.postFindWhere.site), BLOG_ID,
@@ -4253,7 +4421,7 @@ test('with no articles yet, the picker is not shown at all', async () => {
 });
 
 test('SAVING IT STORES THE SLUG ON THE BLOG', async () => {
-  install();
+  installPillarDefaults();
 
   const out = await call(handler('post', '/static-blogs/:id/home'),
     req({ body: { homeSlug: 'second-one' } }));
@@ -4265,7 +4433,7 @@ test('SAVING IT STORES THE SLUG ON THE BLOG', async () => {
 });
 
 test('and empty is a real choice, meaning whichever is oldest', async () => {
-  install();
+  installPillarDefaults();
   db.blogs[0].homeSlug = 'second-one';
 
   await call(handler('post', '/static-blogs/:id/home'), req({ body: { homeSlug: '' } }));
@@ -4280,7 +4448,7 @@ test('AN ARTICLE THAT IS NOT ON THIS BLOG IS REFUSED', async () => {
    * check the field stores any string, including another blog's slug: not
    * a leak, but a setting that can never come true and shows as selected
    * for ever. */
-  install();
+  installPillarDefaults();
 
   const out = await call(handler('post', '/static-blogs/:id/home'),
     req({ body: { homeSlug: 'from-another-blog' } }));

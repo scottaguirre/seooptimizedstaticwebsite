@@ -923,22 +923,25 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
  * no header, no sidebar, no doctype. The existing suite caught it on the
  * first run, which is the entire reason /static-blogs has a suite.
  */
-function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', status = 200, suggestions = [] }) {
-  /* THE ARTICLE COUNT IS articles.length, AND IT IS WATCHED.
+function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, form = {}, notice = '', status = 200, suggestions = [] }) {
+  /* `articles` AND `articleCount` ARE NOW DIFFERENT NUMBERS, DELIBERATELY.
    *
-   * It was briefly a parameter of its own, so the count could come from a
-   * countDocuments() while the list stayed a list. Mutation killed that
-   * idea rather than the code: nothing passed it, so the parameter and its
-   * default were an untested branch dressed up as foresight.
+   * `articles` is the front-page picker's list: pillar campaigns only,
+   * since 23 October. `articleCount` is every article on the blog, from
+   * countDocuments().
    *
-   * The two are the same number today because the front-page dropdown names
-   * every article, so this page loads every article. IF THAT DROPDOWN IS
-   * EVER CAPPED — and it should be; 171 <option> elements is why it is in
-   * CLAUDE.md — then articles.length silently becomes "how many the dropdown
-   * offers" while still reading as "how many exist", and the button below
-   * starts understating the blog. At that point the count must come from
-   * countDocuments(), and this comment is the warning that it has to move
-   * in the same commit. */
+   * THEY USED TO BE THE SAME, and the count was articles.length — honest
+   * only because the dropdown named every article, so the page loaded
+   * every article. The warning that used to sit here said that narrowing
+   * the dropdown without moving the count would make the button read "30
+   * articles" on a blog holding 171: a plausible number in exactly the
+   * right place, one click from an Articles screen saying otherwise.
+   *
+   * Both moved in the same commit, which is what that warning asked for.
+   *
+   * THE DEFAULT OF 0 IS NOT FORESIGHT THIS TIME. An earlier attempt at
+   * this parameter was killed by mutation because nothing passed it — a
+   * default dressed up as an option. All three call sites pass it now. */
 
   /* THE SUGGESTIONS, AS A LIST TO TICK RATHER THAN TEXT TO EDIT.
    *
@@ -1233,7 +1236,17 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
       <h2 class="h4 mt-5 mb-3">Campaigns</h2>
       ${planned}
 
-      ${articles.length ? `
+      ${/* GUARDED ON articleCount, NOT ON `articles` — and this nearly went
+            wrong. This conditional wraps everything from here to the
+            front-page form: Publish, Timezone, Articles, Search Console.
+            It means "has this blog written anything yet".
+
+            `articles` stopped meaning that on 23 October — it is the
+            pillar-campaign list now. Leaving the guard on it would have
+            hidden Publish, the timezone and the verification tag from any
+            blog without a pillar campaign, which is a working blog that
+            simply organises its campaigns differently. */ ''}
+      ${articleCount ? `
       <h2 class="h4 mt-5 mb-3">Publish</h2>
 
       <!-- FOUR BUTTONS, ONE FORM, AND TWO SEPARATE QUESTIONS:
@@ -1409,7 +1422,7 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
 
       <p>
         <a href="/static-blogs/${blog._id}/articles" class="btn btn-outline-light">
-          ${articles.length} ${1 === articles.length ? 'article' : 'articles'}
+          ${articleCount} ${1 === articleCount ? 'article' : 'articles'}
         </a>
         <span class="text-white-50 small ms-2">
           Edits reach the live site the next time you publish.
@@ -1450,6 +1463,17 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
 
       <h2 class="h4 mt-5 mb-3">Front page</h2>
 
+      ${articles.length ? '' : `
+      <!-- NO PILLAR CAMPAIGN, SO NOTHING TO PICK FROM — and saying that is
+           more use than an empty <select>, which reads as a broken
+           control. The blog still HAS a front page; homeOf() falls back to
+           the oldest live article and always has. -->
+      <p class="text-white-50">
+        No pillar campaign on this blog yet, so there is nothing to choose
+        from. The <strong>oldest published article</strong> is the front
+        page until there is.
+      </p>`}
+
       <!-- WHY THERE IS A PICKER AT ALL. This blog has no listing page, so
            something has to answer for the bare domain. One article is
            served at / and that article is NOT also served at its own slug
@@ -1459,6 +1483,7 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
            CHOSEN ON THE BLOG, not on a campaign. A blog can have several
            campaigns, and a per-campaign flag would let two of them claim
            the root with nothing to decide between them. -->
+      ${articles.length ? `
       <form method="post" action="/static-blogs/${blog._id}/home" class="mb-4">
         ${form.csrfField || ''}
 
@@ -1481,7 +1506,7 @@ function blogPageSpec({ blog, campaigns, articles = [], form = {}, notice = '', 
             <button class="btn btn-outline-light" type="submit">Save</button>
           </div>
         </div>
-      </form>` : ''}
+      </form>` : ''}` : ''}
 
       <h2 class="h4 mt-5 mb-3">Plan a campaign</h2>
 
@@ -1875,12 +1900,42 @@ async function blogAndCampaigns(req) {
    * one's editor. The link needs the id, which Mongoose returns anyway,
    * and the title — never the sections. A 52-post blog's full text to
    * draw a table of titles is the thing this select exists to avoid. */
-  const articles = await BlogPost.find({ site: blog._id })
-    .select('title slug')
-    .sort({ createdAt: 1 })
-    .lean();
+  /* PILLAR CAMPAIGNS ONLY — 23 October, on Edwin's instruction: "I want
+   * only pillar articles to be eligible to be the front page."
+   *
+   * It is how he already works. The pillar campaign is the first thing he
+   * builds on a blog and the front page is set from it; the picker was the
+   * only part of the app that did not know.
+   *
+   * IT ALSO ENDS THE UNBOUNDED DROPDOWN. 171 <option> elements on the
+   * plumbing blog became about thirty, and the control stops growing with
+   * the blog — the pillar campaigns are what grow it now, and there are
+   * one or two of those.
+   *
+   * THE CAMPAIGNS ARE ALREADY HERE, so this costs no query. `isPillar` is
+   * in the select above. */
+  const pillarIds = campaigns.filter(c => c.isPillar).map(c => c._id);
 
-  return { blog, campaigns, articles };
+  const articles = pillarIds.length
+    ? await BlogPost.find({ site: blog._id, campaign: { $in: pillarIds } })
+        .select('title slug')
+        .sort({ createdAt: 1 })
+        .lean()
+    : [];
+
+  /* AND THE COUNT NOW COMES FROM THE DATABASE, IN THE SAME COMMIT.
+   *
+   * The Articles button was `articles.length`, honest only because this
+   * page used to load every article FOR THE DROPDOWN. Narrowing that list
+   * without moving the count would make the button read "30 articles" on a
+   * blog holding 171 — a plausible number in exactly the right place, one
+   * click from an Articles screen saying something else.
+   *
+   * The comment above blogPageSpec() has warned about this since the
+   * Articles list moved to its own screen. This is that commit. */
+  const articleCount = await BlogPost.countDocuments({ site: blog._id });
+
+  return { blog, campaigns, articles, articleCount };
 }
 
 /* -------------------------------------------------------------------------
@@ -2024,6 +2079,7 @@ router.get('/static-blogs/:id', requireAuth, async (req, res) => {
       blog: found.blog,
       campaigns: found.campaigns,
       articles: found.articles,
+      articleCount: found.articleCount,
       form: { csrfField: res.locals.csrfField },
     }));
 
@@ -2052,7 +2108,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
     const found = await blogAndCampaigns(req);
     if (!found) return notFound(res);
 
-    const { blog, campaigns, articles } = found;
+    const { blog, campaigns, articles, articleCount } = found;
 
     /* WHAT THE PERSON TYPED, CARRIED BACK WHATEVER HAPPENS. A suggestion
      * that cleared the form would cost them the schedule and the campaign
@@ -2121,6 +2177,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
         blog,
         campaigns,
         articles,
+        articleCount,
         form,
         status: result.code,
         notice: `<div class="alert alert-warning">${esc(result.body.error)}</div>`,
@@ -2161,6 +2218,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
       blog,
       campaigns,
       articles,
+      articleCount,
       form,
       suggestions: topics,
       notice: `
@@ -3435,12 +3493,39 @@ router.post('/static-blogs/:id/home', requireAuth, async (req, res) => {
      * falls back when it misses) but it would store a setting that can
      * never come true and show it selected in the dropdown for ever. */
     if (wanted) {
-      const exists = await BlogPost.exists({ site: blog._id, slug: wanted });
+      /* AND IT HAS TO COME FROM A PILLAR CAMPAIGN — 23 October.
+       *
+       * The picker only offers pillar articles, which is exactly why this
+       * has to check: a <select> constrains a browser and nothing else. A
+       * POST is a POST, and a rule is only a rule where it is enforced.
+       *
+       * THE CAMPAIGN FILTER RIDES ALONG on the existence check that was
+       * already here, so this is one extra query, not two.
+       *
+       * No pillar campaign means nothing is eligible, and `exists` stays
+       * null rather than asking Mongo about an empty $in. */
+      const pillars = await BlogCampaign.find({ site: blog._id, isPillar: true })
+        .select('_id')
+        .lean();
+
+      const exists = pillars.length
+        ? await BlogPost.exists({
+            site: blog._id,
+            slug: wanted,
+            campaign: { $in: pillars.map(c => c._id) },
+          })
+        : null;
+
       if (!exists) {
         return send(res, page({
           status: 400,
-          title: 'No such article',
-          body: `<h1>That article is not on this blog</h1>
+          title: 'Not a pillar article',
+          body: `<h1 class="h3">The front page has to come from a pillar campaign</h1>
+                 <p class="lead">
+                   That article is either not on this blog or belongs to an
+                   ordinary campaign. Pick one from a pillar campaign, or
+                   leave it on the oldest published article.
+                 </p>
                  <a href="/static-blogs/${blog._id}" class="btn btn-primary mt-3">Back</a>`,
         }));
       }

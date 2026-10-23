@@ -47,6 +47,17 @@
 'use strict';
 
 const { cfApi, scrub } = require('./deploy');
+
+/* THE PRODUCT'S NAME, IMPORTED RATHER THAN TYPED — and test-brand-name.js
+ * caught it typed. These three strings are labels on CLOUDFLARE's side:
+ * the list description, the rule description and the ruleset name, sitting
+ * in somebody's dashboard saying what put them there.
+ *
+ * They are still the brand. This app has been renamed twice, and each
+ * rename left strings behind in files nobody thought to search — which is
+ * the whole reason APP_NAME lives in a module that takes no dependencies,
+ * so code that only wants a name only has to take a name. */
+const { APP_NAME } = require('../../pageTitle');
 const { log } = require('../../logger');
 
 /**
@@ -112,10 +123,19 @@ async function findRedirectList({ name = LIST_NAME, fetchImpl = fetch, creds } =
   );
 
   if (!list) {
+    /* `noList` SEPARATES "THERE IS NO LIST" FROM "I COULD NOT ASK".
+     *
+     * ensureRedirectList() creates one through this branch, and must not
+     * create one because a token was revoked or Cloudflare was down — that
+     * would be a POST fired at an account we cannot read, on the strength
+     * of a question that was never answered.
+     *
+     * Same shape as findZone's `noZone`, for the same reason: a failure to
+     * ask is not an answer. */
     return {
       ok: false,
-      error: `No redirect list called "${name}". Create it in the dashboard `
-        + 'under Bulk Redirects, add a rule that uses it, then deploy again.',
+      noList: true,
+      error: `No redirect list called "${name}".`,
     };
   }
 
@@ -296,6 +316,136 @@ async function removeRedirect({ listId, source, expected, fetchImpl = fetch, wai
   return { ok: true, removed: true, completed: !!settled.completed };
 }
 
+/** The ruleset phase a Bulk Redirect rule lives in. */
+const REDIRECT_PHASE = 'http_request_redirect';
+
+/**
+ * The account's redirect list, created if it is not there.
+ *
+ * WHY THE APP MAKES IT RATHER THAN EDWIN — 23 October.
+ *
+ * Every Cloudflare account in the pool needs its own list; they are
+ * account-scoped and cannot be shared. That meant ten accounts, ten trips
+ * to the dashboard, and one chance each to forget — and forgetting is
+ * SILENT, because a blog with no redirect still deploys and still works.
+ * It just also answers on pages.dev, which is the duplicate the list
+ * exists to remove.
+ *
+ * CREATED ONLY ON A GENUINE MISS. `noList` is what says the account has no
+ * such list; any other failure means the question was not answered, and
+ * POSTing on the strength of that creates a list inside an account we
+ * could not read.
+ */
+async function ensureRedirectList({ name = LIST_NAME, fetchImpl = fetch, creds } = {}) {
+  const found = await findRedirectList({ name, fetchImpl, creds });
+
+  /* ONE GUARD, NOT TWO, AND MUTATION IS WHY.
+   *
+   * This had `if (found.ok) return found;` above it — the happy path,
+   * spelled out. Deleting that changed nothing any test could see, because
+   * `!found.noList` is already true for a list that WAS found. A line that
+   * cannot be observed is a line somebody will one day "fix" in the wrong
+   * direction.
+   *
+   * What matters: ANYTHING BUT A GENUINE MISS COMES STRAIGHT BACK — the
+   * list we found, or the failure that stopped us finding out. Only
+   * `noList` falls through to create one. */
+  if (!found.noList) return found;
+
+  const made = await cfApi(`${account(creds)}/rules/lists`, {
+    method: 'POST',
+    fetchImpl,
+    creds,
+    body: {
+      name,
+      kind: 'redirect',
+      description: `${APP_NAME}: each blog's pages.dev address sent to its own domain.`,
+    },
+  });
+
+  if (!made.ok) return { ok: false, error: made.error };
+
+  const id = (made.result || {}).id;
+
+  /* A 200 WITH NO ID IS NOT A LIST. Returning ok here would send the
+   * caller on to POST items at `/rules/lists/undefined/items`. */
+  if (!id) return { ok: false, error: 'Cloudflare created the list but did not say its id.' };
+
+  return { ok: true, id, name, created: true };
+}
+
+/**
+ * The Bulk Redirect rule that switches the list on.
+ *
+ * A LIST ON ITS OWN DOES NOTHING, and that is what catches people out —
+ * Edwin built a list, saw it marked Active, and nothing redirected. The
+ * rule is what applies it.
+ *
+ * ADDS ONE RULE, NEVER REPLACES THE SET. Cloudflare's PUT on a ruleset
+ * replaces every rule in it, so sending back a list built from what we
+ * happened to read would delete any other redirect rule on that account
+ * the moment that read was incomplete. POST /rules adds one and leaves the
+ * rest alone — on an account that may be a client's, that distinction is
+ * the whole difference between a feature and an incident.
+ *
+ * ONLY CALLED WHEN THE LIST WAS JUST CREATED. A list made by hand with no
+ * rule is not healed by this; it is the state Edwin had, and now that the
+ * app makes both together it is not a state anything new can reach.
+ */
+async function ensureRedirectRule({ name = LIST_NAME, fetchImpl = fetch, creds } = {}) {
+  const rule = {
+    /* A STABLE ref, so a later run recognises its own rule instead of
+     * adding a second one beside it. */
+    ref: `three_comets_${name}`,
+    expression: `http.request.full_uri in $${name}`,
+    description: `${APP_NAME}: pages.dev to the blog's own domain`,
+    action: 'redirect',
+    action_parameters: {
+      from_list: { name, key: 'http.request.full_uri' },
+    },
+  };
+
+  const entry = await cfApi(
+    `${account(creds)}/rulesets/phases/${REDIRECT_PHASE}/entrypoint`,
+    { fetchImpl, creds }
+  );
+
+  /* NO ENTRYPOINT YET is the ordinary case on a fresh account: the phase
+   * has no ruleset until something puts a rule in it. */
+  if (!entry.ok) {
+    const made = await cfApi(`${account(creds)}/rulesets`, {
+      method: 'POST',
+      fetchImpl,
+      creds,
+      body: {
+        name: `${APP_NAME} blog redirects`,
+        kind: 'root',
+        phase: REDIRECT_PHASE,
+        rules: [rule],
+      },
+    });
+
+    return made.ok ? { ok: true, created: true } : { ok: false, error: made.error };
+  }
+
+  const current = (entry.result && entry.result.rules) || [];
+
+  const already = current.some(r =>
+    r && r.action_parameters && r.action_parameters.from_list
+    && r.action_parameters.from_list.name === name);
+
+  if (already) return { ok: true, already: true };
+
+  const id = (entry.result || {}).id;
+  if (!id) return { ok: false, error: 'Cloudflare did not say which ruleset to add the rule to.' };
+
+  const put = await cfApi(`${account(creds)}/rulesets/${encodeURIComponent(id)}/rules`, {
+    method: 'POST', fetchImpl, creds, body: rule,
+  });
+
+  return put.ok ? { ok: true, added: true } : { ok: false, error: put.error };
+}
+
 /**
  * The whole job for one blog, in the shape the deploy wants.
  *
@@ -308,8 +458,24 @@ async function redirectPagesDev({ project, domain, requestId, fetchImpl = fetch,
   const source = `${String(project || '')}.pages.dev`;
   const target = `https://${String(domain || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
 
-  const list = await findRedirectList({ fetchImpl, creds });
+  const list = await ensureRedirectList({ fetchImpl, creds });
   if (!list.ok) return { ok: false, error: list.error };
+
+  /* THE RULE GOES IN BESIDE A LIST WE JUST MADE, because a list with no
+   * rule does nothing — and an account set up entirely by this function
+   * would otherwise be set up wrong, silently, in exactly the way this
+   * change exists to stop. */
+  if (list.created) {
+    const rule = await ensureRedirectRule({ fetchImpl, creds });
+
+    if (!rule.ok) {
+      return {
+        ok: false,
+        error: 'The redirect list was created but the rule was not, so nothing '
+          + `redirects yet: ${rule.error}`,
+      };
+    }
+  }
 
   const added = await addRedirect({ listId: list.id, source, target, fetchImpl, creds });
 
@@ -347,6 +513,7 @@ async function releasePagesDev({ project, domain, requestId, fetchImpl = fetch, 
 }
 
 module.exports = {
+  ensureRedirectList, ensureRedirectRule, REDIRECT_PHASE,
   findRedirectList, addRedirect, removeRedirect, listItems, waitForOperation,
   redirectPagesDev, releasePagesDev,
   LIST_NAME,

@@ -2364,6 +2364,78 @@ what has to become argument-passing, and those tests are the spec for it.
     That is the upside, and it is also why the angle/shape work shipped
     first.
 
+### CLOSED 23 October 2026 — the pages.dev redirect went to the wrong account
+
+**The FOURTH instance of the same wiring gap, in one week.**
+
+Edwin clicked a blog's `.pages.dev` address and it did not redirect to the
+custom domain. Both call sites in `deploy.js`:
+
+    774:  const pagesDev = await sendRedirect({ project, domain, fetchImpl });
+    902:  const pagesDev = await dropRedirect({ project, domain, fetchImpl });
+
+`redirectPagesDev` and `releasePagesDev` both ACCEPT `creds`. Neither call
+passed one, so every pool blog's redirect was written into the SERVER'S Bulk
+Redirect list. Not wrong — **inert**. The lists are account-scoped and a
+`.pages.dev` hostname is served by the account its Pages project lives on,
+so a perfectly valid entry sat somewhere the traffic never passes.
+
+**Nothing complained, by design.** `redirectPagesDev` never fails a deploy
+("a blog with no redirect is a working blog with a duplicate-content
+problem"), and the write SUCCEEDS — against the wrong account.
+
+The release half is worse: removing from the wrong list removes nothing and
+reports success, so **a deleted blog's redirect survives its own deletion**,
+pointing at a domain that no longer serves anything.
+
+Confirmed from Edwin's dashboard: the southbayhomeinspections blog's entry
+was sitting in the scottaguirre170283 list.
+
+**WHY THE TEST THAT EXISTED FOR THIS DID NOT CATCH IT**
+
+`test-cloudflare-deploy.js` already had a test named *"pointDomainAtProject
+CARRIES THEM THROUGH EVERY STEP IT TAKES"*, written to prove credentials
+reach every step. It passed throughout.
+
+It stubbed the redirect step with `async () => ({ ok: true })` — **a stub
+that ignores its arguments and records nothing**. Stubbing was right; the
+module is required lazily to break a cycle and a test should not reach
+through a module cache. Stubbing and then never asking what the stub was
+handed is what made a test named for every step a test of two steps in three.
+
+    A STUB THAT RECORDS NOTHING CANNOT FAIL. It can only make the test pass.
+
+The stub now records. Four tests, six mutants, six killed. A sweep of
+`deploy.js` found fifteen helpers taking `creds` and zero call sites
+missing it.
+
+### CLOSED 23 October 2026 — the 302 that was not there
+
+**A measurement lesson, and the mistake was mine.**
+
+I fetched two redirect URLs with my own fetch tool, got `302 Found` both
+times, and reasoned from it: Google shows the SOURCE for a 302, therefore
+the duplicate stays indexed, therefore the whole `blog_pages_dev` mechanism
+does not do its job. I ranked Edwin's options around it and told him the
+configured 301 was being ignored.
+
+Edwin ran `curl -s -o /dev/null -D -` against three of them. **All 301**,
+correct `location:` headers, path preserved.
+
+My tool was misreporting the status. The "preserve query string is being
+ignored" observation came from the same reading and is equally void.
+
+    ONE READING FROM MY OWN TOOLING IS NOT A MEASUREMENT.
+
+Especially not when the conclusion is "a thing we just built does not
+work". The user has `curl` and a browser — the actual clients, talking to
+the actual server. Ask for a second instrument BEFORE building an argument,
+not after being contradicted by one.
+
+The `creds` bug above was real, and it is worth noticing why: it was
+confirmed by an entry visible in Edwin's Cloudflare dashboard, not by
+anything my fetch tool said.
+
 ### CLOSED 22 October 2026 — the zone check was asking the WRONG ACCOUNT
 
 **The first thing Edwin hit the first time he used the pool, and the third
@@ -2509,26 +2581,74 @@ that turns the value into HTML, and a page whose safety depends on a
 function three modules away continuing to behave is a page one refactor from
 rendering a live Cloudflare token.
 
-### QUEUED — an account's project count is written once and never again
+### ~~QUEUED~~ CLOSED 23 October 2026 — the project count, and the 101st blog
 
-**Half closed on 22 October.** `verifyAccount()` has to list the account's
-Pages projects to prove the token works on it, so the count is already in
-hand when a row is created — it is stored there with `projectsCountedAt`
-rather than left at a placeholder `0`. It reads `result_info.total_count`,
-not `result.length`: Cloudflare's list endpoints page, and counting the
-page would report 25 projects on an account holding 140, which on that
-screen reads as 75 free slots that do not exist.
+**Both halves done.** Edwin's Aguirre Negro account read `0 / 100` with a
+blog already published on it: the count was taken when the account was
+added and nothing ever looked again.
 
-Two things are still missing and they are separate:
+    A NUMBER THAT IS RIGHT ON DAY ONE AND SILENTLY WRONG AFTERWARDS IS
+    WORSE THAN NO NUMBER. It is read as current, and the nearlyFull warning
+    hanging off it can never fire.
 
-- **A refresh.** The number is true on the day the account is added and
-  stale forever after. A button on the admin screen that re-counts each
-  account and updates `projectsCountedAt`. Cached rather than live because
-  the screen lists every account and a live count is one round trip a row.
-- **A refusal.** Nothing stops a customer creating the 101st blog on an
-  account. Cloudflare rejects it, and right now that surfaces as a wrangler
-  error on the customer's screen rather than as "that domain is full, pick
-  another".
+**The refresh** — `recountAccount()` in `accounts.js`, plus a button on
+`/admin/blog-domains`. It opens the sealed token, counts, and stores the
+number with `projectsCountedAt`. The screen shows the age beside every
+count — *checked just now*, *checked 3 days ago*, **never checked** — and
+that last one is said out loud rather than left blank, because an empty
+space beside a number reads as "just checked": the same lie by omission.
+
+**It reports instead of throwing, unlike `credsFor`,** and the difference is
+the question each answers. `credsFor` is asked *where does THIS BLOG deploy
+to* — one right answer, so an unreadable account must stop the deploy.
+`recountAccount` is asked *how full is each of these ten* — one unreadable
+row is no reason to abandon the other nine.
+
+**A failed count writes NOTHING, not even the timestamp.** Stamping
+`projectsCountedAt` on a failure makes a stale number look freshly checked:
+the same lie, told more convincingly than before.
+
+**The refusal** — in the create handler, `staticBlogsRoute.js`. Cloudflare
+caps Pages projects at 100 and one blog is one project. Before this the app
+did not know: the customer pressed Create and CLOUDFLARE refused, in the
+form of a wrangler stack trace, in front of the one person who could do
+nothing about it.
+
+**Asked LIVE, not read off the row.** The stored count is a snapshot for the
+admin screen and can be weeks old; a refusal built on a stale number refuses
+people who have room. One request, one account, at the only moment where
+being wrong has a price. The count it fetches is then written down — creating
+a blog is the moment that number changes, so the admin screen self-heals
+between manual refreshes, for free.
+
+**And a check that cannot run lets the customer through.** A revoked token,
+an outage, a rate limit all come back `ok:false`; refusing on that basis
+turns a transient Cloudflare problem into "you cannot create a blog" for
+somebody who has done nothing wrong and can see nothing to fix. Same rule as
+the zone check: *a failure to ask is not an answer.*
+
+**TWO MUTANTS SURVIVED, AND BOTH ARE WORTH REMEMBERING.**
+
+**One: the guard that was invisible because its own catch swallowed the
+evidence.** Changing `if (room.ok)` to `if (true)` passed every test. A
+failed check has no `projects`, the capacity arithmetic reads that as 0
+used, decides there is room, and lets the customer through — the right
+outcome for entirely the wrong reason. It also writes `projects: undefined`,
+clobbering a good count, and the `try/catch` around that write — there so
+bookkeeping never costs a customer their blog — hid the throw. The missing
+assertion was **a failed check writes nothing**.
+
+**Two: the same mutually-covering hole as `credsFor`, written again next
+door.** Removing `recountAccount`'s "no token stored" guard changed nothing:
+without it `open('')` throws, the catch produces a failure naming the
+account, and both paths rejected identically. They mean opposite things —
+*"has no API token stored"* means fix that one row; *"could not be read"*
+means `CF_TOKEN_KEY` changed and EVERY account needs re-entering. `credsFor`
+had this hole, it was found this way, and its comment says so. Pinning the
+rejection is not enough; **pin the message**.
+
+Suites: `test-cloudflare-accounts` 25 → 33, `test-blog-domains` 26 → 36,
+`test-static-blogs` 224 → 233.
 
 ### ~~QUEUED~~ CLOSED 21 October 2026 — fold the campaigns table
 
