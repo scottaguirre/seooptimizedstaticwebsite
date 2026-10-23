@@ -359,6 +359,20 @@ function install(over = {}) {
     return chain;
   };
 
+  /* ONE DOCUMENT, BY CAMPAIGN AND SLOT — the serving-article lookup. The
+   * page works out WHICH slot is answering for the domain from the
+   * campaigns it already has, then asks for that one post's title. */
+  BlogPost.findOne = (where) => {
+    db.postFindOneWhere = where;
+
+    const found = db.articles.find(a =>
+      (!where.campaign || String(a.campaign) === String(where.campaign))
+      && (undefined === where.slotIndex || a.slotIndex === where.slotIndex)) || null;
+
+    const chain = { select: () => chain, lean: async () => found };
+    return chain;
+  };
+
   BlogPost.exists = async (where) => {
     db.postExistsWhere = where;
 
@@ -1039,29 +1053,21 @@ function installPillar() {
   });
 }
 
-/** The <select> the front-page form is built around. */
-function homeSelect(html) {
-  const form = html.match(/<form[^>]*\/home"[\s\S]*?<\/form>/);
-  if (!form) return null;
-
-  return (form[0].match(/<select[\s\S]*?<\/select>/) || [null])[0];
-}
-
 test('THE FRONT-PAGE PICKER OFFERS PILLAR ARTICLES ONLY', async () => {
   installPillar();
 
   const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
-  const select = homeSelect(out.html);
+  const block = picker(out.html);
 
-  assert.ok(select, 'the front-page picker is gone');
-  assert.ok(select.includes('pillar-one'), 'a pillar article is not offered');
-  assert.ok(select.includes('pillar-two'), 'a pillar article is not offered');
+  assert.ok(block, 'the front-page picker is gone');
+  assert.ok(block.includes('pillar-one'), 'a pillar article is not offered');
+  assert.ok(block.includes('pillar-two'), 'a pillar article is not offered');
 
-  /* SCOPED TO THE SELECT, not searched across the page. "money-one"
-   * appears in the Articles link and anywhere else the slug is printed, so
-   * a whole-page assertion would pass for the wrong reason — which this
-   * file has been caught by three times. */
-  assert.ok(!select.includes('money-one'),
+  /* SCOPED TO THE FRONT PAGE BLOCK, not searched across the page.
+   * "money-one" appears wherever else that slug is printed, so a
+   * whole-page assertion would pass for the wrong reason — which this file
+   * has been caught by three times. */
+  assert.ok(!block.includes('money-one'),
     'an article from an ordinary campaign is offered as the front page');
 });
 
@@ -1092,9 +1098,390 @@ test('A BLOG WITH NO PILLAR CAMPAIGN SAYS SO INSTEAD OF OFFERING NOTHING', async
 
   const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
 
-  assert.strictEqual(homeSelect(out.html), null, 'it offered an empty dropdown');
+  assert.ok(!/<details/.test(picker(out.html) || ''), 'it offered an empty list');
+  assert.ok(!/name="homeSlug"/.test(out.html), 'it offered a control with nothing in it');
   assert.ok(/pillar campaign/i.test(out.html), 'it does not say why there is nothing to pick');
   assert.ok(/oldest/i.test(out.html), 'it does not say what the front page is meanwhile');
+});
+
+/* ───────── THE PICKER IS A LIST YOU CAN READ, NOT A DROPDOWN ─────────
+ *
+ * Edwin, 23 October: *"besides number them I want the article be linked to
+ * the actual article so I can click it and check them."*
+ *
+ * WHICH ENDS THE <select>. Options are plain text — a dropdown cannot hold
+ * a link, cannot be numbered without putting digits in the label, and
+ * cannot be read without being opened. Choosing a front page from thirty
+ * titles you cannot click is choosing blind.
+ *
+ * FOLDED, because thirty rows above "Plan a campaign" is the crowding the
+ * Articles screen was moved out to fix. Shut, it says which article is the
+ * front page; open, it is the list.
+ */
+
+const DAY = 24 * 60 * 60 * 1000;
+
+const PILLAR_SCHEDULED = {
+  _id: 'c-pillar',
+  name: 'Main pillar',
+  status: 'active',
+  isPillar: true,
+  slots: [
+    { index: 0, publishAt: new Date(Date.now() - DAY), status: 'ready' },
+    { index: 1, publishAt: new Date(Date.now() + DAY), status: 'ready' },
+  ],
+};
+
+function installPicker(over = {}) {
+  install({
+    campaigns: [PILLAR_SCHEDULED, ORDINARY],
+    articles: [
+      { _id: '507f1f77bcf86cd799439041', title: 'Already live', slug: 'already-live', campaign: 'c-pillar', slotIndex: 0 },
+      { _id: '507f1f77bcf86cd799439042', title: 'Not yet', slug: 'not-yet', campaign: 'c-pillar', slotIndex: 1 },
+      { _id: '507f1f77bcf86cd799439043', title: 'Money one', slug: 'money-one', campaign: 'c-money', slotIndex: 0 },
+    ],
+  });
+
+  db.blogs[0].siteUrl = 'blog.example.com';
+  db.blogs[0].lastDeployAt = over.neverPublished ? null : new Date(Date.now() - DAY);
+  if ('homeSlug' in over) db.blogs[0].homeSlug = over.homeSlug;
+}
+
+/* JUST THE LINE ABOVE THE FOLD, and it has to be just that line.
+ *
+ * Every article's title appears in the list inside the <details>, so
+ * `block.includes('Already live')` is true whatever the summary says.
+ * Three of these assertions passed that way on the first run — the fourth
+ * time this file has been caught by a match that was true for the wrong
+ * reason. */
+function frontLine(html) {
+  const block = picker(html) || '';
+  const at = block.indexOf('<details');
+
+  return at < 0 ? block : block.slice(0, at);
+}
+
+/** The folded Front page block. */
+function picker(html) {
+  const at = html.indexOf('Front page</h2>');
+  if (at < 0) return null;
+
+  const rest = html.slice(at);
+  const end = rest.indexOf('Plan a campaign');
+
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+test('THE PICKER IS A FOLD, NOT A DROPDOWN', async () => {
+  installPicker();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(block, 'the Front page section is gone');
+  assert.ok(!/<select[^>]*homeSlug/.test(block), 'it is still a dropdown');
+  assert.ok(/<details/.test(block), 'the list is not folded');
+});
+
+test('AND EVERY PILLAR ARTICLE IS NUMBERED', async () => {
+  installPicker();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(/>\s*1\s*</.test(block), 'the first article is not numbered');
+  assert.ok(/>\s*2\s*</.test(block), 'the second article is not numbered');
+});
+
+test('AND THE NUMBERS SAY WHAT THEY COUNT', async () => {
+  /* THE CLASH THIS EXISTS TO AVOID. The Articles screen numbers its rows
+   * too, over EVERY article on the blog. These number only the pillar
+   * ones. On a blog of 171 with a 30-post pillar, "7." means two different
+   * articles on two screens one click apart — both plausible, neither
+   * wrong on its own terms, and nothing saying they disagree. */
+  installPicker();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(/not the same numbering|pillar campaign/i.test(block),
+    'nothing says what these numbers count');
+});
+
+test('A LIVE ARTICLE IS A LINK TO THE LIVE ARTICLE', async () => {
+  installPicker();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(block.includes('https://blog.example.com/already-live/'),
+    'the live article is not linked to its live page');
+
+  /* A NEW TAB, because leaving this page loses the fold and whatever else
+   * was half-filled in on the campaign form below it. */
+  const link = block.match(/<a[^>]*already-live[^>]*>/)[0];
+  assert.ok(/target="_blank"/.test(link), `it navigates away: ${link}`);
+  assert.ok(/rel="[^"]*noopener/.test(link), `no rel=noopener: ${link}`);
+});
+
+test('AND AN ARTICLE THAT IS NOT LIVE YET IS NOT A LINK', async () => {
+  /* ITS PAGE DOES NOT EXIST. The article is written and scheduled; the
+   * site that was deployed does not contain it. A link would 404, which
+   * reads as a broken blog rather than as an article waiting for its
+   * day. */
+  installPicker();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(block.includes('Not yet'), 'the scheduled article is missing from the list');
+  assert.ok(!block.includes('https://blog.example.com/not-yet/'),
+    'it linked to a page that does not exist yet');
+});
+
+test('AND THE CURRENT FRONT PAGE LINKS TO THE DOMAIN, NOT TO ITS SLUG', async () => {
+  /* The front-page article is served at / and NOT at its own address —
+   * two addresses for one article is one article competing with itself.
+   * A link to /already-live/ would 404 on the very article being used as
+   * the front page. */
+  installPicker({ homeSlug: 'already-live' });
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(block.includes('"https://blog.example.com/"'),
+    'the front page does not link to the domain root');
+  assert.ok(!block.includes('https://blog.example.com/already-live/'),
+    'the front page links to an address it is not served at');
+});
+
+test('A BLOG THAT HAS NEVER BEEN PUBLISHED LINKS TO NOTHING', async () => {
+  /* Nothing is on the internet yet. Every link would 404, and thirty of
+   * them would read as thirty broken articles. */
+  installPicker({ neverPublished: true });
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(block.includes('Already live'), 'the articles are missing from the list');
+  assert.ok(!/href="https:\/\/blog\.example\.com/.test(block),
+    'it linked to a site that has never been deployed');
+});
+
+test('CHOOSING ONE IS A BUTTON CARRYING ITS SLUG', async () => {
+  /* One click, not pick-then-save. The value rides on the button, so the
+   * row you press is the choice you make.
+   *
+   * A front page IS set here, deliberately. With nothing set, "oldest
+   * published article" is already the front page and shows the badge
+   * rather than a button — which is right, and which the first draft of
+   * this test mistook for the row being missing. */
+  installPicker({ homeSlug: 'already-live' });
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  /* A BUTTON FOR EVERY ROW THAT IS NOT ALREADY THE FRONT PAGE... */
+  assert.ok(/<button[^>]*name="homeSlug"[^>]*value="not-yet"/.test(block),
+    'there is no way to choose that article');
+  assert.ok(/<button[^>]*name="homeSlug"[^>]*value=""/.test(block),
+    '"oldest published article" can no longer be chosen');
+
+  /* ...AND NONE FOR THE ONE THAT ALREADY IS. A button offering to make
+   * the front page the front page is a control that does nothing, sitting
+   * in the one row somebody is looking for. It wears a badge instead.
+   *
+   * THE FIRST TWO DRAFTS OF THIS TEST GOT THAT BACKWARDS, twice — once
+   * expecting a button for "oldest" on a blog where oldest WAS the front
+   * page, then expecting one for the article it had just made the front
+   * page. The code was right both times. */
+  assert.ok(!/<button[^>]*value="already-live"/.test(block),
+    'the current front page is offered as a choice');
+  assert.ok(/badge[^>]*>\s*front page\s*</.test(block),
+    'nothing marks which row is the front page');
+});
+
+test('AND IT STILL POSTS TO THE SAME PLACE, SO THE PILLAR CHECK STILL RUNS', async () => {
+  installPicker();
+
+  const out = await call(handler('post', '/static-blogs/:id/home'),
+    req({ params: { id: BLOG_ID }, body: { homeSlug: 'money-one' } }));
+
+  assert.strictEqual(out.status, 400, 'the control changed and took the rule with it');
+});
+
+test('WITH NOTHING CHOSEN, THE FOLD NAMES WHAT IS ACTUALLY SERVING THE DOMAIN', async () => {
+  /* "Front page: Oldest published article" is true and tells you nothing.
+   * It also makes two different states look identical: "I have not chosen"
+   * and "I chose the oldest one deliberately".
+   *
+   * THE ANSWER COMES FROM THE SLOTS, NOT THE PICKER. homeOf() falls back
+   * to the oldest live article across EVERY campaign, pillar or not — and
+   * the page only loads pillar articles now. So the oldest live slot is
+   * worked out from the campaigns already in hand, and that one post is
+   * fetched by campaign and slot. */
+  installPicker();
+  db.blogs[0].homeSlug = '';
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  const line = frontLine(out.html);
+
+  assert.ok(/Oldest published article/.test(line), 'it no longer says the choice is the oldest');
+  assert.ok(line.includes('Already live'),
+    'it does not name the article actually answering for the domain');
+});
+
+test('AND IT ASKS FOR THE OLDEST LIVE SLOT, NOT WHATEVER IS FIRST', async () => {
+  /* THE ASSERTION ON WHAT WENT TO THE DATABASE. Naming the wrong article
+   * is worse than naming none: it is a confident answer to "what is my
+   * front page" that happens to be false. */
+  installPicker();
+  db.blogs[0].homeSlug = '';
+
+  await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.ok(db.postFindOneWhere, 'it never asked which article is serving');
+  assert.strictEqual(String(db.postFindOneWhere.campaign), 'c-pillar');
+  assert.strictEqual(db.postFindOneWhere.slotIndex, 0,
+    'it asked for a slot that is not the oldest live one');
+});
+
+test('A SCHEDULED SLOT IS NOT THE ONE SERVING THE DOMAIN', async () => {
+  /* A slot dated next month has no page on the site yet. Naming it as the
+   * front page would be describing the site somebody will have rather than
+   * the site they have. */
+  install({
+    campaigns: [{
+      _id: 'c-pillar', name: 'Main pillar', status: 'active', isPillar: true,
+      slots: [
+        { index: 0, publishAt: new Date(Date.now() + DAY), status: 'ready' },
+        { index: 1, publishAt: new Date(Date.now() - DAY), status: 'ready' },
+      ],
+    }],
+    articles: [
+      { _id: '507f1f77bcf86cd799439051', title: 'Future one', slug: 'future-one', campaign: 'c-pillar', slotIndex: 0 },
+      { _id: '507f1f77bcf86cd799439052', title: 'Past one', slug: 'past-one', campaign: 'c-pillar', slotIndex: 1 },
+    ],
+  });
+  db.blogs[0].siteUrl = 'blog.example.com';
+  db.blogs[0].lastDeployAt = new Date(Date.now() - DAY);
+  db.blogs[0].homeSlug = '';
+
+  await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.strictEqual(db.postFindOneWhere.slotIndex, 1,
+    'it named an article that is not on the site yet');
+});
+
+/** A blog with the given pillar slots, one article per slot. */
+function installSlots(slots) {
+  install({
+    campaigns: [{
+      _id: 'c-pillar', name: 'Main pillar', status: 'active', isPillar: true,
+      slots: slots.map((sl, i) => ({ index: i, ...sl })),
+    }],
+    articles: slots.map((sl, i) => ({
+      _id: `507f1f77bcf86cd79943906${i}`,
+      title: `Slot ${i}`,
+      slug: `slot-${i}`,
+      campaign: 'c-pillar',
+      slotIndex: i,
+    })),
+  });
+
+  db.blogs[0].siteUrl = 'blog.example.com';
+  db.blogs[0].lastDeployAt = new Date(Date.now() - DAY);
+  db.blogs[0].homeSlug = '';
+}
+
+test('WITH EVERY ARTICLE STILL SCHEDULED, NOTHING IS NAMED', async () => {
+  /* MUTATION ADDED THIS. Dropping the `at > now` filter survived every
+   * test above, because a future slot can only WIN the oldest-first sort
+   * when every slot is future — and no fixture had that shape.
+   *
+   * It is a real state: a blog deployed on the day it was set up, with
+   * everything dated ahead. The site exists and has nothing on it, and
+   * naming an article that is not there yet describes the site somebody
+   * will have rather than the site they have. */
+  installSlots([
+    { publishAt: new Date(Date.now() + DAY), status: 'ready' },
+    { publishAt: new Date(Date.now() + 2 * DAY), status: 'ready' },
+  ]);
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.ok(!/currently/i.test(frontLine(out.html)),
+    'it named an article that is not on the site yet');
+});
+
+test('AND THE OLDEST OF TWO LIVE SLOTS WINS, WHATEVER ORDER THEY ARE STORED IN', async () => {
+  /* MUTATION ADDED THIS TOO. Removing the sort survived, because every
+   * fixture happened to store its slots in date order — so "first in the
+   * array" and "oldest" were the same article and nothing could tell a
+   * sorted list from an unsorted one.
+   *
+   * The root is the OLDEST live article, deliberately: newest-first would
+   * move `/` every time something published, and every old link to the
+   * root would then point at a different article. */
+  installSlots([
+    { publishAt: new Date(Date.now() - DAY), status: 'ready' },
+    { publishAt: new Date(Date.now() - 3 * DAY), status: 'ready' },
+  ]);
+
+  await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.strictEqual(db.postFindOneWhere.slotIndex, 1,
+    'it named the first slot in the array rather than the oldest one');
+});
+
+test('AND A FAILED SLOT IS NOT SERVING ANYTHING, HOWEVER OLD IT IS', async () => {
+  /* MUTATION ADDED THIS. A failed slot never produced a page, so it is
+   * not on the site — but it is still the oldest by date, and dropping
+   * the status check made it the answer. */
+  installSlots([
+    { publishAt: new Date(Date.now() - 3 * DAY), status: 'failed' },
+    { publishAt: new Date(Date.now() - DAY), status: 'ready' },
+  ]);
+
+  await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.strictEqual(db.postFindOneWhere.slotIndex, 1,
+    'it named an article whose slot failed and never produced a page');
+});
+
+test('A CHOSEN ARTICLE THAT IS NOT LIVE SAYS WHAT IS STANDING IN', async () => {
+  /* THE STATE THAT LOOKS FINE AND IS NOT. You pick article twenty, it is
+   * scheduled for next month, and the root serves something else until
+   * then. The page used to show your choice and nothing else — a true
+   * statement about the setting and a false one about the site. */
+  installPicker({ homeSlug: 'not-yet' });
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  const line = frontLine(out.html);
+
+  assert.ok(line.includes('Not yet'), 'it does not say what was chosen');
+  assert.ok(/not live yet/i.test(line), 'it does not say the choice is not live');
+  assert.ok(line.includes('Already live'),
+    'it does not name what is serving the domain in the meantime');
+});
+
+test('A BLOG THAT HAS NEVER BEEN PUBLISHED NAMES NOTHING', async () => {
+  /* Nothing is serving anything. A name here would be an answer to a
+   * question that has none. */
+  installPicker({ neverPublished: true });
+  db.blogs[0].homeSlug = '';
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  const line = frontLine(out.html);
+
+  assert.ok(/Oldest published article/.test(line));
+  assert.ok(!/currently/i.test(line), 'it named a front page on a site that does not exist');
 });
 
 test('AND SAVING A NON-PILLAR ARTICLE IS REFUSED', async () => {
@@ -4385,22 +4772,27 @@ test('THE PICKER LISTS THIS BLOG\'S ARTICLES, AND THE CURRENT CHOICE IS SELECTED
   const out = await call(handler('get', '/static-blogs/:id'));
 
   assert.ok(out.html.includes('name="homeSlug"'), 'there is no way to choose a front page');
-  assert.ok(out.html.includes('>\n                  First one\n                </option>')
-    || out.html.includes('First one'), 'the articles are not listed');
 
-  /* SCOPED TO THE homeSlug SELECT, and it did not used to be.
+  const block = picker(out.html);
+
+  assert.ok(block.includes('First one'), 'the articles are not listed');
+
+  /* THE CURRENT CHOICE IS NAMED, NOT MARKED WITH `selected` — 23 October,
+   * when the dropdown became a list you can read and click.
    *
-   * This read `out.html.match(/<option value="..." selected>/)` — the
-   * first selected option ANYWHERE on the page. It passed for months and
-   * then broke the day a timezone dropdown was added above it, because
-   * that one is also a select with a selected option. The test was not
-   * wrong about the front page; it was asking the page a question that
-   * only had one possible answer at the time. */
-  const picker = out.html.slice(out.html.indexOf('name="homeSlug"'));
-  const selected = picker.match(/<option value="([^"]*)" selected>/);
+   * It used to read `<option value="..." selected>`. Before THAT it read
+   * the first selected option ANYWHERE on the page, which passed for
+   * months and broke the day a timezone dropdown was added above it. Both
+   * versions were asking about the shape of the control rather than about
+   * the front page.
+   *
+   * What the page has to say is: which article answers for the domain.
+   * The fold says it in words, above the list. */
+  assert.ok(/Front page:\s*<strong>\s*Second one\s*<\/strong>/.test(block),
+    'the page does not say which article is the front page');
 
-  assert.ok(selected, 'nothing is marked as the current choice');
-  assert.strictEqual(selected[1], 'second-one', 'the wrong article is shown as the front page');
+  assert.ok(!/<strong>\s*First one\s*<\/strong>/.test(block),
+    'the wrong article is shown as the front page');
 });
 
 test('and it is scoped to this blog', async () => {

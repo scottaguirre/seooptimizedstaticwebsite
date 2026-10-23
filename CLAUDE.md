@@ -2364,6 +2364,158 @@ what has to become argument-passing, and those tests are the spec for it.
     That is the upside, and it is also why the angle/shape work shipped
     first.
 
+### FOR TOMORROW — number the articles in the front-page dropdown
+
+Edwin, 23 October, after the picker narrowed to pillar campaigns: *"those
+articles in the dropdown should be numbered."*
+
+Thirty titles in a `<select>` is a list you scroll rather than scan, and a
+number gives somebody a place to say "the seventh one" instead of reading
+the title back.
+
+**THE TRAP, AND IT IS THE SAME SHAPE AS THE ARTICLE COUNT.**
+
+The Articles screen already numbers its rows — `.rownum`, from
+`skip + i + 1`. The dropdown would number from its own index. **They are
+not the same list.** The Articles screen shows EVERY article on the blog;
+the dropdown shows only pillar ones. Both sort by `createdAt`.
+
+So on All About Plumbing, "7." in the dropdown is the seventh PILLAR
+article and "7." on the Articles screen is the seventh article of 171.
+Two numbers, two screens one click apart, both plausible, neither wrong on
+its own terms, and nothing to tell you they disagree.
+
+**Decide before building, not after:**
+
+- Number the dropdown 1..n over the PILLAR articles — simple, and silently
+  disagrees with the Articles screen
+- Number both from the blog's full ordering, so article #43 is #43
+  everywhere — needs the dropdown to know each article's position among
+  all of them, which the current query does not fetch
+- Number the dropdown and say what the numbers are, e.g. "Pillar 1 of 30",
+  so the two numbering schemes cannot be mistaken for each other
+
+The third is probably right: the numbers mean different things, so they
+should LOOK different rather than quietly collide.
+
+**Where it goes:** the `<select>` in `blogPageSpec()`,
+`routes/staticBlogsRoute.js`, beside the `articles.map(...)`.
+
+### CLOSED 23 October 2026 — the app sets up its own Bulk Redirects
+
+**THE MANUAL STEP THAT SCALED WITH THE CLIENT LIST, AND IT IS GONE.**
+
+Every Cloudflare account in the pool needs its own `blog_pages_dev` redirect
+list AND its own rule. Both are account-scoped; neither can be shared. That
+was ten accounts, ten trips to the dashboard, and one chance each to forget.
+
+**FORGETTING IS SILENT.** A blog whose account has no list still deploys and
+still works — it just also answers on pages.dev, which is the duplicate the
+list exists to remove. Nothing on any screen says so. Edwin found it twice,
+on two different accounts, by clicking a pages.dev address and noticing.
+
+`ensureRedirectList()` and `ensureRedirectRule()` in `redirects.js`, reached
+from `redirectPagesDev()` on the first publish. Proven end to end on a brand
+new account the same day: project created, domain attached, DNS written,
+list and rule created, redirect live, and the Cloudflare dashboard never
+opened.
+
+**THE DECISION THAT MATTERS MOST: IT ADDS ONE RULE, IT NEVER PUTS.**
+
+Cloudflare's PUT on a ruleset REPLACES every rule in it. Building that body
+from what we happened to read deletes every other redirect rule on the
+account the moment the read is incomplete — and these are CLIENTS' accounts.
+`POST /rulesets/{id}/rules` adds one and leaves the rest alone. There is a
+test whose only job is to make a future PUT impossible to introduce quietly.
+
+**THREE THINGS IT REFUSES TO DO**
+
+- **Create a list when the account could not be read.** A revoked token and
+  a missing list both come back `ok: false`. `findRedirectList` now returns
+  `noList` for a genuine miss, and only that creates — same shape as
+  `findZone`'s `noZone`, same reason: *a failure to ask is not an answer*.
+- **Report success when the list was made and the rule was not.** A list
+  with no rule does nothing. An account set up entirely by this code would
+  otherwise be set up wrong, silently, in exactly the way this change exists
+  to end.
+- **Add a second rule** to a ruleset already pointing at the list.
+
+**WHAT IT DOES NOT HEAL:** a list made by hand with no rule. That was the
+state Edwin had on Alvaro Ciceron. The app only adds a rule beside a list it
+created itself, so the state cannot recur — but an existing one is not
+repaired.
+
+**AN EQUIVALENT MUTANT, DELETED RATHER THAN DOCUMENTED.** `ensureRedirectList`
+opened with `if (found.ok) return found;` — the happy path, spelled out.
+Removing it changed nothing any test could see, because `!found.noList` is
+already true for a list that WAS found. A line no test can observe is a line
+somebody will one day "fix" in the wrong direction, so it went, with a
+comment saying why.
+
+Suite: `test-redirects` 27 → 37. Eight mutants, seven killed, one equivalent.
+
+**Cloudflare is hinting at the end of Pages.** The first publish on the new
+account failed once with code 8000000 and wrangler said *"Workers are the
+recommended way to deploy all new projects."* The retry worked and the
+failure was transient — but if new Pages projects are ever restricted, the
+whole pool design needs rethinking. Worth watching rather than acting on.
+
+### CLOSED 23 October 2026 — test-brand-name.js caught me typing the brand
+
+**A guard earning its keep, on a deploy that correctly refused to ship.**
+
+The Bulk Redirect code above wrote "Three Comets" by hand three times — the
+list description, the rule description, the ruleset name. `./deploy.sh`
+stopped, named the file and the count, and nothing reached the server.
+
+They are labels on CLOUDFLARE's side, sitting in a client's dashboard saying
+what created them. That is still the brand, and this app has been renamed
+twice — each time leaving strings in files nobody thought to search. Which
+is precisely why `APP_NAME` lives in a module that takes no dependencies: so
+code that only wants a name only has to take one.
+
+`redirects.js` imports `APP_NAME` now. The labels follow a rename instead of
+being left behind on ten accounts nobody will ever look at again.
+
+### CLOSED 23 October 2026 — the front page comes from a pillar campaign
+
+Edwin: *"I want only pillar articles to be eligible to be the front page."*
+It is how he already worked — the pillar campaign is the first thing he
+builds on a blog and the front page is set from it. The picker was the only
+part of the app that did not know.
+
+**IT CLOSED THE UNBOUNDED DROPDOWN AS A SIDE EFFECT.** 171 `<option>`
+elements on the plumbing blog became about thirty, and the control stops
+growing with the blog: pillar campaigns grow it now, and there are one or
+two of those. The page also stops pulling every article out of Mongo to
+draw a `<select>`.
+
+**WHICH FORCED THE ARTICLE COUNT TO MOVE IN THE SAME COMMIT**, exactly as
+the comment above `blogPageSpec()` had been warning since the Articles
+screen shipped. The button was `articles.length`, honest only because the
+page loaded every article FOR THE DROPDOWN. Narrowing the list without
+moving the count would have made it read "30 articles" on a blog holding
+171 — a plausible number in exactly the right place, one click from an
+Articles screen saying otherwise. It comes from `countDocuments()` now.
+
+**THE GUARD THAT NEARLY WENT WITH IT.** `${articles.length ? ...}` did not
+wrap the picker. It wrapped Publish, Timezone, Articles and Google Search
+Console — it meant "has this blog written anything". Narrowing `articles`
+would have hidden all of that from any blog without a pillar campaign.
+It reads `articleCount` now, with a comment saying why.
+
+**FOUR EXISTING TESTS NEEDED NEW FIXTURES.** They used a bare blog with no
+campaigns, which can no longer have a front page chosen at all. Their
+assertions were right; their fixture had stopped describing a real blog.
+
+No grandfathering branch was written: every front page Edwin has was already
+a pillar article, and a branch for a case that does not exist is the
+"untested foresight" this file already has a scar from. A stored non-pillar
+slug would still RENDER — `homeOf()` does not care — it simply would not be
+offered in the picker.
+
+Suite: `test-static-blogs` 233 → 239. Six mutants, six killed.
+
 ### CLOSED 23 October 2026 — the pages.dev redirect went to the wrong account
 
 **The FOURTH instance of the same wiring gap, in one week.**

@@ -69,6 +69,13 @@ const { parseVerificationTags } = require('../utils/blog/verificationTags');
 const {
   credsFor, recountAccount, accountCapacity,
 } = require('../utils/blog/cloudflare/accounts');
+
+/* FOR THE FRONT-PAGE PICKER: whether an article is on the internet, and
+ * what its address is if it is. Both already exist and are already tested —
+ * `isLive` is the rule the renderer itself uses to decide what goes on the
+ * site, so the picker and the site cannot disagree about what is live. */
+const { isLive } = require('../utils/blog/render/interlinks');
+const { postUrl } = require('../utils/blog/render/postPage');
 const CloudflareAccount = require('../models/CloudflareAccount');
 const Domain = require('../models/Domain');
 
@@ -923,7 +930,7 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
  * no header, no sidebar, no doctype. The existing suite caught it on the
  * first run, which is the entire reason /static-blogs has a suite.
  */
-function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, form = {}, notice = '', status = 200, suggestions = [] }) {
+function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, serving = null, form = {}, notice = '', status = 200, suggestions = [] }) {
   /* `articles` AND `articleCount` ARE NOW DIFFERENT NUMBERS, DELIBERATELY.
    *
    * `articles` is the front-page picker's list: pillar campaigns only,
@@ -1484,29 +1491,120 @@ function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, form =
            campaigns, and a per-campaign flag would let two of them claim
            the root with nothing to decide between them. -->
       ${articles.length ? `
-      <form method="post" action="/static-blogs/${blog._id}/home" class="mb-4">
-        ${form.csrfField || ''}
+      ${/* A LIST, NOT A DROPDOWN — 23 October, on Edwin's instruction:
+            "I want the article be linked to the actual article so I can
+            click it and check them."
 
-        <div class="row g-2 align-items-end">
-          <div class="col-md-8">
-            <label class="form-label" for="homeSlug">Which article is the front page?</label>
-            <select class="form-select" id="homeSlug" name="homeSlug">
-              <option value="">Oldest published article</option>
-              ${articles.map(a => `
-                <option value="${esc(a.slug)}"${a.slug === blog.homeSlug ? ' selected' : ''}>
-                  ${esc(a.title || a.slug)}
-                </option>`).join('')}
-            </select>
-            <div class="form-text text-white-50">
-              It is served at the domain itself, not at its own address. If the
-              one you pick is not published yet, the oldest one stands in.
-            </div>
+            THAT ENDS THE <select>. Options are plain text: they cannot
+            hold a link, cannot be numbered without putting digits in the
+            label, and cannot be read without being opened. Choosing a
+            front page from thirty titles you cannot click is choosing
+            blind.
+
+            FOLDED, because thirty rows sitting above "Plan a campaign" is
+            the crowding the Articles list was moved to its own screen to
+            fix. Shut it says which article is the front page; open it is
+            the list. A <details> needs no JavaScript and survives the CSP
+            that blocks inline handlers. */ ''}
+      ${/* WHAT IS CHOSEN, AND WHAT IS ACTUALLY SERVING, WHEN THEY DIFFER.
+            Three states used to look identical here:
+
+              - nothing chosen, oldest live article serving
+              - chosen and live
+              - chosen but NOT LIVE YET, something else serving meanwhile
+
+            The third is the one that matters: "Front page: Article 20" was
+            a true statement about the setting and a false one about the
+            site. */ ''}
+      ${(() => {
+        const chosen = blog.homeSlug
+          ? (articles.find(a => a.slug === blog.homeSlug) || null)
+          : null;
+
+        const name = (chosen && chosen.title) || blog.homeSlug || 'Oldest published article';
+
+        /* A CHOICE THAT IS NOT YET ON THE SITE. `chosen` is only ever a
+         * pillar article, which is every article the picker can set — a
+         * homeSlug from before that rule would fall through to the plain
+         * line, which is right: nothing is known about it. */
+        const waiting = chosen && !chosen.live;
+
+        const standIn = serving && serving.title && (waiting || !blog.homeSlug)
+          ? esc(serving.title)
+          : '';
+
+        return `
+      <p class="mb-2">
+        Front page: <strong>${esc(name)}</strong>
+        ${waiting ? '<span class="text-warning small ms-1">not live yet</span>' : ''}
+        ${standIn ? `<span class="text-white-50 small ms-1">&mdash;
+          currently <em>${standIn}</em></span>` : ''}
+      </p>`;
+      })()}
+
+      <details class="mb-4">
+        <summary class="text-white-50" style="cursor:pointer;">
+          Change &mdash; ${articles.length}
+          ${1 === articles.length ? 'pillar article' : 'pillar articles'}
+        </summary>
+
+        <form method="post" action="/static-blogs/${blog._id}/home" class="mt-3">
+          ${form.csrfField || ''}
+
+          <table class="table table-navy align-middle">
+            <thead><tr><th></th><th>Article</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="rownum"></td>
+                <td class="text-white-50">Oldest published article</td>
+                <td class="text-end">
+                  ${'' === (blog.homeSlug || '')
+                    ? '<span class="badge bg-secondary">front page</span>'
+                    : '<button class="btn btn-sm btn-outline-light" type="submit" name="homeSlug" value="">Make front page</button>'}
+                </td>
+              </tr>
+              ${articles.map((a, i) => `
+              <tr>
+                <td class="rownum">${i + 1}</td>
+                <td>
+                  ${/* LINKED ONLY WHEN THE ARTICLE IS ACTUALLY ON THE
+                        INTERNET. One that is written and scheduled has no
+                        page yet, and a link to it 404s — which reads as a
+                        broken blog rather than as an article waiting for
+                        its day.
+
+                        NEW TAB, because leaving this page loses the fold
+                        and whatever is half-typed into the campaign form
+                        below it. */ ''}
+                  ${a.live
+                    ? `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title || a.slug)}</a>`
+                    : `${esc(a.title || a.slug)}
+                       <span class="text-white-50 small ms-2">not live yet</span>`}
+                </td>
+                <td class="text-end">
+                  ${a.slug === blog.homeSlug
+                    ? '<span class="badge bg-secondary">front page</span>'
+                    : `<button class="btn btn-sm btn-outline-light" type="submit"
+                               name="homeSlug" value="${esc(a.slug)}">Make front page</button>`}
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+
+          <div class="form-text text-white-50">
+            ${/* THE NUMBERS ARE SAID OUT LOUD BECAUSE THE ARTICLES SCREEN
+                  NUMBERS TOO, over EVERY article on the blog. These count
+                  only the pillar ones. On a blog of 171 with a 30-post
+                  pillar, "7." means two different articles on two screens
+                  one click apart — both plausible, neither wrong on its
+                  own terms, and nothing to say they disagree. */ ''}
+            Numbered within the pillar campaign &mdash; not the same
+            numbering as the Articles screen. The front page is served at
+            the domain itself, not at its own address. If the one you pick
+            is not published yet, the oldest one stands in.
           </div>
-          <div class="col-md-4">
-            <button class="btn btn-outline-light" type="submit">Save</button>
-          </div>
-        </div>
-      </form>` : ''}` : ''}
+        </form>
+      </details>` : ''}` : ''}
 
       <h2 class="h4 mt-5 mb-3">Plan a campaign</h2>
 
@@ -1881,6 +1979,64 @@ function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, form =
   });
 }
 
+/**
+ * Which article is actually answering for the domain right now.
+ *
+ * WHY THE PAGE CANNOT JUST READ homeSlug. Three states look alike on a
+ * screen and are not alike on the internet:
+ *
+ *   - nothing chosen, so the OLDEST live article is serving
+ *   - chosen and live, so that one is serving
+ *   - chosen but NOT LIVE YET, so something else is serving until its day
+ *
+ * The third is the one that matters. "Front page: Article 20" is a true
+ * statement about the setting and a false one about the site, and nothing
+ * on the page said which it was.
+ *
+ * THE ANSWER COMES FROM THE SLOTS, NOT FROM THE PICKER. homeOf() falls
+ * back to the oldest live article across EVERY campaign, pillar or not,
+ * and this page only loads pillar articles now. So the oldest live slot is
+ * worked out from the campaigns already in hand — free, they are loaded
+ * with their slots — and exactly one post is fetched by campaign and slot.
+ *
+ * ONE QUERY, AND IT DEGRADES HONESTLY. If that post is not there the page
+ * names nothing rather than guessing: naming the WRONG article is worse
+ * than naming none, because it is a confident answer to "what is my front
+ * page" that happens to be false.
+ */
+async function servingArticle({ blog, campaigns, now }) {
+  /* NOTHING SERVES ANYTHING UNTIL THE SITE HAS BEEN DEPLOYED. */
+  if (!blog.lastDeployAt) return null;
+
+  const live = [];
+
+  for (const campaign of campaigns) {
+    for (const slot of (campaign.slots || [])) {
+      if (!slot || 'failed' === slot.status) continue;
+
+      const at = slot.publishAt ? new Date(slot.publishAt) : null;
+      if (!at || Number.isNaN(at.getTime()) || at > now) continue;
+
+      live.push({ campaign, slot, at });
+    }
+  }
+
+  if (!live.length) return null;
+
+  /* THE SAME ORDER liveArticles() USES, and the tie-break matters for the
+   * same reason: two slots can share a publish date, and if the winner
+   * came from Mongo's result order the root could change between two
+   * deploys of identical content. */
+  live.sort((a, b) => (a.at - b.at) || (a.slot.index - b.slot.index));
+
+  const first = live[0];
+
+  return BlogPost
+    .findOne({ site: blog._id, campaign: first.campaign._id, slotIndex: first.slot.index })
+    .select('title slug')
+    .lean();
+}
+
 /** The blog and its campaigns, or null if it is not this person's. */
 async function blogAndCampaigns(req) {
   const blog = await ownedBlog(req);
@@ -1916,12 +2072,48 @@ async function blogAndCampaigns(req) {
    * in the select above. */
   const pillarIds = campaigns.filter(c => c.isPillar).map(c => c._id);
 
-  const articles = pillarIds.length
+  /* `campaign` AND `slotIndex` COME TOO, because whether an article is on
+   * the internet is a property of its SLOT, not of the post — the schedule
+   * lives on the campaign. Without them the picker cannot tell an article
+   * that is live from one still waiting for its day, and would link to
+   * both. */
+  const written = pillarIds.length
     ? await BlogPost.find({ site: blog._id, campaign: { $in: pillarIds } })
-        .select('title slug')
+        .select('title slug campaign slotIndex')
         .sort({ createdAt: 1 })
         .lean()
     : [];
+
+  /* NOTHING IS LIVE UNTIL THE SITE HAS BEEN DEPLOYED AT LEAST ONCE. An
+   * article can be written, scheduled and long past its date and still not
+   * be on the internet, because the internet only has what the last
+   * publish put there. Thirty links to a site that does not exist read as
+   * thirty broken articles. */
+  const deployed = !!blog.lastDeployAt;
+  const now = new Date();
+
+  const byCampaign = new Map(campaigns.map(c => [String(c._id), c]));
+
+  const articles = written.map((post) => {
+    const campaign = byCampaign.get(String(post.campaign));
+    const slot = ((campaign && campaign.slots) || [])
+      .find(sl => sl && sl.index === post.slotIndex);
+
+    const live = deployed && isLive(slot, post, now);
+
+    /* THE FRONT PAGE IS SERVED AT / AND NOT AT ITS OWN ADDRESS — two
+     * addresses for one article is one article competing with itself. So
+     * the link for whichever article is currently the front page has to be
+     * the domain, or it points at a 404 on the very article being used as
+     * the root. */
+    const isHome = !!blog.homeSlug && post.slug === blog.homeSlug;
+
+    return {
+      ...post,
+      live,
+      url: live ? postUrl(blog, post.slug, isHome) : '',
+    };
+  });
 
   /* AND THE COUNT NOW COMES FROM THE DATABASE, IN THE SAME COMMIT.
    *
@@ -1935,7 +2127,9 @@ async function blogAndCampaigns(req) {
    * Articles list moved to its own screen. This is that commit. */
   const articleCount = await BlogPost.countDocuments({ site: blog._id });
 
-  return { blog, campaigns, articles, articleCount };
+  const serving = await servingArticle({ blog, campaigns, now });
+
+  return { blog, campaigns, articles, articleCount, serving };
 }
 
 /* -------------------------------------------------------------------------
@@ -2080,6 +2274,7 @@ router.get('/static-blogs/:id', requireAuth, async (req, res) => {
       campaigns: found.campaigns,
       articles: found.articles,
       articleCount: found.articleCount,
+      serving: found.serving,
       form: { csrfField: res.locals.csrfField },
     }));
 
@@ -2108,7 +2303,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
     const found = await blogAndCampaigns(req);
     if (!found) return notFound(res);
 
-    const { blog, campaigns, articles, articleCount } = found;
+    const { blog, campaigns, articles, articleCount, serving } = found;
 
     /* WHAT THE PERSON TYPED, CARRIED BACK WHATEVER HAPPENS. A suggestion
      * that cleared the form would cost them the schedule and the campaign
@@ -2178,6 +2373,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
         campaigns,
         articles,
         articleCount,
+        serving,
         form,
         status: result.code,
         notice: `<div class="alert alert-warning">${esc(result.body.error)}</div>`,
@@ -2219,6 +2415,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
       campaigns,
       articles,
       articleCount,
+      serving,
       form,
       suggestions: topics,
       notice: `
