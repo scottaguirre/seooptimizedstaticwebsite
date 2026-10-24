@@ -1218,8 +1218,22 @@ function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, servin
       : !folded
         ? plannedTable
         : `<details class="mb-3">
+             ${/* THE VERB WEARS A BUTTON AND THE TRIANGLE STAYS — 24
+                   October, on Edwin's instruction.
+
+                   A <summary> is grey text with a four-pixel triangle. It
+                   IS a control and it does not look like one.
+
+                   THE SPAN IS NOT A BUTTON, DELIBERATELY. The <summary>
+                   is the real control: focusable, operable with Enter,
+                   announced as a disclosure. A <button> inside it would be
+                   a second control inside the first, and a keyboard user
+                   would tab to something that does nothing on its own.
+                   The span only borrows the look; the click bubbles to the
+                   summary like any other click on it. */ ''}
              <summary class="text-white-50" style="cursor:pointer">
-               ${campaigns.length} campaigns &mdash; show
+               ${campaigns.length} campaigns &mdash;
+               <span class="btn btn-sm btn-outline-light align-baseline">show</span>
              </summary>
              <div class="mt-3">${plannedTable}</div>
            </details>`;
@@ -1543,8 +1557,12 @@ function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, servin
       })()}
 
       <details class="mb-4">
+        ${/* Same again: the verb is the button, the count is the label.
+              See the campaigns fold above for why the span is not a real
+              <button>. */ ''}
         <summary class="text-white-50" style="cursor:pointer;">
-          Change &mdash; ${articles.length}
+          <span class="btn btn-sm btn-outline-light align-baseline">Change</span>
+          &mdash; ${articles.length}
           ${1 === articles.length ? 'pillar article' : 'pillar articles'}
         </summary>
 
@@ -2094,19 +2112,42 @@ async function blogAndCampaigns(req) {
 
   const byCampaign = new Map(campaigns.map(c => [String(c._id), c]));
 
-  const articles = written.map((post) => {
+  const liveOf = (post) => {
     const campaign = byCampaign.get(String(post.campaign));
     const slot = ((campaign && campaign.slots) || [])
       .find(sl => sl && sl.index === post.slotIndex);
 
-    const live = deployed && isLive(slot, post, now);
+    return deployed && isLive(slot, post, now);
+  };
 
-    /* THE FRONT PAGE IS SERVED AT / AND NOT AT ITS OWN ADDRESS — two
-     * addresses for one article is one article competing with itself. So
-     * the link for whichever article is currently the front page has to be
-     * the domain, or it points at a 404 on the very article being used as
-     * the root. */
-    const isHome = !!blog.homeSlug && post.slug === blog.homeSlug;
+  const serving = await servingArticle({ blog, campaigns, now });
+
+  /* WHICH ARTICLE IS ACTUALLY AT `/`, WHICH IS NOT THE SAME AS WHAT WAS
+   * CHOSEN — and getting that wrong is how Edwin's own front page linked
+   * to a 404.
+   *
+   * The front-page article is served at the domain and DELIBERATELY NOT at
+   * its own slug: two addresses for one article is one article competing
+   * with itself. So `/its-slug/` does not exist for whichever article is
+   * the root, and a link to it 404s.
+   *
+   * The first version asked `blog.homeSlug === post.slug`, which is only
+   * right when something has been CHOSEN. With nothing chosen the oldest
+   * live article is the root, and every article got a slug link — the
+   * front page included. That is the state every new blog starts in, and
+   * the one every test had set homeSlug to avoid.
+   *
+   * A chosen article that is not live yet is not the root either: the
+   * renderer stands the oldest one in until its day. */
+  const chosen = blog.homeSlug ? written.find(p => p.slug === blog.homeSlug) : null;
+
+  const rootSlug = (chosen && liveOf(chosen))
+    ? blog.homeSlug
+    : ((serving && serving.slug) || '');
+
+  const articles = written.map((post) => {
+    const live = liveOf(post);
+    const isHome = !!rootSlug && post.slug === rootSlug;
 
     return {
       ...post,
@@ -2126,8 +2167,6 @@ async function blogAndCampaigns(req) {
    * The comment above blogPageSpec() has warned about this since the
    * Articles list moved to its own screen. This is that commit. */
   const articleCount = await BlogPost.countDocuments({ site: blog._id });
-
-  const serving = await servingArticle({ blog, campaigns, now });
 
   return { blog, campaigns, articles, articleCount, serving };
 }

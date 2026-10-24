@@ -1209,17 +1209,32 @@ test('AND THE NUMBERS SAY WHAT THEY COUNT', async () => {
 });
 
 test('A LIVE ARTICLE IS A LINK TO THE LIVE ARTICLE', async () => {
-  installPicker();
+  /* TWO LIVE ARTICLES, DELIBERATELY. With only one, that one is the root
+   * and is served at the domain rather than at its slug — so a fixture of
+   * one could never show a slug link at all.
+   *
+   * The first version of this test had exactly that fixture, and passed
+   * only because the code was ALSO wrong: it linked the root to its slug.
+   * Fixing the code broke the test, which is the test doing its job one
+   * step too late. */
+  installSlots([
+    { publishAt: new Date(Date.now() - 3 * DAY), status: 'ready' },
+    { publishAt: new Date(Date.now() - DAY), status: 'ready' },
+  ]);
 
   const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
   const block = picker(out.html);
 
-  assert.ok(block.includes('https://blog.example.com/already-live/'),
+  /* Slot 0 is the oldest, so it is the root and links to the domain.
+   * Slot 1 is an ordinary article and links to its own address. */
+  assert.ok(block.includes('"https://blog.example.com/"'),
+    'the root article does not link to the domain');
+  assert.ok(block.includes('https://blog.example.com/slot-1/'),
     'the live article is not linked to its live page');
 
   /* A NEW TAB, because leaving this page loses the fold and whatever else
    * was half-filled in on the campaign form below it. */
-  const link = block.match(/<a[^>]*already-live[^>]*>/)[0];
+  const link = block.match(/<a[^>]*slot-1[^>]*>/)[0];
   assert.ok(/target="_blank"/.test(link), `it navigates away: ${link}`);
   assert.ok(/rel="[^"]*noopener/.test(link), `no rel=noopener: ${link}`);
 });
@@ -1253,6 +1268,32 @@ test('AND THE CURRENT FRONT PAGE LINKS TO THE DOMAIN, NOT TO ITS SLUG', async ()
     'the front page does not link to the domain root');
   assert.ok(!block.includes('https://blog.example.com/already-live/'),
     'the front page links to an address it is not served at');
+});
+
+test('THE ARTICLE SERVING / LINKS TO THE DOMAIN EVEN WITH NOTHING CHOSEN', async () => {
+  /* EDWIN FOUND THIS BY CLICKING ARTICLE 1 AND GETTING A 404 — on his own
+   * front page.
+   *
+   * The front-page article is served at the domain and DELIBERATELY NOT at
+   * its own slug: two addresses for one article is one article competing
+   * with itself. So `/how-ai-legal-research.../` does not exist, and a link
+   * to it 404s.
+   *
+   * The first version only treated an article as the root when `homeSlug`
+   * was SET. On the fallback path — nothing chosen, oldest live article
+   * serving — every article got a slug link, including the one answering
+   * for the domain. Which is the commonest state a new blog is in, and the
+   * one every test had set homeSlug to avoid. */
+  installPicker();
+  db.blogs[0].homeSlug = '';
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const block = picker(out.html);
+
+  assert.ok(block.includes('"https://blog.example.com/"'),
+    'the article serving the domain does not link to it');
+  assert.ok(!block.includes('https://blog.example.com/already-live/'),
+    'it linked the front page to an address that 404s');
 });
 
 test('A BLOG THAT HAS NEVER BEEN PUBLISHED LINKS TO NOTHING', async () => {
@@ -1467,6 +1508,21 @@ test('A CHOSEN ARTICLE THAT IS NOT LIVE SAYS WHAT IS STANDING IN', async () => {
   assert.ok(/not live yet/i.test(line), 'it does not say the choice is not live');
   assert.ok(line.includes('Already live'),
     'it does not name what is serving the domain in the meantime');
+
+  /* AND THE STAND-IN LINKS TO THE DOMAIN, because the stand-in IS the root
+   * while the choice waits for its day.
+   *
+   * MUTATION ADDED THIS. Dropping the liveness check — `chosen` instead of
+   * `chosen && liveOf(chosen)` — made the not-yet-live choice the root, so
+   * the article actually answering for the domain got a slug link that
+   * 404s. The choice itself is not linked either way, being unpublished,
+   * so nothing else could see the difference. */
+  const fold = picker(out.html);
+
+  assert.ok(fold.includes('"https://blog.example.com/"'),
+    'the article standing in as the root does not link to the domain');
+  assert.ok(!fold.includes('https://blog.example.com/already-live/'),
+    'it linked the root to an address that 404s');
 });
 
 test('A BLOG THAT HAS NEVER BEEN PUBLISHED NAMES NOTHING', async () => {
@@ -5389,6 +5445,65 @@ function manyCampaigns(n) {
     slots: [{ index: 0 }],
   }));
 }
+
+/* ───────── THE FOLDS HAVE TO LOOK PRESSABLE ─────────
+ *
+ * Edwin, 24 October: *"Could you make the word show and change buttons
+ * without removing the arrows. I want the user to understand they can
+ * press the buttons."*
+ *
+ * A <summary> is grey text with a small triangle. It IS a control and it
+ * does not look like one — the triangle is the only hint, and it is four
+ * pixels of chrome somebody has to already know the meaning of.
+ *
+ * SO THE VERB WEARS A BUTTON, AND THE TRIANGLE STAYS. Both halves matter:
+ * the button says "press me", the triangle says "this opens downwards
+ * rather than going somewhere". Hiding the marker to make room for a
+ * tidier button is the obvious next tidy-up and is exactly what was asked
+ * against.
+ */
+
+test('THE FOLDS SAY THEY CAN BE PRESSED', async () => {
+  /* ENOUGH CAMPAIGNS FOR THE SECOND FOLD TO EXIST AT ALL. The campaigns
+   * table only folds above five, and the first version of this test had
+   * three — so it checked one summary, believed it had checked both, and
+   * removing the campaigns button survived it untouched. */
+  installPicker();
+  for (let i = 0; i < 6; i += 1) {
+    db.campaigns.push({ _id: `c-x${i}`, name: `Another ${i}`, status: 'active', slots: [{ index: 0 }] });
+  }
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+  const summaries = out.html.match(/<summary[\s\S]*?<\/summary>/g) || [];
+
+  assert.strictEqual(summaries.length, 2,
+    `expected both folds on the page, found ${summaries.length}`);
+
+  for (const summary of summaries) {
+    assert.ok(/class="[^"]*\bbtn\b/.test(summary),
+      `a fold still reads as grey text: ${summary.replace(/\s+/g, ' ').trim()}`);
+  }
+});
+
+test('AND THE TRIANGLE IS STILL THERE', async () => {
+  /* THE HALF THAT IS EASY TO LOSE. Every CSS recipe for "style a summary"
+   * starts by hiding the marker — `list-style: none`, or the WebKit
+   * pseudo-element — because the triangle is in the way of a tidy button.
+   *
+   * It is not in the way. It is the part that says this opens downwards
+   * rather than navigating somewhere, and removing it was the one thing
+   * the request ruled out. */
+  installPicker();
+
+  const out = await call(handler('get', '/static-blogs/:id'), req({ params: { id: BLOG_ID } }));
+
+  assert.ok(!/list-style\s*:\s*none/.test(out.html),
+    'something hides the disclosure triangle');
+  assert.ok(!/details-marker/.test(out.html),
+    'something hides the WebKit disclosure triangle');
+  assert.ok(!/summary\s*{[^}]*display\s*:/.test(out.html),
+    'summary has had its display changed, which drops the marker');
+});
 
 /** The <details> wrapper around the campaigns table, if there is one. */
 function campaignsFold(html) {
