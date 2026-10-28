@@ -169,25 +169,23 @@ CloudflareAccountModel.updateOne = async (where, update) => {
   return { acknowledged: true };
 };
 
-/* AND THE ZONE LOOKUP, BEFORE THE ROUTER, FOR THE FIFTH TIME IN THIS FILE.
+/* THE ZONE LOOKUP WAS STUBBED HERE, AND IS NOT ANY MORE — 25 October 2026.
  *
- * AND BELOW cloudflareModule, OBVIOUSLY — the first draft of this block
- * sat above the require that defines it and the whole file died with
- * "Cannot access 'cloudflareModule' before initialization".
+ * findZone and listZones were stubbed for the domain check on the create
+ * form. The check moved to /admin/blog-domains, where it runs once per pool
+ * domain instead of after every blog any customer ever creates — and its
+ * tests moved with it, to test-blog-domains.js.
  *
- * Same trap, same reason. These three are what the creation screen uses to
- * notice a typo'd domain before anything is written. Defaulted to "the zone
- * was found", which is the quiet path, so every existing creation test goes
- * on behaving as it did. */
-const zones = {
-  find: { ok: true, id: 'z1', name: 'explr-home.com' },
-  list: { ok: true, names: ['explr-home.com'] },
-  findCalls: [],
-  listCalls: [],
-};
-
-cloudflareModule.findZone = async (opts) => { zones.findCalls.push(opts); return zones.find; };
-cloudflareModule.listZones = async (opts) => { zones.listCalls.push(opts); return zones.list; };
+ * THE STUBS WENT TOO, DELIBERATELY. A stub for a function the route no
+ * longer calls can never fail; it can only make a test pass. This file has
+ * been caught by exactly that once already.
+ *
+ * THE TRAP THE OLD COMMENT HERE WARNED ABOUT STILL APPLIES to everything
+ * else stubbed in this block: it has to sit BELOW the `cloudflareModule`
+ * require that defines it, and ABOVE the require of the router, which
+ * destructures. The first draft of it sat above the require and the whole
+ * file died with "Cannot access 'cloudflareModule' before initialization".
+ * Five features have been caught by the second half of that. */
 
 
 /* childEnv throws when the credentials are absent, which they are in a
@@ -594,225 +592,32 @@ test('and the same hostname twice is refused', async () => {
   assert.strictEqual(db.created, null, 'a second blog was created on the same hostname');
 });
 
-test('A DOMAIN THIS ACCOUNT DOES NOT HOST IS FLAGGED BEFORE ANYTHING IS WRITTEN', async () => {
-  /* THE WHOLE POINT, AND IT COST A CAMPAIGN TO LEARN. Edwin typed
-   * `all-bout-hvac-explr-home.com` meaning `all-about-hvac.explr-home.com`
-   * — one dot became a hyphen, which is a different domain entirely. The
-   * app found out only at publish time, after a campaign was approved,
-   * three articles were written and charged for, and the site deployed
-   * with every canonical naming an address that does not exist. */
-  install({ blogs: [] });
-  zones.find = { ok: false, noZone: true, error: 'No zone in this Cloudflare account matches it.' };
-  zones.list = { ok: true, names: ['explr-home.com'] };
-
-  const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.ok(!out.redirected, 'it redirected past the warning');
-  assert.ok(/No domain in your Cloudflare account matches/i.test(out.html),
-    'the screen does not say the domain is unreachable');
-});
-
-test('AND IT NAMES THE DOMAIN THAT WAS LOOKED FOR', async () => {
-  /* THE "DID YOU MEAN" SUGGESTION IS ALL BUT DEAD — 22 October. It existed
-   * for Edwin typing `all-bout-hvac-explr-home.com`, one dot turned into a
-   * hyphen. The domain now comes from a dropdown, so that typo cannot be
-   * made; what is left is an ADMIN mistake, a pool domain added against an
-   * account whose zone list does not include it.
-   *
-   * The suggestion machinery is left in place because it is harmless and
-   * tested, but it is worth removing deliberately rather than leaving as
-   * code nobody can explain. Noted in CLAUDE.md. */
-  install({ blogs: [] });
-  zones.find = { ok: false, noZone: true, error: 'no' };
-  zones.list = { ok: true, names: ['explr-home.com'] };
-
-  const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.ok(out.html.includes('all-about-hvac.explr-home.com'),
-    'the screen does not say which hostname could not be found');
-});
-
-test('BUT THE BLOG IS STILL CREATED, BECAUSE IT WARNS RATHER THAN BLOCKS', async () => {
-  /* A blog on a domain Cloudflare does not host is a legitimate thing to
-   * want — the owner points the DNS himself and everything else works.
-   * Refusing would break that to catch a typo. */
-  install({ blogs: [] });
-  zones.find = { ok: false, noZone: true, error: 'no' };
-
-  const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'Elsewhere', prefix: 'elsewhere', domain: 'explr-home.com' },
-  }));
-
-  assert.ok(db.created, 'the blog was refused rather than flagged');
-  assert.strictEqual(db.created.siteUrl, 'elsewhere.explr-home.com');
-  assert.ok(/Carry on with this domain/i.test(out.html), 'there is no way past the warning');
-
-  /* 200, NOT 400. The blog WAS created; this page is a heads-up, not a
-   * rejection. Found by mutation: adding a 400 here broke nothing, and a
-   * 400 is what a browser, a log and the next developer all read as
-   * "this failed". */
-  assert.strictEqual(out.status, 200, 'a successful creation answered with an error status');
-});
-
-test('AND A MATCHING DOMAIN GOES STRAIGHT THROUGH, AS IT DID BEFORE', async () => {
-  install({ blogs: [] });
-  zones.find = { ok: true, id: 'z1', name: 'explr-home.com' };
-
-  const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.ok(out.redirected, 'a perfectly good domain was interrupted by a warning');
-});
-
-test('AND A LOOKUP THAT COULD NOT RUN DOES NOT CLAIM THE DOMAIN IS WRONG', async () => {
-  /* THE HALF THAT STOPS THIS BEING WORSE THAN NOTHING. No credentials, or a
-   * token without Zone:Read, also comes back ok:false. Telling somebody
-   * their domain is not in their account on that basis is a confident lie,
-   * and they would go and look for a problem that is not there. Only the
-   * noZone branch warns. */
-  install({ blogs: [] });
-  zones.find = { ok: false, error: 'No Cloudflare credentials.' };
-
-  const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.ok(out.redirected, 'a failed lookup was reported as a bad domain');
-  assert.ok(db.created, 'a failed lookup stopped the blog being created');
-});
-
-test('AND IT STILL WARNS WHEN THE ZONE LIST CANNOT BE READ', async () => {
-  /* The suggestion is a bonus; the warning is the point. A token that can
-   * check one zone but not list them all still catches the typo, just
-   * without naming the fix. */
-  install({ blogs: [] });
-  zones.find = { ok: false, noZone: true, error: 'no' };
-  zones.list = { ok: false, error: 'nope' };
-
-  const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.ok(/No domain in your Cloudflare account matches/i.test(out.html));
-  assert.ok(!/Did you mean/i.test(out.html), 'it suggested something it could not know');
-});
-
-/* ─────────── THE CHECK HAS TO ASK THE ACCOUNT THE BLOG IS ON ───────────
+/* ─────── THE DOMAIN CHECK MOVED OUT OF HERE — 25 OCTOBER 2026 ───────
  *
- * EDWIN HIT THIS THE FIRST TIME HE USED THE POOL — 22 October.
+ * Eight tests stood here, and they were good ones: a domain the account does
+ * not host flagged before anything was written, the warning naming the
+ * hostname, the blog created anyway because it warns rather than blocks, a
+ * failed lookup not claiming the domain was wrong, and three proving the
+ * check asked the account the BLOG was on rather than the environment's —
+ * which is the bug Edwin hit the first time he used the pool.
  *
- * He added a second Cloudflare account for `site-book.net`, added the domain
- * against it, created `cutting-edge-plumbing-techniques.site-book.net`, and
- * the screen told him no domain in his Cloudflare account matched it.
+ * THEY ARE IN test-blog-domains.js NOW, because the check is. The mistake it
+ * catches can only be made by an admin adding a pool domain against the
+ * wrong Cloudflare account, and it was running after every blog any customer
+ * ever created. Edwin, 25 October: "an admin mistake, caught on an admin
+ * screen, instead of firing on every create forever."
  *
- * The blog was perfect. The CHECK was wrong: `findZone({ domain })` with no
- * credentials falls back to the environment, so it had asked his OLD
- * explr-home.com account whether it owned site-book.net. Of course it did not.
+ * WHAT CHANGED WITH THE MOVE, and it is the one thing worth reading here:
+ * on the admin screen it REFUSES. Here it could not — a blog on a domain
+ * Cloudflare does not host is a legitimate thing to want, the owner points
+ * the DNS himself. A POOL domain is not that: the pool exists because the
+ * zone sits on the same account as the Pages project, which is what makes
+ * Cloudflare write the DNS record itself.
  *
- * THE SAME WIRING GAP, THREE TIMES IN ONE SESSION. findZone and listZones
- * were both taught about per-account credentials. This caller was not
- * updated, and nothing failed — a function whose credentials argument is
- * optional does not complain when you forget it. It just answers about
- * somewhere else.
- *
- * A false warning is not harmless here. It appears at the one moment the
- * screen exists to make somebody doubt their domain, and it would have fired
- * on EVERY blog created on EVERY pool domain. The lesson taken from it is
- * worse than the warning: "that alarm is always wrong, click past it". */
-
-test('THE ZONE CHECK ASKS THE ACCOUNT THE BLOG IS ACTUALLY ON', async () => {
-  install({ blogs: [] });
-  zones.findCalls.length = 0;
-  zones.find = { ok: true, id: 'z1', name: 'explr-home.com' };
-
-  await call(handler('post', '/static-blogs'), req({
-    body: { name: 'All About HVAC', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.strictEqual(zones.findCalls.length, 1, 'the zone was not looked up at all');
-
-  /* THE ASSERTION IS ON WHAT WENT OVER THE WIRE, not on what came back,
-   * and that is the only thing that catches this. The return value is
-   * identical whether the right account or the wrong one was asked. */
-  assert.deepStrictEqual(zones.findCalls[0].creds, POOL_CREDS,
-    'the check asked the environment\'s account, not the blog\'s');
-});
-
-test('AND SO DOES THE ZONE LIST BEHIND THE SUGGESTION', async () => {
-  /* The other half, and the quieter one. listZones() on the wrong account
-   * returns the wrong account's domains — so "Did you mean …?" would offer
-   * a domain from somewhere else entirely, which is worse than offering
-   * nothing. */
-  install({ blogs: [] });
-  zones.listCalls.length = 0;
-  zones.find = { ok: false, noZone: true, error: 'no' };
-  zones.list = { ok: true, names: ['explr-home.com'] };
-
-  await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.strictEqual(zones.listCalls.length, 1, 'the zone list was never read');
-  assert.ok(zones.listCalls[0] && zones.listCalls[0].creds,
-    'the suggestion would be drawn from the wrong account\'s domains');
-  assert.deepStrictEqual(zones.listCalls[0].creds, POOL_CREDS);
-});
-
-test('A BLOG ON NO POOL ACCOUNT STILL ASKS WITH NOTHING, WHICH MEANS THE ENVIRONMENT', async () => {
-  /* The fallback has to survive. A Domain row with no account is the
-   * server's own account, and passing `creds: undefined` is how cfApi is
-   * told so. Passing a half-built object instead would make it refuse. */
-  install({
-    blogs: [],
-    pool: [{ _id: 'dom-own', domain: 'explr-home.com', account: null, enabled: true }],
-  });
-  zones.findCalls.length = 0;
-  zones.find = { ok: true, id: 'z1', name: 'explr-home.com' };
-
-  await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.strictEqual(zones.findCalls.length, 1);
-  assert.strictEqual(zones.findCalls[0].creds, undefined,
-    'it invented credentials for a blog that has none');
-});
-
-test('AND A CREDENTIAL THAT CANNOT BE RESOLVED SKIPS THE CHECK RATHER THAN BREAKING', async () => {
-  /* credsFor THROWS for an account that is gone, disabled, or whose token
-   * will not decrypt — deliberately, because falling back would deploy
-   * into the wrong account.
-   *
-   * But by this point the blog has ALREADY BEEN CREATED. Letting that throw
-   * escape turns a created blog into a 500, and the person is left looking
-   * at an error page for a blog that exists.
-   *
-   * So it is caught, and the check is skipped. Which is the rule the
-   * comment above the check already states: a failure to ask is not a
-   * failure to match. The credential problem surfaces at the first publish,
-   * named, from credsFor itself. */
-  install({
-    blogs: [],
-    pool: [{ _id: 'dom-bad', domain: 'explr-home.com', account: 'acct-broken', enabled: true }],
-  });
-  zones.findCalls.length = 0;
-  zones.find = { ok: false, noZone: true, error: 'no' };
-
-  const out = await call(handler('post', '/static-blogs'), req({
-    body: { name: 'X', prefix: 'all-about-hvac', domain: 'explr-home.com' },
-  }));
-
-  assert.notStrictEqual(out.status, 500, 'an unusable account took the creation down');
-  assert.ok(db.created, 'the blog was lost');
-  assert.strictEqual(zones.findCalls.length, 0,
-    'it asked anyway, with credentials it could not resolve');
-  assert.ok(out.redirected, 'it warned on the strength of a check it never ran');
-});
+ * THE CREATE HANDLER IS STILL TESTED ABOVE for everything it still does,
+ * and the capacity check below still proves a live Cloudflare call is made
+ * at creation. What is gone is the assertion that it makes a SECOND one.
+ */
 
 /* ──────────── ONE HUNDRED PAGES PROJECTS AND NOT ONE MORE ────────────
  *

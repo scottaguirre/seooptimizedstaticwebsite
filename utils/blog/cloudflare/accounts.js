@@ -57,6 +57,28 @@ async function credsFor(blog) {
    * is reached. */
   if (!id) return undefined;
 
+  return credsForAccountId(id);
+}
+
+/**
+ * The credentials for one account row, by id.
+ *
+ * SPLIT OUT OF credsFor() ON 25 OCTOBER, when the zone check moved to the
+ * admin screen. That screen already holds the CloudflareAccount it is about
+ * and has no blog to ask on behalf of — and the alternative was passing
+ * `{ cloudflareAccount: id }` as a pretend blog, which reads like a trick
+ * and invites somebody to pass a real blog's id into the wrong argument.
+ *
+ * EVERY REFUSAL IN HERE IS credsFor()'s REFUSAL, unchanged. There is no
+ * second copy of the rules: the account missing, disabled, or short of a
+ * token or an id all throw with the same words they always did, and
+ * `undefined` for "no account named" stays in credsFor() where it belongs,
+ * because an ID WAS NAMED is the whole precondition of this function.
+ *
+ * @param {*} id  a CloudflareAccount _id
+ * @returns {Promise<{token:string, account:string}>}
+ */
+async function credsForAccountId(id) {
   const found = await CloudflareAccount.findById(id);
 
   /* FROM HERE DOWN, EVERY FAILURE THROWS. The blog has told us where it
@@ -268,6 +290,6 @@ async function recountAccount(account, deps = {}) {
 }
 
 module.exports = {
-  credsFor, accountCapacity, verifyAccount, recountAccount,
+  credsFor, credsForAccountId, accountCapacity, verifyAccount, recountAccount,
   PROJECT_LIMIT, NEARLY_FULL_AT,
 };

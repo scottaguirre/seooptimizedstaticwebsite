@@ -210,6 +210,107 @@ else
   echo "php is not installed here — the plugin's PHP suites were SKIPPED, not passed."
 fi
 
+# THE TWO SUITES THAT NEED A DATABASE, AND WHY THEY REFUSE RATHER THAN SKIP.
+#
+# test-blog-batch.js and test-blog-routes.js were written on 3 September 2026
+# and first run on 25 October. Seven weeks. In that time:
+#
+#   - models/User.js renamed `password` to `passwordHash` on 5 September, two
+#     days after the fixtures were written, and every test in both files died
+#     in its own setup from then on
+#   - the quality gate learned to ask for a rewrite, which doubled the model
+#     calls the fixtures were counting
+#   - crossCheck started keying an opening on its first six words
+#
+# None of that was anybody's carelessness. They were not in the loop above, so
+# nothing ran them, so nothing complained. A test nobody runs is a test that
+# rots, and it rots silently.
+#
+# THEY ARE NOT IN THE LOOP ABOVE because both begin:
+#
+#     if (!process.env.MONGO_URI) { console.log('…set MONGO_URI…'); exit(0) }
+#
+# Dropped into that loop they would exit 0 having run nothing, and the deploy
+# would go green on 36 tests that never executed. That is worse than today,
+# because it LOOKS like coverage.
+#
+# SO THIS BLOCK STARTS THE DATABASE ITSELF, and if it cannot, it REFUSES the
+# deploy. These 36 tests are the only thing covering charging a customer per
+# post — charged once, never twice, not charged for a post that failed. A
+# warning you see fifty times is not a warning.
+#
+# SKIP_DB_TESTS=1 is the deliberate way out, and it is deliberately ugly to
+# type. Skipping should be a decision, not a habit.
+#
+# A SCRATCH DATABASE, ALWAYS. The suites create a user, a site and campaigns
+# and delete them at the end, but a crash mid-run leaves rows behind. The name
+# below exists for this script and nothing else, and it is never the database
+# in .env.
+DB_SUITES=(test-blog-batch.js test-blog-routes.js)
+SCRATCH_URI="mongodb://127.0.0.1:27017/tc-deploy-scratch"
+SCRATCH_DBPATH="${HOME}/mongo-scratch"
+
+# A TCP CONNECT, NOT `mongosh`. mongosh is a separate Homebrew formula from
+# the server and may not be installed; something listening on the port is
+# enough to try, and if it is not actually MongoDB the suites say so loudly.
+db_up() {
+  node -e '
+    const net = require("net");
+    const s = net.connect(27017, "127.0.0.1");
+    s.setTimeout(1500);
+    s.on("connect", () => { s.end(); process.exit(0); });
+    s.on("error",   () => process.exit(1));
+    s.on("timeout", () => { s.destroy(); process.exit(1); });
+  ' > /dev/null 2>&1
+}
+
+if [[ -n "${SKIP_DB_TESTS:-}" ]]; then
+  echo "SKIP_DB_TESTS is set — the two database suites were SKIPPED, not passed."
+else
+  if ! db_up && command -v mongod > /dev/null 2>&1; then
+    echo "Starting MongoDB for the database suites..."
+    mkdir -p "$SCRATCH_DBPATH"
+    mongod --dbpath "$SCRATCH_DBPATH" --port 27017 --fork \
+           --logpath "${SCRATCH_DBPATH}/mongod.log" > /dev/null 2>&1 || true
+    sleep 2
+  fi
+
+  if ! db_up; then
+    echo
+    echo "MongoDB is not answering on 127.0.0.1:27017, so these cannot run:"
+    echo
+    for suite in "${DB_SUITES[@]}"; do echo "  ${suite}"; done
+    echo
+    echo "They are the only tests covering charging a customer per post."
+    echo
+    echo "Start it by hand:"
+    echo
+    echo "  mkdir -p ~/mongo-scratch"
+    echo "  mongod --dbpath ~/mongo-scratch --port 27017 --fork --logpath ~/mongo-scratch/mongod.log"
+    echo
+    echo "Or deploy without them, on purpose:"
+    echo
+    echo "  SKIP_DB_TESTS=1 ./deploy.sh"
+    echo
+    echo "Nothing was deployed. The server is still running the previous build."
+    exit 1
+  fi
+
+  echo "Running the database suites..."
+  for suite in "${DB_SUITES[@]}"; do
+    if ! MONGO_URI="$SCRATCH_URI" node "$suite" > /dev/null; then
+      echo
+      echo "FAILED: ${suite}"
+      echo "Run it directly to see which assertion failed:"
+      echo
+      echo "  MONGO_URI=\"${SCRATCH_URI}\" node ${suite}"
+      echo
+      echo "Nothing was deployed. The server is still running the previous build."
+      exit 1
+    fi
+  done
+fi
+
 echo "Tests passed."
 echo
 

@@ -48,12 +48,195 @@ let identicalOpenings = false;   // make every post start the same way
 const writeCalls = [];           // every slot the model was asked for
 
 /**
- * A post carrying every token the slot demands.
+ * Sentences carrying measurable detail, varied by slot.
  *
- * checkPost() verifies the anchors appear VERBATIM inside their wrappers, so
- * the stub has to emit them exactly — a stub that skipped them would make
- * every post in these tests fail its quality check for the wrong reason.
+ * THE NUMBERS ARE NOT DECORATION. qualityCheck's specificity() counts units,
+ * money and bare numbers per hundred words and fails a post under one marker
+ * per hundred as `vague`. A fixture of flat prose fails that check, and a
+ * fixture that fails a check is a fixture that cannot tell you anything about
+ * the code around the check.
+ *
+ * VARIED BY SEED so crossCheck's repeated-sentence count stays low. The
+ * `varied posts produce a clean report` test asserts zero duplicate openings
+ * and would be asserting nothing if every post were word-for-word identical.
  */
+function detailLines(seed) {
+  return [
+    `A 40 gallon tank holds roughly ${300 + seed} pounds of water once full, and the floor under it was rated for that load when the house was built.`,
+    `Most residential units run between ${40 + seed} and ${80 + seed} psi, and a reading outside that band points at the regulator rather than the tank.`,
+    `Sediment settles at about ${1 + (seed % 3)} inch per ${3 + (seed % 4)} years in hard water, which is why the burner works harder each winter.`,
+    `A technician will usually drain ${2 + seed} gallons before the water runs clear, and that alone tells you how long it has been since the last service.`,
+    `Set the thermostat to 120 degrees rather than ${130 + seed}, and the standby loss drops by a measurable amount over ${12 + seed} months.`,
+    `Anode rods are consumed in ${4 + (seed % 5)} to ${7 + (seed % 5)} years depending on the water, and replacing one costs a fraction of replacing a tank.`,
+    `A relief valve is rated at 150 psi and ${210 - seed} degrees, and it is the one part on the unit that nobody should test twice in a week.`,
+    `Expect ${10 + seed} to ${14 + seed} years from a standard unit in this area, and rather less where the water sits above ${7 + (seed % 3)} grains of hardness.`,
+    // RAW SEED, NOT seed % 4. Every line here needs at least one number that
+    // moves with the raw seed, or two slots of a five-post campaign produce a
+    // word-for-word identical sentence. These two were the last pair.
+    `The draw on a 4500 watt element is about ${18 + seed} amps, so a circuit shared with anything else will trip before the tank is at temperature.`,
+    `A drip of ${1 + (seed % 2)} gallon an hour is ${24 + seed} gallons a day, which is the point at which a slow leak stops being cosmetic.`,
+    `Recovery on a gas unit runs near ${30 + seed} gallons an hour at a ${90 - seed} degree rise, and that number is what sizing actually turns on.`,
+    `Flushing takes ${20 + seed} minutes and needs ${5 + (seed % 3)} feet of hose, and skipping it for ${3 + (seed % 3)} years is what turns a service call into a replacement.`,
+    `A dip tube that has cracked will cut usable capacity by ${20 + seed} percent, and the symptom is hot water that runs out ${4 + (seed % 4)} minutes early.`,
+    `Thermal expansion adds ${2 + seed} to ${5 + seed} percent to the volume in the tank, and a closed system with no outlet puts that straight into the fittings.`,
+    `A gas unit needs ${50 + seed} cubic feet of combustion air per 1000 btu, and a sealed closet built in ${1995 + seed} rarely provides it.`,
+    `Vent pipe should rise ${1 + (seed % 2)} inch per ${4 + (seed % 3)} feet of run, and a sagging section is where condensate collects and rusts through.`,
+    `Hard water above ${10 + (seed % 5)} grains cuts element life by roughly ${30 + seed} percent, which is the single biggest local factor in these numbers.`,
+    `A mixing valve set at ${120 + (seed % 5)} degrees lets the tank run at ${140 + (seed % 5)} safely, which buys about ${15 + seed} percent more usable hot water.`,
+    `Insulating ${6 + (seed % 4)} feet of exposed pipe saves a few dollars a month and costs about $${20 + seed} in materials.`,
+    `A pan under the tank with a ${1 + (seed % 2)} inch drain line is required in ${38 + (seed % 3)} states for an interior installation.`,
+    `Expect ${2 + (seed % 2)} to ${4 + (seed % 2)} hours of labour for a straight swap, and rather more where the shutoff has seized after ${12 + seed} years.`,
+    `A tankless unit needs ${150 + seed} to ${199 + seed} thousand btu to serve ${3 + (seed % 3)} fixtures at once, which is why a straight swap is rarely straight.`,
+    `Water at ${55 + seed} degrees entering in January versus ${75 + seed} in July changes recovery by about ${25 + seed} percent, and sizing done in summer shows it.`,
+    `A burner firing for more than ${45 + seed} minutes to recover ${30 + seed} gallons is either undersized or sitting on ${2 + (seed % 3)} inches of sediment.`,
+    `Replacing a thermocouple runs about $${90 + seed} fitted, against $${1400 + seed * 10} for a full replacement, and the choice usually turns on the age above.`,
+    `Sign off adds $${75 + seed} and ${2 + (seed % 3)} days in most areas here, and a swap done without it is the first thing an inspector finds at sale.`,
+    `Earthquake strapping is two bands at ${1 + (seed % 2)} third and ${2 + (seed % 2)} thirds of the tank height, and it takes about ${25 + seed} minutes to fit.`,
+    `Flex connectors are rated for ${15 + seed} years but fail sooner within ${6 + (seed % 4)} inches of a hard bend, which is where most of them are installed.`,
+    `A drain valve made of plastic will usually seize after ${5 + (seed % 4)} years, and swapping it for brass costs about $${14 + seed}.`,
+    `Standby loss on an uninsulated tank runs near ${1 + (seed % 2)} kilowatt hour a day, which is ${350 + seed} kilowatt hours over a year.`,
+    `A recirculation pump on a ${20 + seed} minute timer uses far less than one left running ${24 - (seed % 3)} hours, and the comfort difference is small.`,
+    `Element resistance should read between ${10 + seed} and ${16 + seed} ohms cold, and anything open means the element rather than the thermostat.`,
+    `A thermostat out of calibration by ${8 + (seed % 5)} degrees will short cycle the burner ${3 + (seed % 3)} times an hour and sound exactly like sediment.`,
+    `Gas pressure should sit at ${3 + (seed % 2)} point ${5 - (seed % 3)} inches of water column, and a long ${40 + seed} foot run undersized by one pipe size will not hold it.`,
+    `Condensate from a high efficiency unit runs about ${1 + (seed % 2)} gallon per ${100 + seed} thousand btu burned, and it is acidic enough to need neutralising.`,
+    `Warranty on the tank is typically ${6 + (seed % 4)} years and on labour ${1 + (seed % 2)}, and the difference is where most disputes at year ${7 + (seed % 3)} come from.`,
+    `Budget $${1800 + seed * 10} to $${2600 + seed * 10} installed for a like for like unit in this market, and about ${30 + seed} percent more for a vented upgrade.`,
+  ];
+}
+
+/* THE OPENING IS SIX WORDS LONG, AND THAT IS THE WHOLE KEY.
+ *
+ * crossCheck() reduces a post's opening to
+ *
+ *     first[0].toLowerCase().split(' ').slice(0, 6).join(' ')
+ *
+ * Six words. Nothing after them counts. On 25 October this stub opened every
+ * post with "A tank that has run for N years…" — varied by a number in the
+ * SEVENTH word — and `varied posts produce a clean report` reported three
+ * duplicate openings out of four posts that were, to the eye, all different.
+ * The assertion was right and the fixture was wrong.
+ *
+ * SO THE STEMS DIFFER IN THEIR FIRST WORDS, NOT IN THEIR DIGITS. Seven of
+ * them, indexed by slot, which is more than any campaign in either suite.
+ */
+const OPENINGS = [
+  (n) => `Nobody calls about this until the hot water runs out mid-shower, which is usually ${8 + n} years into the tank's life.`,
+  (n) => `The noise comes first, weeks before anything else, and by then there are ${1 + (n % 3)} inches of sediment sitting on the burner.`,
+  (n) => `Most of these units fail on a Sunday, about ${10 + n} years after installation, and never during a scheduled service visit.`,
+  (n) => `Water heaters give warning signs for ${6 + n} months before they leak, and almost nobody is looking for any of them.`,
+  (n) => `There is a measurable difference between a tank at ${8 + n} years and one at ${14 + n}, and it is not subtle.`,
+  (n) => `By the time a tank is ${12 + n} years old the question has changed from repair to replacement, whatever the symptom was.`,
+  (n) => `Sediment, pressure and age explain nearly all of it, and each one leaves a number you can read off a gauge.`,
+];
+
+/* The money sentence, varied for the same reason one step down.
+ *
+ * It is not an opening, so it cannot move dupOpenings — but an identical
+ * sentence in every post of a campaign IS a repeat, and a test called
+ * `varied posts produce a clean report` should be able to mean the word clean.
+ */
+const MONEY_LINES = [
+  (a) => `Past a certain point a {{money}}${a}{{/money}} is the practical next step, and the numbers above are how you know you have reached it.`,
+  (a) => `Once two or three of those readings land badly, a {{money}}${a}{{/money}} stops being the optional answer.`,
+  (a) => `The threshold where a {{money}}${a}{{/money}} makes more sense than another part is further down this page.`,
+  (a) => `Anyone weighing a {{money}}${a}{{/money}} against another season of patching should start with the pressure reading.`,
+  (a) => `A {{money}}${a}{{/money}} booked before the tank fails costs a fraction of the same work booked after.`,
+  (a) => `None of this replaces a {{money}}${a}{{/money}} by somebody who can see the unit, but it tells you what to ask for.`,
+  (a) => `When the numbers above stack up together, a {{money}}${a}{{/money}} is the cheaper of the two remaining paths.`,
+];
+
+/**
+ * A post that PASSES the quality gate, carrying every token the slot demands.
+ *
+ * THE FIXTURE USED TO FAIL THE GATE, AND THAT IS WHAT BROKE THREE TESTS.
+ *
+ * Until 25 October this stub returned sixty words of flat prose with no
+ * keyword and no numbers. qualityCheck() failed it as `short`, `keyword-meta`,
+ * `keyword-heading` and `keyword-body` — all four of which are in
+ * REWRITE_WORTHY — so blogGenerator did exactly what it is built to do and
+ * asked the model a SECOND time for every single post.
+ *
+ * The three tests that count model calls therefore read double: 4 instead of
+ * 2, 6 instead of 4, 2 instead of 1. Nothing was wrong with the code. The
+ * fixture was asking the generator to behave abnormally and then asserting it
+ * had behaved normally.
+ *
+ * THE FIX IS THE FIXTURE, NOT THE EXPECTED NUMBERS. Changing 2 to 4 would
+ * have made the suite green and thrown away the only assertion standing
+ * between a customer and being charged twice — and it would have broken again
+ * the next time the quality rules moved.
+ *
+ * WHAT THE GATE WANTS, and every line below exists to satisfy one of them:
+ *
+ *   - 850+ words          boundsFor(undefined) → LEGACY.floor
+ *   - keyword in title    includes(keyword, title)
+ *   - keyword in meta     includes(keyword, metaDescription)
+ *   - keyword in a heading
+ *   - keyword exactly ONCE in the body, anchors stripped
+ *   - every anchor VERBATIM inside its wrapper
+ *   - no two link phrases in one paragraph
+ *   - at least one concrete marker per hundred words
+ *   - a distinct opening, which is SIX WORDS — see OPENINGS below
+ *
+ * FROM slot.targetQuery, NOT slot.topic. They are the same string in this
+ * file's fixture and DIFFERENT in test-blog-routes.js, where the topics carry
+ * a separate targetQuery. A stub titling from `topic` passes here and fails
+ * there, which is the kind of difference a shared stub should not have.
+ */
+function qualityPost(slot, opening) {
+  const keyword = String(slot.targetQuery || slot.topic || '').trim();
+  const lines = detailLines(Number(slot.index) % 7);
+
+  const sections = [
+    /* THE MONEY LINK BELONGS IN SECTION 0. linkSpread() warns when it is not
+     * in the opening section, and one paragraph per link phrase keeps
+     * `links-crowded` — a failure, and rewrite-worthy — off the report. */
+    {
+      heading: null,
+      paragraphs: [
+        opening,
+        ...lines.slice(0, 3),
+        MONEY_LINES[Number(slot.index) % MONEY_LINES.length](
+          slot.money ? slot.money.anchor : 'a repair'),
+      ],
+    },
+    {
+      // The keyword's heading. Headings are not counted as body, so this does
+      // not spend the single body mention the rule allows.
+      heading: `What ${keyword} actually tells you`,
+      paragraphs: [
+        `The short answer to ${keyword} is that it is a symptom with a measurable cause, not a verdict on the appliance.`,
+        ...lines.slice(3, 7),
+      ],
+    },
+    { heading: 'What a service call looks for', paragraphs: lines.slice(7, 14) },
+    { heading: 'When replacement is the cheaper answer', paragraphs: lines.slice(14) },
+  ];
+
+  if (slot.prevAnchor) {
+    sections.push({
+      heading: 'Covered earlier',
+      paragraphs: [`We went through {{prev}}${slot.prevAnchor}{{/prev}} already, and the same thresholds apply there.`],
+    });
+  }
+
+  if (slot.nextAnchor) {
+    sections.push({
+      heading: 'Worth reading next',
+      paragraphs: [`This is where people start weighing up {{next}}${slot.nextAnchor}{{/next}} instead of another repair.`],
+    });
+  }
+
+  return {
+    title: `${keyword}: what the numbers say`,
+    // Does not open on the title's first thirty characters, which would earn
+    // a `meta description restates the title` warning.
+    metaDescription: `A measured look at ${keyword}, with the pressures, temperatures and service intervals that decide whether to repair or replace.`,
+    sections,
+  };
+}
+
 function fakeWritePost(slot) {
   writeCalls.push(slot.index);
 
@@ -69,37 +252,9 @@ function fakeWritePost(slot) {
 
   const opening = identicalOpenings
     ? 'Every one of these posts opens with exactly the same sentence, which is the thing crossCheck exists to notice.'
-    : `Slot ${slot.index} opens on its own terms, with a detail specific to this topic and no other.`;
+    : OPENINGS[Number(slot.index) % OPENINGS.length](Number(slot.index));
 
-  const sections = [
-    { heading: null, paragraphs: [opening] },
-    {
-      heading: 'What usually goes wrong',
-      paragraphs: [
-        `Sediment and age account for most of it, and past a certain point a {{money}}${slot.money.anchor}{{/money}} is the practical next step.`,
-      ],
-    },
-  ];
-
-  if (slot.prevAnchor) {
-    sections.push({
-      heading: 'Earlier',
-      paragraphs: [`We went through {{prev}}${slot.prevAnchor}{{/prev}} already, and the same checks apply.`],
-    });
-  }
-
-  if (slot.nextAnchor) {
-    sections.push({
-      heading: 'Worth knowing',
-      paragraphs: [`This is where people start weighing up {{next}}${slot.nextAnchor}{{/next}} instead.`],
-    });
-  }
-
-  return Promise.resolve({
-    title: `Post ${slot.index}: ${slot.topic}`,
-    metaDescription: `A short description for slot ${slot.index}, under the limit.`,
-    sections,
-  });
+  return Promise.resolve(qualityPost(slot, opening));
 }
 
 require.cache[writePostPath] = {
@@ -164,7 +319,15 @@ const made = { users: [], sites: [], campaigns: [], jobs: [] };
 async function seed({ credits = 10000, slots = 5, status = 'draft' } = {}) {
   const user = await User.create({
     email: `batch-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.invalid`,
-    password: 'x'.repeat(60),
+    // THE FIELD IS passwordHash, AND THIS FIXTURE LEARNED IT THE HARD WAY.
+    //
+    // Written 3 September with `password`. models/User.js was renamed two days
+    // later and this line was not, so every test in the file died inside
+    // seed() for seven weeks — unnoticed, because nothing ever ran the file.
+    // A test nobody runs is a test that rots silently.
+    //
+    // The value is a bcrypt-length string. Nothing here checks a password.
+    passwordHash: 'x'.repeat(60),
     credits,
   });
   made.users.push(user._id);

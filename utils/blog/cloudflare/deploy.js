@@ -567,9 +567,20 @@ async function findZone({ domain, fetchImpl = fetch, creds } = {}) {
 /**
  * Every zone this account holds.
  *
- * ONLY EVER CALLED WHEN A DOMAIN DID NOT MATCH ONE, so it costs nothing on
- * the path where everything is fine. Its whole job is to turn "no zone
- * matches" into "no zone matches, and here is the one you probably meant".
+ * NOTHING IN THE APP CALLS THIS TODAY — 25 October 2026.
+ *
+ * It existed to feed suggestZoneFix(), which turned "no zone matches" into
+ * "no zone matches, and here is the one you probably meant". That suggestion
+ * only ever fired on one mistake — a dot typed as a hyphen — and the
+ * free-text domain field that made the mistake possible was replaced by a
+ * dropdown on 22 October. The suggester went with it on the 25th, and this
+ * went with the suggester: a Cloudflare round trip on every mismatched
+ * domain, to build a sentence that could no longer be built.
+ *
+ * KEPT because it is a thin, tested wrapper and the next thing that wants
+ * to know which zones an account holds should not write it again. If it is
+ * still unused the next time somebody reads this, delete it and its two
+ * tests in test-cloudflare-deploy.js.
  */
 async function listZones({ fetchImpl = fetch, creds } = {}) {
   const answer = await cfApi('/zones?per_page=50', { fetchImpl, creds });
@@ -580,44 +591,6 @@ async function listZones({ fetchImpl = fetch, creds } = {}) {
     ok: true,
     names: (answer.result || []).map(z => String((z && z.name) || '')).filter(Boolean),
   };
-}
-
-/**
- * The domain somebody probably meant.
- *
- * ONE MISTAKE, CAUGHT PRECISELY, rather than fuzzy matching that guesses.
- * Edwin typed `all-bout-hvac-explr-home.com` meaning
- * `all-about-hvac.explr-home.com`: the dot before the zone became a hyphen.
- * That turns a subdomain of a domain he owns into a brand-new .com nobody
- * owns, and nothing noticed until three articles had been written and
- * deployed with canonicals pointing at it.
- *
- * So the test is exact: does the typed domain end with a hyphen followed by
- * a zone this account holds? If it does, that hyphen should have been a dot
- * and we can say so. If it does not, we say nothing — a wrong suggestion is
- * worse than none, because it invites somebody to accept it.
- *
- * PURE. No network, no Cloudflare, so every case is one assertion.
- */
-function suggestZoneFix({ domain, zones } = {}) {
-  const typed = String(domain || '').trim().toLowerCase();
-  const owned = Array.isArray(zones) ? zones : [];
-
-  for (const zone of owned) {
-    const name = String(zone || '').trim().toLowerCase();
-    if (!name) continue;
-
-    const tail = `-${name}`;
-
-    /* LONGER THAN THE TAIL, not merely ending with it: a domain that IS
-     * `-example.com` and nothing else has no subdomain label to rescue. */
-    if (typed.length > tail.length && typed.endsWith(tail)) {
-      const label = typed.slice(0, typed.length - tail.length);
-      return { suggestion: `${label}.${name}`, zone: name };
-    }
-  }
-
-  return { suggestion: '', zone: '' };
 }
 
 /**
@@ -1150,6 +1123,6 @@ async function deployBlog({ blog, files, requestId, run = runWrangler, attach = 
 module.exports = {
   deployBlog, projectNameFor, resolveInside, writeSite, scrub, urlFrom, childEnv,
   wranglerEntry, runWrangler, ensureProject, attachDomain, deleteProject,
-  cfApi, findZone, listZones, suggestZoneFix, ensureDnsRecord, pointDomainAtProject,
+  cfApi, findZone, listZones, ensureDnsRecord, pointDomainAtProject,
   detachDomain, removeDnsRecord, releaseDomain,
 };

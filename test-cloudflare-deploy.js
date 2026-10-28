@@ -2188,42 +2188,24 @@ test('AND A FAILURE TO ASK CARRIES NO SUCH MARK', async () => {
   });
 });
 
-test('THE SUGGESTER TURNS A HYPHEN BACK INTO THE DOT IT SHOULD HAVE BEEN', async () => {
-  /* The exact mistake: `all-about-hvac.explr-home.com` typed as
-   * `all-bout-hvac-explr-home.com`. */
-  assert.strictEqual(
-    cf.suggestZoneFix({ domain: 'all-bout-hvac-explr-home.com', zones: ['explr-home.com'] }).suggestion,
-    'all-bout-hvac.explr-home.com');
-});
-
-test('AND SAYS NOTHING WHEN IT HAS NOTHING TO SAY', async () => {
-  /* A wrong suggestion is worse than none: it invites somebody to accept
-   * it. Only the one mistake it can prove is offered. */
-  for (const domain of [
-    'all-about-hvac.explr-home.com',
-    'somewhere-else.com',
-    'explr-home.com',
-    '',
-  ]) {
-    assert.strictEqual(
-      cf.suggestZoneFix({ domain, zones: ['explr-home.com'] }).suggestion, '',
-      `it invented a suggestion for ${JSON.stringify(domain)}`);
-  }
-});
-
-test('AND A DOMAIN THAT IS ONLY THE TAIL GETS NO SUGGESTION', async () => {
-  /* FOUND BY MUTATION. Without the length guard, `-explr-home.com` leaves
-   * an empty label and the suggestion becomes `.explr-home.com` — a string
-   * that is not a domain, offered to somebody as the fix. */
-  assert.strictEqual(
-    cf.suggestZoneFix({ domain: '-explr-home.com', zones: ['explr-home.com'] }).suggestion, '');
-});
-
-test('AND IT MATCHES WHATEVER ZONE FITS, NOT JUST THE FIRST', async () => {
-  assert.strictEqual(
-    cf.suggestZoneFix({ domain: 'blog-second-site.com', zones: ['first-site.com', 'second-site.com'] }).suggestion,
-    'blog.second-site.com');
-});
+/* suggestZoneFix WAS DELETED ON 25 OCTOBER 2026, AND FOUR TESTS WITH IT.
+ *
+ * It answered one question — "was that hyphen meant to be a dot?" — and it
+ * answered it well: a mutation test had already forced a length guard into it
+ * so that `-explr-home.com` could not become the suggestion `.explr-home.com`.
+ *
+ * It died of its input. The suggestion needed somebody to TYPE a domain, and
+ * the free-text field was replaced on 22 October by a prefix plus a dropdown
+ * of the pool's domains, with the dot supplied by the app. The one mistake it
+ * could catch stopped being possible to make.
+ *
+ * THE WARNING IT DECORATED IS STILL THERE and still tested, in
+ * test-static-blogs.js: a domain the account does not host is flagged before
+ * any article is written. What went is the guess about why.
+ *
+ * listZones() survives in deploy.js with its two tests above, now with no
+ * caller in the app — read its comment before assuming that is an oversight.
+ */
 
 
 (async () => {

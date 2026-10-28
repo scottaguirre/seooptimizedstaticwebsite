@@ -29,6 +29,10 @@ const { open } = require('./utils/blog/cloudflare/secretBox');
 const router = require('./routes/blogDomainsRoute');
 const CloudflareAccount = require('./models/CloudflareAccount');
 const Domain = require('./models/Domain');
+/* COUNTED BY THE REMOVAL GUARD, so it is stubbed like the other two. An
+ * unstubbed countDocuments() would reach for a Mongo connection that does not
+ * exist in this suite. */
+const BlogSite = require('./models/BlogSite');
 
 /* STUBBED THE SAME WAY THE MODELS ARE. The add handler calls
  * cloudflare.verifyAccount() — a property read at call time — so replacing it
@@ -38,6 +42,14 @@ const Domain = require('./models/Domain');
  * HTTPS call to Cloudflare, and a test that forgot to stub it would not fail
  * loudly: it would hang on the network inside ./deploy.sh. */
 const cloudflare = require('./utils/blog/cloudflare/accounts');
+
+/* AND THE SAME FOR findZone, WHICH THE ADD-DOMAIN HANDLER CALLS.
+ *
+ * The route requires this module and reads `cfDeploy.findZone` at call time,
+ * for exactly this reason. Stubbing it here is enough even though the router
+ * was required above — and a test that forgot would not fail loudly, it would
+ * make a live HTTPS call to Cloudflare and hang inside ./deploy.sh. */
+const cfDeploy = require('./utils/blog/cloudflare/deploy');
 
 let passed = 0, failed = 0;
 
@@ -80,7 +92,37 @@ function install(over = {}) {
     recount: {},
     recounted: [],
     updates: [],
+
+    /* THE ZONE CHECK ON THE ADD-DOMAIN HANDLER — moved here 25 October from
+     * the customer's create form. Defaulted to "the zone is on the account",
+     * which is the quiet path, so every existing add-domain test above goes
+     * on behaving as it did. */
+    zone: { ok: true, id: 'z1', name: 'acmehvac.com' },
+    zoneCalls: [],
+
+    /* And the credentials the check is made with. `credsError` makes
+     * credsForAccountId throw, which is what a disabled account or a token
+     * that will not decrypt does. */
+    creds: { token: 'cf-token-for-acct-3', account: ACCOUNT_ID },
+    credsError: '',
+    credsCalls: [],
+
+    /* WHAT POINTS AT THE ACCOUNT BEING REMOVED. Both default to zero —
+     * "nothing references it" is the only state in which a removal is
+     * allowed, so it is the state every other test wants to be in. */
+    blogCount: 0,
+    domainCount: 0,
+    countCalls: [],
+    deleted: null,
   }, over);
+
+  cloudflare.credsForAccountId = async (id) => {
+    db.credsCalls.push(String(id));
+    if (db.credsError) throw new Error(db.credsError);
+    return db.creds;
+  };
+
+  cfDeploy.findZone = async (opts) => { db.zoneCalls.push(opts); return db.zone; };
 
   cloudflare.verifyAccount = async (creds) => {
     db.verified.push(creds);
@@ -107,6 +149,21 @@ function install(over = {}) {
   CloudflareAccount.findOne = async (where) =>
     db.accounts.find(a => !where.accountId || a.accountId === where.accountId) || null;
   CloudflareAccount.create = async (doc) => { db.created = doc; return { _id: 'new-acct', ...doc }; };
+
+  BlogSite.countDocuments = async (where) => {
+    db.countCalls.push({ blogs: where });
+    return db.blogCount;
+  };
+
+  Domain.countDocuments = async (where) => {
+    db.countCalls.push({ domains: where });
+    return db.domainCount;
+  };
+
+  CloudflareAccount.deleteOne = async (where) => {
+    db.deleted = where;
+    return { deletedCount: 1 };
+  };
 
   Domain.find = () => ({ sort: () => ({ lean: async () => db.domains }) });
   Domain.findOne = async (where) =>
@@ -606,6 +663,230 @@ await test('AND IT SAYS HOW FULL EACH ACCOUNT IS', async () => {
   assert.ok(/86\s*\/\s*100/.test(out.html), 'the project count is not shown');
 });
 
+section('REPLACING A TOKEN');
+
+const NEW_TOKEN = 'cf-live-token-Q4wE7rT0yU3iO6pA9sD2fG5hJ8k';
+
+await test('THE NEW TOKEN IS SEALED AND WRITTEN IN PLACE', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({ params: { id: 'acct-3' }, body: { token: NEW_TOKEN } }));
+
+  assert.strictEqual(out.redirected, '/admin/blog-domains');
+  assert.strictEqual(db.updates.length, 1, 'nothing was written');
+
+  const [{ where, update }] = db.updates;
+
+  /* THE _id IS THE WHOLE POINT. BlogSite.cloudflareAccount and
+   * Domain.account hold it; a delete-and-recreate would change it and
+   * orphan every reference. */
+  assert.strictEqual(String(where._id), 'acct-3', 'it updated the wrong row');
+  assert.notStrictEqual(update.$set.token, NEW_TOKEN, 'the token was stored in plaintext');
+  assert.strictEqual(open(update.$set.token), NEW_TOKEN,
+    'what was stored does not decrypt to the new token');
+});
+
+await test('AND THE LAST FOUR MOVE WITH IT', async () => {
+  /* The last four are the only thing on the screen that tells one token
+   * from another. Left at the old value, the row would say the rotation
+   * had not happened. */
+  install({ accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({ params: { id: 'acct-3' }, body: { token: NEW_TOKEN } }));
+
+  assert.strictEqual(db.updates[0].update.$set.tokenLast4, NEW_TOKEN.slice(-4));
+});
+
+await test('IT IS CHECKED AGAINST THE ROW\'S OWN ACCOUNT ID, NOT ONE IN THE BODY', async () => {
+  /* THE HAZARD THIS EXISTS TO CLOSE. A token that is perfectly valid for a
+   * DIFFERENT Cloudflare account authenticates fine. Verified against an id
+   * from the request, a rotation could quietly move every blog already
+   * pointing at this row into somebody else's account — which is the 23
+   * October bug with a worse blast radius.
+   *
+   * So the id is taken from the stored row and an id in the body is
+   * ignored. Moving an account to a different Cloudflare ID is not a
+   * rotation; it is a new account, and it goes through the add form where
+   * the pair is checked together. */
+  install({ accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({
+      params: { id: 'acct-3' },
+      body: { token: NEW_TOKEN, accountId: 'aaaa1111bbbb2222cccc3333dddd4444' },
+    }));
+
+  assert.strictEqual(db.verified.length, 1, 'Cloudflare was not asked');
+  assert.strictEqual(db.verified[0].accountId, ACCOUNT_ID,
+    'it verified against an account id from the request body');
+});
+
+await test('A TOKEN CLOUDFLARE REFUSES LEAVES THE OLD ONE IN PLACE', async () => {
+  /* The dangerous failure is not a refusal. It is a refusal that still
+   * wrote — leaving the row holding a credential that authenticates as
+   * nothing, found weeks later inside a deploy. */
+  install({ accounts: [ACCOUNT], verify: { ok: false, error: 'Invalid API Token' } });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({ params: { id: 'acct-3' }, body: { token: NEW_TOKEN } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.updates.length, 0, 'it wrote a token Cloudflare refused');
+});
+
+await test('AND THE REFUSAL DOES NOT PRINT THE TOKEN', async () => {
+  /* This is the line that turns the value into HTML, and it is the only
+   * place that holds the new token for certain. */
+  install({
+    accounts: [ACCOUNT],
+    verify: { ok: false, error: `Invalid API Token ${NEW_TOKEN}` },
+  });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({ params: { id: 'acct-3' }, body: { token: NEW_TOKEN } }));
+
+  assert.ok(!out.html.includes(NEW_TOKEN), 'the new token was rendered into the page');
+});
+
+await test('AN EMPTY TOKEN IS REFUSED BEFORE CLOUDFLARE IS ASKED', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({ params: { id: 'acct-3' }, body: { token: '   ' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.verified.length, 0, 'it asked Cloudflare about an empty token');
+  assert.strictEqual(db.updates.length, 0);
+});
+
+await test('A ROW THAT IS NOT THERE IS REFUSED', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({ params: { id: 'acct-gone' }, body: { token: NEW_TOKEN } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.updates.length, 0);
+});
+
+await test('THE PROJECT COUNT IS REFRESHED BY THE ROTATION', async () => {
+  /* verifyAccount had to list the account's Pages projects to prove the
+   * token works on it, so the count is already in hand. Leaving it alone
+   * would mean the Projects column kept a number taken with a credential
+   * that no longer exists — the "0 / 100 read as current" problem that
+   * ago() was written for. */
+  install({ accounts: [ACCOUNT], verify: { ok: true, projects: 23 } });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/token'),
+    req({ params: { id: 'acct-3' }, body: { token: NEW_TOKEN } }));
+
+  const { $set } = db.updates[0].update;
+
+  assert.strictEqual($set.projects, 23);
+  assert.ok($set.projectsCountedAt instanceof Date, 'the count was not re-dated');
+});
+
+section('REMOVING AN ACCOUNT');
+
+await test('THE CONFIRMATION IS A GET AND IT DELETES NOTHING', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('get', '/admin/blog-domains/accounts/:id/delete'),
+    req({ params: { id: 'acct-3' } }));
+
+  assert.strictEqual(out.status, 200);
+  assert.strictEqual(db.deleted, null, 'a GET deleted the row');
+  assert.ok(out.html.includes('Acme HVAC'), 'the confirmation does not name the account');
+});
+
+await test('AND IT SAYS THE CLOUDFLARE ACCOUNT ITSELF IS NOT TOUCHED', async () => {
+  /* "Remove" on a screen full of Cloudflare accounts invites exactly one
+   * wrong reading, and it is the one that cannot be undone from here. */
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('get', '/admin/blog-domains/accounts/:id/delete'),
+    req({ params: { id: 'acct-3' } }));
+
+  assert.ok(/Cloudflare account itself is not touched/i.test(out.html),
+    'the confirmation does not say what survives');
+});
+
+await test('REMOVAL IS REFUSED WHILE A BLOG POINTS AT IT', async () => {
+  /* credsForAccountId() throws "a Cloudflare account that no longer
+   * exists" for an orphaned blog, and that blog cannot be deployed at all
+   * — not even to the address it already answers on. */
+  install({ accounts: [ACCOUNT], blogCount: 2 });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/delete'),
+    req({ params: { id: 'acct-3' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.deleted, null, 'it removed an account two blogs are using');
+  assert.ok(out.html.includes('2 blogs'), 'the refusal does not say how many');
+});
+
+await test('AND WHILE A POOL DOMAIN POINTS AT IT', async () => {
+  /* The domain table on this same screen already renders "— account
+   * missing —" for this state. That placeholder was written months before
+   * there was any way to cause it. */
+  install({ accounts: [ACCOUNT], domainCount: 1 });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/delete'),
+    req({ params: { id: 'acct-3' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.deleted, null);
+  assert.ok(out.html.includes('1 domain'), 'the refusal does not say how many');
+});
+
+await test('THE CONFIRMATION REFUSES TOO, RATHER THAN OFFERING A BUTTON THAT CANNOT WORK', async () => {
+  install({ accounts: [ACCOUNT], blogCount: 1 });
+
+  const out = await call(handler('get', '/admin/blog-domains/accounts/:id/delete'),
+    req({ params: { id: 'acct-3' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.ok(!out.html.includes('type="submit"'),
+    'it offered a Remove button for a row that cannot be removed');
+});
+
+await test('THE POST COUNTS AGAIN RATHER THAN TRUSTING THE PAGE THAT OFFERED IT', async () => {
+  /* The confirmation was rendered at some earlier moment. A blog created
+   * between then and now is exactly the one nobody is thinking about. */
+  install({ accounts: [ACCOUNT], blogCount: 1 });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/delete'),
+    req({ params: { id: 'acct-3' } }));
+
+  assert.ok(db.countCalls.length >= 2,
+    'the POST did not re-count both collections');
+});
+
+await test('WITH NOTHING POINTING AT IT, THE ROW GOES BY _id', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/delete'),
+    req({ params: { id: 'acct-3' } }));
+
+  assert.strictEqual(out.redirected, '/admin/blog-domains');
+  assert.ok(db.deleted, 'nothing was deleted');
+  assert.strictEqual(String(db.deleted._id), 'acct-3');
+});
+
+await test('A ROW THAT IS NOT THERE IS REFUSED ON BOTH', async () => {
+  for (const method of ['get', 'post']) {
+    install({ accounts: [ACCOUNT] });
+
+    const out = await call(handler(method, '/admin/blog-domains/accounts/:id/delete'),
+      req({ params: { id: 'acct-gone' } }));
+
+    assert.strictEqual(out.status, 400, `${method} accepted a row that is not there`);
+    assert.strictEqual(db.deleted, null);
+  }
+});
+
 section('ADDING A DOMAIN');
 
 await test('A DOMAIN IS STORED AGAINST ITS ACCOUNT', async () => {
@@ -686,6 +967,133 @@ await test('AND SO IS SOMETHING THAT IS NOT A DOMAIN AT ALL', async () => {
 
     assert.strictEqual(out.status, 400, `accepted ${JSON.stringify(junk)}`);
   }
+});
+
+/* ───────── IS THE ZONE ACTUALLY ON THAT ACCOUNT? ─────────
+ *
+ * MOVED HERE FROM test-static-blogs.js ON 25 OCTOBER 2026, with the check.
+ *
+ * It ran on the customer's create form from 19 October: after every blog
+ * anybody created, one Cloudflare round trip, to catch a mistake only an
+ * admin can make. Edwin: "an admin mistake, caught on an admin screen,
+ * instead of firing on every create forever."
+ *
+ * AND IT REFUSES NOW, WHERE IT USED TO WARN. On the create form a refusal
+ * would have been wrong — a blog on a domain Cloudflare does not host is a
+ * legitimate thing to want, the owner points the DNS himself. A POOL domain
+ * is not that. The pool exists because the zone is on the same account as
+ * the Pages project, which is the thing that makes Cloudflare write the DNS
+ * record itself. A pool row where that is untrue turns the automatic half of
+ * this product off, silently, for every blog ever created on it.
+ */
+
+section('THE ZONE HAS TO BE ON THE ACCOUNT');
+
+await test('A DOMAIN THE ACCOUNT DOES NOT HOLD IS REFUSED, AND NOT STORED', async () => {
+  install({ accounts: [ACCOUNT] });
+  db.zone = { ok: false, noZone: true, error: 'No zone in this Cloudflare account matches it.' };
+
+  const out = await call(handler('post', '/admin/blog-domains/domains'),
+    req({ body: { domain: 'acmehvac.com', account: 'acct-3' } }));
+
+  assert.strictEqual(out.status, 400, 'a domain on the wrong account was accepted');
+  assert.strictEqual(db.createdDomain, null, 'it was written to the pool anyway');
+  assert.ok(/not on that Cloudflare account/i.test(out.html),
+    'the screen does not say what is wrong');
+  assert.ok(out.html.includes('acmehvac.com'), 'it does not name the domain');
+  assert.ok(out.html.includes(ACCOUNT.label), 'it does not name the account');
+});
+
+await test('THE CHECK IS MADE WITH THAT ACCOUNT\'S CREDENTIALS, NOT THE ENVIRONMENT\'S', async () => {
+  /* THE BUG THIS EXISTS FOR, AND IT COST EDWIN AN EVENING ON 22 OCTOBER.
+   *
+   * findZone({ domain }) with no `creds` falls back to the environment. The
+   * old caller on the create form forgot to pass them, so it asked his
+   * explr-home.com account whether it owned site-book.net — and told him his
+   * perfectly good blog was on a domain he did not own.
+   *
+   * THE ASSERTION IS ON WHAT WENT OVER THE WIRE, not on what came back. The
+   * answer is identical whether the right account or the wrong one was
+   * asked, which is the only reason this needs saying. */
+  install({ accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/domains'),
+    req({ body: { domain: 'acmehvac.com', account: 'acct-3' } }));
+
+  assert.strictEqual(db.zoneCalls.length, 1, 'the zone was never looked up');
+  assert.deepStrictEqual(db.zoneCalls[0].creds, db.creds,
+    'the check asked the environment\'s account, not the domain\'s');
+  assert.deepStrictEqual(db.credsCalls, ['acct-3'],
+    'the credentials came from somewhere other than the account on the form');
+});
+
+await test('AND A DOMAIN THE ACCOUNT DOES HOLD GOES STRAIGHT IN', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/domains'),
+    req({ body: { domain: 'acmehvac.com', account: 'acct-3' } }));
+
+  assert.strictEqual(out.redirected, '/admin/blog-domains',
+    'a correct domain was interrupted');
+  assert.ok(db.createdDomain, 'it was not stored');
+});
+
+await test('A FAILURE TO ASK IS NOT A FAILURE TO MATCH: IT IS STORED, AND SAID', async () => {
+  /* findZone returns ok:false for "this account does not hold it" AND for
+   * "the token cannot read zones", and only the first carries `noZone`.
+   *
+   * Refusing on a permissions problem would block a correct domain on the
+   * strength of a check that never ran. Storing it silently would teach
+   * nobody anything. So: stored, and the screen says the check could not be
+   * made and what to look at. */
+  install({ accounts: [ACCOUNT] });
+  db.zone = { ok: false, error: 'Zone:Read is missing from this token.' };
+
+  const out = await call(handler('post', '/admin/blog-domains/domains'),
+    req({ body: { domain: 'acmehvac.com', account: 'acct-3' } }));
+
+  assert.ok(db.createdDomain, 'a correct domain was refused over a failed lookup');
+  assert.ok(!out.redirected, 'it was stored silently');
+  assert.ok(/not verified/i.test(out.html), 'the screen does not say the check failed');
+  assert.ok(/Zone:Read/.test(out.html), 'it does not say what went wrong');
+});
+
+await test('AND SO IS A CREDENTIAL THAT WILL NOT RESOLVE', async () => {
+  /* credsForAccountId throws for an account that is disabled or whose token
+   * will not decrypt. The domain is still correct as far as anybody knows,
+   * and the account's own row on this screen is where that gets fixed — so
+   * the domain is stored and the reason is shown. */
+  install({ accounts: [ACCOUNT] });
+  db.credsError = 'The Cloudflare account for this blog is disabled (Client 3 — Acme HVAC).';
+
+  const out = await call(handler('post', '/admin/blog-domains/domains'),
+    req({ body: { domain: 'acmehvac.com', account: 'acct-3' } }));
+
+  assert.ok(db.createdDomain, 'the domain was lost to an account problem');
+  assert.strictEqual(db.zoneCalls.length, 0,
+    'it asked Cloudflare with credentials it could not resolve');
+  assert.ok(/not verified/i.test(out.html));
+  assert.ok(/disabled/i.test(out.html), 'it does not say why the check could not run');
+});
+
+await test('AND NEITHER THE TOKEN NOR THE ACCOUNT ID REACHES THE PAGE', async () => {
+  /* THE ONE THING THIS SCREEN MUST NEVER DO. The unverified page prints an
+   * error that came back from Cloudflare, and a Cloudflare error is exactly
+   * the kind of string that arrives with the credential embedded in it. */
+  install({ accounts: [ACCOUNT] });
+  db.zone = {
+    ok: false,
+    error: `Request to /accounts/${ACCOUNT_ID}/zones failed; `
+      + 'token cf-token-for-acct-3 was refused',
+  };
+
+  const out = await call(handler('post', '/admin/blog-domains/domains'),
+    req({ body: { domain: 'acmehvac.com', account: 'acct-3' } }));
+
+  assert.ok(!out.html.includes('cf-token-for-acct-3'),
+    'the API token was rendered into the page');
+  assert.ok(!out.html.includes(ACCOUNT_ID),
+    'the Cloudflare account id was rendered into the page');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

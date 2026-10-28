@@ -29,6 +29,9 @@ const express = require('express');
 const requireAdmin = require('../middleware/requireAdmin');
 const CloudflareAccount = require('../models/CloudflareAccount');
 const Domain = require('../models/Domain');
+/* ONLY EVER COUNTED, NEVER WRITTEN, by this file. A blog names the account
+ * it publishes into, so it is the first thing a removal has to ask about. */
+const BlogSite = require('../models/BlogSite');
 const { seal } = require('../utils/blog/cloudflare/secretBox');
 const { scrub } = require('../utils/blog/cloudflare/deploy');
 /* REQUIRED AS A MODULE, NOT DESTRUCTURED, so verifyAccount is looked up when
@@ -38,6 +41,11 @@ const { scrub } = require('../utils/blog/cloudflare/deploy');
  * Cloudflare. */
 const cloudflare = require('../utils/blog/cloudflare/accounts');
 const { accountCapacity } = require('../utils/blog/cloudflare/accounts');
+/* SAME REASON AS `cloudflare` ABOVE — findZone is looked up when it is
+ * called, so the suite can stub it. Destructured here it would bind the real
+ * one at require time and every test that adds a domain would make a live
+ * call to Cloudflare. */
+const cfDeploy = require('../utils/blog/cloudflare/deploy');
 const { withAppHeader } = require('../utils/appHeader');
 const { pageTitle } = require('../utils/pageTitle');
 const { log } = require('../utils/logger');
@@ -203,17 +211,96 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
     const accountRows = accounts.map((a, i) => {
       const room = accountCapacity(a);
 
+      /* TWO ROWS PER ACCOUNT, AND THE SECOND ONE IS WHY.
+       *
+       * The first draft put the token field in the row itself. With eight
+       * accounts whose labels are full email addresses, the field was
+       * squeezed to about the width of the word "new", the show/hide eye
+       * wrapped underneath it, and "checked 45 minutes ago" broke across
+       * four lines. A form nobody can read is not a form.
+       *
+       * So the data stays on one line and the form gets a row of its own,
+       * folded away in a <details>. Collapsed, the table is as narrow as it
+       * was before any of this was added; opened, the field has the whole
+       * width of the table.
+       *
+       * <details> AND NOT A SCRIPT, deliberately. It is native HTML with no
+       * JavaScript at all, which means no inline handler for
+       * test-inline-handlers.js to refuse and nothing for the CSP to block.
+       * The one thing this screen must never do is depend on a script that
+       * quietly is not running. */
       return `
-      <tr>
+      ${/* --bs-border-width:0 ON THE DATA ROW, so there is no rule drawn
+            between an account and its own token form. The border on the
+            SECOND row then reads as the divider between accounts, which is
+            where a reader expects one. */ ''}
+      <tr style="--bs-border-width:0">
         <td class="rownum">${i + 1}</td>
-        <td>${esc(a.label)}</td>
+        <td style="min-width:13rem">${esc(a.label)}</td>
         <td class="text-white-50 small"><code>${esc(a.accountId)}</code></td>
-        <td class="text-white-50 small">…${esc(a.tokenLast4 || '')}</td>
-        <td class="text-end ${room.nearlyFull ? 'text-warning' : 'text-white-50'}">
+        <td class="text-white-50 small text-nowrap">…${esc(a.tokenLast4 || '')}</td>
+        ${/* text-nowrap ON BOTH LINES. "1 / 100" and "checked 45 minutes
+              ago" are each one fact, and a column narrow enough to break
+              them mid-phrase makes the number harder to read than no
+              number. */ ''}
+        <td class="text-end text-nowrap ${room.nearlyFull ? 'text-warning' : 'text-white-50'}">
           ${room.used} / ${room.limit}
-          <div class="small text-white-50">${esc(ago(a.projectsCountedAt))}</div>
+          <div class="small text-white-50 text-nowrap">${esc(ago(a.projectsCountedAt))}</div>
         </td>
-        <td>${a.enabled ? '' : '<span class="badge bg-secondary">disabled</span>'}</td>
+        <td class="text-nowrap">${a.enabled ? '' : '<span class="badge bg-secondary">disabled</span>'}</td>
+        ${/* A LINK TO A CONFIRMATION, NOT A DELETE BUTTON.
+              The GET is read-only: it names the row, counts what points at
+              it, and only then offers the POST. No inline click handler
+              calling confirm() either — see test-inline-handlers.js, which
+              refuses inline handlers anywhere in this app. */ ''}
+        <td class="text-end text-nowrap">
+          <a class="btn btn-sm btn-outline-danger"
+             href="/admin/blog-domains/accounts/${esc(a._id)}/delete">Remove</a>
+        </td>
+      </tr>
+      <tr>
+        <td class="pt-0"></td>
+        <td colspan="6" class="pt-0">
+          <details>
+            ${/* THE SUMMARY IS THE CONTROL, so it has to look like one and
+                  take a pointer. list-style:none drops the default triangle,
+                  which Safari and Chrome draw differently and neither draws
+                  in a way that matches the buttons beside it. */ ''}
+            <summary class="small text-white-50 d-inline-block"
+                     style="cursor:pointer; list-style:none">
+              Replace API token &rsaquo;
+            </summary>
+            <form method="post" action="/admin/blog-domains/accounts/${esc(a._id)}/token"
+                  class="row g-2 mt-1 align-items-end">
+              ${res.locals.csrfField || ''}
+              <div class="col-md-7">
+                ${/* A REAL <label>, BECAUSE THE FIELD IS NOW ONE OF EIGHT ON
+                      THE PAGE and a placeholder disappears the moment
+                      anything is typed. The id carries the row so no two
+                      labels point at the same input. */ ''}
+                <label class="form-label small mb-1" for="token-${esc(a._id)}">
+                  New API token for ${esc(a.label)}
+                </label>
+                ${/* type=password and autocomplete="new-password" for the same
+                      two reasons as the add form below: it is not read over a
+                      shoulder, and Chrome does not offer a saved login for it.
+                      public/js/passwordToggle.js adds the show/hide eye. */ ''}
+                <input class="form-control form-control-sm" type="password" name="token"
+                       id="token-${esc(a._id)}"
+                       required maxlength="200" spellcheck="false"
+                       autocomplete="new-password" autocorrect="off" autocapitalize="off">
+              </div>
+              <div class="col-auto">
+                <button class="btn btn-sm btn-outline-light" type="submit">Replace</button>
+              </div>
+              <div class="form-text text-white-50">
+                Checked against <strong>this</strong> account before anything is
+                stored — a token for a different one is refused, not adopted.
+                The old token stays in place if Cloudflare says no.
+              </div>
+            </form>
+          </details>
+        </td>
       </tr>`;
     }).join('');
 
@@ -251,7 +338,7 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
         ${accounts.length ? `
         <table class="table table-navy align-middle">
           <thead><tr><th></th><th>Account</th><th>Cloudflare ID</th><th>Token</th>
-            <th class="text-end">Projects</th><th></th></tr></thead>
+            <th class="text-end text-nowrap">Projects</th><th></th><th></th></tr></thead>
           <tbody>${accountRows}</tbody>
         </table>
 
@@ -570,6 +657,267 @@ router.post('/admin/blog-domains/accounts', requireAdmin, async (req, res) => {
 });
 
 /* -------------------------------------------------------------------------
+ * Replacing an account's token
+ *
+ * ADDED 28 October 2026, the morning after a token was pasted into a chat
+ * window and had to be rolled. There was no way to tell this screen about the
+ * new one: the add form refuses a second row for an account that is already
+ * here, and nothing else writes to the token field. The only repair available
+ * was editing Mongo by hand.
+ *
+ * ONE ACCOUNT PER CLIENT MAKES THIS ROUTINE, NOT EXCEPTIONAL. Tokens get
+ * revoked, leaked, expired and replaced by the client. A pool with no way to
+ * rotate a credential is a pool that has to be rebuilt to change one.
+ * ---------------------------------------------------------------------- */
+
+router.post('/admin/blog-domains/accounts/:id/token', requireAdmin, async (req, res) => {
+  try {
+    const token = String(req.body.token || '').trim();
+
+    const found = await CloudflareAccount.findById(req.params.id);
+
+    if (!found) {
+      return problem(res, 'That account is not here',
+        'It may have been removed in another tab. Reload the screen.');
+    }
+
+    if (!token) {
+      return problem(res, 'No token was given',
+        `Nothing was changed on "${found.label}".`);
+    }
+
+    /* CHECKED AGAINST THIS ROW'S OWN accountId, AND THE ID IS NOT RE-TYPED.
+     *
+     * The add form takes an id and a token together, so all it can prove is
+     * that the PAIR works. Here the account is already decided — blogs and
+     * domains point at this row by _id — so the only open question is
+     * whether the new token works ON THAT ACCOUNT.
+     *
+     * Offering the id for editing here would reintroduce the hazard the add
+     * path warns about, with a worse blast radius: a perfectly valid token
+     * for a DIFFERENT account, adopted silently by every blog already
+     * pointing at this row. Moving an account to a different Cloudflare ID
+     * is not a rotation; it is a new account, and it goes through the add
+     * form where the pair is checked together. */
+    const checked = await cloudflare.verifyAccount({
+      accountId: found.accountId,
+      token,
+    });
+
+    if (!checked.ok) {
+      /* SCRUBBED HERE FOR THE SAME REASON AS THE ADD PATH: this is the line
+       * that turns the value into HTML, and it is the only place that holds
+       * the new token for certain. */
+      return problem(res, 'Cloudflare did not accept that token',
+        `${scrub(checked.error, { token, account: found.accountId })} — the old `
+        + `token is still in place on "${found.label}" and nothing was changed. `
+        + 'Check that the new token is for THAT account, with Pages: Edit, '
+        + 'DNS: Edit and Zone: Read.');
+    }
+
+    /* UPDATED IN PLACE, AND THAT IS THE WHOLE POINT OF THIS ROUTE.
+     *
+     * BlogSite.cloudflareAccount and Domain.account both hold this row's
+     * _id. Delete-and-recreate would give a new one and orphan every
+     * reference — credsForAccountId() throws "a Cloudflare account that no
+     * longer exists" and the blog cannot deploy until somebody works out
+     * why. An $set keeps the _id and every reference with it.
+     *
+     * THE COUNT COMES ALONG FOR FREE. verifyAccount had to list the
+     * account's Pages projects to prove the token works on it, so the
+     * Projects column is refreshed by the rotation rather than going stale
+     * against a credential that no longer exists. */
+    await CloudflareAccount.updateOne(
+      { _id: found._id },
+      {
+        $set: {
+          token: seal(token),
+          tokenLast4: token.slice(-4),
+          projects: checked.projects,
+          projectsCountedAt: new Date(),
+        },
+      }
+    );
+
+    /* NOT THE TOKEN, NOT ITS LENGTH, NOT ITS FIRST CHARACTERS. The last four
+     * are on the screen already; the log says which row changed and when. */
+    log.info('blogDomains.tokenReplaced', {
+      requestId: req.id,
+      label: found.label,
+      accountId: found.accountId,
+    });
+
+    res.redirect('/admin/blog-domains');
+
+  } catch (err) {
+    log.error('blogDomains.replaceToken.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1>We could not replace that token</h1>',
+    }));
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * Removing an account
+ * ---------------------------------------------------------------------- */
+
+/**
+ * What would be orphaned by removing this row.
+ *
+ * BOTH COLLECTIONS, BECAUSE BOTH REFER TO IT. A blog names the account it
+ * deploys into; a pool domain names the account its zone is on. The domain
+ * list on this very screen already renders "— account missing —" for a row
+ * whose account went away, which is this bug's symptom written down months
+ * before there was a way to cause it.
+ */
+async function referencesTo(account) {
+  const [blogs, domains] = await Promise.all([
+    BlogSite.countDocuments({ cloudflareAccount: account._id }),
+    Domain.countDocuments({ account: account._id }),
+  ]);
+
+  return { blogs, domains, total: blogs + domains };
+}
+
+/** "2 blogs and 1 domain", or "1 blog", in the order they are counted. */
+function saysWhat({ blogs, domains }) {
+  const parts = [];
+
+  if (blogs) parts.push(`${blogs} ${1 === blogs ? 'blog' : 'blogs'}`);
+  if (domains) parts.push(`${domains} ${1 === domains ? 'domain' : 'domains'}`);
+
+  return parts.join(' and ');
+}
+
+function refusesRemoval(res, account, refs) {
+  return send(res, page({
+    status: 400,
+    title: 'That account is still in use',
+    body: `<h1 class="h3">"${esc(account.label)}" is still in use</h1>
+      <p class="lead">${esc(saysWhat(refs))} still point at it.</p>
+      <p class="text-white-50">
+        Removing it would leave them naming an account that no longer exists,
+        and a blog in that state cannot be deployed at all — not even to the
+        address it already answers on. Move them to another account first, or
+        leave this row in place and disable it.
+      </p>
+      <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back</a>`,
+  }));
+}
+
+/* THE CONFIRMATION IS A GET, AND IT CHANGES NOTHING.
+ *
+ * It exists to say what is about to be destroyed — which is the credential,
+ * not the Cloudflare account — and to show the reference counts before
+ * anybody commits. The counts are also the refusal, so this page either
+ * offers the button or explains why there is not one. */
+router.get('/admin/blog-domains/accounts/:id/delete', requireAdmin, async (req, res) => {
+  try {
+    const found = await CloudflareAccount.findById(req.params.id);
+
+    if (!found) {
+      return problem(res, 'That account is not here',
+        'It may have been removed already. Reload the screen.');
+    }
+
+    const refs = await referencesTo(found);
+
+    if (refs.total) return refusesRemoval(res, found, refs);
+
+    send(res, page({
+      title: 'Remove account',
+      body: `<h1 class="h3">Remove "${esc(found.label)}"?</h1>
+
+        <p class="lead">
+          This deletes the stored credentials for Cloudflare account
+          <code>${esc(found.accountId)}</code> — the API token and the
+          project count.
+        </p>
+
+        ${/* SAID PLAINLY, BECAUSE THE WORD "REMOVE" ON A SCREEN FULL OF
+              CLOUDFLARE ACCOUNTS INVITES EXACTLY ONE WRONG READING. */ ''}
+        <div class="alert alert-secondary">
+          The Cloudflare account itself is not touched. Neither are its Pages
+          projects, its zones, or any site already published from it. What
+          goes is this app's ability to publish into it.
+        </div>
+
+        <p class="text-white-50">
+          Nothing points at it — no blogs, no pool domains. To add it back you
+          will need the account ID and a token again; the stored one cannot be
+          read back out.
+        </p>
+
+        ${/* data-confirm, EVEN THOUGH THIS PAGE IS ITSELF THE QUESTION.
+              test-inline-handlers.js allows either — ask, or be on a page
+              that does the asking — and /static-blogs/:id/delete takes the
+              second route because it makes you TYPE the blog name, which is
+              a higher bar than a confirm box rather than a lower one.
+
+              This page does not. It is reached by a link and offers a button,
+              so a stray click here destroys a credential that cannot be read
+              back out. One more beat is worth more than a shorter exception
+              list. */ ''}
+        <form method="post" action="/admin/blog-domains/accounts/${esc(found._id)}/delete"
+              class="d-inline"
+              data-confirm="Remove the stored credentials for ${esc(found.label)}? The token cannot be read back, so adding it again means finding a new one.">
+          ${res.locals.csrfField || ''}
+          <button class="btn btn-danger" type="submit">Remove</button>
+        </form>
+        <a href="/admin/blog-domains" class="btn btn-secondary ms-2">Cancel</a>`,
+    }));
+
+  } catch (err) {
+    log.error('blogDomains.confirmDelete.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1>We could not load that</h1>',
+    }));
+  }
+});
+
+router.post('/admin/blog-domains/accounts/:id/delete', requireAdmin, async (req, res) => {
+  try {
+    const found = await CloudflareAccount.findById(req.params.id);
+
+    if (!found) {
+      return problem(res, 'That account is not here',
+        'It may have been removed already. Reload the screen.');
+    }
+
+    /* COUNTED AGAIN, NOT TRUSTED FROM THE PAGE THAT OFFERED THE BUTTON.
+     *
+     * The confirmation was rendered at some earlier moment, and a blog
+     * created between then and now is exactly the one nobody is thinking
+     * about. The GET's count is for the reader; this one is the guard. */
+    const refs = await referencesTo(found);
+
+    if (refs.total) return refusesRemoval(res, found, refs);
+
+    await CloudflareAccount.deleteOne({ _id: found._id });
+
+    log.info('blogDomains.accountRemoved', {
+      requestId: req.id,
+      label: found.label,
+      accountId: found.accountId,
+    });
+
+    res.redirect('/admin/blog-domains');
+
+  } catch (err) {
+    log.error('blogDomains.deleteAccount.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1>We could not remove that account</h1>',
+    }));
+  }
+});
+
+/* -------------------------------------------------------------------------
  * Adding a domain
  * ---------------------------------------------------------------------- */
 
@@ -607,6 +955,73 @@ router.post('/admin/blog-domains/domains', requireAdmin, async (req, res) => {
         `${domain} is already listed.`);
     }
 
+    /* IS THE ZONE ACTUALLY ON THAT ACCOUNT? — MOVED HERE 25 OCTOBER 2026.
+     *
+     * THIS CHECK USED TO LIVE ON THE CUSTOMER'S CREATE FORM, where it ran
+     * after every single blog was created, for the rest of time, to catch a
+     * mistake only an admin can make. Edwin: *"It's an admin mistake, caught
+     * on an admin screen, instead of firing on every create forever."*
+     *
+     * It is the same findZone() call. What changed is WHEN: the pool has one
+     * row per domain, so this runs once per domain ever, at the moment the
+     * row is written — and the person reading the answer is the person who
+     * can act on it.
+     *
+     * AND IT REFUSES, WHERE THE OLD ONE WARNED. On the create form a refusal
+     * would have been wrong: a blog on a domain Cloudflare does not host is
+     * a legitimate thing to want, the owner points the DNS himself. A POOL
+     * domain is not that. The pool exists precisely because the zone is on
+     * the same account as the Pages project, which is what makes Cloudflare
+     * write the DNS record itself. A pool row where that is untrue is a row
+     * that silently turns the automatic half of this product off for every
+     * blog ever created on it.
+     *
+     * A FAILURE TO ASK IS STILL NOT A FAILURE TO MATCH. findZone returns
+     * ok:false both for "this account does not hold it" and for "the token
+     * cannot read zones", and only the first carries `noZone`. The second
+     * adds the domain and says the check could not run — refusing on a
+     * permissions problem would block a correct domain, and silently adding
+     * it would teach nobody anything. */
+    let creds;
+    let unchecked = '';
+
+    try {
+      creds = await cloudflare.credsForAccountId(account._id);
+    } catch (err) {
+      /* credsForAccountId throws for an account that is disabled or whose
+       * token will not decrypt. That is worth saying, and it is not a
+       * reason to refuse the domain — the account's own row on this screen
+       * is where that gets fixed. */
+      unchecked = scrub(err.message, { account: account.accountId });
+    }
+
+    if (creds) {
+      const zone = await cfDeploy.findZone({ domain, creds });
+
+      if (!zone.ok && zone.noZone) {
+        /* log.info, NOT log.security. This is an admin's own typo on an
+         * admin screen, not a denial worth a security line — and the logger
+         * has no generic `warn`, which is how the first draft of this found
+         * out that log.warn is not a function. */
+        log.info('blogDomains.domainNotOnAccount', {
+          requestId: req.id,
+          domain,
+          account: account.label,
+        });
+
+        return problem(res, 'That domain is not on that Cloudflare account',
+          `${domain} is not a zone on "${account.label}". A blog on it would `
+          + 'get no DNS record written for it, so it would answer on nothing '
+          + 'until somebody added a CNAME by hand. Pick the account whose '
+          + 'zone list has it, or add the zone to Cloudflare first.');
+      }
+
+      if (!zone.ok) {
+        unchecked = scrub(zone.error || 'Cloudflare did not answer.',
+          { token: creds.token, account: creds.account });
+      }
+    }
+
     await Domain.create({
       domain,
       account: account._id,
@@ -617,7 +1032,33 @@ router.post('/admin/blog-domains/domains', requireAdmin, async (req, res) => {
       requestId: req.id,
       domain,
       account: account.label,
+      zoneChecked: !unchecked,
     });
+
+    if (unchecked) {
+      return send(res, page({
+        title: 'Domain added',
+        body: `<h1 class="h3">${esc(domain)} added \u2014 but not verified</h1>
+
+          <div class="alert alert-warning">
+            <p class="mb-0"><strong>We could not check whether
+            <code>${esc(domain)}</code> is a zone on
+            "${esc(account.label)}".</strong></p>
+          </div>
+
+          <p class="lead">${esc(unchecked)}</p>
+
+          <p>
+            The domain is in the pool and customers can use it. If the zone is
+            not on that account, Cloudflare will not write the DNS record and
+            blogs on it will answer on nothing \u2014 so it is worth checking
+            the account's token has <strong>Zone:Read</strong> and adding the
+            domain again.
+          </p>
+
+          <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back</a>`,
+      }));
+    }
 
     res.redirect('/admin/blog-domains');
 

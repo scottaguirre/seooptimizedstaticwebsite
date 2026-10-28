@@ -3,6 +3,32 @@
 Read this before changing anything. A new session starts with no memory of the
 last one, so what is written down here is all there is.
 
+## HOW TO ANSWER EDWIN — bullet points, every time
+
+Edwin asked for this repeatedly across weeks — *"please clear bullet points"*,
+*"explain this clear bullet points"*, *"Answer in clear, simple bullet points,
+always"* — and on 25 October asked for it to be WRITTEN DOWN so he would stop
+having to ask. It was never written down before that. That is the failure being
+fixed here: a preference repeated out loud five times and recorded nowhere.
+
+**The rule:**
+
+- **Answer in bullet points.** Not paragraphs that happen to contain a list.
+  The default shape of an answer to Edwin is bullets.
+- **One idea per bullet.** If a bullet needs a semicolon to hold two thoughts,
+  it is two bullets.
+- **Bold the thing being claimed**, so the answer can be skimmed and the
+  skim is still correct.
+- **Short headings between groups** when an answer covers more than one
+  subject, so he can find the part he cares about without reading the rest.
+- **Prose is the exception, not the default.** It is allowed only for a
+  one-line answer, a direct yes/no, or owning a mistake in a sentence.
+- **This applies to explanations, diagnoses, options, status reports and
+  architecture answers** — i.e. almost everything. It is not only for lists.
+
+**And the thing not to do:** do not write four paragraphs and then append a
+bulleted summary. That is still four paragraphs he did not ask for.
+
 ## DO NOT TOUCH — hand-written CSS
 
 Edwin styled these by hand on 10 September 2026. They are deliberate aesthetic
@@ -78,6 +104,50 @@ in force and each was asked for by name:
 Neither touched a class, colour, spacing, `<style>` block or inline style, and
 both build their controls at runtime — so with JavaScript off those pages are
 byte for byte what they were.
+
+## THE COST REPORT DOES NOT MEASURE THE SITE GENERATOR — found 27 October 2026
+
+`cost-report.js` counts exactly one kind of model call:
+
+    const MODEL_EVENTS = new Set(['services.suggested']);
+
+**That is the service-name suggester and nothing else.** Not the page bodies,
+not About Us, not the metadata, not the reviews, not the FAQ, not the location
+pages. A whole site generation shows up as zero.
+
+**AND THE DATA COULD NOT BE COUNTED EVEN IF THE EVENTS WERE LISTED**, because
+every generator prints its usage to stdout rather than through the logger:
+
+    console.log("generatePagesContent usage:", response.usage);
+    console.log("generateAboutuscontent usage:", response.usage);
+    console.log("generateMetaData usage:", response.usage);
+    console.log("generateReview usage:", response.usage);
+
+That goes to pm2's log, not `logs/app.log`, and it is a pretty-printed object
+rather than a JSON line with `event`, `inputTokens` and `outputTokens` — so
+the parser would skip it anyway.
+
+**WHAT THIS COST, ON 27 OCTOBER.** Asked what a site costs, I answered twice
+from the report — "$0.01 a call, about 25 cents a site" — before noticing the
+report excludes the thing being measured. Both answers were withdrawn. The
+real figure came from `pm2 logs webgen --nostream | grep -A 8 'usage: {'` and
+is in the Local Website Options entry above.
+
+    A REPORT THAT OMITS WHAT YOU ARE MEASURING IS WORSE THAN NO REPORT.
+    IT ANSWERS.
+
+The file's own header already admits one undercount — keyword seeds not
+logging their tokens — which is what made the omission read as complete.
+
+**THE FIX, WHEN SOMEBODY TOUCHES IT:** have the generators log through `log`
+with token fields, then add their event names to `MODEL_EVENTS`.
+`generateFaqAnswers.js` already reaches for `log.external('openai', …)` on
+failure; it just does not log usage on success.
+
+**ALSO UNMEASURED:** the People Also Ask fetch. `fetchPeopleAlsoAsk.js` runs a
+DataForSEO task during a lead-site build, and no PAA event appears in
+`VENDOR_EVENTS` either. At $0.09 a task that is more than half the model cost
+of an entire site, counted nowhere.
 
 ## Deploying
 
@@ -188,6 +258,46 @@ at Atlas.** Those tests `BlogCampaign.create()` and `deleteMany()` real
 documents. The cleanup is scoped to a random site id and looks careful, but a
 crash mid-run leaves rows behind — in the live collection, if that is what you
 pointed it at.
+
+    node test-blog-batch.js        # the whole-campaign batch writer; NEEDS A DATABASE; 16
+    node test-blog-routes.js       # the four plugin endpoints over signed HTTP; NEEDS A DATABASE; 20
+
+**These two now run in `deploy.sh`, and the script starts MongoDB itself.**
+They are the only coverage of charging a customer per post — charged once,
+never twice, not charged for a post that failed, and the balance stopping the
+batch where it stands. Both skip silently without `MONGO_URI`, which is why
+they are NOT in the main loop: dropped in there they would exit 0 having run
+nothing, and the deploy would go green on 36 tests that never executed. That
+looks like coverage, which is worse than having none.
+
+If MongoDB cannot be reached the deploy **refuses**. The deliberate way past it
+is `SKIP_DB_TESTS=1 ./deploy.sh`, and it is meant to be ugly to type.
+
+**MongoDB on Edwin's Mac, as of 25 October 2026.** Installed already:
+`mongodb-community@6.0`, `mongodb-database-tools`, `mongosh`, with the server at
+`/usr/local/bin/mongod`.
+
+`brew services start mongodb-community@6.0` **does not work** — it fails with
+*"has not implemented #plist, #service or provided a locatable service file"*,
+because the service file comes from the `mongodb/brew` tap and that tap is no
+longer on the machine. Do not try to fix the tap. Start it directly:
+
+    mkdir -p ~/mongo-scratch
+    mongod --dbpath ~/mongo-scratch --port 27017 --fork --logpath ~/mongo-scratch/mongod.log
+    mongosh --eval 'db.version()'          # 6.0.20
+
+    mongosh --eval 'db.getSiblingDB("admin").shutdownServer()'   # to stop it
+
+`--fork` backgrounds it, so one terminal is enough; it survives closing the
+window and dies on reboot. `deploy.sh` runs this same command itself when the
+port is not answering.
+
+**Run them by hand against a scratch database, never `.env`'s:**
+
+    MONGO_URI="mongodb://127.0.0.1:27017/tc-scratch" node test-blog-batch.js
+    MONGO_URI="mongodb://127.0.0.1:27017/tc-scratch" node test-blog-routes.js
+
+`deploy.sh` uses `tc-deploy-scratch`, a name that exists for that script alone.
 
 **The PHP suites cannot run on Edwin's Mac.** It is on macOS 12, which
 Homebrew no longer ships bottles for, so `brew install php` tries to compile
@@ -303,6 +413,562 @@ these to a live site for the first time:
   "Duplicate without user-selected canonical" report.
 
 Both PHP suites also ran green on the VPS against PHP 8.3 — 27 + 13.
+
+## PLANNED — a simpler static website, published to GitHub Pages
+
+**AGREED WITH EDWIN ON 26 OCTOBER 2026, from his own spec. This is an
+ADDITION, not a replacement.** His words when the question was put: *"is not
+replacement is an addition."*
+
+### What it is
+
+A complete small website — not a one-page sample — generated the way the
+blogs are: plain HTML files written straight to a `path -> contents` map and
+committed to a repository. **No webpack.** Published to **GitHub Pages only,
+for now**, on the client's own GitHub account.
+
+**THE MODE IS CALLED "Local Website Options", AND THE ENUM VALUE IS
+`'localoptions'`.** Named by Edwin, 27 October 2026.
+
+### ⚠️ FIRST, THE COLLISION — `siteMode: 'sample'` ALREADY EXISTS
+
+`models/Job.js` carries `siteMode` with three values, and one of them is a
+one-page site:
+
+    enum: ['lead', 'rankfast', 'sample']
+    //  'sample'  a one-page design sample
+
+This new mode is a FOURTH value. `models/Job.js` warns, from experience:
+
+> *"Whatever `normalizeSiteMode()` accepts, this must accept. They are two
+> halves of one list."*
+
+`rankfast` was added to the wizard, to `utils/pricing.js` and to
+`normalizeSiteMode()` but **not** to that enum, and every Rank Fast build
+failed at `Job.create()` — **after the credit check had already passed**. So
+the four places move together or not at all:
+
+    models/Job.js          the enum
+    normalizeSiteMode()    whatever accepts it
+    utils/pricing.js       PRICING + quote() + affordableExtraPages()
+    the wizard             whether it is offered
+
+### The 11 pages
+
+| Page | Hero image | In the ring |
+|---|---|---|
+| Home | yes | yes |
+| Service pages x6 | yes, one each | yes |
+| Contact | yes | yes, closes it |
+| `privacy-policy.html` | no | no |
+| `terms-of-use.html` | no | no |
+| `accessibility.html` | no | no |
+
+**Eight hero images per site, one per page.** The three legal pages have none.
+
+### The interlink ring — Edwin's design
+
+The **header menu lists every page**. The **in-body links follow a ring**:
+
+    Home        -> service 1, service 2, service 3
+    Service 1   -> home + service 2
+    Service 2   -> home + service 3
+    Service 3   -> home + service 4
+    Service 4   -> home + service 5
+    Service 5   -> home + service 6
+    Service 6   -> home + contact
+    Contact     -> home          (ring closed)
+
+**SERVICES 1-3 GET TWO IN-BODY LINKS, 4-6 GET ONE.** One from home and one
+from the chain, against one from the chain alone. That is a decision, not an
+accident: **which services land in positions 1-3 matters**, and they should be
+chosen rather than taken in whatever order `suggestServices` returned.
+
+### Who provides what
+
+**The customer provides:** logo (a file upload), business name, business type,
+street address, phone number, social profiles, hours of operation.
+
+**The app provides:** the 6 service pages, the contact page, the 3 legal
+pages, the map, the nav, the ring, the schema.
+
+### The contact form is MARKUP ONLY, and that is deliberate
+
+Edwin, twice, when pressed: *"don't worry about processing the contact form.
+Just add it even if it doesn't work. They can add a third party service."* And
+then: *"Just do the markup and leave it alone."*
+
+A static site on GitHub Pages has no server to receive a submission. The form
+renders; nothing handles it. The client wires up Formspree or similar if they
+want it to work. **Do not re-propose an endpoint for it.**
+
+### What already exists and must be REUSED, not rewritten
+
+This is most of the feature. Nearly everything in the spec is already built:
+
+| Need | Already in the app |
+|---|---|
+| Map | `utils/googleMap.js` — a plain Google embed, **no API key**: `maps?q=<address>&z=15&output=embed` |
+| Lat/long for schema | `utils/getCoordinatesFromAddress.js` — OpenStreetMap Nominatim, free |
+| Hours of operation | `utils/formatDaysAndHoursForDisplay.js` — per day, and **loaded by Node AND the browser from one file** so the form's preview and the published page cannot word a day differently |
+| Social icons | `utils/buildSocialLinks.js` — Facebook, Instagram, Twitter/X, Pinterest, YouTube, LinkedIn, and it renders **only** the platforms with a URL |
+| Legal pages | `buildPrivacyPolicyPage.js`, `buildTermsOfUsePage.js`, `buildAccessibilityPage.js`; slugs in `utils/legalLinks.js` |
+| Service names | `utils/suggestServices.js`, `utils/serviceNames.js`, `utils/buildServiceCards.js` |
+| Schema | `utils/buildSchema.js` |
+| Logo upload | `utils/jobUploads.js`, `utils/uploadExtension.js` |
+| Nav | `utils/buildNavMenu.js` |
+| The address/phone/hours form validation | `validateGlobalFields` in `utils/helpers.js` |
+
+**THE LEGAL PAGES ARE ALREADY TEMPLATES, NOT MODEL-WRITTEN, AND THEY STAY
+THAT WAY.** A privacy policy is a legal document; a model inventing one is a
+liability the CLIENT carries. The map is the one thing on these sites that
+genuinely needs disclosing — a Google embed sets cookies and sends visitor
+data to Google — so the template should say so and stay narrow enough to be
+true.
+
+### The architecture: copy `utils/blog/render/`, not the webpack path
+
+`utils/blog/render/publishBlog.js` states the shape: *"Everything under
+`render/` is pure and knows nothing of Mongo or Cloudflare."*
+
+- Pure render modules returning a **flat `files` map: relative path (no
+  leading slash) -> `string | Buffer`**
+- One seam file that touches the database and the host
+- `renderSite()` separable from the deploy, so a dry run costs nothing
+- `writeSite()` already accepts a `Buffer`, so **the logo and the hero images
+  need no new machinery**
+- The stylesheet **hand-written as a JS constant**, like
+  `utils/blog/render/theme.js` — *"NO DISK READ ANY MORE. The stylesheet is a
+  constant."*
+
+**PICK A NEW CLASS PREFIX.** `theme.js` uses `cloudflare-` precisely so a rule
+written there cannot reach a WordPress page, and `test-blog-render.js` asserts
+that file carries no `.ie-` selector. A third page type adding CSS needs its
+own prefix or it breaks that test.
+
+### The HOME page — SEVEN sections, approved 27 October 2026
+
+Edwin's original spec had six. A seventh was added at his request after
+seeing the mockup — *"we should add something that says we are a local
+[business type] company located in [city, st]. and a few more lines"* — and
+his verdict on the result was *"this is perfect."*
+
+1. **Header** — logo, short nav, the phone number as a button, always visible
+2. **Hero** — ONE image band, with the headline in a card overlapping its
+   bottom edge. Deliberately not the split hero the main generator uses
+3. **Name, address, phone** — three columns between hairline rules
+4. **Who we are, where we are** — THE SEVENTH. An H2 carrying the trade and
+   the city (*"A local air conditioning company in Chicago, IL"*) with three
+   paragraphs beside it: where, what, and how the business works. **The
+   heading is templated from business type and city; only the paragraphs come
+   from the model** — this is `generateAboutuscontent`, 1.3 cents on the
+   measured build
+5. **Services we offer** — a numbered two-column LIST, not a card grid.
+   01-06 in ring order, and the first three are the ones home links to
+6. **Map and hours** — side by side. `googleMap.js` embed, no API key;
+   hours worded by `formatDaysAndHoursForDisplay.js`
+7. **Footer** — address, social icons, services, company links including the
+   three legal pages
+
+**THE MOCKUP IS ON DISK** at `Claude outputs/local-website-options-home.html`
+— one self-contained file, no build step, CSS prefixed `lwo-`. It is
+STRUCTURE #1 of the four. The hero there is a labelled gradient placeholder,
+not a photo.
+
+**What makes it read as a different product** — serif headlines against the
+main generator's sans, warm off-white against dark navy, teal and burnt
+orange against navy and green, a list where the other has cards, and a
+sentence-case headline where the other has an uppercase block.
+
+### WHERE IT GOT TO — 27 October 2026, stopped for the day
+
+**THREE THINGS EXIST ON DISK, in `Claude outputs/`:**
+
+    local-website-options-home.html     structure 1, LEDGER   (prefix ledger-)
+    local-website-options-home-2.html   structure 2, BEACON   (prefix beacon-)
+    local-website-options-build.py      the renderer in miniature
+    leander-plumbing.zip                a complete 11-page site, built by it
+
+**`build.py` IS THE USEFUL ONE.** It is shaped exactly like
+`utils/blog/render/`: pure functions in, a `{path: contents}` map out, no
+Mongo and no host. It builds all eleven pages, the ring, the rotation, the
+sitemap, robots, a 404, `LocalBusiness` and `Service` JSON-LD, and copies the
+hero images in as bytes. **Porting it to Node is transcription, not design.**
+
+**EVERY STRUCTURE GETS ITS OWN PREFIX AND ITS OWN ELEMENTS.** Edwin, on seeing
+the second one reuse the first one's class names: *"use different structure
+and names for classes."* Ledger's `<dl>` is Beacon's `<ul>`; Ledger's `<table>`
+of hours is Beacon's `<dl>`. Four layouts sharing a namespace is four
+stylesheets that cannot sit in one repository, and it is the collision
+`cloudflare-` and `ie-` exist to prevent.
+
+#### Two rules I got wrong, and both are written down because I got them wrong
+
+**THE HOME PAGE SHOWS SIX AND LINKS THREE.** Not three. Not six.
+
+    first draft   six rows, all six linked          wrong
+    second draft  three rows, three linked          wrong
+    third         six rows, first three linked      right
+
+The second draft is the instructive one: the function computed
+`SERVICES[:3]`, never used it, and then enumerated all six. **The variable
+proving the rule was known sat one line above the loop that broke it.** The
+other three rows render without an anchor and muted — a row that looks
+clickable and is not is worse than one that plainly is not.
+
+What is capped is links in the BODY, which is what shapes the ring. The nav
+and the footer are navigation and carry all six.
+
+**THE HERO ROTATION WAS NEVER BROKEN, AND THE IMAGES ARE.** Reported twice as
+"not rotating". Read out of the built HTML it is exactly `index % 4`:
+
+    home hero-1 · service 1-4 hero-2,3,4,1 · service 5,6 hero-2,3 · contact hero-4
+
+Cropping the four pictures the way the page crops them and stacking them
+showed the real fault: **hero-2, hero-3 and hero-4 are the same photograph
+with different plumbing.** Same man, same navy shirt and cap, same crouch,
+same profile, same red-handled wrench, same bright bathroom. Only hero-1
+differs — the only one outdoors, standing, with the van.
+
+    FOUR IMAGES THAT ARE VARIATIONS OF ONE SHOT GIVE YOU ONE IMAGE.
+    A ROTATION YOU CANNOT SEE IS NOT A ROTATION.
+
+**What each trade's four should be**, for the rotation to do anything: one
+establishing shot (hero-1 already is), one with no person at all — a finished
+bathroom, a new unit, pipework — one close detail of hands or a fitting, and
+one at a different angle or distance. Four near-identical shots also mean
+every plumbing site looks like every other plumbing site, which is the
+footprint problem being fought everywhere else in this app.
+
+#### What it takes to make this a feature — seven pieces
+
+1. **The mode exists.** `models/Job.js` enum, `normalizeSiteMode()`,
+   `utils/pricing.js` (a `LOCAL_OPTIONS` constant, a branch in `quote()`,
+   `affordableExtraPages` returning 0), and the wizard — **one commit**
+2. **The form takes a street address.** Only `location`, a town string,
+   exists today; `validateGlobalFields` in `helpers.js` needs the field. Logo
+   upload is wiring (`jobUploads.js`); hours and social already exist
+3. **The renderer** — `utils/localOptions/render/`, transcribed from
+   `build.py`. `heroes.js` must **warn and skip an empty trade folder** the
+   way `copyPageImage` already does: only `plumbing` has pictures
+4. **The prose** — a NEW prompt, not `createPagesPrompt.js`, with angle and
+   shape rotation. One call per service page, metadata folded into the same
+   JSON. `qualityCheck.js` is pure and should work as-is on a shorter band
+5. **The GitHub deploy path** — the App, `credsFor` learning *which host*,
+   `deployToGitHub` beside `deployBlog`
+6. **Tests** — `test-local-options.js` and a case in `test-page-meta.js`,
+   both in `deploy.sh`
+7. **Order:** 1, then 3 (output to look at immediately), then 2, 4, 5, 6
+
+**SIZING, HONESTLY:** 1, 2, 3 and 6 are a few days. **4 and 5 are each about
+the size of the Cloudflare pool work**, which took four days and found four
+dropped-credential bugs.
+
+### Four HTML structures, ONE set of sections
+
+**All four render the same seven sections above.** They vary the LAYOUT —
+image left or right, full-bleed hero or boxed, cards or stacked, sidebar or
+none.
+
+If the structures carried different section sets you would need four prompts
+and four content shapes, and the quality checker would have four things to
+understand instead of one.
+
+### The service page sections — RATIFIED 27 October 2026
+
+Asked for a recommendation on 26 October, approved unchanged on 27 October.
+**Six sections, and they are now the contract the prompt in work package 4 is
+written against.** Six, not five and not seven: the shape is fixed so that one
+prompt, one quality band and four layouts all describe the same page.
+
+1. **Hero** — one image, `<service> in <town>` as the H1, one line of what you
+   do, and a **tap-to-call button above the fold**
+2. **The problem in their words** — the symptoms somebody actually types. This
+   is what matches the search
+3. **What the job involves** — what is checked, what is replaced, how long it
+   takes. Numbers, not adjectives
+4. **What affects the cost** — NOT a price. The factors: age, access, a seized
+   shutoff, whether sign-off is needed. **The highest-value section on a local
+   service page, and almost nobody writes it**
+5. **Hours, service area, and the phone number again** — the second call to
+   action, after they have read enough to decide
+6. **Where to go next** — the ring, written as a sentence rather than a bare
+   nav list
+
+Sections 3 and 4 are where the page earns the **density floor** the quality
+checker already enforces (concrete markers per hundred words).
+
+**DELIBERATELY LEFT OUT, each for a reason:**
+
+- **Reviews.** Edwin declined fabricated ones, and a new client has none real
+- **A pricing table.** Section 4 replaces it, and a wrong number on a client's
+  site is theirs to explain
+- **An FAQ block.** The machinery exists (`buildFaqSection.js`,
+  `generateFaqAnswers.js`) so it is cheap — and it is the single most
+  recognisable "this was generated" signal on the web right now
+
+### Hero images — a SECOND set, and Edwin is supplying it
+
+- **One image per page**, hero only. No `section2`/`section4` slots
+- **A folder per business type**, the same convention as
+  `src/predefined-images/<slug>/` today
+- **They must not be the images the main generator already uses.** Two sites
+  for the same trade on two products sharing a hero photo is the most visible
+  possible fingerprint
+
+### The prose: a NEW prompt and its own voice rotation
+
+Edwin's goal, in his words: *"these sites look and sound different from the
+ones we already generate."*
+
+- **Templated prose is out.** A fixed template filled with typed data makes
+  every site read word-for-word the same, which is a worse footprint than what
+  exists now
+- **Reusing `createPagesPrompt.js` is also out** — it would sound exactly like
+  the current sites, which defeats the purpose
+- **So: a new prompt, with the rotation trick from the blogs.** `angles.js`
+  gives seven ways to write, `shapes.js` three lengths, coprime so 35 pairings
+  come up before anything repeats. Same idea here
+- **The facts stay templated** — address, phone, hours, map, social, services.
+  A model must never invent an address or a closing time
+
+### What it costs to run — MEASURED 27 October 2026, not estimated
+
+**A LEAD SITE OF THE SAME SHAPE COSTS 16.5 CENTS.** Read off pm2's log for the
+`chicago-air-conditioning.gomanzo.com` build, priced at $2.00/M input and
+$12.00/M output. Eighteen calls, 9,332 in, 12,219 out:
+
+    generatePagesContent     6   6,043 in   7,626 out   $0.1036
+    generateFAQAnswers       1     271      2,392       $0.0292
+    generateAboutuscontent   1     963        953       $0.0134
+    generateContactContent   1     333        561       $0.0074
+    generateReview           6     360        226       $0.0034
+    generateSampleReviews    1     380        205       $0.0032
+    generateCaseStudy        1     818        129       $0.0032
+    buildServiceCards        1     164        127       $0.0019
+                            18   9,332     12,219       $0.1653
+
+**THIS MODE WOULD COST ABOUT 13 CENTS.** Six page bodies (~$0.104), one
+`suggestServices` call (~$0.01), home (~$0.013), contact (~$0.007). What it
+drops — the FAQ, the reviews, the case study, the service cards — **comes to
+four cents between them.**
+
+**AND IT USES NO DataForSEO.** No FAQ means no People Also Ask fetch; there is
+no pricing table and no keyword research in the flow. The six service names
+come from `suggestServices`, one model call. Edwin, 27 October, when the
+subject drifted onto keyword costs: *"will these new site use dataforseo?"* —
+no, and do not design any in.
+
+**SO THERE IS NO COST ARGUMENT FOR A LOWER PRICE.** Four cents separates the
+two products. The price is a positioning decision beside the $8 lead site and
+nothing else; a lead site already returns about **48x** its model cost.
+
+**ONE THIRD OF THE BILL IS THE MODEL THINKING.** 4,541 of those 12,219 output
+tokens are `reasoning_tokens` — 37% of output, $0.054 of the $0.165, billed at
+the full output rate and never reaching the page. Two calls hold most of it:
+one service page spent 1,337, and `generateFAQAnswers` spent 1,413 of its
+2,392. **That is the cheapest saving available anywhere in this app**, and it
+is a prompt problem rather than an architecture one.
+
+**REVIEWS ARE FREE.** Six `generateReview` calls cost a third of a cent
+between them. Dropping them saves nothing — they are dropped because
+fabricated reviews are not wanted, which is a different reason.
+
+### DECIDED 27 October 2026 — the same price as the generator, and DERIVED
+
+**Edwin:** *"let’s leave it as the same price as the one built with the
+generator."* Then, asked whether to freeze the number or compute it:
+*"derive it."*
+
+    LEAD_BASE 200  +  6 x SERVICE_PAGE 100  =  800 credits  =  $8.00
+
+**NOT A FLAT `LOCAL_OPTIONS: 800`.** A frozen constant records today’s answer
+to the rule. It does not record the rule. The rule is PARITY WITH THE LEAD
+SITE, so the number has to be computed from the same two constants the lead
+site is priced from:
+
+    LOCAL_OPTIONS_PAGES: 6     // home and contact are not charged per page;
+                               // they are what LEAD_BASE already covers
+
+    total = PRICING.LEAD_BASE
+          + PRICING.LOCAL_OPTIONS_PAGES * PRICING.SERVICE_PAGE
+
+Reprice the generator and this mode moves with it, which is what "the same
+price" means. Freeze it and the two diverge silently the first time
+`SERVICE_PAGE` changes — and **nothing would fail**, because 800 is still a
+perfectly valid number. That is the whole argument: a wrong price does not
+throw.
+
+**THE MARGIN IS WHAT IS BEING CHOSEN, AND IT WAS CHOSEN KNOWINGLY.** 13 cents
+against 16.5 for the same page count, at the same $8. The four cents is a
+positioning decision, not a cost one — the measurement is directly above.
+
+**TWO PLACES IN `quote()`, NOT ONE.** The branch is the obvious half:
+
+- `quote()` gets a third early return for `siteMode === localoptions`,
+  shaped like the `sample` branch — one line, a flat total, no per-page rows
+- **`affordableExtraPages()` must return 0 for `localoptions`**, exactly as it
+  already does for `sample`. The page count is FIXED, so there are no extra
+  boxes to pre-tick. Miss this and the suggestion list offers pages the mode
+  cannot generate, against credits the customer has already committed
+
+### Still open
+
+- `utils/getCoordinatesFromAddress.js` sends Nominatim a placeholder
+  User-Agent: `'StaticSiteGenerator/1.0 (your@email.com)'`. Nominatim's usage
+  policy wants a real identifying string, and that one also carries a retired
+  brand name. Worth fixing whoever touches it next
+
+### The GitHub side — see the entry below this one
+
+The deploy path, the one-account-per-client design, the wildcard CNAME and the
+four shared GitHub IPs are written up separately.
+
+## PLANNED — hosting on GitHub Pages, one account per client
+
+**RESEARCHED WITH EDWIN ON 25-26 OCTOBER 2026.** This is the deploy path the
+entry above needs. It is a SECOND host alongside Cloudflare, never a
+replacement: *"I would like to do this in addition to cloudflare not to
+replace it."*
+
+### The shape: the CLIENT owns the account
+
+Edwin, correcting an earlier assumption of mine: *"these won't be my accounts.
+We will be using each client's account and I want them separate because the
+blogs will be my clients and I don't want other clients using another client
+account to create blogs."*
+
+**The reasoning is sound and it is the same reasoning as the Cloudflare pool.**
+One client's credentials cannot reach another client's sites, so a leaked
+token or a bug in our code is contained to one client.
+
+**AND IT IS THE ONLY SHAPE THAT WORKS, because of GitHub's own terms:**
+
+> *"One person or legal entity may maintain no more than one free Account."*
+
+Plus one "machine account" for automation. So twenty accounts owned by Edwin
+is not an option the way twenty Cloudflare accounts is. Twenty accounts owned
+by twenty different clients is exactly what the terms contemplate.
+
+**USE A GITHUB APP, NOT COLLECTED TOKENS.** A GitHub App is installed by the
+client with one click and issues its own credentials; we never hold a personal
+access token belonging to a client. The alternative — asking a plumber to
+generate and paste a PAT — is both a worse security posture and a harder
+conversation than anything we ask of a customer today.
+
+### What GitHub gives, and what it does not
+
+| | Free | Pro, $4/month |
+|---|---|---|
+| Sites | **unlimited** — one repo each, no project cap | unlimited |
+| Repo visibility for Pages | **public only** | public or private |
+| Deploys | effectively unlimited (Actions is free for public repos) | ~3,000/mo for private; unlimited for public |
+| Bandwidth | **100 GB/month soft, PER ACCOUNT, shared by all its sites** | the same |
+| Published site size | 1 GB each | the same |
+
+**THE $4 BUYS EXACTLY ONE THING: a private source repo.** Every capacity
+number is identical. The Pages limits page shows no plan tiering at all.
+
+**NO PROJECT CAP IS THE REAL WIN OVER CLOUDFLARE.** Cloudflare's 100
+projects-per-account is the entire reason the account pool exists, and
+**paying Cloudflare does not lift it** — the paid plan still says 100. GitHub
+has no equivalent limit.
+
+**100 GB/month is roughly a million page views** across everything on one
+account, for a text page of about 75 KB. Nowhere near a concern now; it is the
+number that moves as the blogs grow, and it is the one thing GitHub meters
+that Cloudflare does not.
+
+### THE IP QUESTION, ANSWERED: 30 accounts, 4 addresses
+
+Edwin asked whether separate accounts mean separate servers. **They do not.**
+GitHub documents four IPv4 addresses for every Pages site in the world:
+
+    185.199.108.153   185.199.109.153   185.199.110.153   185.199.111.153
+
+- 30 clients, 30 accounts, 30 domains — the same four
+- The only per-account difference is the CNAME target, `<client>.github.io`
+- **This is LESS varied than Cloudflare**, whose anycast range is shared with
+  a large share of the internet. GitHub's four are published in their own docs
+  and are instantly identifiable as GitHub Pages
+
+**DO NOT BUILD THIS EXPECTING IP SEPARATION.** No free or shared static host
+offers it; that needs a VPS per site. And shared IPs are not the signal that
+matters — identical templates, identical linking shape, identical publishing
+rhythm, sites linking to each other, and shared nameservers are. `style2`-
+`style6`, `angles.js` and `shapes.js` already attack the ones that do.
+
+**What this plan DOES improve is nameservers.** Today twenty domains sit on
+three Cloudflare accounts using Cloudflare's nameservers. Under this plan each
+domain stays at its own registrar with its own. That is real diversification,
+and worth more than the IP question.
+
+### THE ACTUAL REASON TO BUILD IT: the domain can live anywhere
+
+On Cloudflare the DNS zone **must** be on the same account as the Pages
+project — that constraint is what the whole pool design bends around, and it
+is what makes Cloudflare write the DNS record itself.
+
+**On GitHub, hosting and DNS are completely separate.** The client's domain can
+stay at GoDaddy, Namecheap, anywhere. One CNAME record is all it needs.
+
+So this is not about capacity or cost. **It is about reach: it lets Edwin take
+clients whose domains he does not control** — the separate set of clients with
+domains at unrelated registrars that he has asked about more than once.
+
+### The manual steps, and there are only two
+
+**Once per client:** the client clicks **Install** on the GitHub App page.
+That is the only thing a client ever does.
+
+**Once per domain:** one DNS record, wherever that domain's DNS lives.
+
+    *.acmehvac.com    CNAME    acmehvac.github.io
+
+**USE THE WILDCARD.** With `*`, every blog or site ever built on that domain
+resolves with no further DNS work — `hvac.acmehvac.com`,
+`plumbing.acmehvac.com`, all of them. Without it, it is one CNAME per site,
+added by hand, for ever. The only side effect is that an unused subdomain
+resolves to GitHub and shows a 404 instead of nothing.
+
+**Once per domain, on our side:** add the domain and the account on
+`/admin/blog-domains`, the same screen the Cloudflare pool uses.
+
+**Everything else is the app:** create the repo, turn on Pages, set the custom
+domain, commit the site, re-commit on every publish, enable HTTPS once the
+certificate issues, delete the repo when the site is removed.
+
+### What is different from Cloudflare, and worth knowing before building
+
+- **The client can see the repo, and delete it.** On Cloudflare they never see
+  anything. Here their site is a folder in their own account
+- **Deploys are git commits**, not a direct upload. Files go through the GitHub
+  API; one commit per publish carries the whole site
+- **One manual DNS step per domain** — unless the domain happens to be on our
+  Cloudflare, in which case our own code writes it, as it does today
+- **The duplicate-address question is UNRESOLVED.** A Pages site is also
+  reachable at `<client>.github.io/<repo>/`. GitHub is believed to redirect
+  that to the custom domain, but **this was not confirmed** — and a second
+  address serving the same pages is exactly the problem the Cloudflare Bulk
+  Redirect work exists to fix. **Check it before relying on it.**
+- **Actions minutes are free on PUBLIC repos only.** A private repo on Pro has
+  a 3,000-minute monthly budget, which is thousands of deploys but is not
+  unlimited
+
+### Rejected, with reasons — do not re-propose
+
+- **Netlify.** Allowed commercially, but the free tier is 300 credits/month
+  hard-capped, a production deploy costs 15, so **20 deploys per month per
+  account** — and bandwidth comes out of the same pot. A 20-article campaign
+  at one post per day is exactly 20 deploys: the entire month's allowance with
+  nothing left for visitors. One site per account does not rescue it. And
+  their own agreement says *"Netlify may shut down Free Usage Tier website
+  projects without notice for any reason or no reason"*, which is not a clause
+  to put a client's site behind
+- **Vercel Hobby.** Explicitly non-commercial, and their definition of
+  commercial names *"receiving payment to create, update, or host the site"*
+- **Render.** Their docs say not to use free services for production, and the
+  Hobby workspace allows 2 custom domains
 
 ## PLANNED — blogs published to Cloudflare Pages
 
@@ -789,6 +1455,347 @@ another domain should carry `rel="nofollow"`. On WordPress the plugin writes
 the href as it inserts the post; on Cloudflare our renderer will. Same
 question in two places, and it is Edwin's SEO call rather than a technical
 one. Ask before building either.
+
+## A domain moved between Cloudflare accounts BY HAND — 27 October 2026
+
+`journalsres.com`. Not an app deploy. A domain that was live on one Cloudflare
+account, removed from it, and rebuilt on another — every step the app never
+has to take.
+
+**WHAT THE APP DOES IS LESS THAN IT LOOKS.** `pointDomainAtProject()` is five
+calls: `ensureProject` and `deployBlog` through wrangler, `attachDomain`
+through the REST API, `redirectPagesDev` into an account-level Bulk Redirect
+list, then `findZone` + `ensureDnsRecord` for one proxied CNAME. **It assumes
+the zone is ALREADY in the account and ALREADY active.** It never adds a site
+and never touches nameservers, because during a normal deploy nobody ever
+needs it to.
+
+**THE MANUAL PATH HAS FOUR STEPS WITH NO EQUIVALENT IN THE CODE:**
+
+1. **Add site**, which makes Cloudflare SCAN the old DNS and import what it
+   finds
+2. **Throw the import away.** It is garbage whenever the domain was previously
+   proxied
+3. **Remove the zone from the old account first** — and the custom domain from
+   the old Pages project. A hostname still claimed elsewhere blocks the new
+   claim
+4. **Change the nameservers at the registrar.** The new account issues a
+   DIFFERENT pair; the old pair is dead the moment the old zone is removed
+
+**THE IMPORT SCAN COPIES THE PROXY, NOT THE ORIGIN.** journalsres.com arrived
+with four `www` records — `104.21.41.200`, `172.67.192.74` and two
+`2606:4700:30xx::` addresses. Those are **Cloudflare's own anycast IPs**. The
+scanner saw the old account's proxy and wrote it down as if it were a server.
+Cloudflare flags each one with an orange triangle; activating on them gives
+**Error 1000, "DNS points to prohibited IP"**, and the site goes dark.
+
+    A DNS SCAN OF A PROXIED DOMAIN RETURNS THE PROXY.
+    THERE IS NO ORIGIN IN IT TO FIND.
+
+**AN EMPTY RECORD LIST IS THE RIGHT STARTING POINT**, not a problem to fix.
+Delete every imported record, activate the zone with nothing in it, and let
+Pages write the records itself when the custom domain is attached. Anything
+added by hand first only gets in the way.
+
+### `ensureDnsRecord()` HAS AN APEX BLIND SPOT
+
+`ensureDnsRecord({ name: domain })` writes **one** CNAME, for the blog's
+`siteUrl`. **Every blog so far is a SUBDOMAIN** — `chicago-air-conditioning.gomanzo.com` —
+and on a subdomain `www` has no meaning. Point a generated blog at an **apex**
+domain and:
+
+- `www.<domain>` has no DNS record at all, so it is a dead hostname that
+  visitors will type anyway
+- nothing creates a `www` → apex redirect rule
+- `attachDomain` is never called for `www` either, so there is no certificate
+  for it
+
+Doing journalsres.com by hand needed **both**: a second custom domain, and a
+zone Redirect Rule. The app has neither, and nothing in it notices.
+
+**Not a bug today. A trap the first time a client brings an apex domain.**
+
+### THREE ADDRESSES SERVE ONE PAGE, and the canonical names only one
+
+apex, `www`, `project.pages.dev` — plus `<hash>.project.pages.dev`, the
+deployment address, which serves the same bytes. The app fixes the pages.dev
+pair with the account-level Bulk Redirect. It has never had to fix `www`.
+
+**THE BULK REDIRECT TOGGLES ALL DEFAULT TO THE WRONG VALUE** — this is already
+written down in `redirects.js` and it is written down again because it is the
+same list a human has to tick by hand in the dashboard:
+
+    subpath_matching       OFF by default → only the home page redirects
+    preserve_query_string  OFF by default → every ?utm_source= is dropped
+    include_subdomains     OFF by default → the hash address stays live
+    status_code            301, never 302 — a 302 tells Google to keep
+                           indexing the copy
+
+The check that proves subpath matching took is a request for a **path**, not
+for the root. `/some/path` must land on `/some/path`. A redirect to the
+homepage looks like success in a browser and is a silent failure.
+
+### THE BEACON I REMOVED WAS NEVER BEING INJECTED — 27 October
+
+Edwin pasted the **served** HTML and asked whether it had a canonical. It did.
+It also carried a `static.cloudflareinsights.com/beacon.min.js` tag, and I
+said that Cloudflare Pages injects that at the edge, that leaving it in the
+source would double-count every visit, and I removed it.
+
+`curl -s https://journalsres.com | grep -c cloudflareinsights` returned **0**,
+where I had told him to expect **1**. Web Analytics is not enabled on that
+project. Nothing injects anything. The tag was real content in his file, and
+removing it removed his analytics entirely.
+
+    A PREDICTION IS WHAT MAKES A MISTAKE VISIBLE.
+    "EXPECT 1" IS WHY 0 WAS A FINDING AND NOT A SHRUG.
+
+**AND THE THING NOT TO DO ABOUT IT.** The old tag's token belonged to the
+account he had just left. Pasting it back would report his traffic to an
+abandoned account — correct-looking, completely inert, the same shape as the
+Bulk Redirect written with the server's credentials. Enable Web Analytics on
+the project and let Cloudflare issue its own token; never restore a token
+that outlived its account.
+
+## RUNBOOK — moving a domain to a new Cloudflare account and serving one page
+
+**WRITTEN 27 October 2026, AFTER DOING IT THREE TIMES IN ONE AFTERNOON:**
+journalsres.com, uclatv.com, xmlguild.org. Every gotcha below cost time on at
+least one of them. The narrative of the first one is the entry above; this is
+the list to work from.
+
+### The nine steps
+
+1. **Remove the zone from the OLD account first** — Overview → Advanced
+   Actions → Remove Site. Also remove the hostname from the old Pages
+   project's Custom domains. A hostname still claimed elsewhere blocks the new
+   claim.
+2. **Add the site to the new account.** Cloudflare scans the old DNS and
+   imports what it finds.
+3. **Delete almost everything it imported** — see the next section for the one
+   record to keep.
+4. **Continue to activation** with an empty record list, then set the two
+   nameservers at the registrar (Custom DNS, replace both, remove extra rows).
+   Wait for **Active**. "Invalid nameservers" before this is normal, not an
+   error — it means Cloudflare looked and found a different pair.
+5. **Create the Pages project** and deploy the page (see the deploy section —
+   the dashboard uploader is not reliable).
+6. **Custom domains → add the apex, then `www`.** Cloudflare writes the DNS
+   records itself. Do not add them by hand first; they only get in the way.
+7. **Redirect Rule** in the zone: `www` → apex.
+8. **Bulk Redirect** at the account level: `<project>.pages.dev` → apex.
+9. **Verify with the block at the end of this runbook.** Not in a browser.
+
+### Step 3, in detail — what the import actually contains
+
+**THE SCAN COPIES THE PROXY, NOT THE ORIGIN.** If the domain was proxied on
+the old account, the imported A/AAAA records are **Cloudflare's own anycast
+IPs** — `104.21.x`, `172.67.x`, `2606:4700:30xx::`. Activating on them gives
+**Error 1000, "DNS points to prohibited IP"**, and the site goes dark.
+
+**OTHER THINGS THAT ARRIVE AND MEAN NOTHING:**
+
+    192.0.2.0              RFC 5737 documentation space — a deliberate black
+                           hole, used as a dummy origin so a redirect rule can
+                           proxy in front of nothing  (uclatv.com)
+    15.197.148.33          an AWS Global Accelerator pair used by registrars
+    3.33.130.190           for domain forwarding / parking  (xmlguild.org)
+    CNAME _domainconnect   registrar auto-config leftover, and it should never
+                           have been proxied
+    TXT _acme-challenge    dead SSL validation tokens from the old host
+
+**THE ONE RECORD TO KEEP: `TXT` containing `google-site-verification=`.**
+That is the Search Console property. Delete it and the property unverifies —
+silently. uclatv.com had one; the other two did not. **Check every time.**
+
+**AN EMPTY RECORD LIST IS THE CORRECT STARTING STATE**, not a problem to fix.
+
+**RULES DO NOT MIGRATE WITH A ZONE.** Redirect Rules, WAF rules, page rules —
+all per-zone configuration on the old account, all gone. If the old setup had
+a `www` redirect, recreate it at step 7. A dummy `192.0.2.0` origin in the
+import is the tell that it did.
+
+### Step 7 — the Redirect Rule, and the default that breaks it
+
+The dashboard offers a **"Redirect from WWW to root"** template. Use it. Done
+by hand, in the wildcard form:
+
+    Request URL    https://www.<domain>/*
+    Target URL     https://<domain>/${1}
+    Status         301
+    Preserve query string   ticked
+
+**`${1}` IS THE WHOLE THING.** It is the capture from the `*`. Leave it out
+and every path on `www` collapses onto the home page — which looks like
+success in a browser, because the home page loads.
+
+**AN OLDER DASHBOARD SHOWS Static/Dynamic INSTEAD OF WILDCARDS.** There the
+equivalent is Type `Dynamic`, expression
+`concat("https://<domain>", http.request.uri.path)`. `Static` is the default
+and has the same collapse-to-home-page failure.
+
+**WHETHER `www` NEEDS TO BE A CUSTOM DOMAIN AT ALL DEPENDS ON STEP 3.**
+Redirect Rules run at the edge *before* anything reaches Pages, and Universal
+SSL already covers `www` as a first-level subdomain. So:
+
+- deleted the imported `www` record → `www` has nothing to resolve to, and
+  attaching it as a custom domain is what creates the record. **Required.**
+- left an imported `www` record in place → it already resolves and the rule
+  already fires. Attaching it is **redundant but harmless**.
+
+Do it anyway, so all the domains are configured identically. Consistency is
+worth more than one spare moving part when the next one is done from memory.
+
+### Step 8 — the Bulk Redirect, and its four wrong defaults
+
+Account level, not the zone: **Bulk Redirects** → create a list → add one
+item → then a **Bulk Redirect Rule** referencing the list. *The list alone
+does nothing.* A second domain can reuse an existing list; its rule picks the
+new item up automatically.
+
+    Source URL             <project>.pages.dev     (no https://, no slash)
+    Target URL             https://<domain>/
+    status_code            301   — a 302 tells Google to keep indexing the copy
+    subpath_matching       OFF by default → only the home page redirects
+    preserve_path_suffix   needs subpath matching on to do anything
+    preserve_query_string  OFF by default → every ?utm_source= is dropped
+    include_subdomains     OFF by default → <hash>.<project>.pages.dev stays live
+
+**THE PROJECT'S pages.dev NAME IS NOT ALWAYS THE PROJECT NAME.** `journals`
+came out as `journals-ctt.pages.dev` because the plain name was taken
+globally. Read it off Deployments → the **Domains:** line. Getting it wrong
+produces a rule that matches nothing and never fires.
+
+### Deploying the page — the dashboard uploader, and wrangler
+
+**THE DASHBOARD UPLOADER FAILED THREE TIMES IN A ROW** with a bare "Failed to
+upload" and `0/1 files uploaded`, on a 23 KB file, across a folder and a zip.
+Do not spend time on it. Two facts, both learned the hard way:
+
+- **Pages accepts a FOLDER or a ZIP, never a bare file.** The banner says so.
+  A folder's *contents* become the site root, so a wrapper folder's name does
+  not matter — `index/index.html` publishes to `/`, which is correct. (I said
+  otherwise first, and was wrong.)
+- A zip must have `index.html` at its **top level**. Build it from inside the
+  folder: `cd <folder> && zip -r ../site.zip . -x ".*" "__MACOSX/*"`, then
+  confirm with `unzip -l`. Zipping the folder from outside nests it.
+
+**USE WRANGLER INSTEAD:**
+
+    npx wrangler@latest pages deploy <folder> --project-name=<project> --branch=main
+
+`--branch=main` makes it a **Production** deployment rather than a preview.
+
+**`wrangler login` IS OAUTH THROUGH `localhost:8976`, AND IT IS FLAKY.** It
+failed twice — once `ERR_CONNECTION_REFUSED` on the callback, once "Timed out
+waiting for authorization code" — then worked on the third attempt. The
+browser saying "Authorization granted" does not mean wrangler received the
+code: check with `npx wrangler@latest whoami`.
+
+**THE macOS 12.6 WARNING IS IRRELEVANT TO DEPLOYS.** It is about `workerd`,
+the local Workers runtime used by `wrangler dev`. `pages deploy` only uploads
+files.
+
+### ONE ACCOUNT PER CLIENT MEANS WRANGLER IS WRONG BY DEFAULT
+
+**`wrangler login` authenticates ONE account per machine.** With a Cloudflare
+account per client, a deploy aimed at another client's project fails with
+*project not found* — or, worse, finds a same-named project on the account it
+is actually logged into.
+
+**SO USE A TOKEN PER ACCOUNT. An environment token OVERRIDES the stored OAuth
+login**, so there is no logout/login cycle:
+
+    export CLOUDFLARE_API_TOKEN=<token>        # Account · Cloudflare Pages · Edit
+    export CLOUDFLARE_ACCOUNT_ID=<account id>  # zone Overview, right sidebar
+    npx wrangler@latest pages deploy <folder> --project-name=<project> --branch=main
+
+`export` lives in that terminal only. One permission, scoped to one account,
+instead of the thirty the OAuth grant asks for.
+
+**THIS IS THE SAME SHAPE AS THE 23 OCTOBER BUG.** `redirectPagesDev` wrote
+every pool blog's redirect into the server's own account because `creds` was
+optional — the write SUCCEEDED, against somewhere the traffic never passes.
+**A credential that defaults does not complain when you forget it; it acts on
+somewhere else.** By hand the exposure is identical.
+
+### ONE FOLDER PER SITE, AND THE REASON
+
+**`~/Desktop/index/index.html` was reused for all three domains**, each one
+overwriting the last. Consequences, both real:
+
+- `xmlguild.org` went live serving a page branded **South Bay Home
+  Inspections**, whose canonical named `southbayhomeinspections.com`. The
+  infrastructure was perfect and pointed at the wrong page.
+- The uclatv source was overwritten and had to be recovered with
+  `curl -s https://uclatv.com > index.html`.
+
+    ~/Desktop/sites/<domain>/index.html
+
+A folder per site also makes the deploy line name the site twice — once as the
+folder, once as `--project-name` — so a mismatch is visible in the command
+being typed.
+
+### CHECK THE CANONICAL BEFORE EVERY DEPLOY
+
+**TWO OF THE THREE PAGES HAD A WRONG CANONICAL**, and neither was detectable
+in a browser:
+
+    southbayhomeinspections.com    the wrong file entirely
+    example.com/plumbing-cost-...  a placeholder nobody replaced
+
+A canonical naming another domain says *"do not index this URL, index that
+one instead."* The page serves 200, looks perfect, and is invisible.
+
+    grep -o 'https://[^"]*' index.html | sort -u
+
+Every URL in `canonical`, `og:url`, `og:site_name`, the Twitter tags, the
+JSON-LD `url` / `mainEntityOfPage.@id` / `publisher.name`, and any visible
+footer link must name the domain being deployed to.
+
+### DO NOT PUT THE CLOUDFLARE ANALYTICS BEACON IN THE SOURCE FILE
+
+Cloudflare injects `static.cloudflareinsights.com/beacon.min.js` at the edge
+**when Web Analytics is enabled on the project** — and not otherwise. Copying
+a *served* page back into a source file captures that injected tag, and then
+the page carries two.
+
+- **uclatv.com served two identical beacons**, both from the file.
+- **journalsres.com: I removed its beacon asserting Cloudflare would re-inject
+  it. The count came back 0.** Web Analytics was off; the tag was real content
+  and removing it removed the analytics.
+
+Enable Web Analytics in project Settings and let Cloudflare inject its own.
+**Never paste an old beacon tag back** — its token belongs to whichever
+account issued it, and after a migration that is the account being left.
+
+### THE VERIFICATION BLOCK — run it, do not open a browser
+
+    for d in <domain> <domain> <domain>; do
+      echo "=== $d ==="
+      printf "apex:      "; curl -s -o /dev/null -w "%{http_code}\n" "https://$d"
+      printf "www:       "; curl -s -o /dev/null -w "%{http_code} -> %{redirect_url}\n" "https://www.$d"
+      printf "www/path:  "; curl -s -o /dev/null -w "%{http_code} -> %{redirect_url}\n" "https://www.$d/some/path"
+      printf "canonical: "; curl -s "https://$d" | grep -o '<link rel="canonical"[^>]*>'
+      printf "title:     "; curl -s "https://$d" | grep -o '<title>.*</title>'
+      printf "beacons:   "; curl -s "https://$d" | grep -c cloudflareinsights
+      echo
+    done
+
+    for p in <project>.pages.dev <project>.pages.dev; do
+      printf "%-24s " "$p:"
+      curl -s -o /dev/null -w "%{http_code} -> %{redirect_url}\n" "https://$p"
+    done
+
+    dig +short TXT <domain> | grep google     # only if it had a Search Console TXT
+
+**PASSING:** apex 200 · www 301 to the apex · **`www/some/path` → `/some/path`,
+path preserved** · canonical naming its own domain · pages.dev 301 · beacons 0
+or 1, never 2.
+
+**THE PATH ROW IS THE ONE THAT MATTERS.** A redirect to the home page returns
+301 and loads a page, so a browser cannot tell it from a correct one. Only the
+`redirect_url` shows the difference.
 
 ## Generated websites are stored in ONE place, and it is not backed up
 
@@ -2247,7 +3254,22 @@ back when disputing a bill. Now covered, and the mutation is caught.
 
 ## Outstanding
 
-### NEXT — blogs on a pool of domains, across several Cloudflare accounts
+### ~~NEXT~~ CLOSED 23 October 2026 — blogs on a pool of domains, across several Cloudflare accounts
+
+**SHIPPED. The plan below is kept as the record of why it is shaped this way;
+it is no longer work to do.** Everything in "Order of work" landed between
+22 and 23 October: `scrub()` takes its secrets as an argument, `cfApi()` and
+`childEnv()` take credentials, `credsFor(blog)` is the one place that decides
+which account a blog belongs to, tokens are stored encrypted under
+`CF_TOKEN_KEY`, the `CloudflareAccount` model and `/admin/blog-domains` exist,
+and the create form is a prefix plus a dropdown of the pool's domains. The app
+also provisions its own Bulk Redirect list and rule. Verified end to end on a
+brand-new account (Gomanzo / `us-law-firms.gomanzo.com`).
+
+**NOTHING IS OPEN FROM IT.** The two items left in "Open, and his call"
+below — per-account project-name uniqueness, and asking Cloudflare directly
+about the account count — were both dropped by Edwin on 25 October. See
+*Deliberately dropped*. Read that subsection as history, not as a to-do list.
 
 Agreed with Edwin on 21 October, for 22 October. This is "product B" from
 the earlier backlog, and the shape he settled on.
@@ -2364,42 +3386,216 @@ what has to become argument-passing, and those tests are the spec for it.
     That is the upside, and it is also why the angle/shape work shipped
     first.
 
-### FOR TOMORROW — number the articles in the front-page dropdown
+### CLOSED 25 October 2026 — two suites that had never run, and seven weeks of rot
 
-Edwin, 23 October, after the picker narrowed to pillar campaigns: *"those
-articles in the dropdown should be numbered."*
+`test-blog-batch.js` and `test-blog-routes.js` were written on **3 September
+2026**. They were first executed on **25 October**. Thirty-six tests, seven
+weeks, and the only coverage anywhere of charging a customer per post.
 
-Thirty titles in a `<select>` is a list you scroll rather than scan, and a
-number gives somebody a place to say "the seventh one" instead of reading
-the title back.
+**WHY THEY NEVER RAN.** Both open with
 
-**THE TRAP, AND IT IS THE SAME SHAPE AS THE ARTICLE COUNT.**
+    if (!process.env.MONGO_URI) { console.log('…set MONGO_URI…'); process.exit(0); }
 
-The Articles screen already numbers its rows — `.rownum`, from
-`skip + i + 1`. The dropdown would number from its own index. **They are
-not the same list.** The Articles screen shows EVERY article on the blog;
-the dropdown shows only pillar ones. Both sort by `createdAt`.
+and neither was in `deploy.sh`. So nothing ran them, nothing complained, and
+nobody chose that. They needed a real database on purpose — the header of
+`test-blog-batch.js` says why, and it is right: *"everything here turns on
+conditional updates — charge once, claim once, stop cleanly — and a mock of
+Mongo would only prove that the mock agrees with itself."*
 
-So on All About Plumbing, "7." in the dropdown is the seventh PILLAR
-article and "7." on the Articles screen is the seventh article of 171.
-Two numbers, two screens one click apart, both plausible, neither wrong on
-its own terms, and nothing to tell you they disagree.
+**WHAT SEVEN WEEKS DID TO THEM.** Three separate drifts, none of them in the
+code under test:
 
-**Decide before building, not after:**
+1. **Two days of life.** `models/User.js` renamed `password` to `passwordHash`
+   on **5 September**, 48 hours after the fixtures were written. Every test in
+   both files died inside its own `seed()` from then on — all 16 reporting the
+   identical message, which is what a fixture failure looks like.
+2. **The quality gate learned to retry.** The stub returned sixty words of flat
+   prose with no keyword and no numbers. `checkPost()` failed it as `short`,
+   `keyword-meta`, `keyword-heading` and `keyword-body`, all four of which are
+   in `REWRITE_WORTHY`, so `blogGenerator` did exactly its job and asked the
+   model a SECOND time for every post. The three tests that count model calls
+   read 4 instead of 2, 6 instead of 4, 2 instead of 1.
+3. **Six words is the whole opening key.** `crossCheck()` reduces an opening to
+   `first[0].toLowerCase().split(' ').slice(0, 6).join(' ')`. The replacement
+   stub opened every post with *"A tank that has run for N years…"* — varied by
+   a digit in the SEVENTH word. Four openings that looked different to the eye
+   were one opening, and `varied posts produce a clean report` said so.
 
-- Number the dropdown 1..n over the PILLAR articles — simple, and silently
-  disagrees with the Articles screen
-- Number both from the blog's full ordering, so article #43 is #43
-  everywhere — needs the dropdown to know each article's position among
-  all of them, which the current query does not fetch
-- Number the dropdown and say what the numbers are, e.g. "Pillar 1 of 30",
-  so the two numbering schemes cannot be mistaken for each other
+**THE FIX WAS THE FIXTURE, NOT THE EXPECTED NUMBERS, AND THAT WAS THE WHOLE
+DECISION.** Changing `2` to `4` would have gone green in one edit and thrown
+away the only assertion standing between a customer and being charged twice —
+and it would have broken again the next time the quality bands moved. The stub
+now writes ~980 words that pass the gate clean: keyword in the title, the meta
+and one heading, exactly once in the body, every anchor verbatim in its own
+paragraph, money link in section 0, fourteen concrete markers per hundred
+words, and an opening whose FIRST six words differ per slot.
 
-The third is probably right: the numbers mean different things, so they
-should LOOK different rather than quietly collide.
+**WHAT THE 36 TESTS THEN SAID: nothing was wrong with the application.**
+Charged once per post. A requeued job writes nothing and charges nothing. Out
+of credits at 2 of 5 — stopped, two paid posts still publishable, 10 credits
+left, slots 3-5 untouched. A failed post not charged for, its neighbours'
+dangling placeholders repaired. A transient failure retried and charged once.
+`/write` refusing with 402 and leaving the campaign a draft. A second `/write`
+reporting the batch instead of starting a second one. Another site refused a
+campaign id. A duplicate confirmation not overwriting the real post id.
 
-**Where it goes:** the `<select>` in `blogPageSpec()`,
-`routes/staticBlogsRoute.js`, beside the `articles.map(...)`.
+**THE GATE THEY GOT.** `deploy.sh` starts MongoDB itself and **refuses to
+deploy** if it cannot — not a warning, because a warning seen fifty times is
+not a warning. `SKIP_DB_TESTS=1` is the way past and is deliberately ugly.
+Four paths were tested before it shipped: no database (refuses, exit 1),
+`SKIP_DB_TESTS=1` (skips, says SKIPPED not passed), database up (runs both with
+the scratch URI), a suite failing (refuses, prints the exact command to repeat
+it).
+
+### THE LESSON OF 25 OCTOBER — a test nobody runs is a test that rots
+
+    A SUITE OUTSIDE THE GATE IS NOT COVERAGE YOU HAVE NOT MEASURED YET.
+    IT IS COVERAGE THAT IS DECAYING, AT THE SPEED THE CODE CHANGES.
+
+Two days. That is how long `test-blog-batch.js` matched the schema it was
+written against. Nothing announced it, because nothing ran it — and the file
+sat there for seven weeks reading exactly like insurance.
+
+This is the fourth shape of the same flaw in this file:
+
+- `test-deleted-posts.php` outside the loop because the loop runs `node`
+- `test-admin-tabs.php` at 6 passing / 23 failing, unnoticed
+- the two Cloudflare suites, written and never gated
+- these two, which needed a database and so were quietly exempted
+
+**AND THE SECOND HALF, WHICH IS WORSE:** a suite that SKIPS when its
+prerequisite is missing must never be dropped into a gate as-is. `exit(0)` on a
+missing `MONGO_URI` plus a green deploy is a lie told confidently. Either the
+gate supplies the prerequisite — which is what `deploy.sh` now does — or it
+refuses. There is no third option that is honest.
+
+### CLOSED 24 October 2026 — the front-page picker became a list you can read
+
+Asked for as *"number the dropdown articles"*, and it could not stop there.
+Edwin, a message later: *"besides number them I want the article be linked
+to the actual article so I can click it and check them."*
+
+**WHICH ENDS THE `<select>`.** Options are plain text. They cannot hold a
+link, cannot be numbered without putting digits in the label, and cannot be
+read without being opened. Choosing a front page from thirty titles you
+cannot click is choosing blind.
+
+It is a folded table now: **#**, the **title as a link**, and a **Make front
+page** button per row. Folded because thirty rows above "Plan a campaign" is
+the crowding the Articles screen was moved out to fix.
+
+**WHAT THE CODE GETS RIGHT THAT IS EASY TO GET WRONG**
+
+- **Only live articles are linked.** One written and scheduled has no page
+  yet; a link to it 404s, which reads as a broken blog rather than as an
+  article waiting for its day.
+- **A blog never deployed links to nothing.** Articles can be written,
+  scheduled and long past their date while the site still does not exist.
+- **"Live" uses `isLive()` — the renderer's own rule**, so the picker and
+  the published site cannot disagree about what is on the internet.
+- **The current front page wears a badge, not a button.** A control offering
+  to make the front page the front page is a control that does nothing,
+  sitting in the one row somebody is looking for.
+
+**THE NUMBERING CLASH, ANSWERED IN WORDS.** The Articles screen numbers its
+rows too, over EVERY article on the blog; these count only the pillar ones.
+On a blog of 171 with a 30-post pillar, "7." means two different articles on
+two screens one click apart. The note under the table says so out loud —
+the third of the three options written up the day before, chosen because the
+numbers mean different things and should therefore LOOK different rather
+than quietly collide.
+
+### CLOSED 24 October 2026 — the page now says what is actually at `/`
+
+Three states looked identical on the screen and are not identical on the
+internet:
+
+- nothing chosen, so the OLDEST live article is serving
+- chosen and live, so that one is serving
+- **chosen but NOT LIVE YET**, so something else is serving until its day
+
+The third is the one that matters. *"Front page: Article 20"* was a true
+statement about the setting and a false one about the site, and nothing on
+the page said which it was.
+
+`servingArticle()` works the oldest live slot out from the campaigns already
+loaded — free, they come with their slots — then fetches exactly one post by
+campaign and slot. **It degrades honestly:** if that post is not there the
+page names nothing rather than guessing, because naming the WRONG article is
+worse than naming none. It is a confident answer to "what is my front page"
+that happens to be false.
+
+### CLOSED 24 October 2026 — my own feature linked to a 404
+
+**Edwin clicked article 1 in the new list and got "That page is not here" —
+on his own front page.**
+
+The front-page article is served at the domain and DELIBERATELY NOT at its
+own slug: two addresses for one article is one article competing with
+itself. So `/how-ai-legal-research.../` does not exist.
+
+The loader decided "is this the root?" with `blog.homeSlug === post.slug`,
+which is only right when something has been CHOSEN. With nothing chosen the
+oldest live article is the root — and every article got a slug link,
+including the one answering for the domain.
+
+**That is the state every new blog starts in**, and every test had set
+`homeSlug` to avoid it.
+
+The root is now worked out properly: the chosen article if it is live, else
+whatever is standing in. Nothing was wrong on any published site — the fix
+is to the admin page, so deploying it corrected every blog at once with no
+republishing.
+
+### CLOSED 24 October 2026 — the folds now look pressable
+
+Edwin: *"Could you make the word show and change buttons without removing
+the arrows. I want the user to understand they can press the buttons."*
+
+A `<summary>` is grey text with a four-pixel triangle. It IS a control and
+it does not look like one.
+
+The verb wears an outlined button; the triangle stays. **Both halves
+matter** — the button says "press me", the triangle says "this opens
+downwards rather than going somewhere".
+
+**THE SPAN IS NOT A REAL `<button>`, DELIBERATELY.** The `<summary>` is
+already the control: focusable, operable with Enter, announced as a
+disclosure. A button inside it is a second control nested in the first, and
+a keyboard user would tab onto something that does nothing on its own.
+
+**AND THERE IS A TEST THAT FAILS IF THE TRIANGLE EVER GOES.** Every CSS
+recipe for styling a summary opens with `list-style: none` or by hiding the
+WebKit marker, because the triangle is in the way of a tidy button. It is
+not in the way, and removing it was the one thing the request ruled out.
+
+### THE LESSON OF 23–24 OCTOBER — a fixture too thin to tell right from wrong
+
+**Three times in two days, a test passed because its fixture could not
+express the difference it claimed to check.**
+
+- **One live article where two were needed.** *"A live article is a link to
+  the live article"* had a single live article — which is always the root,
+  and the root is served at the domain rather than at its slug. The fixture
+  could never show a slug link at all. It passed only because the code was
+  ALSO wrong, linking the root to its slug. Fixing the code broke the test.
+- **Three campaigns where six were needed.** *"The folds say they can be
+  pressed"* looped over every `<summary>` believing it checked both. The
+  campaigns table only folds above five, so there was one. Removing the
+  campaigns button survived it untouched.
+- **One summary where two existed**, which is the same failure stated from
+  the other side.
+
+Plus two more in the same window: a guard made invisible by its own
+`try/catch`, and `if (room.ok)` → `if (true)` passing because a failed check
+has no count and the arithmetic reads that as "plenty of room".
+
+    A GREEN TEST PROVES THE FIXTURE AND THE CODE AGREE.
+    IT DOES NOT PROVE THE FIXTURE COULD HAVE DISAGREED.
+
+Mutation is what finds these, and every one of them was found that way —
+never by reading the test, always by breaking the code and watching nothing
+happen. **When a mutant survives, suspect the fixture before the assertion.**
 
 ### CLOSED 23 October 2026 — the app sets up its own Bulk Redirects
 
@@ -2638,10 +3834,91 @@ or the wrong one. Six mutants, six killed, including re-introducing the bug.
 Checked every other caller of `findZone`/`listZones` across `routes/` and
 `utils/`: there are none. This was the only one.
 
-### QUEUED — the "did you mean" suggestion is still mostly dead code
+### CLOSED 25 October 2026 — the zone check moved to the screen where the mistake is made
+
+Edwin, reading the note left on the entry above: *"Move the zone check from
+the customer's create form to `/admin/blog-domains`, at the moment a domain is
+added to the pool. It's an admin mistake, caught on an admin screen, instead
+of firing on every create forever."*
+
+**WHAT IT WAS DOING.** From 19 October, `POST /static-blogs` created the blog
+and then asked Cloudflare whether the domain was a zone on the blog's account.
+It earned that place: Edwin had typed `all-bout-hvac-explr-home.com` meaning
+`all-about-hvac.explr-home.com`, a campaign was approved, three articles were
+written and charged for, and the first thing to notice was the publish screen.
+
+**WHY IT STOPPED BELONGING THERE.** The input it guarded is gone. Since
+22 October the customer types a PREFIX and picks the domain from the pool, and
+the app supplies the dot — so the only mistake left is an admin adding a pool
+domain against an account that does not hold its zone. One row per domain,
+written once, being re-checked after every blog any customer ever creates.
+
+**AND IT REFUSES NOW, WHERE IT WARNED BEFORE.** That is the part worth
+reading. On the create form a refusal would have been wrong: a blog on a
+domain Cloudflare does not host is a legitimate thing to want — the owner
+points the DNS himself and everything else works. A POOL domain is not that.
+The pool exists BECAUSE the zone is on the same account as the Pages project,
+which is the thing that makes Cloudflare write the DNS record itself. A pool
+row where that is untrue turns the automatic half of this product off,
+silently, for every blog ever created on it.
+
+**THE CASE THAT IS NOT COLLAPSED.** `findZone` answers ok:false both for
+"this account does not hold it" and for "this token cannot read zones", and
+only the first carries `noZone`. Only the first refuses. The second stores the
+domain and says the check could not be made, with the reason and a nudge at
+`Zone:Read` — refusing on a permissions problem would block a correct domain
+on the strength of a check that never ran, and storing it silently would teach
+nobody anything. The same page appears when `credsForAccountId` throws for a
+disabled account or a token that will not decrypt.
+
+**`credsForAccountId(id)` IS NEW, and it is a split rather than an addition.**
+The admin screen holds the `CloudflareAccount` it is about and has no blog to
+ask on behalf of. The alternative was passing `{ cloudflareAccount: id }` as a
+pretend blog, which reads like a trick and invites somebody to pass a real
+blog's id into the wrong argument. Every refusal inside it is `credsFor()`'s
+refusal, unchanged, and `undefined` for "no account named" stays in
+`credsFor()` where it belongs.
+
+**SIX TESTS MOVED** from `test-static-blogs.js` to `test-blog-domains.js`,
+including the one that asserts the check asks the account the DOMAIN is on
+rather than the environment's — the bug that cost Edwin an evening on
+`site-book.net`. The `findZone` stub went with them: **a stub for a function
+the route no longer calls can never fail, it can only make a test pass**, and
+this file had already been caught by exactly that once.
+
+**RUN, NOT JUST SYNTAX-CHECKED, AND IT MATTERED.** The staged `node_modules`
+made it possible to run the suites in the session for the first time:
+`test-blog-domains.js` 42, `test-static-blogs.js` 249, `test-cloudflare-accounts.js`
+33, all green. The FIRST run failed one test with `TypeError: log.warn is not a
+function` — `utils/logger.js` has `error`, `security`, `generation`,
+`external`, `info` and `debug`, and no generic `warn`. A syntax check could
+not have seen it, and neither could I: I wrote it from habit.
+
+### ~~QUEUED~~ CLOSED 25 October 2026 — the "did you mean" suggestion is gone
+
+**DELETED, and it was not dead code — that is worth saying because I told
+Edwin it was.** `suggestZoneFix()` was still called on every mismatched
+domain and its answer still rendered. What was dead was the only path that
+could reach a non-empty answer.
+
+What went: the function and its export from `deploy.js`; the import, the
+`listZones()` call, the log field and the "Did you mean …?" branch in
+`staticBlogsRoute.js`; four tests in `test-cloudflare-deploy.js`; the
+`listZones` stub and two tests in `test-static-blogs.js`.
+
+What stayed: **the warning**, still tested, still naming the hostname that
+could not be found. And **the test that the zone check asks the blog's own
+account** — the one that caught the false warning on `site-book.net`.
+
+`listZones()` survives in `deploy.js` with its two tests and no caller in the
+app, with a comment saying so in plain words. Delete it with its tests if it
+is still unused next time somebody reads it.
+
+**THE BETTER IDEA FROM THIS ENTRY SHIPPED THE SAME DAY** — see the next
+entry. The check moved to `/admin/blog-domains`.
 
 `suggestZoneFix()` in `utils/blog/cloudflare/deploy.js`, and the branch in
-`staticBlogsRoute.js` that renders it, exist for one incident: Edwin typed
+`staticBlogsRoute.js` that rendered it, existed for one incident: Edwin typed
 `all-bout-hvac-explr-home.com` meaning `all-about-hvac.explr-home.com` —
 one dot became a hyphen, and the app found out only at publish time, after
 a campaign was approved and three articles were written and charged for.
@@ -2832,7 +4109,13 @@ the inline-handler entry below; that is exactly the trap this avoids).
 open at five or fewer. A control that hides a blog's only campaign is
 worse than no control.
 
-### QUEUED — the front-page dropdown is still unbounded
+### ~~QUEUED~~ CLOSED 24 October 2026 — the front-page dropdown is still unbounded
+
+**CLOSED by deleting the `<select>` altogether** — see *CLOSED 24 October
+2026 — the front-page picker became a list you can read*. Options cannot hold
+a link, so numbering them was not enough: it is a folded table of pillar
+articles now, numbered, each title a link to the live page, with a **Make
+front page** button per row and a badge on the one already serving.
 
 Found 21 October, while moving the Articles list onto its own screen.
 
@@ -3464,6 +4747,37 @@ page's own layout.
 `${appHeaderAssets()}`. There is a test listing every such page.
 
 ## Deliberately dropped — do not re-propose
+
+**Per-account project-name uniqueness.** Dropped 25 October 2026: *"forget
+about this."*
+
+Cloudflare Pages project names are unique per ACCOUNT, not globally, so two
+clients on two different accounts can both hold `hvac-blog`. The proposal was
+a check at creation time.
+
+**Dropped, and the shape of the risk is why it is fine.** `credsFor(blog)`
+resolves the account from the blog's own domain, and a project is only ever
+created in, read from or deleted on that one account. Two same-named projects
+on two accounts never meet. The name is not a key anywhere in this app; the
+blog's `_id` and its domain are. A uniqueness check would be guarding against
+a collision that has no code path to collide in.
+
+---
+
+**Asking Cloudflare directly about the number of accounts.** Dropped
+25 October 2026: *"forget about this."*
+
+The original note, from 21 October, said that opening many accounts
+specifically to get past the 100-projects-per-account cap was worth a direct
+question rather than an assumption, and that there is a partner/tenant
+arrangement built for this shape.
+
+**Dropped.** Cloudflare has already answered the question that matters:
+**under 50 accounts is fine.** Edwin is nowhere near that — three accounts
+today, twenty domains planned. Do not raise the partner/tenant route again
+until the account count is actually approaching fifty.
+
+---
 
 **Pluralising the owner's typed keyword.** Ruled on 6 October: *"no to this."*
 

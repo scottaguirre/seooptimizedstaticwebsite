@@ -58,11 +58,15 @@ const { publishBlog } = require('../utils/blog/render/publishBlog');
 const { markPublished } = require('../utils/blog/markPublished');
 const {
   deleteProject, releaseDomain, childEnv,
-  /* ADDED 19 OCTOBER, for the domain check at blog creation. Destructured at
-   * load like the rest of this file, so a test that stubs them has to do it
-   * before requiring the router — see the note at the top of
-   * test-static-blogs.js, which has now caught five features. */
-  findZone, listZones, suggestZoneFix,
+  /* THE DOMAIN CHECK THAT USED TO LIVE HERE IS GONE — 25 October 2026.
+   *
+   * findZone, listZones and suggestZoneFix were all imported for it. The
+   * check now runs ONCE PER POOL DOMAIN, in blogDomainsRoute.js, at the
+   * moment the domain is added — because the only mistake it can still
+   * catch is an admin putting a domain against the wrong Cloudflare
+   * account, and it was running after every blog any customer ever
+   * created. Edwin, 25 October: "an admin mistake, caught on an admin
+   * screen, instead of firing on every create forever." */
 } = require('../utils/blog/cloudflare/deploy');
 const { approveCampaign } = require('../utils/blog/approveCampaign');
 const { parseVerificationTags } = require('../utils/blog/verificationTags');
@@ -778,118 +782,29 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
       timezone,
     });
 
-    /* AND NOW, BEFORE ANYTHING HAS BEEN WRITTEN OR PAID FOR, IS THE DOMAIN
-     * REACHABLE AT ALL?
+    /* NO DOMAIN CHECK HERE ANY MORE — 25 OCTOBER 2026.
      *
-     * ON 19 OCTOBER EDWIN TYPED `all-bout-hvac-explr-home.com` meaning
-     * `all-about-hvac.explr-home.com` — one dot became a hyphen, which
-     * turns a subdomain of a domain he owns into a brand new .com nobody
-     * owns. Nothing noticed. A campaign was approved, three articles were
-     * written and charged for, the site deployed, and only the publish
-     * screen said "No zone in this Cloudflare account matches" — by which
-     * point every canonical, the sitemap and the feed named an address that
-     * does not exist.
+     * It lived here from 19 October, and it earned its place: Edwin had
+     * typed `all-bout-hvac-explr-home.com` meaning
+     * `all-about-hvac.explr-home.com`, a campaign was approved, three
+     * articles were written and charged for, and the first thing to notice
+     * was the publish screen.
      *
-     * The same findZone() call, moved to the one moment when a typo is
-     * still free to fix.
+     * THE INPUT THAT MADE THAT POSSIBLE IS GONE. Since 22 October the
+     * customer types a prefix and picks the domain from the pool, and the
+     * app supplies the dot. A mistyped prefix is still a valid hostname
+     * under a zone we own, so the lookup finds it.
      *
-     * IT WARNS, IT DOES NOT BLOCK. A blog on a domain Cloudflare does not
-     * host is a legitimate thing to want: the owner points the DNS himself
-     * and everything else works. Refusing would break that for the sake of
-     * catching a typo.
+     * WHAT WAS LEFT WAS AN ADMIN MISTAKE — a pool domain added against an
+     * account that does not hold its zone — being checked on every
+     * customer's create form, for ever, one Cloudflare round trip at a
+     * time. It is now checked once, where the mistake is made and by the
+     * person who can fix it: blogDomainsRoute.js, POST
+     * /admin/blog-domains/domains. There it REFUSES rather than warns, for
+     * the reason written beside it.
      *
-     * AND A FAILURE TO ASK IS NOT A FAILURE TO MATCH. No credentials, or a
-     * token without Zone:Read, also comes back ok:false — saying "that
-     * domain is not in your account" then would be a confident lie. Only
-     * the noZone branch warns. */
-    /* ASKED OF THE ACCOUNT THE BLOG IS ON, WHICH IS NOT NECESSARILY OURS.
-     *
-     * EDWIN HIT THIS THE FIRST TIME HE USED THE POOL — 22 October. He added
-     * a Cloudflare account for `site-book.net`, created a blog on it, and
-     * this screen told him no domain in his Cloudflare account matched.
-     *
-     * The blog was perfect. The CHECK was wrong: findZone with no `creds`
-     * falls back to the environment, so it had asked his OLD explr-home.com
-     * account whether it owned site-book.net.
-     *
-     * THE SAME WIRING GAP THREE TIMES IN ONE SESSION. findZone and listZones
-     * were both taught about per-account credentials; this caller was not
-     * updated, and nothing failed — an optional credentials argument does
-     * not complain when it is forgotten. It just answers about somewhere
-     * else. A false warning here is worse than no warning, because the
-     * lesson it teaches is "that alarm is always wrong, click past it".
-     *
-     * RESOLVED IN A try/catch BECAUSE THE BLOG ALREADY EXISTS. credsFor
-     * throws for an account that is gone, disabled, or whose token will not
-     * decrypt — deliberately, because falling back would deploy into the
-     * wrong account. But letting that throw escape HERE would turn a
-     * created blog into a 500 page.
-     *
-     * So an unresolvable credential skips the check, which is the rule the
-     * comment above already states: a failure to ask is not a failure to
-     * match. The credential problem surfaces at the first publish, named,
-     * from credsFor itself. */
-    let creds;
-    let canCheck = true;
-
-    try {
-      creds = await credsFor(blog);
-    } catch (err) {
-      canCheck = false;
-      log.error('staticBlogs.zoneCheck.credentials', err, {
-        requestId: req.id,
-        siteId: String(blog._id),
-      });
-    }
-
-    const zone = canCheck ? await findZone({ domain, creds }) : { ok: false };
-
-    if (!zone.ok && zone.noZone) {
-      const owned = await listZones({ creds });
-      const { suggestion } = owned.ok ? suggestZoneFix({ domain, zones: owned.names }) : {};
-
-      log.info('staticBlogs.domainNotInAccount', {
-        requestId: req.id,
-        siteId: String(blog._id),
-        domain,
-        suggestion: suggestion || '',
-      });
-
-      return send(res, page({
-        title: 'Blog added',
-        body: `
-          <h1 class="h2 mb-3">Blog added \u2014 but check the domain</h1>
-
-          <div class="alert alert-warning">
-            <p><strong>No domain in your Cloudflare account matches
-            <code>${esc(domain)}</code>.</strong></p>
-
-            ${suggestion ? `
-            <p class="mb-0">
-              Did you mean <strong><code>${esc(suggestion)}</code></strong>?
-              A hyphen where a dot should be turns a subdomain of a domain you
-              own into a different domain entirely.
-            </p>` : `
-            <p class="mb-0">
-              That is fine if you point the DNS yourself. If it was a typo,
-              now is the moment to fix it \u2014 before any articles are written.
-            </p>`}
-          </div>
-
-          <p class="lead">
-            You can carry on either way. The blog will publish to its Cloudflare
-            address, but the DNS record will not be created automatically and
-            every link on the site will name <code>${esc(domain)}</code>.
-          </p>
-
-          <a href="/static-blogs/${blog._id}" class="btn btn-primary">
-            Carry on with this domain
-          </a>
-          <a href="/static-blogs/${blog._id}/delete" class="btn btn-outline-light ms-2">
-            Delete it and start again
-          </a>`,
-      }));
-    }
+     * credsFor() IS STILL USED IN THIS FILE, further down, for the publish
+     * path. Only the check went. */
 
     res.redirect(`/static-blogs/${blog._id}`);
 

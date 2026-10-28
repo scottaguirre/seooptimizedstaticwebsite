@@ -37,29 +37,134 @@ const realWritePost = require(writePostPath);
 
 let failOn = new Set();
 
+/* THE SAME SHAPE AS test-blog-batch.js's STUB, AND FOR THE SAME REASON.
+ *
+ * A post that fails qualityCheck carries rewrite-worthy codes, and
+ * blogGenerator then asks the model a SECOND time for it. Nothing in this
+ * file counts model calls, so a failing fixture was invisible here — it only
+ * surfaced next door, where three tests do count. The two stubs are kept in
+ * step anyway: a stub that behaves differently in two suites is a stub that
+ * makes one of them lie.
+ *
+ * THE KEYWORD COMES FROM slot.targetQuery, WHICH IN THIS FILE IS NOT
+ * slot.topic. TOPICS below pairs 'why a water heater rumbles' with the query
+ * 'water heater rumbling noise'. A stub titling from `topic` would fail
+ * keyword-title here and pass in the other file — which is exactly the kind
+ * of difference that hides in a fixture nobody runs.
+ */
+function detailLines(seed) {
+  return [
+    `A 40 gallon tank holds roughly ${300 + seed} pounds of water once full, and the floor under it was rated for that load when the house was built.`,
+    `Most residential units run between ${40 + seed} and ${80 + seed} psi, and a reading outside that band points at the regulator rather than the tank.`,
+    `Sediment settles at about ${1 + (seed % 3)} inch per ${3 + (seed % 4)} years in hard water, which is why the burner works harder each winter.`,
+    `A technician will usually drain ${2 + seed} gallons before the water runs clear, and that alone tells you how long it has been since the last service.`,
+    `Set the thermostat to 120 degrees rather than ${130 + seed}, and the standby loss drops by a measurable amount over ${12 + seed} months.`,
+    `Anode rods are consumed in ${4 + (seed % 5)} to ${7 + (seed % 5)} years depending on the water, and replacing one costs a fraction of replacing a tank.`,
+    `A relief valve is rated at 150 psi and ${210 - seed} degrees, and it is the one part on the unit that nobody should test twice in a week.`,
+    `Expect ${10 + seed} to ${14 + seed} years from a standard unit in this area, and rather less where the water sits above ${7 + (seed % 3)} grains of hardness.`,
+    // Raw seed, not seed % 4 — see the note in test-blog-batch.js.
+    `The draw on a 4500 watt element is about ${18 + seed} amps, so a circuit shared with anything else will trip before the tank is at temperature.`,
+    `A drip of ${1 + (seed % 2)} gallon an hour is ${24 + seed} gallons a day, which is the point at which a slow leak stops being cosmetic.`,
+    `Recovery on a gas unit runs near ${30 + seed} gallons an hour at a ${90 - seed} degree rise, and that number is what sizing actually turns on.`,
+    `Flushing takes ${20 + seed} minutes and needs ${5 + (seed % 3)} feet of hose, and skipping it for ${3 + (seed % 3)} years is what turns a service call into a replacement.`,
+    `A dip tube that has cracked will cut usable capacity by ${20 + seed} percent, and the symptom is hot water that runs out ${4 + (seed % 4)} minutes early.`,
+    `Thermal expansion adds ${2 + seed} to ${5 + seed} percent to the volume in the tank, and a closed system with no outlet puts that straight into the fittings.`,
+    `A gas unit needs ${50 + seed} cubic feet of combustion air per 1000 btu, and a sealed closet built in ${1995 + seed} rarely provides it.`,
+    `Vent pipe should rise ${1 + (seed % 2)} inch per ${4 + (seed % 3)} feet of run, and a sagging section is where condensate collects and rusts through.`,
+    `Hard water above ${10 + (seed % 5)} grains cuts element life by roughly ${30 + seed} percent, which is the single biggest local factor in these numbers.`,
+    `A mixing valve set at ${120 + (seed % 5)} degrees lets the tank run at ${140 + (seed % 5)} safely, which buys about ${15 + seed} percent more usable hot water.`,
+    `Insulating ${6 + (seed % 4)} feet of exposed pipe saves a few dollars a month and costs about $${20 + seed} in materials.`,
+    `A pan under the tank with a ${1 + (seed % 2)} inch drain line is required in ${38 + (seed % 3)} states for an interior installation.`,
+    `Expect ${2 + (seed % 2)} to ${4 + (seed % 2)} hours of labour for a straight swap, and rather more where the shutoff has seized after ${12 + seed} years.`,
+    `A tankless unit needs ${150 + seed} to ${199 + seed} thousand btu to serve ${3 + (seed % 3)} fixtures at once, which is why a straight swap is rarely straight.`,
+    `Water at ${55 + seed} degrees entering in January versus ${75 + seed} in July changes recovery by about ${25 + seed} percent, and sizing done in summer shows it.`,
+    `A burner firing for more than ${45 + seed} minutes to recover ${30 + seed} gallons is either undersized or sitting on ${2 + (seed % 3)} inches of sediment.`,
+    `Replacing a thermocouple runs about $${90 + seed} fitted, against $${1400 + seed * 10} for a full replacement, and the choice usually turns on the age above.`,
+    `Sign off adds $${75 + seed} and ${2 + (seed % 3)} days in most areas here, and a swap done without it is the first thing an inspector finds at sale.`,
+    `Earthquake strapping is two bands at ${1 + (seed % 2)} third and ${2 + (seed % 2)} thirds of the tank height, and it takes about ${25 + seed} minutes to fit.`,
+    `Flex connectors are rated for ${15 + seed} years but fail sooner within ${6 + (seed % 4)} inches of a hard bend, which is where most of them are installed.`,
+    `A drain valve made of plastic will usually seize after ${5 + (seed % 4)} years, and swapping it for brass costs about $${14 + seed}.`,
+    `Standby loss on an uninsulated tank runs near ${1 + (seed % 2)} kilowatt hour a day, which is ${350 + seed} kilowatt hours over a year.`,
+    `A recirculation pump on a ${20 + seed} minute timer uses far less than one left running ${24 - (seed % 3)} hours, and the comfort difference is small.`,
+    `Element resistance should read between ${10 + seed} and ${16 + seed} ohms cold, and anything open means the element rather than the thermostat.`,
+    `A thermostat out of calibration by ${8 + (seed % 5)} degrees will short cycle the burner ${3 + (seed % 3)} times an hour and sound exactly like sediment.`,
+    `Gas pressure should sit at ${3 + (seed % 2)} point ${5 - (seed % 3)} inches of water column, and a long ${40 + seed} foot run undersized by one pipe size will not hold it.`,
+    `Condensate from a high efficiency unit runs about ${1 + (seed % 2)} gallon per ${100 + seed} thousand btu burned, and it is acidic enough to need neutralising.`,
+    `Warranty on the tank is typically ${6 + (seed % 4)} years and on labour ${1 + (seed % 2)}, and the difference is where most disputes at year ${7 + (seed % 3)} come from.`,
+    `Budget $${1800 + seed * 10} to $${2600 + seed * 10} installed for a like for like unit in this market, and about ${30 + seed} percent more for a vented upgrade.`,
+  ];
+}
+
+/* SIX WORDS IS THE WHOLE OPENING KEY — see the long note in
+ * test-blog-batch.js. An opening varied only by a digit in the seventh word
+ * is one opening as far as crossCheck() is concerned. */
+const OPENINGS = [
+  (n) => `Nobody calls about this until the hot water runs out mid-shower, which is usually ${8 + n} years into the tank's life.`,
+  (n) => `The noise comes first, weeks before anything else, and by then there are ${1 + (n % 3)} inches of sediment sitting on the burner.`,
+  (n) => `Most of these units fail on a Sunday, about ${10 + n} years after installation, and never during a scheduled service visit.`,
+  (n) => `Water heaters give warning signs for ${6 + n} months before they leak, and almost nobody is looking for any of them.`,
+  (n) => `There is a measurable difference between a tank at ${8 + n} years and one at ${14 + n}, and it is not subtle.`,
+  (n) => `By the time a tank is ${12 + n} years old the question has changed from repair to replacement, whatever the symptom was.`,
+  (n) => `Sediment, pressure and age explain nearly all of it, and each one leaves a number you can read off a gauge.`,
+];
+
+const MONEY_LINES = [
+  (a) => `Past a certain point a {{money}}${a}{{/money}} is the practical next step, and the numbers above are how you know you have reached it.`,
+  (a) => `Once two or three of those readings land badly, a {{money}}${a}{{/money}} stops being the optional answer.`,
+  (a) => `The threshold where a {{money}}${a}{{/money}} makes more sense than another part is further down this page.`,
+  (a) => `Anyone weighing a {{money}}${a}{{/money}} against another season of patching should start with the pressure reading.`,
+  (a) => `A {{money}}${a}{{/money}} booked before the tank fails costs a fraction of the same work booked after.`,
+  (a) => `None of this replaces a {{money}}${a}{{/money}} by somebody who can see the unit, but it tells you what to ask for.`,
+  (a) => `When the numbers above stack up together, a {{money}}${a}{{/money}} is the cheaper of the two remaining paths.`,
+];
+
 function fakeWritePost(slot) {
   if (failOn.has(slot.index)) {
     return Promise.reject(new Error(`stub: refusing slot ${slot.index}`));
   }
 
+  const keyword = String(slot.targetQuery || slot.topic || '').trim();
+  const n = Number(slot.index) || 0;
+  const lines = detailLines(n % 7);
+
   const sections = [
-    { heading: null, paragraphs: [`Slot ${slot.index} opens on its own terms with a specific detail.`] },
+    // The money link goes in section 0, one link phrase per paragraph.
     {
-      heading: 'The part that matters',
-      paragraphs: [`Past a certain point a {{money}}${slot.money.anchor}{{/money}} is the practical next step.`],
+      heading: null,
+      paragraphs: [
+        OPENINGS[n % OPENINGS.length](n),
+        ...lines.slice(0, 3),
+        MONEY_LINES[n % MONEY_LINES.length](slot.money ? slot.money.anchor : 'a repair'),
+      ],
     },
+    {
+      // Headings are not body, so this does not spend the one body mention.
+      heading: `What ${keyword} actually tells you`,
+      paragraphs: [
+        `The short answer to ${keyword} is that it is a symptom with a measurable cause, not a verdict on the appliance.`,
+        ...lines.slice(3, 7),
+      ],
+    },
+    { heading: 'What a service call looks for', paragraphs: lines.slice(7, 14) },
+    { heading: 'When replacement is the cheaper answer', paragraphs: lines.slice(14) },
   ];
 
   if (slot.prevAnchor) {
-    sections.push({ heading: 'Earlier', paragraphs: [`We covered {{prev}}${slot.prevAnchor}{{/prev}} already.`] });
+    sections.push({
+      heading: 'Covered earlier',
+      paragraphs: [`We went through {{prev}}${slot.prevAnchor}{{/prev}} already, and the same thresholds apply there.`],
+    });
   }
   if (slot.nextAnchor) {
-    sections.push({ heading: 'Next', paragraphs: [`People then weigh up {{next}}${slot.nextAnchor}{{/next}}.`] });
+    sections.push({
+      heading: 'Worth reading next',
+      paragraphs: [`This is where people start weighing up {{next}}${slot.nextAnchor}{{/next}} instead of another repair.`],
+    });
   }
 
   return Promise.resolve({
-    title: `Post ${slot.index}`,
-    metaDescription: `Description for slot ${slot.index}.`,
+    title: `${keyword}: what the numbers say`,
+    metaDescription: `A measured look at ${keyword}, with the pressures, temperatures and service intervals that decide whether to repair or replace.`,
     sections,
   });
 }
@@ -127,7 +232,8 @@ const secret = crypto.randomBytes(32).toString('hex');
 
 const user = await User.create({
   email: `routes-test-${Date.now()}@example.invalid`,
-  password: 'x'.repeat(60),
+  // passwordHash, not password — see the note in test-blog-batch.js.
+  passwordHash: 'x'.repeat(60),
   credits: 10000,
 });
 made.users.push(user._id);
