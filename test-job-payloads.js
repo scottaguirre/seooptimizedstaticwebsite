@@ -286,13 +286,37 @@ test('AND IT HAPPENS BEFORE THE BUILD, NOT AFTER', function () {
 
   /* THE CALL, NOT THE IMPORT. Found by mutation: moving the clear to after
    * the build left this passing, because `clearForUsers` appears first in
-   * the require line at the top of the file and indexOf found that. */
+   * the require line at the top of the file and indexOf found that.
+   *
+   * `await build(` AND NOT `await runGeneration(`, SINCE 28 OCTOBER.
+   *
+   * jobGenerator stopped calling one builder by name on that date: it now
+   * chooses between runGeneration and runLocalOptions, because Local Website
+   * Options builds a fixed eleven pages out of utils/localOptions/ and
+   * shares none of runGeneration's page-at-a-time steps.
+   *
+   * THIS TEST FAILED, AND FAILING WAS CORRECT — "jobGenerator has changed
+   * shape" is exactly what had happened, and the message said so. What this
+   * test guards did NOT change: the clear still has to run before whatever
+   * does the building, for both builders, because both of them wipe
+   * dist/user_<id> and neither can give the old payload back.
+   *
+   * The mutation trap is still live, and still handled: `runLocalOptions`
+   * and `runGeneration` BOTH appear in require lines at the top of the file,
+   * so matching either name would find the import. `await build(` appears
+   * once, at the call. */
   const cleared = gen.indexOf('clearForUsers([job.user]');
-  const built = gen.indexOf('await runGeneration(');
+  const built = gen.indexOf('await build(');
 
   assert.ok(cleared > -1 && built > -1, 'jobGenerator has changed shape');
   assert.ok(cleared < built,
     'the clear runs after the build, so a crashed build keeps its old payload for ever');
+
+  /* AND THE BUILDER IS NOT ALSO CALLED BY NAME. If a later edit put
+   * `await runGeneration(...)` back alongside the chosen one, the check
+   * above would still pass and every job would get the old builder. */
+  assert.ok(!/await runGeneration\(/.test(gen),
+    'runGeneration is called directly as well, so the choice is decorative');
 });
 
 test('the sweep reports WHICH entries it removed, not how many', function () {

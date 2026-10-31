@@ -1,17 +1,52 @@
 // utils/jobGenerator.js
 //
-// The bridge between a Job record and runGeneration().
+// The bridge between a Job record and whichever builder its mode needs.
 //
 // Kept separate from both so neither has to know about the other: the runner
-// deals in jobs and knows nothing about site building, and runGeneration
-// takes a plain context and knows nothing about queues. This is the only
-// file that understands both.
+// deals in jobs and knows nothing about site building, and the builders take
+// a plain context and know nothing about queues. This is the only file that
+// understands both.
+//
+// AND IT IS THE ONLY FILE THAT CHOOSES BETWEEN THE TWO BUILDERS.
+// Rank Fast, Rank GBPs and One-Page Design go through runGeneration();
+// Local Website Options goes through runLocalOptions(). The reason they are
+// separate files rather than a branch inside the big one is written at the
+// top of utils/runLocalOptions.js. The reason the choice is made HERE is
+// that both take the identical context and return the identical result, so
+// this is the one place where that fact is worth anything.
 
 const User = require('../models/User');
 const { runGeneration } = require('./runGeneration');
+const { runLocalOptions } = require('./runLocalOptions');
 const { cleanupJobUploads, filesFromJob } = require('./jobUploads');
 const { clearForUsers } = require('./jobPayloads');
+const { MODES, normalizeSiteMode } = require('./seoPresets');
 const { log } = require('./logger');
+
+/**
+ * Which builder this job needs.
+ *
+ * READ OUT OF THE PAYLOAD, NOT OFF job.siteMode.
+ *
+ * Both are written by the route and they agree — but the payload is what
+ * every builder actually reads, and runGeneration resolves the mode from it
+ * again on its own. Taking the decision from the same place keeps the two
+ * from ever disagreeing about one job. The `siteMode` column exists so lists
+ * and support queries can filter without opening the payload; that is a
+ * different job from this one.
+ *
+ * normalizeSiteMode() falls back to 'lead', so a job with no mode at all —
+ * every row written before the field existed — builds the way it always did.
+ */
+function builderFor(job) {
+  const siteMode = normalizeSiteMode(
+    job.payload?.global?.siteMode ?? job.payload?.['global[siteMode]']
+  );
+
+  return siteMode === MODES.LOCAL_OPTIONS
+    ? { siteMode, build: runLocalOptions }
+    : { siteMode, build: runGeneration };
+}
 
 /**
  * @param {object} job                 the Job document
@@ -53,20 +88,35 @@ async function generateForJob(job, { onProgress }) {
     reason: 'replaced by a new build',
   });
 
+  const { siteMode, build } = builderFor(job);
+
+  log.info('jobs.builderChosen', {
+    jobId: String(job._id),
+    siteMode,
+    builder: build === runLocalOptions ? 'runLocalOptions' : 'runGeneration',
+  });
+
   try {
-    const result = await runGeneration({
+    const result = await build({
       body: job.payload,
       files: filesFromJob(job.uploads || {}),
       user,
       requestId: `job:${job._id}`,
 
-      // Forwarded straight through. runGeneration calls this as each page
+      // Forwarded straight through. The builder calls this as each page
       // completes; the runner persists it, which is what makes a restart
       // resume rather than start over.
       onProgress,
 
-      // Pages already written by an earlier attempt. runGeneration skips
-      // them rather than paying to regenerate content the user has.
+      /* Pages already written by an earlier attempt. runGeneration skips
+       * them rather than paying to regenerate content the user has.
+       *
+       * runLocalOptions IGNORES THIS, on purpose. Its build is seven model
+       * calls and about nineteen cents, and a half-written eleven-page site
+       * is worth nothing to hand back — so a restart starts over. Passed
+       * anyway rather than conditionally, because a context that changes
+       * shape by mode is a context where the next field gets forgotten for
+       * one of them. */
       alreadyCompleted: job.completedPages || [],
     });
 
@@ -81,4 +131,12 @@ async function generateForJob(job, { onProgress }) {
   }
 }
 
-module.exports = { generateForJob };
+module.exports = {
+  generateForJob,
+
+  /* Exported for test-local-options-wiring.js. Which builder a job gets is
+   * the whole decision this file makes, and the only honest way to test it
+   * is to ask — generateForJob() would have to load a User out of Mongo and
+   * run a build to tell you the same thing. */
+  builderFor,
+};

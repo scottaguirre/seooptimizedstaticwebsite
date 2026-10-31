@@ -27,6 +27,31 @@ const BASE_DELAY_MS = 1000;
 
 /** Transient errors are worth another attempt; malformed requests are not. */
 function isRetryable(err) {
+  /* AN EXPLICIT FLAG BEATS GUESSING FROM THE MESSAGE — 28 October.
+   *
+   * Everything below this line infers "transient" from a status code or
+   * from words in an error string. That works for the failures the network
+   * produces, because they announce themselves with a status or with
+   * "ECONNRESET". It does not work for the one the MODEL produces: a reply
+   * that is not JSON carries no status and no agreed wording, so it fell
+   * through every test here and was treated as a malformed REQUEST — the
+   * one kind of failure that is correctly never retried.
+   *
+   *     A BAD REQUEST CANNOT SUCCEED ON A SECOND ATTEMPT.
+   *     A BAD REPLY USUALLY DOES. THEY WERE IN THE SAME BUCKET.
+   *
+   * The cost was a whole seven-call site build thrown away over one missing
+   * "]", with the earlier calls already paid for. Edwin hit it on a six-page
+   * run: one page's JSON lost a bracket at the very end, and that was the
+   * build.
+   *
+   * MATCHING THE STRING "did not return JSON" WOULD ALSO HAVE WORKED AND IS
+   * THE WRONG FIX. It would make this file depend on the exact wording of a
+   * message raised three modules away — a rule nobody editing that message
+   * would know existed. A thrower that knows its own failure is worth
+   * repeating says so, here, with one property. */
+  if (true === err?.retryable) return true;
+
   const status = err?.status || err?.response?.status;
 
   if (status) {

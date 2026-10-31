@@ -24,6 +24,28 @@ const userSchema = new mongoose.Schema({
     default: 'subscriber'   // new users become "subscriber" by default
   },
 
+  /**
+   * Where this customer's generated sites get published.
+   *
+   * THE ID GITHUB GAVE WHEN THEY INSTALLED THE APP on their own GitHub
+   * account. One number, recorded once, and everything else is derivable
+   * from it: utils/github/publishSite.js trades it for an hour-long token
+   * and asks GitHub which account it belongs to.
+   *
+   * WHY A NUMBER AND NOT A TOKEN. CloudflareAccount stores a credential the
+   * customer pasted — sealed, but permanent until somebody rotates it. This
+   * is not a secret. It is useless without the App's private key, and a
+   * customer who uninstalls the App revokes everything by doing so. The
+   * header of utils/github/app.js makes the same argument at length.
+   *
+   * UNSET MEANS "DO NOT PUBLISH", NOT "FAIL". A Local Website Options build
+   * for a customer who has never installed the App still writes its eleven
+   * pages and still charges for them; it simply has nowhere to push to, and
+   * says so. Treating it as an error would break every existing account on
+   * the day this shipped.
+   */
+  githubInstallationId: { type: String, default: '' },
+
   // 🔹 Email verification
   verified: { type: Boolean, default: false },
 

@@ -4681,8 +4681,16 @@ test('SAVING IT STORES THE SLUG ON THE BLOG', async () => {
 
   assert.strictEqual(out.redirected, `/static-blogs/${BLOG_ID}`);
   assert.strictEqual(db.siteUpdates.length, 1, 'nothing was saved');
-  assert.deepStrictEqual(db.siteUpdates[0].update, { $set: { homeSlug: 'second-one' } });
+  assert.strictEqual(db.siteUpdates[0].update.$set.homeSlug, 'second-one');
   assert.strictEqual(String(db.siteUpdates[0].where._id), BLOG_ID);
+
+  /* AND THE BLOG IS NOW BEHIND ITS OWN DATABASE — 29 October. Which
+   * article answers at the root is part of what gets published, so setting
+   * it leaves the live site stale exactly as an article edit does. Stamped
+   * in the SAME update, so there is no way to save one without the
+   * other. */
+  assert.ok(db.siteUpdates[0].update.$set.contentChangedAt instanceof Date,
+    'nothing recorded that the site is now behind');
 });
 
 test('and empty is a real choice, meaning whichever is oldest', async () => {
@@ -4691,8 +4699,9 @@ test('and empty is a real choice, meaning whichever is oldest', async () => {
 
   await call(handler('post', '/static-blogs/:id/home'), req({ body: { homeSlug: '' } }));
 
-  assert.deepStrictEqual(db.siteUpdates[0].update, { $set: { homeSlug: '' } },
+  assert.strictEqual(db.siteUpdates[0].update.$set.homeSlug, '',
     'clearing the choice did not save');
+  assert.ok(db.siteUpdates[0].update.$set.contentChangedAt instanceof Date);
 });
 
 test('AN ARTICLE THAT IS NOT ON THIS BLOG IS REFUSED', async () => {
@@ -5644,6 +5653,282 @@ test('A BLOG WITH NO ARTICLES SAYS SO RATHER THAN SHOWING AN EMPTY TABLE', async
 
   assert.strictEqual(out.status, 200);
   assert.ok(!/<tbody>\s*<\/tbody>/.test(out.html), 'an empty table was rendered');
+});
+
+/* ======================================================================= */
+
+section('DELETING A CAMPAIGN THAT WAS PLANNED AND NEVER WRITTEN');
+
+/**
+ * The campaign lookup, the post count and the update the cancel route makes.
+ *
+ * SEPARATE FROM install(), because these three stubs exist for one route and
+ * folding them into the shared fakes would move the ground every other test
+ * in this file is standing on.
+ */
+function installCancel({ status = 'draft', written = 0 } = {}) {
+  install();
+
+  db.campaignUpdates = [];
+  db.countedCampaign = null;
+
+  BlogCampaign.findOne = (where) => {
+    db.campaignFindWhere = where;
+
+    const answer = Promise.resolve(
+      String(where.site) === String(BLOG_ID) && 'c-draft' === String(where._id)
+        ? { _id: 'c-draft', name: 'Autumn water heaters', status }
+        : null
+    );
+
+    answer.select = () => answer;
+    answer.lean = () => answer;
+    return answer;
+  };
+
+  /* COUNTED BY CAMPAIGN, and recorded — a route that counted every post on
+   * the BLOG would refuse to delete an empty campaign on a busy site, which
+   * is a bug that only appears once a blog has articles in it. */
+  BlogPost.countDocuments = async (where) => {
+    db.countedCampaign = where;
+    return written;
+  };
+
+  BlogCampaign.updateOne = async (where, update) => {
+    db.campaignUpdates.push({ where, update });
+    return { modifiedCount: 1 };
+  };
+}
+
+const cancelHandler = () => handler('post', '/static-blogs/:id/campaigns/:campaignId/cancel');
+const cancelReq = () => req({ params: { id: BLOG_ID, campaignId: 'c-draft' } });
+
+test('A DRAFT IS MARKED CANCELLED, NOT TORN UP', async () => {
+  /* The row stays. `cancelled` and `cancelledAt` have been on the model
+   * since it was written, and reportFilters.js already tells "cancelled
+   * halfway, then deleted" apart from "completed, then removed". This route
+   * is the only part that was missing. */
+  installCancel();
+
+  const out = await call(cancelHandler(), cancelReq());
+
+  assert.strictEqual(out.redirected, `/static-blogs/${BLOG_ID}`);
+  assert.strictEqual(db.campaignUpdates.length, 1);
+
+  const { update } = db.campaignUpdates[0];
+
+  assert.strictEqual(update.$set.status, 'cancelled');
+  assert.ok(update.$set.cancelledAt instanceof Date, 'nothing recorded when');
+});
+
+test('AND THE UPDATE ITSELF INSISTS ON draft, not just the check above it', async () => {
+  /* Two clicks on a slow connection, or a click racing an approve in
+   * another tab, both arrive as requests that each passed the status check.
+   * The second must change nothing rather than cancel a campaign that is by
+   * then writing. */
+  installCancel();
+
+  await call(cancelHandler(), cancelReq());
+
+  assert.strictEqual(db.campaignUpdates[0].where.status, 'draft');
+  assert.strictEqual(String(db.campaignUpdates[0].where.site), String(BLOG_ID));
+});
+
+test('A CAMPAIGN THAT IS ALREADY WRITING IS REFUSED', async () => {
+  installCancel({ status: 'writing' });
+
+  const out = await call(cancelHandler(), cancelReq());
+
+  assert.strictEqual(out.status, 409);
+  assert.ok(out.html.includes('already started'));
+  assert.strictEqual(db.campaignUpdates.length, 0, 'it was cancelled anyway');
+});
+
+test('AND SO IS A DRAFT THAT SOMEHOW HOLDS ARTICLES', async () => {
+  /* THE CHECK THE STATUS ALONE WOULD NOT MAKE. A write that died between
+   * claiming a slot and moving the campaign's own status leaves a draft
+   * with real articles in it. Cancelling that strands work somebody paid
+   * for behind a status saying there is nothing there. */
+  installCancel({ status: 'draft', written: 3 });
+
+  const out = await call(cancelHandler(), cancelReq());
+
+  assert.strictEqual(out.status, 409);
+  assert.ok(out.html.includes('3 articles'));
+  assert.strictEqual(db.campaignUpdates.length, 0);
+});
+
+test('and the count asks about THIS campaign, not the whole blog', async () => {
+  installCancel();
+
+  await call(cancelHandler(), cancelReq());
+
+  assert.deepStrictEqual(db.countedCampaign, { campaign: 'c-draft' });
+});
+
+test('ANOTHER ACCOUNT\'S CAMPAIGN IS NOT FOUND, NOT REFUSED', async () => {
+  /* Scoped in the query rather than compared after loading — the comparison
+   * is the line that gets dropped in a refactor. */
+  installCancel();
+
+  const out = await call(
+    cancelHandler(),
+    req({ user: { _id: OTHER_USER }, params: { id: BLOG_ID, campaignId: 'c-draft' } })
+  );
+
+  assert.strictEqual(out.status, 404);
+  assert.strictEqual(db.campaignUpdates.length, 0);
+});
+
+test('THE BUTTON IS ON A DRAFT ROW, AND ONLY ON A DRAFT ROW', async () => {
+  install({
+    campaigns: [
+      { _id: 'c-draft', name: 'Planned', status: 'draft', slots: [{ index: 0 }] },
+      { _id: 'c-live', name: 'Running', status: 'active', slots: [{ index: 0 }] },
+    ],
+  });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(out.html.includes('/campaigns/c-draft/cancel'), 'no Delete on the draft');
+  assert.ok(!out.html.includes('/campaigns/c-live/cancel'), 'Delete offered on a live campaign');
+});
+
+/* ======================================================================= */
+
+section('THE SCREEN SAYS WHEN THE LIVE SITE IS BEHIND');
+
+/**
+ * A deployed blog, with a stamp and a fresh-article count we control.
+ *
+ * THE STUB HONOURS THE FRESHNESS FILTER rather than returning a number
+ * regardless. The route counts with `createdAt: { $gt: lastDeployAt }`, and
+ * a stub more generous than the database would let a route that counted
+ * EVERY article pass every test below.
+ */
+function installPending({ deployedAt = new Date('2026-10-20T00:00:00Z'),
+                          changedAt = null, fresh = 0 } = {}) {
+  install();
+
+  db.blogs[0].lastDeployAt = deployedAt;
+  db.blogs[0].contentChangedAt = changedAt;
+
+  db.postCountWhere = null;
+
+  BlogPost.countDocuments = async (where) => {
+    db.postCountWhere = where;
+
+    if (where && where.createdAt && where.createdAt.$gt) return fresh;
+
+    return db.articles.length;
+  };
+}
+
+const publishBox = html =>
+  (html.match(/Changes waiting to publish[\s\S]{0,300}/) || [''])[0];
+
+test('A BLOG WITH NOTHING PENDING SAYS NOTHING', async () => {
+  /* A permanent "everything is up to date" line stops being read inside a
+   * week, and an amber one appearing beside it then reads as more of the
+   * same furniture rather than as news. */
+  installPending();
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(!out.html.includes('Changes waiting to publish'));
+});
+
+test('ARTICLES WRITTEN SINCE THE LAST PUBLISH ARE COUNTED AND NAMED', async () => {
+  installPending({ fresh: 3 });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(out.html.includes('Changes waiting to publish'));
+  assert.ok(publishBox(out.html).includes('3 articles have been written'));
+});
+
+test('and one article is "has", not "have"', async () => {
+  installPending({ fresh: 1 });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(publishBox(out.html).includes('1 article has been written'));
+});
+
+test('AN EDIT COUNTS EVEN THOUGH NO ARTICLE WAS ADDED', async () => {
+  /* THE CASE THAT STARTED THIS. Edwin edited an article, looked at the
+   * live site, saw the old words and reported a bug. Nothing was written,
+   * so a count of new articles alone would have shown him nothing. */
+  installPending({ changedAt: new Date('2026-10-21T00:00:00Z') });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(out.html.includes('Changes waiting to publish'));
+  assert.ok(publishBox(out.html).includes('front page have been changed'));
+});
+
+test('a change from BEFORE the last publish is not pending', async () => {
+  /* The comparison is the whole mechanism. Without it the stamp would be
+   * set once and the warning would never come down again. */
+  installPending({
+    deployedAt: new Date('2026-10-25T00:00:00Z'),
+    changedAt: new Date('2026-10-21T00:00:00Z'),
+  });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(!out.html.includes('Changes waiting to publish'));
+});
+
+test('BOTH AT ONCE READ AS ONE SENTENCE', async () => {
+  installPending({ fresh: 2, changedAt: new Date('2026-10-21T00:00:00Z') });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+  const box = publishBox(out.html);
+
+  assert.ok(box.includes('2 articles have been written'));
+  assert.ok(box.includes('and'));
+  assert.ok(box.includes('front page have been changed'));
+});
+
+test('A BLOG THAT HAS NEVER BEEN PUBLISHED IS NOT "BEHIND"', async () => {
+  /* It has not started. The publish box already says so in its own words,
+   * and the count is not even asked for — there is no deploy date to
+   * compare a createdAt against. */
+  installPending({ deployedAt: null, fresh: 9 });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(!out.html.includes('Changes waiting to publish'));
+  assert.ok(out.html.includes('never been published'));
+
+  assert.ok(!(db.postCountWhere && db.postCountWhere.createdAt),
+    'it counted fresh articles with no deploy date to compare against');
+});
+
+test('and the count asks only about articles newer than the deploy', async () => {
+  installPending({ fresh: 1 });
+
+  await call(handler('get', '/static-blogs/:id'));
+
+  assert.ok(db.postCountWhere.createdAt.$gt instanceof Date,
+    'it counted every article on the blog');
+  assert.strictEqual(String(db.postCountWhere.site), BLOG_ID);
+});
+
+test('THE WARNING SITS ABOVE THE BUTTON THAT FIXES IT', async () => {
+  /* The same words at the top of the page get read once and scrolled past.
+   * Directly above the control is what turns a notice into an
+   * instruction. */
+  installPending({ fresh: 1 });
+
+  const out = await call(handler('get', '/static-blogs/:id'));
+
+  const warning = out.html.indexOf('Changes waiting to publish');
+  const button = out.html.indexOf('value="publish"');
+
+  assert.ok(warning > -1 && button > -1, 'one of them is not on the page');
+  assert.ok(warning < button, 'the warning is below the publish button');
 });
 
 /* ======================================================================= */

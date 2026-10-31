@@ -53,9 +53,11 @@ const jobSchema = new mongoose.Schema({
   /**
    * Which kind of site this build produces.
    *
-   *   'lead'      Rank GBPs — the full optimised site
-   *   'rankfast'  Rank Fast — the newer formats and interlink ring
-   *   'sample'    a one-page design sample
+   *   'lead'          Rank GBPs — the full optimised site
+   *   'rankfast'      Rank Fast — the newer formats and interlink ring
+   *   'sample'        a one-page design sample
+   *   'localoptions'  Local Website Options — a fixed eleven-page static
+   *                   site, its own renderer, published to GitHub Pages
    *
    * 'rankfast' was added to the wizard, to utils/pricing.js and to
    * normalizeSiteMode() but never here, so every Rank Fast generation failed
@@ -67,7 +69,7 @@ const jobSchema = new mongoose.Schema({
    */
   siteMode: {
     type: String,
-    enum: ['lead', 'rankfast', 'sample'],
+    enum: ['lead', 'rankfast', 'sample', 'localoptions'],
     default: 'lead',
   },
 

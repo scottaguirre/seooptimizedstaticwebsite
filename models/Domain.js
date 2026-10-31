@@ -44,13 +44,93 @@ const domainSchema = new mongoose.Schema({
     unique: true,
   },
 
-  /** The Cloudflare account its zone is on. */
+  /**
+   * Which product publishes to this domain.
+   *
+   * ADDED 29 October, when Local Website Options needed the same "pick one
+   * from a list" that blogs have had since this pool was built. The question
+   * a customer is answering is identical — "where does this go?" — so the
+   * list they pick from is the same list, and the row says what is behind
+   * it.
+   *
+   * TWO SHAPES IN ONE COLLECTION RATHER THAN TWO COLLECTIONS, because the
+   * alternative is two admin screens, two pickers and two sets of rules
+   * about what a domain is, for one idea.
+   *
+   * 'cloudflare' IS THE DEFAULT, AND EVERY STORED ROW IS ONE. This field did
+   * not exist until now, so an unset value has to mean the thing every
+   * existing row already is — anything else silently re-targets the blogs.
+   */
+  target: {
+    type: String,
+    enum: ['cloudflare', 'github'],
+    default: 'cloudflare',
+    index: true,
+  },
+
+  /**
+   * The Cloudflare account its zone is on.
+   *
+   * REQUIRED ONLY FOR A CLOUDFLARE ROW, and the reason it is required at all
+   * is at the top of this file: Cloudflare writes the DNS record itself only
+   * when the zone and the Pages project are on the same account. A GitHub
+   * row has no Cloudflare account and must not be made to invent one.
+   */
   account: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'CloudflareAccount',
-    required: true,
+    required() { return 'github' !== this.target; },
     index: true,
   },
+
+  /**
+   * The GitHub installation whose account serves this domain.
+   *
+   * ONE DOMAIN, ONE GITHUB ACCOUNT, MANY SITES — Edwin, 29 October, on how
+   * the URLs work out: "only one can serve from the root and then other
+   * website will use a subdirectory."
+   *
+   * That account's own `<login>.github.io` repository carries the custom
+   * domain, so every other repository on it is served beneath that domain:
+   * acme.com/quality-plumbing/, acme.com/roof-pros/. Which GitHub account
+   * that is cannot be chosen separately from the domain — they are one
+   * choice — which is why it lives on this row rather than on the user or
+   * on the job.
+   *
+   * A NUMBER, NOT A CREDENTIAL. See the note on User.githubInstallationId:
+   * it is useless without the App's private key, and a client uninstalling
+   * the App revokes it by doing so.
+   */
+  githubInstallationId: {
+    type: String,
+    default: '',
+    required() { return 'github' === this.target; },
+    trim: true,
+  },
+
+  /**
+   * When the GitHub setup last ran, and whether it finished.
+   *
+   * WHY A RECORD AND NOT A LIVE CHECK — Edwin, 31 October, looking at two
+   * GitHub rows both offering the same button: "I thought I had already
+   * done the first one. Will the set up GitHub button always show up?"
+   *
+   * It did, on every row, whether or not it had been run — because the row
+   * knew nothing and the page would have had to ask GitHub four times per
+   * domain just to grey out a button.
+   *
+   *     A BUTTON THAT IS SAFE TO PRESS TWICE IS NOT THE SAME AS
+   *     A PAGE THAT CAN TELL YOU WHETHER YOU ALREADY DID.
+   *
+   * TWO FIELDS, BECAUSE THE JOB HAS TWO HALVES. The repository, the page
+   * and Pages are done on GitHub and either worked or threw. The custom
+   * domain depends on DNS at a registrar this app has never heard of, and
+   * commonly fails the first time — so "it ran" and "it finished" are
+   * different facts and the row says which.
+   */
+  githubSetupAt: { type: Date, default: null },
+
+  githubSetupOk: { type: Boolean, default: false },
 
   /**
    * What to call it on the dropdown, if the domain alone is not enough.

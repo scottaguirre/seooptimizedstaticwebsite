@@ -119,6 +119,14 @@ for suite in \
   test-email-health.js \
   test-hours.js \
   test-pages-to-build.js \
+  test-local-options.js \
+  test-local-options-shape.js \
+  test-local-options-chrome.js \
+  test-local-options-render.js \
+  test-local-options-heroes.js \
+  test-local-options-generate.js \
+  test-local-options-wiring.js \
+  test-github-app.js \
   test-trust-points.js \
   test-job-uploads.js \
   test-ping-detail.js \

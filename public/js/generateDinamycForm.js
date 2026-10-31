@@ -510,8 +510,56 @@
     document.body.appendChild(box);
   }
 
+  /**
+   * Steps this mode does not have.
+   *
+   * THREE OF THE EIGHT, AND NONE OF THEM BECAUSE THE SCREEN WAS UNTIDY. Each
+   * one asked a question whose answer this mode does not use:
+   *
+   *   DESIGN      One structure. utils/runLocalOptions.js passes
+   *               `structure: 'ledger'` as a literal, so whichever of style1
+   *               to style6 was picked was stored on the job and thrown away.
+   *               Beacon exists only as markup in the mock-up; when it is
+   *               real this step comes back here offering those two rather
+   *               than the generator's six.
+   *
+   *   PAGES       The model names the six services. Edwin, 28 October: "the
+   *               service pages option should not be there as the model will
+   *               suggest". utils/suggestServices.js is one cheap call and
+   *               the count is fixed at six either way, so the step was six
+   *               boxes the customer had to fill to be told what their own
+   *               trade does.
+   *
+   *   LOCATIONS   The service area comes from utils/nearbyPlaces.js — a
+   *               gazetteer and some trigonometry, no tokens and no network.
+   *               That file's own header argues why: a model asked for the
+   *               towns near Leander answers confidently and wrongly, and
+   *               Edwin's screenshot of a Dallas page on a Round Rock site
+   *               is the evidence. The towns are not pages in this mode, so
+   *               there was nothing for the customer to choose.
+   *
+   * A LIST RATHER THAN THREE `if`s, because the two things that have to
+   * agree about it — what go() will render and how the headings are
+   * numbered — are in different places, and the second is easy to forget.
+   */
+  function hiddenSteps() {
+    return isLocalOptions() ? [STEP.DESIGN, STEP.PAGES, STEP.LOCATIONS] : [];
+  }
+
+  /**
+   * The visible number for a step, e.g. "4. Global Information".
+   *
+   * `step + 1` WAS ENOUGH UNTIL A MODE STARTED SKIPPING ONE. With the Design
+   * step gone, that returned 5 for the main form and the customer walked
+   * 1, 2, 3, 5, 6, 7, 8 — a gap exactly where the step they were never shown
+   * would have been, which reads as a step that failed to load.
+   *
+   * Counting the hidden steps BELOW this one renumbers everything from the
+   * one place, which is what the old comment on this function promised:
+   * inserting or removing a step must not mean editing eight headings.
+   */
   function stepNumber(step) {
-    return step + 1;
+    return step + 1 - hiddenSteps().filter(hidden => hidden < step).length;
   }
 
   const state = {
@@ -519,6 +567,10 @@
     // optimised site as it has always been built. 'sample' = a one-page
     // design sample for showing a prospective client, with no service,
     // location or legal pages and no pricing or FAQ section.
+    // 'localoptions' = Local Website Options: a fixed eleven pages — home,
+    // six services, contact and three legal — written by utils/localOptions/
+    // rather than by runGeneration, with its own stylesheet and its own
+    // structured address.
 
     siteMode: 'rankfast',
     styleKey: 'style',
@@ -594,13 +646,31 @@
    * A list rather than hardcoded markup: two more are planned, and adding
    * one should mean adding an entry here, not editing the template and
    * renumbering the labels by hand.
+   *
+   * ONE OF THE TWO ARRIVED ON 28 OCTOBER AND THAT IS ALL IT TOOK HERE —
+   * renderSiteModeStep() reads this list and nothing else knows how many
+   * entries it has.
    */
-  
+
   const SITE_MODES = [
     {
       value: 'rankfast',
       title: 'Rank Fast',
       description: 'Built fully SEO-optimized to rank fast and generate leads without a GBP',
+    },
+    {
+      /* SECOND, NOT LAST, AND THAT IS THE ONLY THING THE POSITION DOES.
+       * This list is display order; nothing reads the index. It sits above
+       * Rank GBPs because Rank GBPs is the oldest mode, not the one most
+       * reached for.
+       *
+       * A FIXED ELEVEN PAGES, enforced rather than mentioned: the services
+       * step accepts exactly six in this mode, and utils/pricing.js charges
+       * a flat 800 whatever is posted — so a seventh row would be a page the
+       * customer paid for and the renderer never writes. */
+      value: 'localoptions',
+      title: 'Local Website Options',
+      description: 'A fixed 11-page site for one local business — six services, hours, map and schema',
     },
     {
       value: 'sample',
@@ -617,6 +687,63 @@
       description: 'Optimised to rank an existing Google Business Profile',
     },
   ];
+
+  /**
+   * Is this the fixed eleven-page local site?
+   *
+   * A FUNCTION, NOT A CONSTANT. Three steps read it while rendering, and the
+   * mode can change up to the moment Next is pressed on step 1 — a value
+   * captured once would be whatever was selected when this file loaded.
+   *
+   * Compared against the string rather than against SITE_MODES[1].value: the
+   * list is display order and resorting it must not change behaviour.
+   */
+  function isLocalOptions() {
+    return state.siteMode === 'localoptions';
+  }
+
+  /**
+   * Keep the text of the domain the customer picked.
+   *
+   * THE SNAPSHOT HOLDS AN ID AND THE REVIEW CARD NEEDS A DOMAIN. The picker's
+   * value is the pool row's id — correct to submit, meaningless to read — and
+   * the readable form is the text of the selected <option>.
+   *
+   * CALLED WHEN LEAVING THE STEP, NOT WHEN RENDERING THE REVIEW, because by
+   * then this step's DOM has been replaced and there is no option left to
+   * read. A review card that showed "— not set —" for a domain the customer
+   * had chosen is what prompted this; it said the same thing the server then
+   * said, and neither named the field.
+   */
+  function rememberPickedDomain(scope) {
+    const picker = scope && scope.querySelector('[name="global[domainId]"]');
+
+    if (!picker) return;
+
+    const chosen = picker.options[picker.selectedIndex];
+
+    state.pickedDomainText = (picker.value && chosen)
+      ? chosen.textContent.trim()
+      : '';
+  }
+
+  /* THERE WAS A FIXED_SERVICE_COUNT HERE, AND IT IS GONE ON PURPOSE.
+   *
+   * For a few hours on 28 October this file knew that Local Website Options
+   * takes exactly six services: the pages step opened with six rows, hid its
+   * Add and Delete buttons, and refused to continue with a blank one. A
+   * mirror of LOCAL_OPTIONS_SERVICE_PAGES, with a test comparing the two
+   * copies.
+   *
+   * Then the step itself went, because the model names the services. All of
+   * that became code no customer could reach — and the duplicated constant
+   * went with it, which is the better outcome: the only place that now needs
+   * to know the number is the server, where seoPresets.js declares it once
+   * and utils/runLocalOptions.js and utils/pricing.js both read it.
+   *
+   * A BROWSER COPY OF A SERVER CONSTANT IS A LIABILITY WHEN NOTHING NEEDS
+   * IT. If the step ever comes back, the number comes back with it — from a
+   * fresh look at seoPresets, not from whatever this file remembered. */
 
 
   // ---------------------------------------------------------------------
@@ -1324,7 +1451,17 @@
     if (businessName) labels.push(`Business: ${businessName}`);
     if (state.businessType) labels.push(`Type: ${state.businessType}`);
     if (location) labels.push(`Location: ${location}`);
-    labels.push(themeLabel(state.styleKey));
+
+    /* THE THEME BADGE ONLY WHERE A THEME WAS CHOSEN.
+     *
+     * These badges exist to remind somebody of decisions they have already
+     * made. "Design 1" in a mode that skips the Design step is not a
+     * reminder — it reports a choice nobody was offered, for a value
+     * utils/runLocalOptions.js discards in favour of 'ledger'. It was on
+     * Edwin's screen above a form that had never asked a design question. */
+    if (!hiddenSteps().includes(STEP.DESIGN)) {
+      labels.push(themeLabel(state.styleKey));
+    }
 
     extra.forEach(text => labels.push(text));
 
@@ -1362,20 +1499,194 @@
         </div>
 
 
-        <!-- Domain -->
+        <!-- Domain.
+
+             TYPED IN EVERY MODE BUT THIS ONE — 29 October. Local Website
+             Options publishes the site itself, to a GitHub account that is
+             already set up with a domain pointed at it, so asking the
+             customer to type one would be asking them to name somewhere the
+             app cannot put anything.
+
+             A SELECT, FILLED AFTER THE FORM IS DRAWN. The list comes from
+             /api/site-domains, so this renders at once with a placeholder
+             and is filled a moment later. Making the whole step wait on a
+             request to draw one dropdown is worse than the dropdown
+             arriving late.
+
+             THE OPTION VALUE IS THE ROW ID, NOT THE DOMAIN. The id is what
+             the build looks up, and the row is what carries the GitHub
+             account that domain belongs to. A domain string would have to
+             be matched back to a row, which is a second place for the two
+             to disagree.
+
+             AND NO BACKTICKS IN HERE. This block is inside a template
+             literal and one in a comment ends the string early, which has
+             cost a syntax error in this file three times. -->
+        ${isLocalOptions() ? `
+        <div class="mb-3">
+          <label class="form-label" for="siteDomain">Domain</label>
+          <select name="global[domainId]" id="siteDomain" class="form-select" required>
+            <option value="">Loading the domains…</option>
+          </select>
+          <div class="form-text">
+            The site is published here on its own once it is built. Its
+            address will be this domain followed by the business name.
+          </div>
+        </div>
+        ` : `
         <div class="mb-3">
           <label class="form-label">Domain</label>
           <input type="text" name="global[domain]" class="form-control" placeholder="example.com" required />
         </div>
+        `}
 
-        <!-- Address -->
+        <!-- Which design.
+
+             WHY IT IS A CHOICE AND NOT A CALCULATION. The build can pick a
+             set from the business name, and that keeps a rebuilt site's
+             pictures stable. It cannot promise two DIFFERENT businesses get
+             different ones: with two sets, two sites have an even chance of
+             landing on the same set, which is the thing sets were added to
+             prevent. Edwin, 30 October: "how the user will be able to pick
+             what set?"
+
+             ONE DROPDOWN, BECAUSE THERE IS ONE DECISION. A design carries
+             the layout, the stylesheet, the class prefix and ids, the voice
+             the model writes in, AND the four photographs. It started as a
+             photographs-only picker and Edwin asked the right question of
+             it: "if I choose Design 2, will it use a different html
+             structure and different services?" It did not. It does now.
+
+             NO THUMBNAILS, AND NUMBERS RATHER THAN NAMES. The person
+             building a second site for a client does not need to study four
+             photographs or learn that the layouts are called Ledger and
+             Beacon; they need to say "not the same as the last one".
+
+             CHOOSE FOR ME IS THE DEFAULT, because most trades have one set
+             of pictures and most builds do not care.
+
+             THE SAME LIST FOR EVERY TRADE, and the photographs are not the
+             same — only plumbing has a second set today. generate.js drops
+             a photo set the chosen trade does not have and falls back to
+             the automatic pick, rather than publishing a site with four
+             empty bands. The layout always applies.
+
+             AND NO BACKTICKS IN HERE. -->
+        ${isLocalOptions() ? `
+        <div class="mb-3">
+          <label class="form-label" for="design">Design</label>
+          <select name="global[design]" id="design" class="form-select">
+            <option value="">Choose for me</option>
+            <option value="1">Design 1</option>
+            <option value="2">Design 2</option>
+          </select>
+          <div class="form-text">
+            Each design has its own layout, its own photographs and its own
+            way of writing. Pick a different one when you are building a
+            second site in the same trade, so the two do not look alike.
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- Search Console.
+
+             OPTIONAL, AND USUALLY FILLED IN LATER. Google hands the tag
+             over when a property is created, and a client creates the
+             property once their site exists — so most builds leave this
+             empty and the tag is added afterwards without a rebuild.
+
+             EACH SITE IS ITS OWN PROPERTY. A site at acme.com/their-name/
+             is a URL-prefix property belonging to that business. A DNS
+             record would verify the whole domain, which holds other
+             people's sites.
+
+             A TEXTAREA, BECAUSE WHAT IS ON THE CLIPBOARD IS A WHOLE TAG and
+             it may have wrapped across lines on the way. The server pulls
+             the token out of it.
+
+             AND NO BACKTICKS IN HERE. -->
+        ${isLocalOptions() ? `
+        <div class="mb-3">
+          <label class="form-label" for="searchConsole">
+            Google Search Console <span class="text-white-50">— optional</span>
+          </label>
+          <textarea name="global[searchConsole]" id="searchConsole" class="form-control"
+                    rows="2" spellcheck="false"
+                    placeholder='&lt;meta name="google-site-verification" content="..." /&gt;'></textarea>
+          <div class="form-text">
+            Paste the whole tag Google gives you. Leave it blank if you do not
+            have it yet — it can be added after the site is live without
+            rebuilding anything.
+          </div>
+        </div>
+        ` : ''}
+
+        <!-- The address.
+             ONE FREE-TEXT BOX FOR THREE MODES, FOUR TYPED BOXES FOR THE
+             FOURTH, and they are alternatives rather than both.
+
+             Local Website Options needs street, city, state and ZIP APART:
+             its schema emits a PostalAddress with a field for each, and a
+             node with the town inside streetAddress is read wrong rather
+             than not at all. Splitting the free-text box on commas was the
+             other option and it fails silently — a suite number, a missing
+             ZIP or a state written out in full all produce a plausible,
+             wrong addressRegion that nobody sees until it is indexed.
+
+             SO THE BOXES THAT ARE NOT USED ARE NOT RENDERED, rather than
+             hidden. A hidden input carrying the required attribute fails
+             checkValidity() below and blocks Next on a box nobody can see.
+             routes/generateRoute.js composes address and location out of the
+             four parts before anything else reads them, so nothing
+             downstream needs to know which form was shown.
+
+             AND NO BACKTICKS IN HERE. This whole block is a template
+             literal; one backtick in a comment ends the string early. It
+             cost a syntax error to find out. -->
+        ${isLocalOptions() ? `
+        <div class="mb-3">
+          <label class="form-label">Street address</label>
+          <input type="text" name="global[street]" class="form-control"
+                 placeholder="1204 Ranch Road 2243, Suite 120" required />
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-sm-7">
+            <label class="form-label">City</label>
+            <input type="text" name="global[city]" class="form-control"
+                   placeholder="Leander" required />
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label">State</label>
+            <input type="text" name="global[state]" class="form-control text-uppercase"
+                   placeholder="TX" maxlength="2" required />
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label">ZIP code</label>
+            <input type="text" name="global[zip]" class="form-control"
+                   placeholder="78641" inputmode="numeric" required />
+          </div>
+        </div>
+
+        <div class="form-text mb-3">
+          This is the address on the contact page, in the footer of every
+          page, in the map and in the LocalBusiness schema. The city and
+          state also stand in for Main Location, so there is no separate box
+          for it in this mode.
+        </div>
+        ` : `
         <div class="mb-3">
           <label class="form-label">Address</label>
           <input type="text" name="global[address]" class="form-control" required />
         </div>
+        `}
 
         <!-- Owner / founder name. A design sample is not a real business
-             page, so an invented owner would be noise. -->
+             page, so an invented owner would be noise. And Local Website
+             Options has no About page for a founder to appear on: the name
+             was collected, stored on the job, and never read by anything
+             utils/runLocalOptions.js passes to the renderer. -->
+        ${isLocalOptions() ? '' : `
         <div class="mb-3" ${state.siteMode === 'sample' ? 'style="display:none;"' : ''}>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="includeOwner" name="global[includeOwner]">
@@ -1392,12 +1703,19 @@
             </div>
           </div>
         </div>
+        `}
 
-        <!-- Main Location-->
+        <!-- Main Location.
+             NOT SHOWN for Local Website Options: the City and State boxes
+             above already say where the business is, and asking the same
+             question twice is how the two answers come back different. The
+             route composes location as "City, ST" from them. -->
+        ${isLocalOptions() ? '' : `
         <div class="mb-3">
           <label class="form-label">Main Location</label>
           <input type="text" name="global[location]" class="form-control" required />
         </div>
+        `}
 
 
         <!-- Phone -->
@@ -1426,6 +1744,33 @@
         </div>
 
 
+        <!-- FIVE CONTROLS THAT THE ELEVEN-PAGE SITE HAS NOWHERE TO PUT.
+             Edwin, 28 October, naming four of them; the trust badges went
+             with them for the same reason.
+
+             Four of the five describe the ABOUT PAGE, and Local Website
+             Options has no About page: its eleven are home, six services,
+             contact and three legal. The fifth, the Map CID, feeds the
+             LocalBusiness schema that runGeneration builds — this mode
+             builds its own in render/schema.js, out of the four address
+             boxes, and never looks at a CID.
+
+             A TICKED BOX THAT CHANGES NOTHING IS WORSE THAN NO BOX. It
+             reads as a promise the finished site does not keep, and the
+             customer only finds out by looking for a price table that was
+             never going to be there.
+
+             UNRENDERED FOR THIS MODE, display:none FOR A DESIGN SAMPLE, and
+             the difference is deliberate rather than untidy: the sample
+             rules predate this and changing them would change a live
+             product. None of these carry the required attribute, so either
+             would work here; not rendering is what makes it visible in the
+             markup that the control does not exist in this mode.
+
+             (No backticks in this comment. It sits inside a template
+             literal, and one backtick ends the string early — which is the
+             second time today.) -->
+        ${isLocalOptions() ? '' : `
          <!-- Google Map CID. Feeds the LocalBusiness schema, so it has no
               purpose in a design sample. -->
         <div class="mb-3 mt-3" ${state.siteMode === 'sample' ? 'style="display:none;"' : ''}>
@@ -1448,6 +1793,7 @@
             Include contact form on About page
           </label>
         </div>
+        `}
 
         <!-- The price range table.
              HIDDEN ENTIRELY for shapes that cannot have one — a dentist or an
@@ -1455,8 +1801,12 @@
              says "you could turn this on" and they cannot. See
              SHAPES_WITH_PRICING above and CAPABILITIES in businessShape.js,
              which is the authority: the server refuses those shapes whatever
-             arrives from here. -->
-        ${canHavePricingTable(state.businessType) ? `
+             arrives from here.
+
+             The mode test is FIRST, so a plumber building a Local Website
+             Options site is treated the same as a dentist building any site:
+             the box is not there to tick. -->
+        ${!isLocalOptions() && canHavePricingTable(state.businessType) ? `
         <!-- The rule is INSIDE the conditional, with the field it belongs to.
              Outside it, a dentist's form would show two <hr> lines with
              nothing between them. -->
@@ -1477,7 +1827,7 @@
              SHAPES_WITH_BADGES above for why that list is narrower than the
              pricing one. The description names the two images so the choice
              is not made blind. -->
-        ${canHaveBadges(state.businessType) ? `
+        ${!isLocalOptions() && canHaveBadges(state.businessType) ? `
         <hr>
 
         <div class="form-check mt-2">
@@ -1491,6 +1841,7 @@
         </div>
         ` : ''}
 
+        ${isLocalOptions() ? '' : `
         <hr>
 
         <!-- Near Me. Hidden for design samples, and unchecked so the
@@ -1502,16 +1853,31 @@
             Check to optimize About Us page with "Near Me" term
           </label>
         </div>
+        `}
 
         <hr>
-
 
         <!-- What this business can claim.
              Everything here is a statement of FACT about the business, so the
              owner ticks what is true rather than the generator asserting it.
              Home services arrive pre-ticked, which is what the page said
              before this existed; every other kind of business starts empty.
-             Nothing unticked is ever offered to the model. -->
+             Nothing unticked is ever offered to the model.
+
+             NOT IN LOCAL WEBSITE OPTIONS, and its own description says why:
+             "These appear on the About page". That mode has no About page,
+             and trustClaims is read by nothing it runs — not
+             utils/runLocalOptions.js, not the prompt, not the renderer, not
+             the schema. Ten ticked boxes that change nothing, which is the
+             worst kind: they read as a promise the eleven pages do not keep.
+
+             (No backticks in here. This block is a template literal and one
+             backtick ends the string early — the third time today, in the
+             file whose own comment forty lines up says exactly that.)
+
+             The ninth control cut from this form on 28 October, for the same
+             reason as the other eight. -->
+        ${isLocalOptions() ? '' : `
         <div class="mb-3" id="trustClaimsBlock">
           <label class="form-label">What can this business claim?</label>
           <div class="form-text mb-2">
@@ -1523,6 +1889,7 @@
         </div>
 
         <hr>
+        `}
 
 
         <!-- Business Hours-->
@@ -1573,6 +1940,19 @@
           </div>
         `).join('')}
 
+        <!-- The intro video.
+             NOT SHOWN for Local Website Options. Its own form text says the
+             video appears "on the About / Home page", and none of that
+             mode's eleven pages embeds one — not the home page it writes,
+             and there is no About page at all. Asking for a URL and
+             embedding it nowhere is the same defect as the price-range box.
+
+             THE SOCIAL PROFILES ABOVE STAY, and are the opposite case: the
+             footer of all eleven pages renders them, through
+             socialFrom() in utils/runLocalOptions.js. They were being
+             dropped on the way, which was a wiring gap rather than a
+             control with nowhere to go. -->
+        ${isLocalOptions() ? '' : `
         <hr>
 
         <div class="mb-3">
@@ -1590,6 +1970,7 @@
             Paste a full YouTube link. This video will show on the About / Home page.
           </div>
         </div>
+        `}
 
 
 
@@ -1642,6 +2023,59 @@
       ownerToggle.addEventListener('change', syncOwner);
     }
 
+    /* THE DOMAIN LIST, FETCHED AFTER THE STEP IS DRAWN.
+     *
+     * AFTER restoreFormValues, and that ordering matters: the options do not
+     * exist until this resolves, and a <select> cannot hold a value for an
+     * option it has not got yet. So the snapshot's choice is reapplied below
+     * once they are in, rather than being restored with everything else and
+     * silently dropped.
+     *
+     * A FAILURE LEAVES THE STEP USABLE AND SAYS SO. The alternative is a
+     * dropdown stuck on "Loading the domains…" for ever, which reads as a
+     * hung page rather than as a request that failed. */
+    if (isLocalOptions()) {
+      const picker = container.querySelector('#siteDomain');
+
+      if (picker) {
+        const chosen = (state.mainFormSnapshot || {})['global[domainId]'] || '';
+
+        fetch('/api/site-domains', { headers: { Accept: 'application/json' } })
+          .then(res => (res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status))))
+          .then((data) => {
+            const rows = (data && data.domains) || [];
+
+            if (!rows.length) {
+              picker.innerHTML = '<option value="">No domains are set up yet</option>';
+              return;
+            }
+
+            /* THE DOMAIN, AND ONLY THE DOMAIN — Edwin, 29 October: "why are
+             * we showing the domain name + the label. I should be only the
+             * domain name."
+             *
+             * The label exists for the admin table, where a column of bare
+             * domains is hard to scan against a list of clients. In the
+             * customer's dropdown it is noise at best, and when somebody
+             * types the domain into both boxes it reads "7-y.xyz — 7-y.xyz".
+             *
+             * THE DOMAIN IS ALSO THE THING THEY ARE CHOOSING. It is what
+             * appears in the address of every page they are about to pay
+             * for, so it is the one string that has to be right in front of
+             * them. */
+            picker.innerHTML = '<option value="">Choose a domain…</option>'
+              + rows.map(row =>
+                '<option value="' + row.id + '">' + row.domain + '</option>').join('');
+
+            if (chosen) picker.value = chosen;
+          })
+          .catch(() => {
+            picker.innerHTML =
+              '<option value="">Could not load the domains — reload the page</option>';
+          });
+      }
+    }
+
     // Remove red outline when user fixes input (text/time/checkbox)
     container.addEventListener('input', (ev) => {
       if (ev.target.classList?.contains('is-invalid')) ev.target.classList.remove('is-invalid');
@@ -1652,16 +2086,29 @@
 
     backBtn.addEventListener('click', () => {
       state.mainFormSnapshot = snapshotFormValues(form);
+      rememberPickedDomain(container);
       go(STEP.DESIGN);
     });
 
     nextBtn.addEventListener('click', () => {
       // Validate required text/email/tel fields
+      /* THE ADDRESS BOXES DIFFER BY MODE, so the list that validates them
+       * has to as well. Listing a field that was never rendered is harmless
+       * — the map below returns null and the loop skips it — but listing the
+       * wrong ones means a mode whose address is never checked at all. */
       const requiredFields = [
         'global[businessName]',
-        'global[domain]',
-        'global[address]',
-        'global[location]',
+
+        /* THE DOMAIN IS A DIFFERENT FIELD IN THIS MODE, and listing the
+         * wrong one means it is never checked: the map below returns null
+         * for a field that was not rendered and the loop skips it, so a
+         * customer could reach the end with no domain picked and the build
+         * would fail three minutes later, after paying for the writing. */
+        isLocalOptions() ? 'global[domainId]' : 'global[domain]',
+
+        ...(isLocalOptions()
+          ? ['global[street]', 'global[city]', 'global[state]', 'global[zip]']
+          : ['global[address]', 'global[location]']),
         'global[phone]',
         'global[email]'
       ];
@@ -1682,18 +2129,49 @@
         return digits.length === 10 || (digits.length === 11 && digits.startsWith('1'));
       };
 
+      /* THE STATE AND ZIP RULES, MIRRORED FROM THE SERVER.
+       *
+       * utils/localOptions/address.js is the authority; these two save the
+       * customer a round-trip, exactly as isPhoneLike() above does, and the
+       * comment on that one applies word for word. The state list is NOT
+       * mirrored — fifty-one entries in this file would be a fourth copy of
+       * it — so a two-letter code that is not a real state is caught by the
+       * server and reported on this box by name. */
+      const isZipLike = (value) => /^\d{5}(-\d{4})?$/.test(String(value || '').trim());
+      const isStateLike = (value) => /^[A-Za-z]{2}$/.test(String(value || '').trim());
+
       let firstInvalid = null;
       let phoneBadFormat = false;
+
+      /* KEYED BY FIELD, NOT A SINGLE STRING. A plain variable holds whatever
+       * failed LAST, which with a bad state AND a bad ZIP is the wrong
+       * message pointed at the wrong box. The lookup below asks for the
+       * message belonging to the box being focused. */
+      const badFormat = {};
 
       inputs.forEach(input => {
         if (!input) return;
         const val = String(input.value || '').trim();
+        const field = input.getAttribute('name');
         let ok = input.checkValidity() && val !== '';
 
         // type="tel" accepts any string, so checkValidity() passes "call me".
-        if (ok && input.getAttribute('name') === 'global[phone]' && !isPhoneLike(val)) {
+        if (ok && field === 'global[phone]' && !isPhoneLike(val)) {
           ok = false;
           phoneBadFormat = true;
+        }
+
+        /* SAME REASON, DIFFERENT BOXES: a filled box that is the wrong shape
+         * needs its own message, because "Please fill out ZIP code" about a
+         * box with 7864 in it reads as a bug in the form. */
+        if (ok && field === 'global[state]' && !isStateLike(val)) {
+          ok = false;
+          badFormat[field] = 'Use the two-letter state code, e.g. TX.';
+        }
+
+        if (ok && field === 'global[zip]' && !isZipLike(val)) {
+          ok = false;
+          badFormat[field] = 'Enter a 5-digit ZIP code, e.g. 78641.';
         }
 
         if (!ok) {
@@ -1714,15 +2192,30 @@
 
       if (firstInvalid) {
         firstInvalid.focus();
+        const name = firstInvalid.getAttribute('name');
+
+        /* A FILLED BOX OF THE WRONG SHAPE GETS THE SHAPE'S MESSAGE, and only
+         * then does it fall back to "Please fill out X". Checked before the
+         * labels, because the labels have an answer for every field and
+         * would always win. */
+        if (badFormat[name]) {
+          showAlert(container, badFormat[name]);
+          return;
+        }
+
         const labels = {
           'global[businessName]': 'Business Name',
           'global[domain]': 'Domain',
+          'global[domainId]': 'Domain',
           'global[address]': 'Address',
           'global[location]': 'Main Location',
+          'global[street]': 'Street address',
+          'global[city]': 'City',
+          'global[state]': 'State',
+          'global[zip]': 'ZIP code',
           'global[phone]': 'Phone',
           'global[email]': 'Email'
         };
-        const name = firstInvalid.getAttribute('name');
         showAlert(container, `Please fill out ${labels[name] || 'all required fields'}.`);
         return;
       }
@@ -1782,6 +2275,15 @@
 
       // All good — snapshot and move on
       state.mainFormSnapshot = snapshotFormValues(form);
+
+      /* THE DOMAIN'S TEXT, KEPT BEFORE THIS STEP IS TORN DOWN.
+       *
+       * The snapshot holds the picker's VALUE, which is a row id — not a
+       * thing a customer can check on the review card. The text is on the
+       * selected <option>, and by the time Review renders, this step's DOM
+       * has been replaced and there is no option left to read. */
+      rememberPickedDomain(container);
+
       go(STEP.PAGES);
     });
   }
@@ -1832,6 +2334,7 @@
     svcWrap.append(hr);
 
     const addRow = (val='') => addPageRow(pagesList, val);
+
     if (state.pages.length) state.pages.forEach(p => addRow(p)); else addRow('');
 
     mountSuggestPanel(suggestWrap, pagesList);
@@ -1967,6 +2470,11 @@
   function renderLocationsStep() {
     container.innerHTML = '';
 
+    /* THIS STEP WAS RELABELLED "Service Area" FOR Local Website Options FOR
+     * ABOUT AN HOUR ON 28 OCTOBER, and then that mode stopped reaching it at
+     * all — hiddenSteps() lists it. The towns come from
+     * utils/nearbyPlaces.js now, which is free, offline and does not need
+     * asking. So this step is back to being only what it always was. */
     const header = el('div', { class: 'mb-3' });
     header.innerHTML = `
       <h4 class="mb-2">${stepNumber(STEP.LOCATIONS)}. Location Pages</h4>
@@ -2015,6 +2523,17 @@
     // check passes we call its published helper ourselves. Editing the other
     // file would work too, and would leave the gate somewhere nobody looks
     // when they wonder why a page was refused.
+    /** The row this button adds, however the other file spells it. */
+    const appendLocationRow = () => {
+      if (window.addLocationInput) {
+        window.addLocationInput();
+      } else {
+        locList.appendChild(el('input', {
+          type: 'text', class: 'form-control mb-2', name: 'global[locationPages][]',
+        }));
+      }
+    };
+
     addLocBtn.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -2044,13 +2563,7 @@
 
       if (!allowed) return;
 
-      if (window.addLocationInput) {
-        window.addLocationInput();
-      } else {
-        locList.appendChild(el('input', {
-          type: 'text', class: 'form-control mb-2', name: 'global[locationPages][]',
-        }));
-      }
+      appendLocationRow();
     }, true);   // capture
 
     const seedLocations = () => {
@@ -3294,25 +3807,65 @@
                style="max-height:80px;max-width:200px;background:#fff;padding:6px;border-radius:6px;">`
         : ''), STEP.LOGO),
 
-      reviewCard('Design', [
+      /* NO DESIGN CARD WHERE THERE WAS NO DESIGN STEP. The card carries an
+       * edit link to STEP.DESIGN; go() would step straight past it, so the
+       * link would silently do nothing — and the row would report a theme
+       * this mode never applies. */
+      ...(isLocalOptions() ? [] : [reviewCard('Design', [
         reviewRow('Selected', themeLabel(state.styleKey), { strong: true }),
-      ].join(''), STEP.DESIGN),
+      ].join(''), STEP.DESIGN)]),
 
       reviewCard('Business Details', [
         reviewRow('Name', snapshotValue('businessName'), { strong: true }),
-        reviewRow('Domain', snapshotValue('domain')),
-        reviewRow('Location', snapshotValue('location')),
-        reviewRow('Address', snapshotValue('address')),
-        ...(state.siteMode === 'sample' ? [] : [reviewRow('Owner name', ownerSummary())]),
+
+        /* THE DOMAIN IS A DIFFERENT FIELD IN THIS MODE, and reading the old
+         * one here showed "— not set —" on a form where it had been chosen
+         * — a review card saying a required thing is missing, on a build
+         * that was about to be refused for the same reason one layer down.
+         *
+         * THE PICKER STORES AN ID, SO THE ID IS NOT WHAT TO SHOW. A row
+         * reading "68f3a1c4b2..." tells the customer nothing; the domain
+         * they picked is the thing they are checking. The option's text is
+         * the domain, so it is read back off the select. */
+        reviewRow('Domain', isLocalOptions()
+          ? (state.pickedDomainText || '')
+          : snapshotValue('domain')),
+        /* THE ADDRESS, AS THE MODE ASKED FOR IT.
+         *
+         * Reading snapshotValue('address') in this mode shows a blank row:
+         * that box is not rendered, so nothing snapshots it, and the route
+         * composes the value after this screen is gone. A review step that
+         * reports "Address: " about an address the customer typed is worse
+         * than no row, because it reads as having lost it. */
+        ...(isLocalOptions()
+          ? [
+              reviewRow('Street', snapshotValue('street')),
+              reviewRow('City', [snapshotValue('city'), snapshotValue('state')]
+                .filter(Boolean).join(', ')),
+              reviewRow('ZIP', snapshotValue('zip')),
+            ]
+          : [
+              reviewRow('Location', snapshotValue('location')),
+              reviewRow('Address', snapshotValue('address')),
+            ]),
+        ...(isLocalOptions() || state.siteMode === 'sample'
+          ? []
+          : [reviewRow('Owner name', ownerSummary())]),
         /* A SECTION THAT WILL NOT BE BUILT HAS TO BE ON THE REVIEW STEP.
          * This is the only screen that claims to say what is about to be
          * generated; a choice absent from it is one the customer discovers by
          * looking at the finished site. Shown only where a table is possible
          * at all — for a dentist there is no decision to report. */
-        ...(state.siteMode === 'sample' || !canHavePricingTable(state.businessType)
+        /* AND NOT WHERE THERE IS NO DECISION TO REPORT. The rule above is
+         * about a choice the customer MADE and the site will not honour.
+         * These two are not on the Local Website Options form at all, so a
+         * row saying "Price range table: included" would be the review step
+         * inventing a choice nobody was offered — which is the same defect
+         * pointing the other way. */
+        ...(isLocalOptions() || state.siteMode === 'sample' || !canHavePricingTable(state.businessType)
           ? []
           : [reviewRow('Price range table', pricingSummary())]),
-        ...(state.siteMode === 'sample' || !canHaveBadges(state.businessType)
+        ...(isLocalOptions() || state.siteMode === 'sample' || !canHaveBadges(state.businessType)
           ? []
           : [reviewRow('Trust badges', badgesSummary())]),
       ].join(''), STEP.MAIN),
@@ -3320,8 +3873,15 @@
       reviewCard('Contact', [
         reviewRow('Phone', snapshotValue('phone')),
         reviewRow('Email', snapshotValue('email')),
-        reviewRow('Map CID', snapshotValue('googleMapCid')),
-        reviewRow('Intro video', snapshotValue('youtubeVideoUrl')),
+
+        /* The Map CID box is not on the form in this mode, so nothing
+         * snapshots it and the row would always read "Map CID: " — a blank
+         * that looks like a value the wizard lost rather than a question it
+         * never asked. */
+        ...(isLocalOptions() ? [] : [
+          reviewRow('Map CID', snapshotValue('googleMapCid')),
+          reviewRow('Intro video', snapshotValue('youtubeVideoUrl')),
+        ]),
       ].join(''), STEP.MAIN),
 
       reviewCard('Hours', hoursSummary(), STEP.MAIN),
@@ -3330,11 +3890,34 @@
 
       // Pages last: they are what the credit cost is based on, so they sit
       // closest to the Generate button.
-      reviewCard(`Service pages (${pages.length})`,
-        listSummary(pages, 'No service pages added.'), STEP.PAGES),
+      //
+      // AND IN THIS MODE THEY ARE NOT A LIST, THEY ARE A STATEMENT.
+      //
+      // Neither step exists here: the model names the six services and
+      // utils/nearbyPlaces.js names the towns. So there is nothing for a
+      // list to show and no step for an edit button to jump to — the cards
+      // below carry editStep, and an edit link to a step go() skips is a
+      // button that does nothing.
+      //
+      // IT IS STILL ON THE REVIEW STEP, THOUGH, and that is the point. This
+      // screen is the only one that says what is about to be built. Leaving
+      // the page count off it because the customer did not choose it is how
+      // somebody presses Generate expecting the site they are used to.
+      ...(isLocalOptions()
+        ? [reviewCard('Pages', `
+            <p class="mb-2">Eleven pages: a home page, six service pages, a
+            contact page and three legal pages.</p>
+            <p class="mb-0 text-white-50 small">The six services are chosen
+            for this trade, and the service area is taken from the towns near
+            the address above. Neither needs a step of its own.</p>
+          `)]
+        : [
+            reviewCard(`Service pages (${pages.length})`,
+              listSummary(pages, 'No service pages added.'), STEP.PAGES),
 
-      reviewCard(`Location pages (${locations.length})`,
-        listSummary(locations, state.addLocations ? 'No locations added.' : 'Location pages are turned off.'), STEP.LOCATIONS),
+            reviewCard(`Location pages (${locations.length})`,
+              listSummary(locations, state.addLocations ? 'No locations added.' : 'Location pages are turned off.'), STEP.LOCATIONS),
+          ]),
     ].join('');
     container.appendChild(grid);
 
@@ -3402,6 +3985,23 @@
   let current = 0;
   function go(index) {
     if (index < 0 || index >= steps.length) return;
+
+    /* A STEP THIS MODE DOES NOT HAVE IS STEPPED PAST, NOT RENDERED.
+     *
+     * Handled here rather than at the call sites, and that is the whole
+     * point: `go(STEP.DESIGN)` appears in the logo step's Next and the main
+     * form's Back, and will appear again the next time somebody links to a
+     * step. Teaching each of them which modes skip which step is how one of
+     * them gets missed.
+     *
+     * THE DIRECTION COMES FROM WHERE WE ARE. Arriving at a hidden step from
+     * below means going forward, so it steps up; from above, it steps down.
+     * Without that, Back out of the main form would land on the main form
+     * again and the Back button would look broken. */
+    if (hiddenSteps().includes(index)) {
+      return go(index >= current ? index + 1 : index - 1);
+    }
+
     current = index;
     steps[current]();
   }
@@ -3547,8 +4147,37 @@
         state.pages
       );
 
+      /* A GUARD MUST NOT SEND SOMEBODY TO A STEP THAT DOES NOT EXIST.
+       *
+       * Each guard below refuses the submit and calls go(STEP.PAGES) or
+       * go(STEP.LOCATIONS) so the customer can fix what is wrong. In a mode
+       * that skips those steps, go() steps straight past the target and
+       * lands them somewhere else — so the alert names a screen they have
+       * never seen, over a form that looks complete, with nothing on it to
+       * correct.
+       *
+       * That is a dead end, not a cosmetic problem. Edwin hit it on the
+       * first real build of Local Website Options: "Please add at least one
+       * service page", bounced back to Global Information, with the
+       * locations twin waiting behind it.
+       *
+       * ASKED OF hiddenSteps() RATHER THAN OF THE MODE. `!isLocalOptions()`
+       * in four places is four places to update when a fifth mode skips a
+       * step. This says the thing that is actually true: a guard applies
+       * when the step it points at can be reached. */
+      const hasPagesStep = !hiddenSteps().includes(STEP.PAGES);
+      const hasLocationsStep = !hiddenSteps().includes(STEP.LOCATIONS);
+
       const hasLocToggle = !!form.querySelector('#addLocations');
-      const addLoc = hasLocToggle ? form.querySelector('#addLocations').checked : !!state.addLocations;
+
+      /* FALSE WHERE THERE IS NO LOCATIONS STEP, whatever `state` remembers.
+       * state.addLocations defaults to TRUE — the toggle ships on — so
+       * without this, a mode with no locations step reads as "locations are
+       * switched on and there are none", which is the guard below firing
+       * over a question nobody was asked. */
+      const addLoc = !hasLocationsStep
+        ? false
+        : (hasLocToggle ? form.querySelector('#addLocations').checked : !!state.addLocations);
 
       const locInputsDom = form.querySelectorAll(
         '#locationsList input[name="global[locationPages][]"]:not([type="hidden"])'
@@ -3561,8 +4190,30 @@
           )
         : [];
     
-      // Guard: must have ≥1 service page
-      if (pagesVals.length === 0) {
+      /* Guard: must have ≥1 service page.
+       *
+       * NOT IN A MODE THAT HAS NO SERVICE-PAGES STEP, and this guard is the
+       * one that caught Edwin's first real build of Local Website Options.
+       *
+       * The rule "at least one service page" lived in THREE places: the
+       * pages step's own Next button, routes/generateRoute.js, and here, in
+       * the form's submit handler. Removing the step and fixing the server
+       * left this one, so Generate on the review step refused with "Please
+       * add at least one service page" — about a step that is not in that
+       * wizard.
+       *
+       * AND THEN IT MADE ITSELF INVISIBLE. `go(STEP.PAGES)` sends them to a
+       * step hiddenSteps() skips, so go() stepped past it and landed back on
+       * Global Information. The alert named a screen the customer had never
+       * seen, over a form that looked complete.
+       *
+       * ONE RULE, THREE COPIES, AND TWO OF THEM FIXED IS WORSE THAN NONE:
+       * the two that were right made the third look like a different bug.
+       *
+       * The duplicate and similar-pair checks below need no such guard —
+       * they compare rows against each other, and with no rows there is
+       * nothing to compare. */
+      if (hasPagesStep && pagesVals.length === 0) {
         e.preventDefault();
         e.stopImmediatePropagation(); // stop spinner.js submitting anyway
         go(STEP.PAGES);

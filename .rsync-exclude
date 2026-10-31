@@ -13,6 +13,11 @@
 # until the next deploy is not a backup.
 .env.*
 
+# GitHub App private keys. The server reads GITHUB_APP_KEY from its own .env,
+# so a .pem has no business travelling — and a key copied around is a key
+# nobody can say they have rotated.
+*.pem
+
 # Rebuilt on the server. Sending it is slow and can mix architectures for any
 # package with a native binary.
 node_modules/

@@ -812,12 +812,332 @@ positioning decision, not a cost one — the measurement is directly above.
   boxes to pre-tick. Miss this and the suggestion list offers pages the mode
   cannot generate, against credits the customer has already committed
 
-### Still open
+### IT IS BUILT, AND IT RAN — 28 October 2026
 
-- `utils/getCoordinatesFromAddress.js` sends Nominatim a placeholder
+Everything above this line was a plan. On 28 October the mode was wired into
+the app end to end and Edwin generated a real eleven-page plumbing site from
+the wizard: six services named by the model, four photographs, hours, map,
+LocalBusiness schema, sitemap, robots, 404.
+
+Nothing below is theory. All of it is on his Mac; **none of it is on the
+live server** as of that evening.
+
+#### The wizard is FIVE steps in this mode, not eight
+
+    1  What are we building      4  Global Information
+    2  Business Type             5  Review & Generate
+    3  Logo
+
+`hiddenSteps()` in `public/js/generateDinamycForm.js` lists the three that
+are skipped, and `stepNumber()` counts them so the headings read 1-2-3-4-5
+rather than 1-2-3-5-8. Each one was removed because it asked a question whose
+answer this mode throws away:
+
+- **Design.** `utils/runLocalOptions.js` passes `structure: 'ledger'` as a
+  literal. **Beacon was dropped on 28 October** — Edwin: *"i don't even know
+  what it is and if it's not related to rankings or seo then just forget
+  it."* It was a second visual layout, nothing to do with ranking. So this
+  step is gone permanently, not until Beacon ships.
+- **Service Pages.** The model names the six. Edwin: *"the service pages
+  option should not be there as the model will suggest"*.
+- **Location Pages.** The service area comes from `utils/nearbyPlaces.js`.
+  Edwin: *"also no location pages option"*.
+
+#### The address is FOUR BOXES in this mode
+
+Street / City / State / ZIP, replacing the single free-text Address box AND
+Main Location. `render/schema.js` emits a PostalAddress with a field for
+each, and a node with the town inside `streetAddress` is read wrong rather
+than ignored.
+
+**Splitting the free-text box on commas was the alternative and it fails
+silently** — a suite number, a missing ZIP or a state written out in full all
+produce a plausible, wrong `addressRegion` that nobody sees until it is
+indexed. `utils/localOptions/address.js` composes `address` and `location`
+from the parts in the route, BEFORE `validateGlobalFields()`, so nothing
+downstream needs to know which form was shown.
+
+The boxes that are not used are **not rendered**, not hidden. A hidden input
+carrying `required` fails `checkValidity()` and blocks Next on a box nobody
+can see.
+
+#### Eight controls removed from this mode's form
+
+Map CID, the About-page contact form, the price-range table, trust badges,
+the Near Me box, owner name, the intro video, and the Design step. Four of
+them describe an About page this mode does not build; the Map CID feeds a
+schema it builds itself from the four address boxes.
+
+**A ticked box that changes nothing is worse than no box** — it reads as a
+promise the eleven pages do not keep.
+
+**The social links STAYED, and that is the opposite case.** They had somewhere
+to go and were not getting there: `render/chrome.js`'s footer reads
+`business.social` and nothing passed it. That was a wiring gap, fixed in
+`socialFrom()`, not a control to delete. The renderer also only held three
+marks — facebook, instagram, youtube — so Twitter, Pinterest and LinkedIn
+were dropped silently. It holds all six now.
+
+#### The service area is a GAZETTEER, never a model call
+
+`utils/nearbyPlaces.js` — GeoNames cities1000 and trigonometry. No tokens, no
+network, no rate limit, and the same four towns every time for the same
+address, which is also what keeps a rebuild byte-identical.
+
+    Leander, TX      ->  Leander, Cedar Park, Jonestown, Liberty Hill
+    Round Rock, TX   ->  Round Rock, Brushy Creek, Windemere, Wells Branch
+    Nowhereville, ZZ ->  Nowhereville          (falls back, never empty)
+
+That file's own header is the argument, and Edwin's screenshot of a Dallas
+location page on a Round Rock site — 190 miles — is the evidence. **Four
+towns including the business's own**, because four is what both prose runs
+were measured on.
+
+#### The build folder is wiped AFTER generation, not before
+
+`resetUserDirs()` used to run before the model calls. That was defensible
+only while the six service names came off the form, because the count was
+checked first. With the names coming from `suggestServices`, the suggester
+can return short, three minutes of writing can time out, and a hero folder
+can be missing — **every one of those after the customer's existing site was
+already gone, in a mode with no resume.**
+
+The wipe now happens between generating and writing, once all nineteen files
+are in hand. It cost splitting `placeLogo` into a name step (before
+generation, for the `<img src>`) and a copy step (after the wipe, or the wipe
+deletes the logo that was just put there).
+
+#### EVERY PATH IS RELATIVE — and this was a production bug, not a preview one
+
+    index.html                 ./      contact/      assets/site.css
+    drain-cleaning/index.html  ../     ../contact/   ../assets/site.css
+    404.html                   /       /contact/     /assets/site.css
+
+Every href and src used to be absolute. That is correct only at a domain
+root, and wrong in three places: opened from the filesystem, served under the
+app's own `/dist/user_<id>/` preview, and **on GitHub Pages, where a project
+site lives at `/<repo>/`** — the destination `models/Job.js` names for this
+mode.
+
+Edwin met it three times in one afternoon as an unstyled page with a broken
+hero and **a logo that worked** — the logo being the one path that happened
+to be written relative. That asymmetry is the tell.
+
+- `urlFor(slug)` — where a page LIVES, absolute. Still used, and only for the
+  canonical, the sitemap and the LocalBusiness image. Those are full URLs by
+  definition; a relative canonical names a different page from every
+  directory it appears in.
+- `linkTo(slug, depth)` / `assetTo(file, depth)` — how to GET there from the
+  page being written.
+- **`depth: null` means absolute, and 404.html is the one page that passes
+  it.** The server returns it for whatever URL was missing, so `../` would
+  climb from a directory nobody chose.
+
+**The last absolute href left after the conversion was inside `homeRows()`**
+— the three linked service rows on the home page. Invisible in a diff. Found
+by listing every path in every rendered page, which is now a test.
+
+#### The words are stored, so a template fix is free
+
+`_src/localoptions.json` holds **`renderSite()`'s own argument object** —
+not a summary, the same object — so a re-render is `renderSite(stored)` and
+nothing can quietly go missing.
+
+**NOT `content.json`.** `utils/contentModel.js` owns that filename: it is the
+WordPress exporter's format, read by the theme builder and
+`checkStructureParity()`. A second shape at the same path would be a file
+that lies about what it describes.
+
+    node tools/rerender-local-options.js <build dir> --check
+    node tools/rerender-local-options.js <build dir>
+
+`--check` says which files a template change would alter and writes nothing.
+Verified on Edwin's real site: **0 files would change, 15 identical**.
+
+The images and logo are never touched — `renderSite` returns pages,
+stylesheet, sitemap, robots and 404, not photographs.
+
+**Why it exists:** the relative-paths fix cost a full rebuild — seven model
+calls, three minutes and 800 credits — to change an href. It should have cost
+nothing.
+
+### THE EIGHT BUGS OF 28 OCTOBER, AND WHAT EACH ONE TEACHES
+
+Written out because the two patterns at the end of this list appeared twice
+each in one day.
+
+**1. A blog campaign blocked every website build.** The guard in
+`generateRoute.js` asked for any queued or running job on the account, with
+no `kind` filter. A fifteen-article campaign is one job for as long as it
+takes to write fifteen posts. The 409 carries a redirect that
+`public/js/spinner.js` follows WITHOUT showing the message — so Edwin was
+sent to a progress page and watched a bar fill to 15 of 15 for a site build
+that was never created. The articles arrived; the website did not exist.
+
+> The rule is not "one job at a time", it is **one job that touches
+> `dist/user_<id>`**. `DIST_KINDS = ['site', 'build']`; a campaign writes to
+> Mongo and Cloudflare and never opens that folder.
+
+**2. The dashboard claimed a website was building during a campaign.** Same
+omission, opposite symptom, found the same afternoon from the other end. The
+`lastSiteJob` lookup three lines below it had always filtered `kind: 'site'`,
+which is what made this one's absence worth looking for.
+
+**3. "At least one service page" lived in THREE places.** The pages step's
+Next, the route, and the form's submit handler. Removing the step and fixing
+the route left the third, which refused with a message about a step that is
+not in that wizard — and then called `go(STEP.PAGES)`, a step `go()` skips,
+so it bounced to Global Information with nothing on screen to fix.
+
+> **Fixing two of three was worse than fixing none**: the two that were right
+> made the third look like a different bug.
+>
+> The fix is the invariant, not the mode: **a guard must not send somebody to
+> a step that does not exist.** `hasPagesStep` / `hasLocationsStep` ask
+> `hiddenSteps()`, so a fifth mode skipping a step needs no edit here.
+
+**4. `state.addLocations` defaults to TRUE.** One guard behind the last,
+waiting. With no locations step to turn it off, the submit handler read
+"locations are switched on and there are none".
+
+**5. ABSENT is not EMPTY.** The route's exception for this mode tested
+`!Object.keys(pages).length`, assuming an empty object would arrive. Nothing
+posts one — the wizard names its rows `pages[0][filename]`, so with no rows
+Express never creates the key and `req.body.pages` is `undefined`.
+`validateEachPageInputs` refuses `undefined` with the **same message** and
+was the next wall. Normalised once to `{}` rather than guarded at each use.
+
+**6. `checkCredits` could never reach `quote()`'s own branch.** It read
+`options.siteMode === 'sample' ? 'sample' : 'lead'` — the exact flattening
+`generateRoute.js` carries a long comment about having removed from itself.
+The totals agree at exactly six services, which is why nothing looked wrong,
+and part company everywhere else: the Add-page gate was pricing a seventh
+page for a site whose eleven are fixed.
+
+> **A price that is right by coincidence is still wrong.** It would have
+> stopped coinciding the first time `SERVICE_PAGE` moved.
+
+**7. `strong { color: white }` reached inside a Bootstrap alert.** The page
+stylesheet in `src/views/form.html` carries a list of bare element selectors
+with no scoping. `.alert-warning` sets dark amber on the alert BOX and lets
+the text inherit; **a rule matching a child by name beats inheritance from
+the parent whatever the specificity**. So the headline of "This replaces your
+current website" rendered white on pale amber — 1.11:1, measured — while the
+rest of the same sentence was dark at 7.21:1.
+
+> Fixed with `.alert strong, … { color: inherit }` — `inherit` rather than a
+> colour, so each variant keeps its own.
+
+**8. `suggestServices` returns an object, not an array.** `generate.js` used
+the resolved value as the list. `Array.from()` on an object with no length
+and no iterator is `[]`, **silently** — so the build failed with "expected 6
+services, got 0" about a call that had worked and cost real tokens.
+
+### THE TWO PATTERNS — both appeared twice on 28 October
+
+**A WRAPPER IS NOT ITS PAYLOAD.** Bug 8 was the FOURTH time in this codebase.
+`parseModelJson` returns `{ ok, data }` and was read as the data in
+`suggestServices` itself, in `tools/try-local-options-page.js`, and in
+`askModel` — which sits **forty lines above** the code that then made it
+again, under a comment calling it *"a shape that invites one"*.
+
+> Check the shape at the point it arrives. `if (!suggested ||
+> !Array.isArray(suggested.services)) throw` costs four lines and names the
+> real problem instead of describing a symptom six functions later.
+
+**A STUB IS A CLAIM ABOUT A CONTRACT, AND NOTHING CHECKS THE CLAIM.**
+
+- Bug 8 passed 21 tests because **the suite's stub returned a bare array** —
+  the fake was written from the same misreading as the code, so the two
+  agreed with each other and not with the real function. Fixed by calling the
+  real `suggestServices` with `{ stub: true }`, which returns the genuine
+  shape with no API call.
+- The same day, the chrome suite's path assertions were rewritten to compute
+  expected hrefs **from `linkTo()` itself**. Mutating `linkTo` back to
+  absolute left that suite passing. The render suite caught it because those
+  assertions are **literals** — `href="../assets/site.css"`.
+- And `fakeGenerate()` in the wiring suite omitted `source`, failing a test
+  against correct code.
+
+> **Where a stub can be replaced by the real function, replace it.** Where it
+> cannot, assert at least one literal, so the test and the code cannot move
+> together.
+
+### What this mode costs, measured three times
+
+    six service pages   $0.1607   $0.1641
+    the whole site      $0.1863   (seven calls; the home page is one)
+
+**The margin claim that used to be in `utils/pricing.js` was wrong** — "about
+13 cents against the lead site's 16.5" was built by subtracting one estimate
+from another. The two products cost very nearly the same to generate. The
+price (800, parity with the lead site) was never argued from the margin and
+does not move.
+
+> **A subtraction is not a measurement.**
+
+### The word band is ADVISORY, and it has moved three times
+
+    550-750   the original guess, before anything was written
+    650-850   after twelve pages came in at 616-892
+    780-1000  after six more came in at 785-995
+
+Run 3 against 650-850 had four pages over, mean 879 — the same overshoot as
+run 2 against 550-750, mean 813. **The band did not constrain the output; the
+output followed the band upward.** The 28 October plumbing build measured
+1004-1163, over again.
+
+> A number stated as a whole-page total is spent wherever the model likes.
+> **The only untried fix is per-section counts**, which leave no total to
+> reallocate. Until then the runner's LONG flag means "longer than this trade
+> has produced before", not "wrong".
+
+### The section headings are identical on all six service pages
+
+    What people call about        What to have ready when you call
+    What the visit involves       Hours of operation
+    What affects the cost
+
+Hardcoded in `prompt.js`; only the opening section has `heading: null`. The
+prose underneath IS per-service — four pages checked on 28 October shared no
+sentences and ran 1004-1163 words — but skimming them reads as one template.
+
+**Ratified 27 October and still open.** Three ways out, none taken: let the
+model write the headings, rotate a set per stance, or vary which sections
+appear. Edwin has not chosen.
+
+
+### Still open — as of the evening of 28 October 2026
+
+- **Package 5: the GitHub deploy path.** The only thing between this mode and
+  being sellable. Nothing uploads a finished build anywhere yet — the site
+  sits in `dist/user_<id>/` and is viewed by serving that folder. The
+  one-account-per-client design is written up in the entry below this one.
+- **The business-type list offers trades this mode has no photographs for.**
+  `src/predefined-images/local-website-options/` has seven: concrete-contractor,
+  electrician, painter, paving, plumbing, roofing, tree-service. Edwin picked
+  Appliance Repair on the first real build and got an eleven-page site with
+  four broken `<img>` tags — `heroFiles()` warns and skips, which is right for
+  a library and wrong for a wizard that offered the choice. Either restrict the
+  list in this mode or add the folders.
+- **The section headings repeat on all six service pages.** See above; three
+  options, none chosen.
+- **The word band.** See above; only per-section counts would hold it.
+- **`utils/getCoordinatesFromAddress.js`** sends Nominatim a placeholder
   User-Agent: `'StaticSiteGenerator/1.0 (your@email.com)'`. Nominatim's usage
   policy wants a real identifying string, and that one also carries a retired
   brand name. Worth fixing whoever touches it next
+- **An overnight day breaks `openingHours`.** `render/schema.js`'s
+  `parseHours()` reads "5:00 PM – 1:00 AM" as a backwards range and returns
+  null, so that day is absent from the schema. The page itself is right.
+  "Open 24 hours" is a phrase, not a range, so it drops every day — the
+  correct schema for that is `openingHoursSpecification`, which is not emitted.
+- **No favicon.** `render/chrome.js`'s `document()` emits no
+  `<link rel="icon">`, so generating one would be a file nothing references.
+  The uploaded logo IS used, in the header.
+- **No WordPress export for this mode.** No `content.json` is written and no
+  parity check runs — both describe the generator's structure, which this mode
+  shares none of. It is built to be deployed as static files.
 
 ### The GitHub side — see the entry below this one
 
@@ -1556,6 +1876,237 @@ abandoned account — correct-looking, completely inert, the same shape as the
 Bulk Redirect written with the server's credentials. Enable Web Analytics on
 the project and let Cloudflare issue its own token; never restore a token
 that outlived its account.
+
+## THE PROSE, MEASURED — 28 October 2026, six pages actually written
+
+**`node tools/try-local-options-page.js --all`.** Six service pages for the
+Leander fixture, through `utils/localOptions/prompt.js`. The first time
+anything in this mode produced words rather than assertions.
+
+**THE PREMISE HELD.** Edwin, 26 October: *"What I'm looking is these sites
+look and sound different from the ones we already generate."* They do, and
+it is not a close call — the pages read as a plumber describing his own work
+rather than as a page written about a keyword.
+
+    first person plural throughout      "We start at the tank, supply pipes,
+                                         shutoff valve, drain valve"
+    concrete nouns, unprompted          anode rod, dip tube, trap arm,
+                                         Orangeburg pipe, closet bolts,
+                                         flange height, 12-inch rough-in
+    trade numbers, no invented prices   30 to 60 minutes · 120°F · 3 to 5
+                                         years · 40 to 80 psi · 3 or 4 inches
+    the cost section carried NO figure  on all six, which was the rule most
+                                         likely to break and did not
+
+**THE STANCE ROTATION WORKS, AND IT IS THE THING THAT WOULD HAVE FAILED
+SILENTLY.** Six pages sharing one shape is six pages at risk of sharing one
+opening. The first six words of each:
+
+    noticed                A popping sound from the utility...
+    two-jobs               A sink that drains slowly after...
+    timing                 A pinhole in a copper pipe...
+    what-it-costs-to-wait  A plunger is usually the right...
+    who-calls              People usually call when the toilet...
+    the-house              In older homes around Leander, Cedar...
+
+Six different entries, no repeats. On the blog this is what `crossCheck`'s
+`dupOpenings` exists to catch; here there is no such machinery, which is why
+the runner prints them.
+
+### THREE DEFECTS, AND THE FIRST ONE IS THE PROMPT'S FAULT
+
+**1. ONE SENTENCE APPEARS ON ALL SIX PAGES.**
+
+> *"...are different faults with different bills, even though they sound
+> alike from the next room."*
+
+It is on every page, nearly verbatim. **Because the prompt told it to be.**
+The brief for section 2 reads: *"Then one sentence saying that they are
+different faults with different bills even though they sound alike from the
+next room."*
+
+    A PROMPT THAT DICTATES A SENTENCE GETS THAT SENTENCE, SIX TIMES.
+    THE INSTRUCTION WAS OBEYED EXACTLY. THAT IS THE BUG.
+
+It reads as a house style on one page and as a template on six. The fix is to
+describe the JOB — *"close by saying these are different faults with
+different costs, in your own words"* — and never hand it a phrase. The same
+error is available anywhere a brief quotes the output it wants.
+
+**2. "HOURS, AND THE AREA WE COVER" IS THE SAME BLOCK SIX TIMES.** Same
+hours, same four towns, same street, same number, differing only in which
+symptom the final sentence names. Six pages of a small site carrying one
+duplicated paragraph is the footprint problem this app fights everywhere
+else — and the page ALREADY HAS AN HOURS TABLE and a NAP strip, which is why
+the brief says "written as a sentence rather than a list".
+
+Decide before package 4 ships: either cut the section and let the table
+carry it, or give it a per-service job — *what you need ready before you
+call about THIS* — so it earns its place.
+
+**3. THE SPELLING DRIFTED BRITISH.** "odour", "discoloured", "ageing", "grey
+water" — on a Texas address, against an instruction that says to match it.
+The instruction is one line among twenty and it lost. Either make it an
+explicit "US spelling" flag derived from the country, or check it after the
+fact; "match the address given" asks the model to infer a rule it will
+sometimes get wrong.
+
+**AND A FOURTH, SMALLER:** two of six overshot the 550–750 band (754, 803).
+Not worth a rule yet — but `qualityCheck.js` should see this band when
+package 4 lands.
+
+### THE COST, AND IT CORRECTS A NUMBER THIS MODE WAS PRICED ON
+
+    6 pages   $0.1607 total   $0.0268 each
+
+**THE 13 CENTS IN THE ENTRY ABOVE IS WRONG.** That figure was built by
+subtraction — the main generator's measured 16.5 cents, minus the FAQ, the
+reviews, the case study and the service cards, which came to four cents
+between them. It assumed the six service pages cost what the main
+generator's six cost. They do not: **this prompt reasons harder.**
+
+    reasoning tokens, per page:  1536 · 512 · 512 · 1536 · 1341 · 470
+    output tokens, per page:     2548 · 1664 · 1489 · 2639 · 2350 · 1630
+
+Between 29% and 60% of output is reasoning, and it varies by a factor of
+three across six calls of the same prompt. **16 cents for the service pages
+alone**, before the home page, the contact page and `suggestServices`.
+
+    A SUBTRACTION IS NOT A MEASUREMENT.
+    THE FIRST TWO COST ANSWERS THIS PROJECT PRODUCED WERE ALSO ARITHMETIC
+    ON NUMBERS FROM SOMEWHERE ELSE, AND BOTH WERE WITHDRAWN.
+
+**WHAT THIS DOES AND DOES NOT CHANGE.**
+
+- **The price is unaffected.** 800 credits, derived from the lead site.
+  Parity was a positioning decision, not a cost-plus one — Edwin: *"let's
+  leave it as the same price as the one built with the generator."*
+- **The margin claim IS affected.** "13 cents against 16.5 for the same page
+  count" is written into `utils/pricing.js`, into the DECIDED entry above,
+  and into the runbook. On this evidence the two modes cost about the same,
+  and this one may cost more. **Nobody should repeat the 13-cent figure.**
+- **It is still a 30x return** on model cost at $8.00, which is what actually
+  matters.
+
+**AND ONE SAMPLE OF SIX IS NOT A MEASUREMENT EITHER.** It is one trade, one
+business, one fixture, one afternoon. The honest statement is a range
+measured once, not a cost. Re-run it on another trade before writing a
+number into anything.
+
+### THE BUG IN THE TOOL, WHICH COST 3.5 CENTS TO FIND
+
+The first run printed `undefined` for every field, `0 words`, and the verdict
+`SHORT` — about a page the model had written correctly and the script had
+thrown away.
+
+**`parseModelJson()` RETURNS `{ ok, data, repaired, error }`, NOT THE
+OBJECT.** Its return value was used as the page. The contract was inferred
+from the function's name instead of read, which is the one rule this file
+asks for by name: *read the code before describing what it does.*
+
+The tool now reads `parsed.data`, checks that the five expected keys are
+present, and **prints the model's own words** when either fails. A row of
+`undefined` is visible; a tool that silently reports a good page as empty is
+not.
+
+### THE SECOND RUN — 28 October, after the three fixes
+
+Same command, same fixture, after the repeated sentence, the spelling and
+the duplicated hours section were all changed. **All three fixes landed, and
+the run surfaced two things that were invisible in the first one.**
+
+**THE DICTATED SENTENCE IS GONE.** Six different closings for section 2,
+none of them the phrase the old brief supplied:
+
+    "Each source leaves water in roughly the same place, but the repair is
+     not the same."
+    "...may look similar from the room, but the pipe involved, access needed,
+     and corrective work can be entirely different."
+    "The same water mark can have very different causes, repair steps, and
+     material needs."
+
+**BUT THE SHAPE SURVIVED THE SENTENCE.** All six still close section 2 with
+a *these-look-alike-but-differ* construction, because the brief still asks
+for exactly that point. Six wordings is better than one sentence six times;
+it is not six different ideas.
+
+    REMOVING A DICTATED PHRASE REMOVES THE PHRASE.
+    THE BRIEF STILL DICTATES THE MOVE.
+
+Not worth another pass yet — the duplication is no longer visible to a
+reader — but it is the ceiling on what rewording a brief can achieve.
+
+**THE SPELLING HELD.** "labor", "odor", "discoloration" throughout. No
+"odour", no "ageing", no "grey". Stating the dialect beat asking the model
+to infer it from an address.
+
+**THE NEW SECTION IS GENUINELY PER-SERVICE**, which is what it was for:
+
+    water heater   model and serial on the data plate, side of the tank or
+                   behind a front panel on a tankless unit
+    drain          which room and fixture, where the cleanout is, whether
+                   water is standing now
+    leak           whether the meter moves with everything off; a photo of
+                   the wet area
+    toilet         the number inside the tank near the back wall or under
+                   the lid
+    sewer          where the cleanout is, an ejector pump's model number,
+                   and DO NOT remove a damaged cap or open a sewer access
+    repiping       the construction date, and a pressure regulator's model
+                   number if there is one
+
+Nothing in that table transfers to another page. That is the test it passes
+and the old hours section failed.
+
+### THE TWO NEW FINDINGS
+
+**1. THE DUPLICATION MOVED. IT DID NOT LEAVE.**
+
+The hours section is gone, and all six openings now end with a near-identical
+hours clause:
+
+    "...during our Monday through Saturday hours"
+    "...call us during business hours"
+    "We are available Monday through Saturday"
+    "...during scheduled Monday-through-Saturday appointments"
+    "Call us during our Monday through Saturday hours"
+    "...during our Monday through Saturday schedule"
+
+**Because the opening brief says to "end by saying plainly that this business
+does this work and roughly how soon".** Given no dedicated hours section, the
+model put the hours there instead.
+
+    CUT A SECTION THAT REPEATS AND THE REPETITION FINDS ANOTHER SECTION.
+    IT IS THE BRIEF THAT REPEATS, NOT THE SECTION.
+
+The fix is in the opening brief, not in a new rule about hours: it should ask
+for what makes THIS service urgent or routine, and leave scheduling to the
+table and the footer. **The same correction applies to the closing call to
+action**, which has started converging on *"Call (512) 555-0164 rather than
+waiting if…"* across three of the six.
+
+**2. THE LENGTH BLEW THE BAND.** Four of six are over 750 words, one by 19%:
+
+    892 · 792 · 865 · 734 · 857 · 739     band 550-750
+
+The previous run had two over. The new section added roughly 150 words and
+nothing was taken out to pay for it. Either widen the band to 600-900 and
+mean it, or say in the brief that the new section is three or four sentences.
+**Do not leave a band in the prompt that the output ignores** — an unenforced
+number teaches whoever reads it next that the numbers here are decorative.
+
+### THE COST, SECOND SAMPLE — IT AGREES
+
+    run 1   $0.1607 total   $0.0268 each
+    run 2   $0.1641 total   $0.0273 each
+
+Two independent runs within 2% of each other. **Sixteen cents for the six
+service pages** is now a measurement rather than one sample, on this trade.
+The 13-cent figure built by subtraction is wrong by about a quarter, and the
+correction above stands.
+
+Reasoning tokens still swing hard — 463 to 1522 across six calls of one
+prompt — so the per-page figure is a range, not a number.
 
 ## RUNBOOK — moving a domain to a new Cloudflare account and serving one page
 

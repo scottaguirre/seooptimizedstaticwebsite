@@ -131,11 +131,46 @@ function isDialablePhone(value) {
 }
 
 // 3. Validate Global Fields
-function validateGlobalFields(global) {
+function validateGlobalFields(global, options = {}) {
+  /* THE DOMAIN IS A DIFFERENT FIELD IN ONE MODE — 29 October.
+   *
+   * Local Website Options publishes the site itself, to a GitHub account
+   * that already has a domain on it, so the customer PICKS one from a list
+   * instead of typing it: `domainId`, the id of a row in the pool.
+   *
+   * REQUIRING 'domain' REGARDLESS IS WHAT BROKE THE FIRST BUILD THROUGH THE
+   * NEW FORM. The picker worked, the choice was stored, and the server
+   * refused with "Missing required global fields" — naming no field, because
+   * the field it wanted was one the form no longer renders.
+   *
+   *     A REQUIRED-FIELD LIST THAT DOES NOT KNOW THE MODE
+   *     ASKS FOR A BOX THAT IS NOT ON THE SCREEN.
+   *
+   * The wizard's own list learned this when the picker was built. This one
+   * is the same rule in the second of its three places, and the third is the
+   * review card.
+   *
+   * THE MODE IS PASSED IN, NOT READ OFF `global`, AND THAT IS THE SECOND
+   * MISTAKE ON THE SAME LINE. The first version read `global.siteMode` — and
+   * the body does not reliably have it there. generateRoute.js resolves it
+   * as `req.body.global?.siteMode ?? req.body['global[siteMode]']`, because
+   * the form arrives in two shapes depending on how it was posted. So in the
+   * shape that uses bracketed keys, `global.siteMode` is undefined, this read
+   * as "not that mode", and the build was refused exactly as before.
+   *
+   *     THE ROUTE HAD ALREADY WORKED OUT THE ANSWER AND I ASKED THE
+   *     QUESTION AGAIN, IN A PLACE WITH LESS INFORMATION.
+   *
+   * It falls back to `global.siteMode` for callers that have it — the
+   * suites, and anything that composes a global object itself. */
+  const picksDomain = 'localoptions' === String(
+    options.siteMode || global.siteMode || ''
+  ).trim();
+
   const requiredGlobalFields = [
     'businessName',
     'businessType',
-    'domain',
+    picksDomain ? 'domainId' : 'domain',
     'phone',
     'address',
     'location',
@@ -502,6 +537,11 @@ function resolveThemeCss(styleKey) {
 
 const { quote } = require('./pricing');
 
+/* Beside `quote`, because the credits section is the only part of this file
+ * that knows what a site mode is. seoPresets requires nothing but slugify,
+ * so there is no cycle to route around here. */
+const { normalizeSiteMode } = require('./seoPresets');
+
 function countPages(pagesData) {
   if (Array.isArray(pagesData)) return pagesData.length;
   if (pagesData && typeof pagesData === 'object') return Object.keys(pagesData).length;
@@ -526,7 +566,32 @@ function checkCredits(user, pagesData, opts = {}) {
   // argument. Anything numeric is ignored rather than silently mispricing.
   const options = (typeof opts === 'object' && opts !== null) ? opts : {};
 
-  const siteMode = options.siteMode === 'sample' ? 'sample' : 'lead';
+  /* THE REAL MODE GOES THROUGH TO quote(), AND UNTIL 28 OCTOBER IT DID NOT.
+   *
+   * This line read `options.siteMode === 'sample' ? 'sample' : 'lead'` — the
+   * exact flattening that routes/generateRoute.js carries a long comment
+   * about having removed from itself. It was harmless while the only other
+   * mode was Rank Fast, which quote() prices identically to Rank GBPs.
+   *
+   * Local Website Options is not priced identically. quote() has a branch
+   * for it that returns a FLAT price for a FIXED six service pages, and this
+   * line meant that branch could never be reached from here — so the price
+   * came from the lead formula and moved with however many rows were posted.
+   *
+   * The totals agree at exactly six, which is why nothing looked wrong:
+   * 200 + 6 x 100 is 800 either way. They part company everywhere else. The
+   * Add page button asks this endpoint to price one more row, and for a mode
+   * whose eleven pages are fixed it was answering 900 — a price for a page
+   * the renderer will not write.
+   *
+   * A PRICE THAT IS RIGHT BY COINCIDENCE IS STILL WRONG. It was going to
+   * stop coinciding the first time SERVICE_PAGE moved.
+   *
+   * normalizeSiteMode() rather than a pass-through: a mode this does not
+   * recognise must land on 'lead' and not on `undefined`, which quote()
+   * would read as its own default and price the same but for no stated
+   * reason. */
+  const siteMode = normalizeSiteMode(options.siteMode);
   const pagesCount = countPages(pagesData);
   const locationPages = Math.max(0, Number(options.locationPages) || 0);
 
@@ -538,8 +603,25 @@ function checkCredits(user, pagesData, opts = {}) {
 
   const available = Number(user?.credits || 0);
 
-  // A sample needs no service pages; a lead-generation site does.
-  const hasEnoughPages = siteMode === 'sample' ? true : pagesCount > 0;
+  /* A sample needs no service pages; a lead-generation site does.
+   *
+   * AND NEITHER DOES LOCAL WEBSITE OPTIONS, for a different reason: it needs
+   * six and the customer supplies none of them. There is no service-pages
+   * step in that wizard — utils/suggestServices.js names them — so `pages`
+   * arrives empty and `pagesCount > 0` was answering ok:false.
+   *
+   * WHICH THE WIZARD READS AS "cannot afford it". /api/check-credits returns
+   * this object to the review step, and the comment in fetchQuote() there
+   * says plainly that it computes affordability itself BECAUSE ok:false also
+   * means "no service pages yet" — a different thing. So the visible symptom
+   * would not have been an error at all; the Generate button would simply
+   * have priced the site and then the POST would have been refused.
+   *
+   * A MODE WHOSE PAGE SET IS FIXED CANNOT BE SHORT OF PAGES. Both modes on
+   * this line are that, and the condition now says so rather than listing
+   * 'sample' and meaning something narrower. */
+  const FIXED_PAGE_SET = ['sample', 'localoptions'];
+  const hasEnoughPages = FIXED_PAGE_SET.includes(siteMode) ? true : pagesCount > 0;
 
   return {
     ok: hasEnoughPages && available >= total,
@@ -643,5 +725,19 @@ module.exports = {
   // directly rather than only through the validator.
   parsePlace,
   samePlace,
-  isDialablePhone
+  isDialablePhone,
+
+  /* THE STATE CODES THIS APP ACCEPTS FROM A CUSTOMER.
+   *
+   * Exported so utils/localOptions/address.js can validate its State box
+   * against the SAME set the towns list is validated against. It was private
+   * to this file, and a second copy in that one would have been a third list
+   * of states in the codebase — utils/getFullStateName.js already holds its
+   * own, for turning "TX" into "Texas" in prose.
+   *
+   * THE TWO DISAGREE, AND IT IS WORTH KNOWING WHERE: this set has DC, that
+   * table does not. So a Washington DC business can type its state here and
+   * then reads "" wherever the full name is printed. One table to widen,
+   * whenever that matters — not two, and now not three. */
+  US,
 };

@@ -46,6 +46,70 @@ function withoutComments(src) {
 
 const JS = withoutComments(RAW);
 
+/**
+ * The main form's markup, as a given mode renders it.
+ *
+ * WHY THE TEMPLATE IS EVALUATED RATHER THAN GREPPED.
+ *
+ * renderMainForm() builds one template literal with five mode conditionals
+ * nested in it, and whether a control reaches the page is the product of all
+ * of them. Matching source text answers "is there a conditional", which is
+ * not the question — it passes just as happily when a sixth control is added
+ * with no conditional at all, and it cannot see a stranded <hr>.
+ *
+ * So the literal is cut out of the file and evaluated with the handful of
+ * things it closes over stubbed. That is a narrow, brittle trick and it is
+ * the honest one here: it tests the HTML the customer is served.
+ *
+ * It depends on renderMainForm containing exactly one `block.innerHTML =`
+ * template literal. If that stops being true this throws rather than
+ * quietly measuring the wrong string.
+ */
+function mainFormHtml(siteMode, businessType = 'Plumbing') {
+  const from = RAW.indexOf('function renderMainForm(');
+  assert.notStrictEqual(from, -1, 'renderMainForm() has been renamed or removed');
+
+  const at = RAW.indexOf('block.innerHTML = `', from);
+  assert.notStrictEqual(at, -1, 'renderMainForm no longer builds one innerHTML template');
+
+  const open = RAW.indexOf('`', at);
+
+  /* The matching close, counting ${ } so a nested literal does not end it. */
+  let i = open + 1;
+  let depth = 0;
+  let end = -1;
+
+  while (i < RAW.length) {
+    const c = RAW[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === '`' && depth === 0) { end = i; break; }
+    if (c === '$' && RAW[i + 1] === '{') { depth += 1; i += 2; continue; }
+    if (c === '}' && depth > 0) { depth -= 1; i += 1; continue; }
+    i += 1;
+  }
+
+  assert.notStrictEqual(end, -1, 'the main form template literal is unterminated');
+
+  const render = new Function(
+    'state', 'isLocalOptions', 'canHavePricingTable', 'canHaveBadges',
+    `return ${RAW.slice(open, end + 1)};`
+  );
+
+  const html = render(
+    { siteMode, businessType },
+    () => siteMode === 'localoptions',
+    () => true,
+    () => true
+  );
+
+  /* HTML COMMENTS STRIPPED, because they are part of the output string and
+   * they are long. A comment EXPLAINING why a control was removed contains
+   * that control's name, so `html.includes('trustClaims')` matched the
+   * explanation and reported the field still present. Found by running the
+   * check and not believing the answer. */
+  return html.replace(/<!--[\s\S]*?-->/g, '');
+}
+
 /** The body of a top-level function in the wizard, comments stripped. */
 function bodyOf(name) {
   const at = JS.indexOf(`function ${name}(`);
@@ -99,8 +163,25 @@ test('each step heading numbers itself from its own constant', () => {
   // Hard-coding "6." and "7." is how the numbers drift apart from the order
   // the wizard actually walks.
   assert.ok(/stepNumber\(STEP\.PAGES\)\}\. Service Pages/.test(RAW));
-  assert.ok(/stepNumber\(STEP\.LOCATIONS\)\}\. Location Pages/.test(RAW));
+
+  /* THE NUMBER IS WHAT THIS TEST IS ABOUT, NOT THE WORDS.
+   *
+   * It read `stepNumber(STEP.LOCATIONS)}. Location Pages` and failed on 28
+   * October, when that heading became conditional: Local Website Options
+   * builds no location pages and calls the step "Service Area", because the
+   * towns it collects are the area in the footer and the schema rather than
+   * pages anybody is charged for.
+   *
+   * ASSERTING THE TITLE WOULD HAVE BEEN THE WRONG FIX IN EITHER DIRECTION.
+   * Pinning both titles makes this a test about captions that fails every
+   * time one is reworded; deleting the line gives up the only thing it was
+   * ever guarding, which is that the number comes from the constant and not
+   * from somebody counting the steps by hand. So it asserts the interpolation
+   * and the full stop, and says nothing about what follows them. */
+  assert.ok(/stepNumber\(STEP\.LOCATIONS\)\}\. /.test(RAW),
+    'the locations heading no longer numbers itself from STEP.LOCATIONS');
 });
+
 
 /* -------------------------------------------------------------------------
  * The rule: every way out of a step saves that step
@@ -481,15 +562,231 @@ test('every step\'s button row asks for that spacing by name', () => {
   }
 });
 
+/** One top-level function of the wizard, as source, for evaluating. */
+function fnSource(name) {
+  const found = JS.match(new RegExp(`\\n  function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
+  assert.ok(found, `${name}() has been renamed, reshaped or reindented`);
+  return found[0];
+}
+
+/** stepNumber(), evaluated for a mode: { MODE: 1, TYPE: 2, ... }. */
+function stepNumbers(siteMode) {
+  const STEP = {
+    MODE: 0, TYPE: 1, LOGO: 2, DESIGN: 3,
+    MAIN: 4, PAGES: 5, LOCATIONS: 6, REVIEW: 7,
+  };
+
+  const make = new Function('STEP', 'isLocalOptions',
+    `${fnSource('hiddenSteps')}\n${fnSource('stepNumber')}\nreturn stepNumber;`);
+
+  const stepNumber = make(STEP, () => siteMode === 'localoptions');
+
+  return Object.fromEntries(Object.entries(STEP).map(([k, v]) => [k, stepNumber(v)]));
+}
+
 test('THE STEP NUMBERS ON SCREEN COME FROM THE ORDER, NOT FROM TYPING', () => {
   /* Design reads "4." and Review reads "8." because they are index 3 and 7
    * of an eight-step wizard. Hardcoding either is how "1. Global Information"
-   * stayed wrong after a step was inserted in front of it. */
-  assert.ok(/function stepNumber\(step\)\s*\{\s*return step \+ 1;/.test(JS),
-    'stepNumber no longer derives the visible number from the index');
+   * stayed wrong after a step was inserted in front of it.
+   *
+   * THIS PINNED THE SOURCE — `return step + 1;` — AND FAILED ON 28 OCTOBER,
+   * when a mode started skipping a step and the number had to account for
+   * it. Pinning an implementation is how a test fails on a change that was
+   * correct, so it now EVALUATES the function instead and checks the numbers
+   * the customer reads. That is both stricter and less brittle: the old
+   * version would have passed `return step + 1 - 1`. */
+  const normal = stepNumbers('rankfast');
+
+  assert.deepStrictEqual(normal, {
+    MODE: 1, TYPE: 2, LOGO: 3, DESIGN: 4,
+    MAIN: 5, PAGES: 6, LOCATIONS: 7, REVIEW: 8,
+  });
 
   // And no heading types its own number.
   assert.ok(!/<h[34][^>]*>\s*\d+\.\s/.test(JS), 'a step heading hardcodes its number');
+});
+
+test('and they close the gaps where steps are skipped', () => {
+  /* Local Website Options skips THREE of the eight: Design (one structure,
+   * passed as a literal), Service Pages (the model names them) and Location
+   * Pages (the gazetteer names the towns).
+   *
+   * WITH THE STEPS GONE AND THE NUMBERS LEFT ALONE, the customer would walk
+   * 1, 2, 3, 5, 8 — gaps exactly where the steps they were never shown would
+   * have been, which reads as steps that failed to load. */
+  const local = stepNumbers('localoptions');
+
+  assert.strictEqual(local.MODE, 1);
+  assert.strictEqual(local.TYPE, 2);
+  assert.strictEqual(local.LOGO, 3);
+  assert.strictEqual(local.MAIN, 4, 'Global Information still numbers itself 5');
+  assert.strictEqual(local.REVIEW, 5, 'Review still numbers itself 8');
+
+  /* Every visible step, once, with no gaps. The assertions above would all
+   * pass if two steps shared a number. */
+  const shown = Object.entries(local)
+    .filter(([name]) => !['DESIGN', 'PAGES', 'LOCATIONS'].includes(name))
+    .map(([, n]) => n);
+
+  assert.deepStrictEqual(shown.slice().sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+});
+
+test('this mode is five steps: mode, type, logo, details, review', () => {
+  /* THE WHOLE SHAPE OF THE PRODUCT, IN ONE ASSERTION. Everything else about
+   * this mode's wizard is a detail of one of these five; if a sixth appears
+   * or one of them goes, it should be a deliberate edit here. */
+  assert.ok(/isLocalOptions\(\) \? \[STEP\.DESIGN, STEP\.PAGES, STEP\.LOCATIONS\] : \[\]/.test(JS),
+    'the set of skipped steps has changed');
+});
+
+test('a step this mode does not have is stepped past, in both directions', () => {
+  /* Handled inside go() rather than at the call sites, because
+   * `go(STEP.DESIGN)` appears in the logo step's Next AND the main form's
+   * Back, and will appear again the next time somebody links to a step. */
+  const body = bodyOf('go');
+
+  assert.ok(/hiddenSteps\(\)\.includes\(index\)/.test(body),
+    'go() will render a step this mode does not have');
+
+  /* THE DIRECTION COMES FROM WHERE WE ARE. Without it, Back out of the main
+   * form steps up to the main form again and the button looks broken. */
+  assert.ok(/index >= current \? index \+ 1 : index - 1/.test(body),
+    'go() steps past a hidden step in one direction only');
+});
+
+test('the skipped steps are gone from the review too', () => {
+  /* The steps themselves stay in the steps array — it is asserted above to
+   * match the constants in order, and Beacon will bring Design back for this
+   * mode. They are unreachable, not deleted.
+   *
+   * THE REVIEW CARDS CARRY AN EDIT LINK TO THEIR STEP, and go() steps past a
+   * hidden one — so a card for a skipped step is a button that does nothing,
+   * beside a row reporting a choice nobody made. */
+  const review = bodyOf('renderReviewStep');
+  const at = review.indexOf("reviewCard('Design'");
+
+  assert.notStrictEqual(at, -1, 'the Design card is gone for every mode');
+  assert.ok(/isLocalOptions\(\)/.test(review.slice(Math.max(0, at - 200), at)),
+    'the Design card is shown in the mode that has no Design step');
+
+  /* The service-pages and location-pages cards go the same way, and are
+   * REPLACED rather than simply dropped: this screen is the only one that
+   * says what is about to be built, and leaving the page count off it
+   * because the customer did not choose it is how somebody presses Generate
+   * expecting the site they are used to. */
+  const pagesAt = review.indexOf('Service pages (');
+  assert.notStrictEqual(pagesAt, -1, 'the service pages card is gone for every mode');
+  assert.ok(/isLocalOptions\(\)/.test(review.slice(Math.max(0, pagesAt - 900), pagesAt)),
+    'the service pages card is shown in the mode that has no such step');
+
+  assert.ok(/Eleven pages/.test(review),
+    'this mode no longer says on the review step how many pages it builds');
+  assert.ok(/chosen\s+for this trade/.test(review),
+    'the review step does not say where the six services come from');
+});
+
+test('no submit guard points at a step this mode skips', () => {
+  /* THE ONE THAT BROKE THE FIRST REAL BUILD, and it broke twice.
+   *
+   * The form's submit handler carries four guards that refuse and then call
+   * go(STEP.PAGES) or go(STEP.LOCATIONS) so the customer can fix what is
+   * wrong. With those steps skipped, go() steps past the target and lands
+   * them somewhere else — Edwin got "Please add at least one service page"
+   * and was returned to Global Information, a screen with nothing on it to
+   * correct, about a step that is not in that wizard.
+   *
+   * "at least one service page" lived in THREE places: the pages step's own
+   * Next, routes/generateRoute.js, and the submit handler. Fixing two of
+   * three was worse than fixing none — the two that were right made the
+   * third look like a different bug. */
+  assert.ok(/hasPagesStep = !hiddenSteps\(\)\.includes\(STEP\.PAGES\)/.test(JS),
+    'the service-page guard no longer asks whether that step exists');
+  assert.ok(/hasLocationsStep = !hiddenSteps\(\)\.includes\(STEP\.LOCATIONS\)/.test(JS),
+    'the locations guard no longer asks whether that step exists');
+
+  assert.ok(/if \(hasPagesStep && pagesVals\.length === 0\)/.test(JS),
+    'the submit handler still refuses a build with no service rows in every mode');
+
+  /* state.addLocations DEFAULTS TO TRUE — the toggle ships on — so a mode
+   * with no locations step reads as "locations are switched on and there
+   * are none" unless this is forced false. That was the next wall, one
+   * guard behind the first. */
+  assert.ok(/const addLoc = !hasLocationsStep\s*\n?\s*\? false/.test(JS),
+    'addLoc still trusts state in a mode that never showed the toggle');
+});
+
+test('and no badge reports a choice this mode never offered', () => {
+  /* "Design 1" sat above a form that had never asked a design question, for
+   * a value runLocalOptions discards in favour of 'ledger'. */
+  const body = bodyOf('contextBadges');
+
+  assert.ok(/hiddenSteps\(\)\.includes\(STEP\.DESIGN\)/.test(body),
+    'the theme badge is shown in a mode with no Design step');
+});
+
+test('the owner name and the intro video are off this form too', () => {
+  /* Both describe a page this mode does not build: there is no About page
+   * for a founder, and none of the eleven embeds a video. */
+  const local = mainFormHtml('localoptions');
+  const other = mainFormHtml('rankfast');
+
+  for (const field of ['includeOwner', 'ownerName', 'youtubeVideoUrl']) {
+    assert.ok(!local.includes(field), `${field} is still on the Local Website Options form`);
+    assert.ok(other.includes(field), `${field} has been removed from every mode`);
+  }
+});
+
+test('but the social profiles stay, because the footer renders them', () => {
+  /* THE OPPOSITE CASE, AND THE REASON IT IS WORTH A TEST BESIDE THE ONES
+   * ABOVE. Every control cut from this form was cut for having nowhere to
+   * go. These six had somewhere to go and were not getting there — a wiring
+   * gap, fixed in socialFrom() rather than by deleting the question. */
+  const local = mainFormHtml('localoptions');
+
+  for (const field of ['facebookUrl', 'instagramUrl', 'youtubeUrl',
+    'twitterUrl', 'pinterestUrl', 'linkedinUrl']) {
+    assert.ok(local.includes(field), `${field} was removed from the form instead of wired up`);
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * The domain
+ * ---------------------------------------------------------------------- */
+
+test('THE DOMAIN IS PICKED FROM A LIST HERE, AND TYPED EVERYWHERE ELSE', () => {
+  /* Local Website Options publishes the site itself, to a GitHub account
+   * that already has a domain pointed at it. Asking the customer to type
+   * one would be asking them to name somewhere the app cannot put
+   * anything. */
+  const local = mainFormHtml('localoptions');
+  const other = mainFormHtml('rankfast');
+
+  assert.ok(local.includes('name="global[domainId]"'), 'no picker on this form');
+  assert.ok(!local.includes('name="global[domain]"'), 'the typed box is still here');
+
+  assert.ok(other.includes('name="global[domain]"'), 'the typed box went from every mode');
+  assert.ok(!other.includes('name="global[domainId]"'), 'the picker leaked into another mode');
+});
+
+test('and the picker is a select, not a text box with a datalist', () => {
+  /* A datalist still accepts anything typed, which is the thing being
+   * removed. The value has to be one of the rows or none. */
+  const local = mainFormHtml('localoptions');
+
+  assert.ok(/<select[^>]*name="global\[domainId\]"/.test(local));
+  assert.ok(local.includes('required'), 'a site with nowhere to go can be submitted');
+});
+
+test('IT STARTS WITH A PLACEHOLDER THAT HAS NO VALUE', () => {
+  /* The list arrives from /api/site-domains a moment after the step is
+   * drawn. An option with a value in the meantime is a choice somebody
+   * could submit before the real ones exist. */
+  const local = mainFormHtml('localoptions');
+
+  const placeholder = local.match(/<option value="">([^<]*)<\/option>/);
+
+  assert.ok(placeholder, 'no empty-valued placeholder');
+  assert.match(placeholder[1], /Loading/);
 });
 
 /* -------------------------------------------------------------------------
@@ -963,6 +1260,190 @@ test('and the dashboard card says it too', () => {
    * people looking at the site they are about to lose. */
   assert.ok(/Generating a new website replaces this one/.test(AUTH),
     'the dashboard card does not mention that a new build replaces it');
+});
+
+/* -------------------------------------------------------------------------
+ * Local Website Options — the fourth mode
+ *
+ * It is the first mode whose PAGE COUNT IS NOT THE CUSTOMER'S DECISION, and
+ * almost everything below follows from that one fact. utils/pricing.js
+ * charges a flat 800 whatever is posted, so every control that could change
+ * the count is a control that could sell a page the renderer never writes.
+ * ---------------------------------------------------------------------- */
+
+test('the mode is on the list, and the list is still just a list', () => {
+  assert.ok(/value: 'localoptions'/.test(JS), 'the mode is not offered');
+  assert.ok(/title: 'Local Website Options'/.test(JS));
+
+  /* FOUR ENTRIES AND NOTHING COUNTS THEM. The step renders from SITE_MODES,
+   * so a fifth mode is a fifth entry — the comment above the array has
+   * promised that since there were two, and this is what keeps the promise
+   * true. */
+  const list = JS.slice(JS.indexOf('const SITE_MODES'), JS.indexOf('function isLocalOptions'));
+  assert.strictEqual((list.match(/value: '/g) || []).length, 4);
+});
+
+
+test('the address is four typed boxes in this mode and one free-text box otherwise', () => {
+  const body = bodyOf('renderMainForm');
+
+  for (const field of ['street', 'city', 'state', 'zip']) {
+    assert.ok(new RegExp(`name="global\\[${field}\\]"`).test(body),
+      `the ${field} box is missing`);
+  }
+
+  /* BOTH FORMS ARE PRESENT AND THE CHOICE IS MADE AT RENDER TIME. The single
+   * Address box has to survive for the other three modes — deleting it was
+   * the easy way to make the new boxes work and it would have taken the
+   * address off every other site this app builds. */
+  assert.ok(/name="global\[address\]"/.test(body), 'the free-text Address box is gone');
+  assert.ok(/isLocalOptions\(\)/.test(body), 'the main form does not know which mode it is in');
+});
+
+test('the boxes that are not used are not rendered, rather than hidden', () => {
+  /* A hidden input carrying `required` fails checkValidity() in the Next
+   * handler, so Next refuses and points at a box nobody can see. That is why
+   * these are conditional MARKUP rather than conditional CSS — and the other
+   * mode-dependent fields on this step, the owner name and Near Me, ARE done
+   * with display:none, which is what makes the distinction worth a test
+   * rather than a comment.
+   *
+   * Asserted on the text BETWEEN the ternary and the input, so it fails if
+   * somebody converts these four to the display:none form the fields above
+   * them use. */
+  const body = bodyOf('renderMainForm');
+
+  const at = body.indexOf('name="global[street]"');
+  assert.notStrictEqual(at, -1, 'the street box is gone');
+
+  const before = body.slice(Math.max(0, at - 300), at);
+
+  assert.ok(/isLocalOptions\(\) \?/.test(before),
+    'the street box is not inside the mode ternary');
+  assert.ok(!/display:none/.test(before),
+    'the address boxes are hidden with CSS instead of left unrendered');
+  assert.ok(/required/.test(body.slice(at, at + 200)),
+    'the street box is no longer required, so an empty one reaches the server');
+});
+
+test('Main Location is not asked twice', () => {
+  /* City and State already say where the business is. Asking again is how
+   * the two answers come back different, and the route composes `location`
+   * as "City, ST" from the parts. */
+  const body = bodyOf('renderMainForm');
+  const at = body.indexOf('name="global[location]"');
+
+  assert.notStrictEqual(at, -1, 'the Main Location box is gone for every mode');
+
+  const before = body.slice(Math.max(0, at - 300), at);
+  assert.ok(/isLocalOptions\(\) \? ''/.test(before),
+    'Main Location is still shown in the mode whose City and State replace it');
+});
+
+test('the required-field list follows the boxes that were actually rendered', () => {
+  const body = bodyOf('renderMainForm');
+  const list = body.slice(body.indexOf('const requiredFields'), body.indexOf('const inputs'));
+
+  assert.ok(/global\[street\]/.test(list) && /global\[zip\]/.test(list));
+  assert.ok(/global\[address\]/.test(list) && /global\[location\]/.test(list));
+  assert.ok(/isLocalOptions\(\)/.test(list),
+    'one list validates both forms, so one of them is unchecked');
+});
+
+test('a filled box of the wrong shape gets its own message', () => {
+  /* "Please fill out ZIP code" about a box with 7864 in it reads as a bug in
+   * the form. The phone number has had its own message for this reason since
+   * 8 October; the state and ZIP now do too. */
+  const body = bodyOf('renderMainForm');
+
+  assert.ok(/two-letter state code/.test(body));
+  assert.ok(/5-digit ZIP code/.test(body));
+
+  /* KEYED BY FIELD. A single `badFormatMessage` variable holds whatever
+   * failed last, which with a bad state AND a bad ZIP points the wrong
+   * message at the focused box. */
+  assert.ok(/badFormat\[field\]/.test(body) && /badFormat\[name\]/.test(body),
+    'the format messages are not keyed by the field they belong to');
+});
+
+test('the controls with nowhere to go are not on this form', () => {
+  /* Edwin, 28 October: remove the Map CID, the price-range table, the
+   * About-page contact form and the Near Me box. The trust badges went with
+   * them, for the same reason.
+   *
+   * FOUR OF THE FIVE DESCRIBE THE ABOUT PAGE, and this mode has no About
+   * page — its eleven are home, six services, contact and three legal. The
+   * fifth, the Map CID, feeds the LocalBusiness schema runGeneration builds;
+   * this mode builds its own in render/schema.js out of the four address
+   * boxes and never reads a CID.
+   *
+   * ASSERTED ON THE MARKUP THE MODE PRODUCES, not on the conditionals.
+   * mainFormHtml() renders the template for a given mode, so this fails if
+   * somebody adds a sixth control or loosens one of the five — which
+   * matching source text would not catch. */
+  const html = mainFormHtml('localoptions');
+
+  /* ASKED AS THE ATTRIBUTE, not as a bare word. `name="global[useNearMe]"`
+   * cannot match prose; `useNearMe` can, and did. */
+  for (const field of [
+    'id="googleMapCid"', 'id="showAboutForm"', 'id="showPricingTable"',
+    'id="showBadges"', 'id="useNearMe"',
+    'name="global[trustClaims]"', 'id="trustClaimsList"',
+  ]) {
+    assert.ok(!html.includes(field),
+      `${field} is still on the Local Website Options form, where it does nothing`);
+  }
+});
+
+test('and all five are untouched for the modes that use them', () => {
+  /* The other half, and the more important one: this was a form cleanup for
+   * ONE mode, not a product change. Rank Fast and Rank GBPs sell the price
+   * table and the Near Me section. */
+  const html = mainFormHtml('rankfast');
+
+  for (const field of [
+    'id="googleMapCid"', 'id="showAboutForm"', 'id="showPricingTable"',
+    'id="showBadges"', 'id="useNearMe"',
+    'name="global[trustClaims]"', 'id="trustClaimsList"',
+  ]) {
+    assert.ok(html.includes(field), `${field} has been removed from every mode`);
+  }
+
+  /* AND THE HORIZONTAL RULES STILL PAIR UP. Five controls came out of the
+   * middle of a run of <hr> separators; the leading rule of each block had
+   * to come out with it. Two rules together is what a stranded one looks
+   * like. */
+  assert.ok(!/<hr>\s*<hr>/.test(html), 'rankfast has two rules with nothing between them');
+  assert.ok(!/<hr>\s*<hr>/.test(mainFormHtml('localoptions')),
+    'Local Website Options has two rules with nothing between them');
+});
+
+test('the review step does not report a choice nobody was offered', () => {
+  /* The rule on the review step is that a choice the customer MADE and the
+   * site will not honour has to be shown. These are the mirror image: not
+   * on the form at all, so a row reading "Price range table: included"
+   * would be the wizard inventing one. */
+  const body = bodyOf('renderReviewStep');
+  const rows = body.slice(body.indexOf("reviewCard('Business Details'"), body.indexOf("reviewCard('Hours'"));
+
+  for (const row of ['Price range table', 'Trust badges', 'Map CID']) {
+    const at = rows.indexOf(`'${row}'`);
+    assert.notStrictEqual(at, -1, `the ${row} row is gone for every mode`);
+    assert.ok(/isLocalOptions\(\)/.test(rows.slice(Math.max(0, at - 320), at)),
+      `the ${row} row is shown in the mode that has no such control`);
+  }
+});
+
+test('the review step shows the address the customer actually typed', () => {
+  /* snapshotValue('address') is blank in this mode: that box is never
+   * rendered, so nothing snapshots it, and the route composes the value
+   * after this screen is gone. A row reading "Address: " about an address
+   * they typed reads as having lost it. */
+  const body = bodyOf('renderReviewStep');
+
+  assert.ok(/isLocalOptions\(\)/.test(body), 'the review step does not know the mode');
+  assert.ok(/snapshotValue\('street'\)/.test(body), 'the street is not on the review step');
+  assert.ok(/snapshotValue\('zip'\)/.test(body), 'the ZIP is not on the review step');
 });
 
 console.log('');

@@ -119,10 +119,15 @@ test('the header offers exactly the destinations it should', () => {
   // "/" ONCE now: the logo. The visible "Build a Website" button moved to the
   // sidebar on 23 September, because with a tools column on the page it was
   // the same action offered twice on one screen.
+  //
+  // "/my-sites" ADDED 30 OCTOBER. The route had been mounted since the editor
+  // was built and nothing in the app linked to it, so the only way in was to
+  // type the URL — which Edwin had been doing all evening without saying so.
+  // A screen nobody can reach is a screen nobody has.
   const html = appHeader(CSRF);
   assert.deepStrictEqual(
     [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]),
-    ['/', '/dashboard', '/buy-credits']
+    ['/', '/dashboard', '/my-sites', '/buy-credits']
   );
   assert.deepStrictEqual(
     [...html.matchAll(/action="([^"]+)"/g)].map(m => m[1]),

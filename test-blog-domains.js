@@ -1096,6 +1096,270 @@ await test('AND NEITHER THE TOKEN NOR THE ACCOUNT ID REACHES THE PAGE', async ()
     'the Cloudflare account id was rendered into the page');
 });
 
+/* =======================================================================
+ * Domains for WEBSITES
+ *
+ * The same pool and the same screen, with a GitHub installation behind the
+ * row instead of a Cloudflare account. The customer's question is identical
+ * — "where does this go?" — so the list is one list.
+ * ==================================================================== */
+
+await test('A WEBSITE DOMAIN IS STORED AGAINST AN INSTALLATION, NOT AN ACCOUNT', async () => {
+  install();
+
+  const out = await call(handler('post', '/admin/blog-domains/site-domains'),
+    req({ body: { domain: 'acme.com', label: 'Acme', githubInstallationId: '176399104' } }));
+
+  assert.strictEqual(out.status, 200);
+
+  assert.strictEqual(db.createdDomain.domain, 'acme.com');
+  assert.strictEqual(db.createdDomain.target, 'github');
+  assert.strictEqual(db.createdDomain.githubInstallationId, '176399104');
+
+  /* NO CLOUDFLARE ACCOUNT ON IT. A GitHub row has none and must not be made
+   * to invent one — the account is required on this model only because
+   * Cloudflare writes the DNS record from it. */
+  assert.ok(!db.createdDomain.account);
+});
+
+await test('and the id has to be digits, not a pasted URL', async () => {
+  /* The likeliest wrong input, and storing one would fail much later
+   * against an endpoint whose path then has a slash in the middle. */
+  install();
+
+  const out = await call(handler('post', '/admin/blog-domains/site-domains'),
+    req({ body: {
+      domain: 'acme.com',
+      githubInstallationId: 'https://github.com/settings/installations/176399104',
+    } }));
+
+  assert.ok(out.html.includes('not an installation id'));
+  assert.strictEqual(db.createdDomain, null, 'it stored a URL as an id');
+});
+
+await test('A DOMAIN ALREADY IN THE POOL IS REFUSED, WHICHEVER KIND IT IS', async () => {
+  /* One row per domain. Two rows pointing at different accounts is an
+   * ambiguity made permanent: whichever the lookup returned would decide
+   * where a site went, and the two would disagree between builds. */
+  install({ domains: [{ _id: 'dom-1', domain: 'acme.com', account: 'acct-3' }] });
+
+  const out = await call(handler('post', '/admin/blog-domains/site-domains'),
+    req({ body: { domain: 'acme.com', githubInstallationId: '1' } }));
+
+  assert.ok(out.html.includes('already in the pool'));
+  assert.strictEqual(db.createdDomain, null);
+});
+
+await test('a subdomain is refused, because sites are served BENEATH the domain', async () => {
+  /* acme.com/quality-plumbing/ is the shape. A subdomain here would put
+   * every site two levels down. */
+  install();
+
+  const out = await call(handler('post', '/admin/blog-domains/site-domains'),
+    req({ body: { domain: 'sites.acme.com', githubInstallationId: '1' } }));
+
+  assert.ok(out.html.includes('not a domain we can use'));
+  assert.strictEqual(db.createdDomain, null);
+});
+
+await test('THE SCREEN SAYS WHICH KIND EACH ROW IS', async () => {
+  /* Two shapes in one table. Without a column saying which, a GitHub row
+   * reads as a Cloudflare row whose account has gone missing. */
+  install({
+    domains: [
+      { _id: 'd1', domain: 'acmehvac.com', account: 'acct-3', enabled: true },
+      { _id: 'd2', domain: 'acme.com', target: 'github',
+        githubInstallationId: '176399104', enabled: true },
+    ],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('websites'), 'no marker on the GitHub row');
+  assert.ok(out.html.includes('blogs'), 'no marker on the Cloudflare row');
+  assert.ok(out.html.includes('installation 176399104'));
+});
+
+/* ------------------------------------------------------------------------
+ * What the row says about its own GitHub setup
+ * --------------------------------------------------------------------- */
+
+section('WHETHER THE SETUP HAS BEEN RUN');
+
+await test('A DOMAIN NOBODY HAS SET UP SAYS SO, AND OFFERS THE BUTTON', async () => {
+  /* The button used to look identical on a domain set up an hour ago and
+   * one never touched — which is the question Edwin asked of it: "I
+   * thought I had already done the first one. Will the set up GitHub
+   * button always show up?" It did, on every row, because the row knew
+   * nothing. */
+  install({
+    domains: [{ _id: 'd1', domain: 'acme.com', target: 'github',
+      githubInstallationId: '176399104', enabled: true }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('not set up'));
+  assert.ok(out.html.includes('Set up GitHub'));
+  assert.ok(!out.html.includes('Run again'));
+});
+
+await test('and one that finished says when, and offers a re-run instead', async () => {
+  install({
+    domains: [{ _id: 'd1', domain: 'acme.com', target: 'github',
+      githubInstallationId: '176399104', enabled: true,
+      githubSetupAt: new Date('2026-10-31T00:00:00Z'), githubSetupOk: true }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('set up'), 'the row does not say it is set up');
+  assert.ok(out.html.includes('Run again'));
+  assert.ok(!out.html.includes('>Set up GitHub<'));
+});
+
+await test('A RUN THAT DID NOT ATTACH THE DOMAIN SAYS PENDING, NOT DONE', async () => {
+  /* The job has two halves and only one of them is GitHub's. The custom
+   * domain depends on DNS at a registrar this app has never heard of, and
+   * commonly fails the first time — so "it ran" and "it finished" are
+   * different facts, and a row that said "set up" for both would be the
+   * same lie the old button told by saying nothing. */
+  install({
+    domains: [{ _id: 'd1', domain: 'acme.com', target: 'github',
+      githubInstallationId: '176399104', enabled: true,
+      githubSetupAt: new Date('2026-10-31T00:00:00Z'), githubSetupOk: false }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('domain pending'));
+  assert.ok(out.html.includes('Run again'));
+});
+
+await test('and a Cloudflare row has no GitHub column content at all', async () => {
+  install({
+    domains: [{ _id: 'd1', domain: 'acmehvac.com', account: 'acct-3', enabled: true }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(!out.html.includes('not set up'));
+  assert.ok(!out.html.includes('setup-github'));
+});
+
+/* ------------------------------------------------------------------------
+ * The table fitting on the screen
+ * --------------------------------------------------------------------- */
+
+section('THE TABLE HAS TO FIT');
+
+/** The domains table alone — the page draws an accounts table above it. */
+function domainsTable(html) {
+  const from = html.indexOf('>Domains<');
+  assert.ok(from > 0, 'the Domains heading is not on the page');
+
+  const open = html.indexOf('<table', from);
+  const shut = html.indexOf('</table>', open);
+
+  assert.ok(open > 0 && shut > open, 'there is no domains table');
+
+  return html.slice(open, shut);
+}
+
+await test('AN ACCOUNT NAME WITH NO SPACES IN IT IS ALLOWED TO WRAP', async () => {
+  /* 31 October: the GitHub column was pushed off the right of the screen
+   * with its button cut in half. The cause was not the number of columns —
+   * it was one cell holding
+   * "vickishomecarellc.com-aguirreseconds@gmail.com", a string with no
+   * space in it, which a browser will not break. That one cell set a
+   * minimum width nothing else could argue with.
+   *
+   *     A TABLE DOES NOT OVERFLOW BECAUSE IT HAS TOO MANY COLUMNS.
+   *     IT OVERFLOWS BECAUSE ONE CELL REFUSES TO GET NARROWER.
+   *
+   * There is no layout engine here to measure against, so what is checked
+   * is that the cell carries the class that permits the break. */
+  install({
+    domains: [{
+      _id: 'd1',
+      domain: 'vickishomecarellc.com',
+      label: 'vickishomecarellc.com',
+      account: 'acct-3',
+      enabled: true,
+    }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+  const table = domainsTable(out.html);
+
+  assert.ok(/<td[^>]*\bcol-tight\b/.test(table),
+    'the account cell cannot wrap, so a long address pushes the row sideways');
+});
+
+await test('and the cell holding the button is told never to wrap', async () => {
+  /* The opposite instruction, in the same breath: a control broken across
+   * two lines reads as broken software. */
+  install({
+    domains: [{ _id: 'd1', domain: 'acme.com', target: 'github',
+      githubInstallationId: '176399104', enabled: true }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+  const table = domainsTable(out.html);
+
+  assert.ok(/<td[^>]*\bcol-actions\b/.test(table), 'the button cell may wrap');
+});
+
+await test('THE HEADER AND THE ROW AGREE ON HOW MANY COLUMNS THERE ARE', async () => {
+  /* The status and the button were two columns saying one thing about one
+   * subject, and merging them meant deleting a <th> elsewhere in the file.
+   * A row with more cells than headings does not throw — it draws a column
+   * with no name over it, which is how the GitHub column came to be the
+   * nameless one squeezed off the end. */
+  install({
+    domains: [
+      { _id: 'd1', domain: 'acme.com', target: 'github',
+        githubInstallationId: '176399104', enabled: true },
+      { _id: 'd2', domain: 'acmehvac.com', account: 'acct-3', enabled: false },
+    ],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+  const table = domainsTable(out.html);
+
+  const head = table.slice(table.indexOf('<thead'), table.indexOf('</thead>'));
+  const heads = (head.match(/<th\b/g) || []).length;
+
+  assert.ok(heads > 0, 'the table has no headings at all');
+
+  const body = table.slice(table.indexOf('<tbody'));
+  const rows = body.split('<tr>').slice(1);
+
+  assert.strictEqual(rows.length, 2, 'the two domains did not both draw a row');
+
+  for (const row of rows) {
+    const cells = (row.match(/<td\b/g) || []).length;
+
+    assert.strictEqual(cells, heads,
+      `a row draws ${cells} cells under ${heads} headings`);
+  }
+});
+
+await test('and the table is allowed to scroll rather than be clipped', async () => {
+  /* The floor, not the fix. col-tight is what keeps it fitting; this is
+   * what makes the day somebody adds a ninth column a scroll bar, rather
+   * than a button nobody can reach with nothing on the page admitting it
+   * is there. */
+  install({
+    domains: [{ _id: 'd1', domain: 'acme.com', target: 'github',
+      githubInstallationId: '176399104', enabled: true }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('table-responsive'), 'an overflow would be clipped');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
 

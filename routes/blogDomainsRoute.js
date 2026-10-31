@@ -50,6 +50,8 @@ const { withAppHeader } = require('../utils/appHeader');
 const { pageTitle } = require('../utils/pageTitle');
 const { log } = require('../utils/logger');
 
+const { setupDomain } = require('../utils/github/setupDomain');
+
 const router = express.Router();
 
 function esc(value) {
@@ -304,16 +306,80 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
       </tr>`;
     }).join('');
 
+    /* TWO KINDS OF ROW IN ONE TABLE — 29 October, when Local Website
+     * Options needed the same "pick one from a list" that blogs have had
+     * since this pool was built. The question a customer answers is
+     * identical, so the list is one list and the row says what is behind
+     * it: a Cloudflare account, or a GitHub installation. */
     const domainRows = domains.map((d, i) => {
-      const owner = byId.get(String(d.account));
+      const github = 'github' === d.target;
+
+      const owner = github
+        ? `installation ${esc(d.githubInstallationId || '—')}`
+        : esc((byId.get(String(d.account)) || {}).label || '— account missing —');
 
       return `
       <tr>
         <td class="rownum">${i + 1}</td>
         <td><code>${esc(d.domain)}</code></td>
-        <td class="text-white-50">${esc(d.label || '')}</td>
-        <td class="text-white-50">${esc(owner ? owner.label : '— account missing —')}</td>
+        <td class="text-white-50 col-tight">${esc(d.label || '')}</td>
+        <td>${github
+          ? '<span class="badge bg-dark">websites</span>'
+          : '<span class="badge bg-secondary">blogs</span>'}</td>
+        ${/* col-tight — 31 October. An account here is commonly one
+              unbroken word: an email address, or
+              `Aguirre_Negro:https://southbayhomeinspections.com`. A
+              browser will not break a word, so this one cell set a
+              minimum width nothing could argue with and shoved the GitHub
+              column off the right of the screen. The class lets it wrap
+              mid-word when it has to. */''}
+        <td class="text-white-50 col-tight">${owner}</td>
         <td>${d.enabled ? '' : '<span class="badge bg-secondary">off the list</span>'}</td>
+
+        <!-- SET UP GITHUB — 30 October. Creating <login>.github.io, giving
+             it a page, turning Pages on and attaching the domain were four
+             steps done by hand on github.com, once per client. That is
+             three chances to miss one and a fourth to do the wrong thing
+             to the right repository — which is what happened on the 29th,
+             when the repository deleted was the root site rather than the
+             test project under it, and every site on the domain went down
+             at once.
+
+             A BUTTON RATHER THAN PART OF ADDING THE DOMAIN. Four GitHub
+             calls would make the Add form slow, and a failure part-way
+             would save the domain with a half-built account behind it and
+             report the error on a form you had already left.
+
+             SAFE TO PRESS TWICE, which is the property that makes a retry
+             button worth having: a repository that exists is found, Pages
+             already on answers 409, and a domain already attached is
+             attached again to the same value. -->
+        <!-- WHAT THE ROW KNOWS ABOUT ITS OWN SETUP — 31 October. The button
+             used to look identical on a domain set up an hour ago and one
+             never touched, which is the question Edwin asked of it: "I
+             thought I had already done the first one."
+
+             THE DATE IS WHAT THE ROW STORES, NOT WHAT GITHUB SAYS. Asking
+             GitHub would be four calls per domain on every page load, to
+             grey out a button that is safe to press anyway. -->
+        ${/* THE STATUS AND THE BUTTON SHARE ONE CELL — 31 October. They
+              were two columns, which is two columns' worth of padding and
+              two chances to be squeezed, to say one thing about one
+              subject. Stacked rather than side by side, the column is as
+              wide as the button and no wider. */''}
+        <td class="text-end col-actions">${github ? `
+          <div class="small mb-1">${d.githubSetupAt
+            ? `${d.githubSetupOk
+                ? '<span class="badge bg-success">set up</span>'
+                : '<span class="badge bg-warning text-dark">domain pending</span>'}
+               <span class="text-white-50 ms-1">${esc(new Date(d.githubSetupAt).toDateString())}</span>`
+            : '<span class="badge bg-secondary">not set up</span>'}</div>
+
+          <form method="post" action="/admin/blog-domains/${d._id}/setup-github">
+            ${res.locals.csrfField || ''}
+            <button class="btn btn-sm btn-outline-light" type="submit">${
+              d.githubSetupAt ? 'Run again' : 'Set up GitHub'}</button>
+          </form>` : ''}</td>
       </tr>`;
     }).join('');
 
@@ -420,10 +486,19 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
         <h2 class="h4 mt-5 mb-3">Domains</h2>
 
         ${domains.length ? `
+        ${/* table-responsive — 31 October, as the floor rather than the
+              fix. col-tight is what stops this table overflowing; this is
+              what makes an overflow SCROLL instead of being clipped, on
+              the day somebody adds a ninth column or opens it on a phone.
+              A table that runs off the screen hides the controls at its
+              right-hand end, and nothing on the page says they are
+              there. */''}
+        <div class="table-responsive">
         <table class="table table-navy align-middle">
-          <thead><tr><th></th><th>Domain</th><th>Label</th><th>Account</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Domain</th><th>Label</th><th>For</th><th>Account</th><th></th><th class="text-end">GitHub</th></tr></thead>
           <tbody>${domainRows}</tbody>
-        </table>` : '<p class="text-white-50">No domains yet.</p>'}
+        </table>
+        </div>` : '<p class="text-white-50">No domains yet.</p>'}
 
         ${accounts.length ? `
         <form method="post" action="/admin/blog-domains/domains" class="row g-2">
@@ -453,7 +528,53 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
             will not write the DNS record and the customer is back to
             pasting a CNAME.
           </div>
-        </form>` : ''}`,
+        </form>` : ''}
+
+        <!-- A DOMAIN FOR WEBSITES, WHICH IS A DIFFERENT THING BEHIND THE
+             SAME QUESTION.
+
+             A blog domain names a Cloudflare account and the customer adds
+             a prefix: hvac.acmehvac.com. A website domain names a GITHUB
+             INSTALLATION and the customer adds nothing — the site is served
+             at the domain followed by the business name,
+             acme.com/quality-plumbing/, because one GitHub account serves
+             one domain with many sites beneath it.
+
+             SO IT IS A SECOND FORM RATHER THAN A DROPDOWN ON THE FIRST. The
+             two have one field in common and three that differ, and a form
+             that changes shape by a select is a form where half the fields
+             are wrong at any moment. -->
+        <h2 class="h4 mt-5 mb-3">A domain for websites</h2>
+
+        <form method="post" action="/admin/blog-domains/site-domains" class="row g-2">
+          ${res.locals.csrfField || ''}
+          <div class="col-md-4">
+            <label class="form-label" for="siteDomain">Domain</label>
+            <input class="form-control" id="siteDomain" name="domain" required maxlength="253"
+                   placeholder="acme.com" spellcheck="false">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="siteLabel">Label</label>
+            <input class="form-control" id="siteLabel" name="label" maxlength="120"
+                   placeholder="Acme">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="installation">GitHub installation</label>
+            <input class="form-control" id="installation" name="githubInstallationId"
+                   required inputmode="numeric" placeholder="176399104">
+          </div>
+          <div class="col-md-1 d-flex align-items-end">
+            <button class="btn btn-outline-light" type="submit">Add</button>
+          </div>
+          <div class="form-text text-white-50">
+            The installation id is the number at the end of
+            <code>github.com/settings/installations/&lt;id&gt;</code> after the
+            App is installed on that client's account, or whatever
+            <code>tools/github-check.js</code> prints. The account's own
+            <code>&lt;login&gt;.github.io</code> repository must carry this
+            domain, or the sites will only answer on github.io.
+          </div>
+        </form>`,
     }));
 
   } catch (err) {
@@ -918,7 +1039,93 @@ router.post('/admin/blog-domains/accounts/:id/delete', requireAdmin, async (req,
 });
 
 /* -------------------------------------------------------------------------
- * Adding a domain
+ * Adding a domain for WEBSITES
+ *
+ * A separate handler from the blog one below, for the same reason it is a
+ * separate form: the two share one field and differ in three. Folding them
+ * together would mean a validator whose rules depend on a flag, which is
+ * where "required unless" conditions go to rot.
+ *
+ * THE INSTALLATION IS NOT VERIFIED AGAINST GITHUB HERE, and that is a
+ * decision rather than an omission. Checking it means an App JWT and a call
+ * to github.com from an admin form — a screen that then fails to load a
+ * domain list because GitHub is slow. The number is checked for SHAPE; a
+ * wrong one fails at publish with "the App was uninstalled", which names
+ * the problem well enough and happens where the work is.
+ * ---------------------------------------------------------------------- */
+
+router.post('/admin/blog-domains/site-domains', requireAdmin, async (req, res) => {
+  try {
+    const domain = normaliseDomain(req.body.domain);
+    const installationId = String(req.body.githubInstallationId || '').trim();
+
+    if (!domain) {
+      return problem(res, 'That is not a domain we can use',
+        'It has to be a registrable domain such as acme.com. Sites are '
+        + 'served beneath it — acme.com/quality-plumbing/ — so a subdomain '
+        + 'here would put every site two levels down.');
+    }
+
+    /* DIGITS ONLY. A pasted URL is the likeliest wrong input, and storing
+     * one would fail much later against an endpoint whose path then has a
+     * slash in the middle of it. */
+    if (!/^\d+$/.test(installationId)) {
+      return problem(res, 'That is not an installation id',
+        'It is the number at the end of '
+        + 'github.com/settings/installations/&lt;id&gt; — digits only.');
+    }
+
+    if (await Domain.findOne({ domain })) {
+      return problem(res, 'That domain is already in the pool',
+        'One row per domain. Two rows pointing at different accounts is an '
+        + 'ambiguity made permanent: whichever the lookup returned would '
+        + 'decide where a site went, and the two would disagree between '
+        + 'builds.');
+    }
+
+    await Domain.create({
+      domain,
+      label: String(req.body.label || '').trim(),
+      target: 'github',
+      githubInstallationId: installationId,
+      enabled: true,
+    });
+
+    log.info('blogDomains.siteDomainAdded', {
+      requestId: req.id,
+      domain,
+      installationId,
+    });
+
+    return send(res, page({
+      title: 'Domain added',
+      body: `<h1 class="h3">${esc(domain)} is on the list</h1>
+             <p class="lead">
+               Local Website Options builds can now be published to it. A
+               site called "Quality Plumbing" will be served at
+               <code>${esc(domain)}/quality-plumbing/</code>.
+             </p>
+             <p class="text-white-50">
+               For that to answer, the GitHub account's own
+               <code>&lt;login&gt;.github.io</code> repository has to carry
+               this domain as its custom domain. Until it does, the sites
+               are still published and still reachable on github.io.
+             </p>
+             <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to the pool</a>`,
+    }));
+
+  } catch (err) {
+    log.error('blogDomains.addSiteDomain.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1>We could not add that domain</h1>',
+    }));
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * Adding a domain for BLOGS
  * ---------------------------------------------------------------------- */
 
 router.post('/admin/blog-domains/domains', requireAdmin, async (req, res) => {
@@ -1068,6 +1275,164 @@ router.post('/admin/blog-domains/domains', requireAdmin, async (req, res) => {
       status: 500,
       title: 'Something went wrong',
       body: '<h1>We could not save that domain</h1>',
+    }));
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * Getting a client's GitHub account ready to serve a domain
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The four steps that were done by hand on github.com.
+ *
+ * IT REPORTS RATHER THAN REDIRECTS. Half of this job is DNS, which nothing
+ * here can touch — the A records are at whichever registrar the domain came
+ * from. A flash message saying "done" would be a lie about the half that
+ * was not done, so the answer is a page listing what happened and what is
+ * still owed.
+ */
+router.post('/admin/blog-domains/:id/setup-github', requireAdmin, async (req, res) => {
+  let domain;
+
+  try {
+    domain = await Domain.findById(req.params.id).lean();
+  } catch (_) {
+    domain = null;
+  }
+
+  if (!domain) {
+    return problem(res, 'That domain is not here', 'It may have been removed.');
+  }
+
+  if ('github' !== domain.target || !domain.githubInstallationId) {
+    return problem(res, 'That is not a GitHub domain',
+      'This sets up the root <login>.github.io repository on a client\'s '
+      + 'GitHub account. A Cloudflare domain has nothing for it to do.');
+  }
+
+  try {
+    const out = await setupDomain({
+      installationId: domain.githubInstallationId,
+      domain: domain.domain,
+    });
+
+    /* RECORDED SO THE LIST CAN SAY WHAT HAPPENED. Written after the call
+     * returns, which is also after everything it could do was done — a
+     * setup that threw never reaches here, and one whose custom domain was
+     * refused reaches it with ok false.
+     *
+     * HTTPS IS DELIBERATELY NOT PART OF THIS VERDICT. The certificate is
+     * issued by GitHub an hour after the DNS starts answering, so a setup
+     * that did everything right is ALWAYS waiting on it on the first run.
+     * Folding that into "ok" would mark every correct setup as failed and
+     * teach whoever reads the list to ignore the column. */
+    await Domain.updateOne(
+      { _id: domain._id },
+      { $set: { githubSetupAt: new Date(), githubSetupOk: !!(out.pages.ok && out.custom.ok) } }
+    ).catch(err => log.error('blogDomains.setupGithub.recordFailed', err, {
+      requestId: req.id, domainId: String(domain._id),
+    }));
+
+    log.info('blogDomains.setupGithub', {
+      requestId: req.id,
+      domain: out.domain,
+      repo: `${out.owner}/${out.repo}`,
+      created: out.created,
+      page: out.page,
+      pagesOk: out.pages.ok,
+      customOk: out.custom.ok,
+      httpsOk: out.https.ok,
+      certState: out.https.state || '',
+    });
+
+    const rows = (label, type, host, values) => `
+      <tr><td class="text-white-50">${esc(label)}</td><td><code>${esc(type)}</code></td>
+      <td><code>${esc(host)}</code></td>
+      <td>${values.map(v => `<code>${esc(v)}</code>`).join('<br>')}</td></tr>`;
+
+    send(res, page({
+      title: `Set up ${out.domain}`,
+      body: `
+        <h1 class="h3 mb-3">${esc(out.domain)}</h1>
+
+        <p class="lead text-white-50">
+          <code>${esc(out.owner)}/${esc(out.repo)}</code> is the root site.
+          Every site on this domain is served beneath it.
+        </p>
+
+        <h2 class="h5 mt-4 mb-2">What happened on GitHub</h2>
+        <ul class="text-white-50">
+          <li>Repository: ${out.created ? 'created' : 'already there'}</li>
+          <li>Holding page: ${'created' === out.page
+            ? 'added, because the repository was empty'
+            : 'left alone — there was already a page on it'}</li>
+          <li>Pages: ${out.pages.ok
+            ? (out.pages.already ? 'was already on' : 'turned on')
+            : `<span class="text-warning">not on — ${esc(out.pages.error)}</span>`}</li>
+          <li>Custom domain: ${out.custom.ok
+            ? `set to <code>${esc(out.custom.domain)}</code>`
+            : `<span class="text-warning">not set — ${esc(out.custom.error)}</span>`}</li>
+          <li>Enforce HTTPS: ${out.https.ok
+            ? (out.https.already ? 'was already on' : 'turned on')
+            : '<span class="text-warning">not yet</span>'}${out.https.note
+              ? `<br><span class="small">${esc(out.https.note)}</span>`
+              : ''}</li>
+        </ul>
+
+        <h2 class="h5 mt-4 mb-2">What has to be done at the registrar</h2>
+        <p class="text-white-50">
+          GitHub has no say in DNS, so this is the half nothing here can do.
+          The A records are the ones that matter; the AAAA records are
+          optional and the <code>www</code> one is only needed if the domain
+          should answer with it.
+        </p>
+
+        <table class="table table-navy align-middle">
+          <thead><tr><th></th><th>Type</th><th>Host</th><th>Value</th></tr></thead>
+          <tbody>
+            ${rows('Apex', out.dns.apex.type, out.dns.apex.host, out.dns.apex.values)}
+            ${rows('Apex, IPv6', out.dns.apexIpv6.type, out.dns.apexIpv6.host, out.dns.apexIpv6.values)}
+            ${rows('www', out.dns.www.type, out.dns.www.host, [out.dns.www.value])}
+          </tbody>
+        </table>
+
+        <p class="text-white-50">
+          If the custom domain did not take, GitHub is usually refusing a
+          domain whose DNS does not point at it yet. Set the records, give
+          them a few minutes, and press the button again — nothing here
+          minds being run twice.
+        </p>
+
+        <p class="text-white-50">
+          HTTPS is the one step that cannot be finished in a single run.
+          GitHub issues the certificate itself once the DNS is answering,
+          which takes anything up to an hour, and there is nothing to
+          enforce until it has. Pressing the button again after that is what
+          ticks it — until then the site answers on
+          <code>http://</code> and a browser will warn about the certificate.
+        </p>
+
+        <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to domains</a>`,
+    }));
+
+  } catch (err) {
+    log.error('blogDomains.setupGithub.failed', err, {
+      requestId: req.id,
+      domainId: req.params.id,
+    });
+
+    /* NOTHING IS HALF-CREATED WHEN THIS BRANCH RUNS. setupDomain() throws
+     * only before it touches anything — a missing installation, or a
+     * permission the client did not grant. Everything after the repository
+     * exists is reported rather than thrown. */
+    send(res, page({
+      status: 500,
+      title: 'Could not set it up',
+      body: `<h1 class="h3">We could not set up that account</h1>
+             <p class="lead text-white-50">${esc(err.message)}</p>
+             <p class="text-white-50">Nothing was created.</p>
+             <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to domains</a>`,
     }));
   }
 });

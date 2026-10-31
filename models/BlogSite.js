@@ -198,6 +198,33 @@ const blogSiteSchema = new mongoose.Schema({
   lastDeployUrl: { type: String, default: '' },
 
   /**
+   * When somebody last changed something the live site does not have yet.
+   *
+   * ADDED 29 October, after Edwin reported two separate "bugs" in one
+   * evening that turned out to be the same thing: he edited an article and
+   * the site did not change, and he set a front page and the site did not
+   * change. Both times the app had told him — on the confirmation page,
+   * once, in a sentence he then navigated away from.
+   *
+   *     THE APP SAYS IT ON THE PAGE YOU ARE LEAVING,
+   *     AND NOWHERE ON THE PAGE YOU COME BACK TO.
+   *
+   * WHY A STAMP ON THE SITE RATHER THAN updatedAt ON THE POST. An article
+   * edit and a front-page change are both "the live site is behind", and
+   * only one of them happens to a post at all — homeSlug lives here. Two
+   * mechanisms answering one question is how they come to disagree.
+   *
+   * ARTICLES WRITTEN since the last deploy are counted separately, from
+   * their own createdAt, because that field already exists and is already
+   * true. Stamping this one from the write batch as well would mean
+   * reaching into blogGenerator for a fact the posts already carry.
+   *
+   * COMPARED AGAINST lastDeployAt, never read alone. A blog that has never
+   * been published is not "behind"; it has not started.
+   */
+  contentChangedAt: { type: Date },
+
+  /**
    * The business's own timezone, as an IANA name. CLOUDFLARE BLOGS ONLY.
    *
    * WHY IT IS STORED RATHER THAN ASKED FOR EACH TIME. A WordPress site

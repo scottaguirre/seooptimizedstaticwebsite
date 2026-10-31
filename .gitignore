@@ -1,5 +1,12 @@
 node_modules/
 .env
+
+# GitHub App private keys. Downloading one from the App's settings page puts
+# it straight in whatever folder the browser saves to, and a committed App key
+# lets anyone act as the App on EVERY installation — all the clients at once.
+# 30 October: one sat in this folder for two days, uncommitted by luck.
+*.pem
+
 dist/
 *.log
 .DS_Store

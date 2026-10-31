@@ -158,6 +158,42 @@ function appHeaderAssets() {
       white-space: nowrap;
       padding-right: .75rem;
     }
+
+    /* A COLUMN WHOSE CONTENT IS ONE UNBROKEN WORD — 31 October, after the
+       GitHub column on /admin/blog-domains was pushed off the right of the
+       screen with its button cut in half.
+
+       THE CAUSE WAS NOT TOO MANY COLUMNS. It was the Account column
+       holding things like "vickishomecarellc.com-aguirreseconds@gmail.com"
+       and "Aguirre_Negro:https://southbayhomeinspections.com" — strings
+       with no space anywhere in them, which a browser will not break. One
+       cell then sets a minimum width nothing else can argue with, and
+       every column to its right is pushed out of the viewport.
+
+       NOTE FOR WHOEVER EDITS THIS BLOCK NEXT: it lives inside a JavaScript
+       template literal, so a backtick here ends the string and breaks the
+       app at require() time. It did, on the first attempt at this comment.
+
+           A TABLE DOES NOT OVERFLOW BECAUSE IT HAS TOO MANY COLUMNS.
+           IT OVERFLOWS BECAUSE ONE CELL REFUSES TO GET NARROWER.
+
+       "anywhere" rather than "break-all": it breaks a long word only when
+       there is no other option, so an account name that DOES contain
+       spaces still wraps at them and stays readable. The ch cap stops the
+       column taking more than its share on a wide window. */
+    .table-navy .col-tight {
+      max-width: 26ch;
+      overflow-wrap: anywhere;
+    }
+
+    /* The opposite instruction, for a cell holding a control: it gets
+       whatever width its content needs and never wraps, because a button
+       split across two lines reads as broken. width:1% is the CSS idiom
+       for "as narrow as your content allows". */
+    .table-navy .col-actions {
+      width: 1%;
+      white-space: nowrap;
+    }
   </style>`;
 }
 
@@ -326,6 +362,13 @@ function appHeader(csrfField = '') {
           <li><hr class="dropdown-divider"></li>
 
           <li><a class="dropdown-item" href="/dashboard">My Dashboard</a></li>
+
+          <!-- MY SITES — 30 October. The route has been mounted since the
+               editor was built and nothing linked to it, so the only way
+               in was to type the URL. A screen nobody can reach is a
+               screen nobody has. -->
+          <li><a class="dropdown-item" href="/my-sites">My Sites</a></li>
+
           <li><a class="dropdown-item" href="/buy-credits">Buy Credits</a></li>
           <li><hr class="dropdown-divider"></li>
           <li>

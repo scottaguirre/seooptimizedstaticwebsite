@@ -191,10 +191,22 @@ test('EVERY DESTRUCTIVE FORM CARRIES A QUESTION', () => {
   /* A form that deletes or revokes something must either ask, or be on a
    * page that is itself the asking. Nothing may simply do it. */
 
-  /* THE ONE EXCEPTION, AND IT IS STRONGER RATHER THAN WEAKER. Deleting a
-   * blog has its own page: it names the blog, says what goes with it, and
-   * makes you TYPE the name. A confirm() box would be a downgrade. */
-  const ASKED_ANOTHER_WAY = ['/static-blogs/${blog._id}/delete'];
+  /* THE EXCEPTIONS, AND THEY ARE STRONGER RATHER THAN WEAKER. Each of these
+   * has a page of its own that names the thing, says what goes with it, and
+   * makes you TYPE the name. A confirm() box would be a downgrade.
+   *
+   * THE LIST IS THE SHAPE, NOT A WAIVER. A form only belongs here when the
+   * page it sits on IS the question — the list it was reached from must
+   * link to that page rather than post from it, which is what keeps a
+   * one-click delete from being added to this array to quiet the suite.
+   *
+   * 30 October: the site delete is the second. It deletes the GitHub
+   * repository, which is the only copy of the site's words, so it asks for
+   * the business name in full. */
+  const ASKED_ANOTHER_WAY = [
+    '/static-blogs/${blog._id}/delete',
+    '/my-sites/${site._id}/delete',
+  ];
 
   const DESTRUCTIVE = /\/(delete|revoke|remove|destroy)\b/;
   const unguarded = [];

@@ -283,11 +283,34 @@ router.get('/dashboard', requireAuth, async (req, res) => {
      * land on after logging in, and it must not fail to render because one
      * optional lookup could not be made. A missed job shows the old card,
      * which is what shipped for months. */
+    /* SITE JOBS ONLY, and this query did not say so until 28 October.
+     *
+     * It asked for ANY queued or running job on the account, and the answer
+     * goes to siteCardState() — which reads it as "a website is being built
+     * right now" and renders the building card. A fifteen-article blog
+     * campaign is one queued job for as long as it takes to write fifteen
+     * posts, so for all of that time the dashboard told the owner their
+     * WEBSITE was being generated. It was not.
+     *
+     * THE SAME OMISSION AS routes/generateRoute.js's guard, found the same
+     * afternoon and from the other end: there a running campaign REFUSED the
+     * build, here it misreports one. The lastSiteJob lookup directly below
+     * has always restricted to `kind: 'site'`, and that is what made this
+     * one's absence worth looking for.
+     *
+     * 'build' IS NOT A SITE BUILD EITHER. A production zip runs over a site
+     * that already exists, so the card should show that site rather than a
+     * progress bar over the top of it. */
     let activeJob = null;
     try {
       activeJob = await Job.findOne({
         user: req.session.userId,
         status: { $in: ACTIVE },
+        $or: [
+          { kind: 'site' },
+          // Rows written before `kind` existed are site builds.
+          { kind: { $exists: false } },
+        ],
       }).sort({ createdAt: -1 }).lean();
     } catch (err) {
       log.error('dashboard.activeJob.failed', err, { requestId: req.id });
@@ -636,6 +659,51 @@ ${appSidebar('/dashboard')}
   } catch (err) {
     console.error('Dashboard error:', err);
     res.status(500).send('Error loading dashboard');
+  }
+});
+
+
+/**
+ * GET /api/site-domains — where a Local Website Options site can be put.
+ *
+ * THE WIZARD'S DROPDOWN, AND NOTHING ELSE. The customer picks one and the
+ * build publishes there on its own, to the GitHub account that domain
+ * belongs to.
+ *
+ * THE INSTALLATION ID DOES NOT LEAVE THE SERVER. It is not a secret — it is
+ * useless without the App's private key — but it is also none of the
+ * browser's business: the build looks the row up again by id and reads it
+ * there. Sending it would invite a later version to post it back, and then
+ * the thing deciding where a customer's site goes would be a value the
+ * browser supplied.
+ *
+ *     WHAT THE PAGE NEEDS IS AN ID AND A LABEL.
+ *     WHAT IT IS ASKING ABOUT IS WHERE A SITE GOES.
+ *
+ * DISABLED ROWS ARE NOT OFFERED. Turning a domain off is how a client
+ * leaving is handled — the sites already on it keep serving, and no new one
+ * is pointed at it.
+ */
+router.get('/api/site-domains', requireAuth, async (req, res) => {
+  try {
+    const Domain = require('../models/Domain');
+
+    const rows = await Domain.find({ target: 'github', enabled: true })
+      .select('domain label')
+      .sort({ domain: 1 })
+      .lean();
+
+    res.json({
+      domains: rows.map(row => ({
+        id: String(row._id),
+        domain: row.domain,
+        label: row.label || '',
+      })),
+    });
+
+  } catch (err) {
+    console.error('api/site-domains error:', err);
+    res.status(500).json({ error: 'Could not load the domains' });
   }
 });
 

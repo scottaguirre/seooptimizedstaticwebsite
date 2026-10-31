@@ -46,6 +46,7 @@ const { fillLegalLinks } = require('../utils/legalLinks');
 const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
 const { MODES, normalizeSiteMode, pagesToBuild } = require('../utils/seoPresets');
+const { localAddress } = require('../utils/localOptions/address');
 
 const CM = require('../utils/contentModel');
 
@@ -165,7 +166,7 @@ router.post('/generate', upload.any(), async (req, res) => {
   let movedUploads = false;
 
   try {
-    const pages = req.body.pages;
+    let pages = req.body.pages;
     const global = req.body.global;
     const showAboutForm = (v => v === true || v === 'true' || v === 'on' || v === '1')(global?.showAboutForm);
 
@@ -181,13 +182,103 @@ router.post('/generate', upload.any(), async (req, res) => {
     // submission no longer destroys the user's previous site.
     // =========================================================
 
-    // Make sure at least one page is submitted and it's submitted the right way
-    if (!pages || typeof pages !== 'object' || Object.keys(pages).length === 0) {
+    // THE site mode for this submission, resolved once.
+    //
+    // This used to be a boolean — `siteMode === 'sample'` — and every use of
+    // it below re-derived a string as `isSample ? 'sample' : 'lead'`. With two
+    // modes that was correct. With three it silently rewrites 'rankfast' as
+    // 'lead' in the credit check, in both log lines and, worst of all, in the
+    // Job record that is this build's permanent history.
+    //
+    // normalizeSiteMode() knows all four and still falls back to 'lead' for
+    // anything unrecognised, so a hand-crafted POST cannot invent a mode.
+    //
+    // A design sample is one page shown to a prospective client. It skips the
+    // service, location and legal pages, the pricing table, the FAQ and the
+    // sitemap — everything that only matters for a published site. Rank Fast
+    // builds all of them; only the SEO formats differ.
+    //
+    // Read from the request rather than globalValues, which does not exist in
+    // this handler at all — generation happens in the background job.
+    //
+    // RESOLVED FIRST, AND IT USED TO BE RESOLVED LAST. "Once" was true and
+    // the position was wrong twice over: the address check below needs the
+    // mode, and so does the pages check immediately after this, which is the
+    // first thing in the handler that can reject a submission. Nothing
+    // between the old position and this one reads it, so moving it changes
+    // nothing for the other three modes.
+    const siteMode = normalizeSiteMode(
+      req.body.global?.siteMode ?? req.body['global[siteMode]']
+    );
+    const isSample = siteMode === MODES.SAMPLE;
+
+    /* Make sure at least one page is submitted and it's submitted the right way.
+     *
+     * EXCEPT WHERE THE CUSTOMER WAS NEVER ASKED.
+     *
+     * Local Website Options has no service-pages step: the model names the
+     * six, so `pages` arrives empty and that is the correct submission. This
+     * guard refused it with "No pages submitted" — a message about a step
+     * that is not in that wizard, on a form with nothing to go back and fix.
+     *
+     * The shape is still checked. An empty object is fine; a string or an
+     * array of nulls is not, in any mode.
+     *
+     * THE COUNT IS NOT TRUSTED FROM HERE EITHER WAY. utils/runLocalOptions.js
+     * asks utils/suggestServices.js for exactly six and throws on anything
+     * else, before it wipes the customer's previous site. */
+    /* ABSENT, NOT EMPTY — and that distinction cost a second attempt.
+     *
+     * The first version of this exception read `!Object.keys(pages).length`
+     * and left the shape check above it alone, on the assumption that an
+     * empty `pages` object would arrive. Nothing posts one. The wizard names
+     * its service rows `pages[0][filename]`, so with no rows there are no
+     * such fields at all and Express never creates the key: `req.body.pages`
+     * is `undefined`, and `!pages` rejected it before the exception below
+     * was ever reached.
+     *
+     * Normalised HERE rather than guarded at each use, because `pages` is
+     * read four more times before this handler ends — validateEachPageInputs
+     * refuses `undefined` with the same message, and would have been the
+     * next wall. One `{}` fixes all of them. */
+    if (pages === undefined && siteMode === MODES.LOCAL_OPTIONS) {
+      pages = {};
+    }
+
+    if (!pages || typeof pages !== 'object') {
       return jsonValidationError(res, 400, '❌ No pages submitted.');
     }
 
-    // Validate global text fields from req.body
-    const validGlobal = validateGlobalFields(global);
+    if (!Object.keys(pages).length && siteMode !== MODES.LOCAL_OPTIONS) {
+      return jsonValidationError(res, 400, '❌ No pages submitted.');
+    }
+
+    /* LOCAL WEBSITE OPTIONS ASKS FOR THE ADDRESS IN FOUR BOXES.
+     *
+     * Its renderer needs street, city, state and ZIP apart — PostalAddress
+     * has a field for each, and a LocalBusiness node with the town sitting
+     * inside streetAddress is read wrong rather than not at all. So that mode
+     * shows four boxes in place of the single Address and Main Location pair,
+     * and both of those strings are composed from them here.
+     *
+     * BEFORE validateGlobalFields(), which requires `address` and `location`
+     * for every mode. Composing first means that function needs no knowledge
+     * of this mode at all, and the four boxes remain the only place the
+     * address is typed. utils/localOptions/address.js records why they are
+     * not split out of one free-text box instead. */
+    if (siteMode === MODES.LOCAL_OPTIONS) {
+      const addr = localAddress(global);
+      if (!addr.ok) {
+        return jsonValidationError(res, 400, addr.error, addr.fields);
+      }
+      global.address = addr.address;
+      global.location = addr.location;
+    }
+
+    /* THE MODE IS HANDED OVER, because this handler has already worked it
+     * out of a body that carries it in one of two shapes — and the domain
+     * field this mode requires depends on it. */
+    const validGlobal = validateGlobalFields(global, { siteMode });
     if (!validGlobal.ok) {
       return jsonValidationError(res, 400, validGlobal.error, validGlobal.fields);
     }
@@ -229,14 +320,51 @@ router.post('/generate', upload.any(), async (req, res) => {
     if (!locOK) return jsonValidationError(res, 400, locError, locFields);
 
 
-    // Reject a second build while one is already queued or running.
-    //
-    // Checks the job collection rather than an in-memory Set: the work no
-    // longer happens in this request, so nothing in memory would know about
-    // it — and a user could otherwise queue ten builds in ten seconds.
+    /* Reject a second build while one is already queued or running.
+     *
+     * Checks the job collection rather than an in-memory Set: the work no
+     * longer happens in this request, so nothing in memory would know about
+     * it — and a user could otherwise queue ten builds in ten seconds.
+     *
+     * `kind` MATTERS, AND LEAVING IT OUT COST A WHOLE BUILD.
+     *
+     * This query asked for ANY queued or running job belonging to the user.
+     * Job.kind has been 'site' | 'blog' | 'build' since the Interlink Engine
+     * shipped, so a fifteen-article blog campaign — one job, queued for as
+     * long as it takes to write fifteen posts — blocked every website build
+     * on the account.
+     *
+     * AND IT DID NOT LOOK LIKE A REFUSAL. The 409 carries a redirect, and
+     * public/js/spinner.js follows it without showing the message. Edwin
+     * approved a campaign, started a site build, was sent to a progress page
+     * and watched a bar fill to 15 of 15 — the campaign's bar, for a site
+     * build that was never created. The articles arrived; the website did
+     * not exist, and nothing anywhere said so.
+     *
+     * The error text was wrong in the same way: "A website is already being
+     * generated for your account" when no website was being generated at
+     * all.
+     *
+     * THE RULE IS NOT "ONE JOB", IT IS "ONE JOB THAT TOUCHES THIS USER'S
+     * BUILD FOLDER", which is what the guard was always for. A site build
+     * wipes and refills dist/user_<id>; a production build copies and zips
+     * that same folder, so a wipe part way through it yields a corrupt
+     * download. Those two must not overlap. A blog campaign writes to Mongo
+     * and to Cloudflare and never opens that folder, so it has no business
+     * being in this query.
+     *
+     * The `$exists: false` arm is for rows written before `kind` existed —
+     * those are site builds, and utils/jobRunner.js's claimNextJob() treats
+     * them the same way for the same reason. */
+    const DIST_KINDS = ['site', 'build'];
+
     const activeJob = await Job.findOne({
       user: req.user._id,
       status: { $in: ['queued', 'running'] },
+      $or: [
+        { kind: { $in: DIST_KINDS } },
+        { kind: { $exists: false } },
+      ],
     }).lean();
 
     if (activeJob) {
@@ -248,28 +376,8 @@ router.post('/generate', upload.any(), async (req, res) => {
       });
     }
 
-    // THE site mode for this submission, resolved once.
-    //
-    // This used to be a boolean — `siteMode === 'sample'` — and every use of
-    // it below re-derived a string as `isSample ? 'sample' : 'lead'`. With two
-    // modes that was correct. With three it silently rewrites 'rankfast' as
-    // 'lead' in the credit check, in both log lines and, worst of all, in the
-    // Job record that is this build's permanent history.
-    //
-    // normalizeSiteMode() knows all three and still falls back to 'lead' for
-    // anything unrecognised, so a hand-crafted POST cannot invent a mode.
-    //
-    // A design sample is one page shown to a prospective client. It skips the
-    // service, location and legal pages, the pricing table, the FAQ and the
-    // sitemap — everything that only matters for a published site. Rank Fast
-    // builds all of them; only the SEO formats differ.
-    //
-    // Read from the request rather than globalValues, which does not exist in
-    // this handler at all — generation happens in the background job.
-    const siteMode = normalizeSiteMode(
-      req.body.global?.siteMode ?? req.body['global[siteMode]']
-    );
-    const isSample = siteMode === MODES.SAMPLE;
+    /* `siteMode` and `isSample` are resolved up beside the validation now,
+     * because the address check needs the mode. They were declared here. */
 
     const startedAt = Date.now();
     log.generation('generation.started', {

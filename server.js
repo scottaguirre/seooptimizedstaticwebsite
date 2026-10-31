@@ -15,6 +15,7 @@ const formRoute = require('./routes/formRoute');
 const authRoute = require('./routes/authRoute');
 const adminRoute = require('./routes/adminRoute');
 const blogDomainsRoute = require('./routes/blogDomainsRoute');
+const mySitesRoute = require('./routes/mySitesRoute');
 const creditsRoute = require('./routes/creditsRoute');
 const suggestServicesRoute = require('./routes/suggestServicesRoute');
 const suggestLocationsRoute = require('./routes/suggestLocationsRoute');
@@ -370,6 +371,12 @@ app.use('/', requireAuth, adminRoute);        // /admin section
  * live API tokens for ten customers' Cloudflare accounts, and requireAuth
  * alone is something every signed-up customer has. */
 app.use('/', requireAuth, blogDomainsRoute);
+
+/* /my-sites — a customer's own published sites, and the only place one can
+ * be edited. Every query inside it is scoped to the signed-in user, so
+ * requireAuth here is the outer door and ownedSite() is the inner one. */
+app.use('/', requireAuth, mySitesRoute);
+
 app.use('/', requireAuth, formRoute);         // /
 app.use('/', requireAuth, generateRoute);     // /generate
 app.use('/', requireAuth, productionRoute);   // /production

@@ -27,6 +27,15 @@ const MODES = {
   RANK_FAST: 'rankfast',
   SAMPLE: 'sample',
   LEAD: 'lead',
+  /* Local Website Options: a fixed eight-page static site plus the three
+   * legal pages, published to GitHub Pages. Named by Edwin, 27 October 2026.
+   *
+   * ONE WORD, NO SEPARATOR, because this string is written into Mongo, read
+   * back by normalizeSiteMode(), compared in templates and posted by a form.
+   * 'local-options' and 'local_options' would both work and the day one of
+   * them is typed in the other place is the day a job quietly builds a lead
+   * site — see DEFAULT_MODE directly below. */
+  LOCAL_OPTIONS: 'localoptions',
 };
 
 // Anything unrecognised builds a full 'lead' site. A malformed request must
@@ -387,9 +396,56 @@ const SAMPLE = Object.assign({}, LEAD, {
   label: 'One-Page Design',
 });
 
+/* Local Website Options.
+ *
+ * WHY IT IS A PRESET AT ALL, when it has its own renderer.
+ *
+ * normalizeSiteMode() validates against PRESETS and falls back to 'lead' for
+ * anything it does not recognise. A mode that is not in this object is not
+ * refused — it is SILENTLY BUILT AS A LEAD SITE, which is the one failure
+ * this file's DEFAULT_MODE comment calls out by name. Being in the list is
+ * what makes the mode real.
+ *
+ * MOST OF THESE FIELDS ARE INERT FOR IT, AND THAT IS NOT A PROBLEM TO SOLVE.
+ * indexMeta, alt and images are read by runGeneration.js, which this mode
+ * does not go through — utils/localOptions/render/ does its own rendering
+ * from its own prompt. They are filled in honestly rather than left out, so
+ * that a reader comparing the four presets is comparing like with like, and
+ * so that nothing reading a preset generically gets undefined.
+ *
+ * Edwin chose this shape over a separate accepted-modes list on 28 October:
+ * one list cannot drift against itself, and two lists that must agree is
+ * exactly the bug recorded in models/Job.js.
+ */
+const LOCAL_OPTIONS = Object.assign({}, LEAD, {
+  key: MODES.LOCAL_OPTIONS,
+  label: 'Local Website Options',
+
+  schema: {
+    /* NO FAQPage, and that is a cost decision as much as a format one. This
+     * mode has no FAQ section, which is what pulls in the People Also Ask
+     * fetch — so it makes no DataForSEO call at all. Edwin, 27 October:
+     * "will these new site use dataforseo?" No, and none is to be designed
+     * in. */
+    faqPage: false,
+    localBusiness: true,
+  },
+
+  links: {
+    interlinks: true,
+    /* ITS OWN RING, named for the mode. The home page shows six services and
+     * links the first three; every other page links on to the next until
+     * contact closes the circle back to home. Neither 'classic' nor
+     * 'rankfast' describes that, and pointing at either would be one edit
+     * away from changing a ring nobody asked to change. */
+    ring: 'localoptions',
+  },
+});
+
 const PRESETS = {
   [MODES.RANK_FAST]: RANK_FAST,
   [MODES.SAMPLE]: SAMPLE,
+  [MODES.LOCAL_OPTIONS]: LOCAL_OPTIONS,
   [MODES.LEAD]: LEAD,
 };
 
@@ -433,6 +489,20 @@ function getPreset(siteMode) {
 const FIXED_PAGES = ['contact', 'privacy-policy', 'terms-of-use', 'accessibility'];
 
 /**
+ * How many service pages a Local Website Options site has. Always this many.
+ *
+ * THE PRICE IS DERIVED FROM THE SAME NUMBER — see utils/pricing.js, where
+ * the total is LEAD_BASE + this × SERVICE_PAGE rather than a flat 800.
+ * Edwin, 28 October, choosing between the two: "derive it." The rule is
+ * parity with the lead site, and a frozen constant records today's answer to
+ * the rule rather than the rule.
+ *
+ * It lives here, beside pagesToBuild(), because "what does this mode build?"
+ * is the question this file answers. pricing.js imports it.
+ */
+const LOCAL_OPTIONS_SERVICE_PAGES = 6;
+
+/**
  * How many pages this build will actually write.
  *
  * This is the denominator on the progress bar, and it used to be computed in
@@ -455,6 +525,22 @@ const FIXED_PAGES = ['contact', 'privacy-policy', 'terms-of-use', 'accessibility
 function pagesToBuild(siteMode, pages, locationCount = 0) {
   // One page, whatever was typed on the steps before it.
   if (normalizeSiteMode(siteMode) === MODES.SAMPLE) return 1;
+
+  /* ELEVEN, AND NOT COUNTED FROM WHAT WAS POSTED.
+   *
+   * Local Website Options has a FIXED page set — home, six service pages,
+   * and the four in FIXED_PAGES. The six service names come from
+   * suggestServices rather than from the wizard, so `pages` is not what this
+   * mode builds and counting it would make the progress bar's denominator
+   * depend on a form field the mode does not read.
+   *
+   * That is the same bug as the sample's "0 of 2": a total computed from
+   * what was typed, for a mode that builds something else. It is written as
+   * an expression rather than 11 so that changing the service count changes
+   * the bar with it. */
+  if (normalizeSiteMode(siteMode) === MODES.LOCAL_OPTIONS) {
+    return 1 + LOCAL_OPTIONS_SERVICE_PAGES + FIXED_PAGES.length;
+  }
 
   const services = pages && typeof pages === 'object' ? Object.keys(pages).length : 0;
   const locations = Math.max(0, Number(locationCount) || 0);
@@ -531,6 +617,7 @@ module.exports = {
   normalizeSiteMode,
   pagesToBuild,
   FIXED_PAGES,
+  LOCAL_OPTIONS_SERVICE_PAGES,
   assetFile,
   assetPath,
   imageAlt,

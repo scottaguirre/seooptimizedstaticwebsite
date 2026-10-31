@@ -845,7 +845,7 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
  * no header, no sidebar, no doctype. The existing suite caught it on the
  * first run, which is the entire reason /static-blogs has a suite.
  */
-function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, serving = null, form = {}, notice = '', status = 200, suggestions = [] }) {
+function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, serving = null, pending = {}, form = {}, notice = '', status = 200, suggestions = [] }) {
   /* `articles` AND `articleCount` ARE NOW DIFFERENT NUMBERS, DELIBERATELY.
    *
    * `articles` is the front-page picker's list: pillar campaigns only,
@@ -1026,9 +1026,21 @@ function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, servin
               </button>`;
     }
     if ('draft' === c.status) {
+      /* TWO WAYS OUT OF A DRAFT, SINCE 29 October. It had one, and it was
+       * "write all of it and charge for them" — so a campaign planned and
+       * thought better of stayed in this table for ever.
+       *
+       * THE DELETE IS THE QUIET ONE. btn-outline-danger beside a filled
+       * primary: both reachable, only one of them the obvious thing to
+       * press. The route refuses anything that is not a draft with no
+       * articles, whatever this column happens to draw. */
       return `<button class="btn btn-sm btn-primary" type="submit"
                       formaction="/static-blogs/${blog._id}/campaigns/${c._id}/approve">
                 Approve &amp; write
+              </button>
+              <button class="btn btn-sm btn-outline-danger ms-2" type="submit"
+                      formaction="/static-blogs/${blog._id}/campaigns/${c._id}/cancel">
+                Delete
               </button>`;
     }
     return '';
@@ -1236,6 +1248,41 @@ function blogPageSpec({ blog, campaigns, articles = [], articleCount = 0, servin
              moment somebody attaches or removes a domain in Cloudflare —
              a thing this app never hears about. Two links cannot go
              stale; one of them simply always works. -->
+
+        ${/* WHAT THE LIVE SITE HAS NOT GOT YET — 29 October, on Edwin's
+              instruction after reporting the same thing as two separate
+              bugs in one evening: an article edited and the site unchanged,
+              a front page set and the site unchanged.
+
+              Both times the app HAD told him. On the confirmation page.
+              Once. In a sentence he then navigated away from, leaving a
+              blog screen that said nothing at all about it.
+
+                  A MESSAGE ON THE PAGE YOU ARE LEAVING IS NOT A STATE.
+                  THE SCREEN YOU COME BACK TO HAS TO CARRY IT.
+
+              DIRECTLY ABOVE THE BUTTON THAT FIXES IT, which is the only
+              placement that turns a notice into an instruction. The same
+              words at the top of the page get read once and scrolled past.
+
+              AND IT SAYS NOTHING WHEN THERE IS NOTHING TO SAY. A permanent
+              "everything is up to date" line stops being read inside a
+              week, and an amber one appearing next to it then reads as more
+              of the same furniture rather than as news. */ ''}
+        ${(pending.posts || pending.edited) ? `
+        <div class="alert alert-warning py-2 px-3 mb-3">
+          <strong>Changes waiting to publish.</strong>
+          ${[
+            pending.posts
+              ? `${pending.posts} ${1 === pending.posts ? 'article has' : 'articles have'} been written`
+              : '',
+            pending.edited ? 'articles or the front page have been changed' : '',
+          ].filter(Boolean).join(', and ')}
+          since this blog was last published. The live site will not show
+          ${pending.posts && pending.edited ? 'them' : 'that'} until you
+          publish again.
+        </div>` : ''}
+
         <p class="text-white-50 mb-2">
           ${blog.lastDeployAt
             ? `Last published ${esc(new Date(blog.lastDeployAt).toUTCString())}.`
@@ -1975,7 +2022,23 @@ async function blogAndCampaigns(req) {
   const blog = await ownedBlog(req);
   if (!blog) return null;
 
-  const campaigns = await BlogCampaign.find({ site: blog._id })
+  /* CANCELLED CAMPAIGNS ARE NOT ON THIS SCREEN — 29 October, with the
+   * Delete button that creates them.
+   *
+   * The row stays in the database, which is the whole reason the status
+   * exists rather than a deleteOne: the report can still say what was
+   * planned and abandoned. But a campaign somebody deleted should not keep
+   * occupying a line of the table that prompted them to delete it.
+   *
+   * FILTERED IN THE QUERY, not after. Everything on this screen reads from
+   * this one list — the table, the fold's count, the pillar filter behind
+   * the front-page picker and the byCampaign lookup — so a filter applied
+   * to the table alone would leave the count disagreeing with the rows it
+   * is counting. */
+  const campaigns = await BlogCampaign.find({
+    site: blog._id,
+    status: { $ne: 'cancelled' },
+  })
     .sort({ createdAt: -1 })
     .select('name status slots createdAt targetPage isPillar')
     .lean();
@@ -2083,7 +2146,32 @@ async function blogAndCampaigns(req) {
    * Articles list moved to its own screen. This is that commit. */
   const articleCount = await BlogPost.countDocuments({ site: blog._id });
 
-  return { blog, campaigns, articles, articleCount, serving };
+  /* WHAT THE LIVE SITE HAS NOT GOT YET — 29 October.
+   *
+   * TWO FACTS, BECAUSE THEY HAVE TWO SOURCES AND BOTH ARE ALREADY TRUE.
+   * Articles written since the last deploy are countable from their own
+   * createdAt. Edits and front-page changes leave nothing on a post, so
+   * they stamp contentChangedAt on the blog instead — see the note on that
+   * field.
+   *
+   * NOT ASKED AT ALL BEFORE THE FIRST PUBLISH. A blog nobody has deployed
+   * is not behind; it has not started, and the publish box already says so
+   * in its own words. Skipping the query is the point: on a first visit
+   * there is nothing to count and no reason to ask. */
+  const freshPosts = deployed
+    ? await BlogPost.countDocuments({
+        site: blog._id,
+        createdAt: { $gt: blog.lastDeployAt },
+      })
+    : 0;
+
+  const pending = {
+    posts: freshPosts,
+    edited: !!(deployed && blog.contentChangedAt
+      && new Date(blog.contentChangedAt) > new Date(blog.lastDeployAt)),
+  };
+
+  return { blog, campaigns, articles, articleCount, serving, pending };
 }
 
 /* -------------------------------------------------------------------------
@@ -2229,6 +2317,7 @@ router.get('/static-blogs/:id', requireAuth, async (req, res) => {
       articles: found.articles,
       articleCount: found.articleCount,
       serving: found.serving,
+      pending: found.pending,
       form: { csrfField: res.locals.csrfField },
     }));
 
@@ -2257,7 +2346,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
     const found = await blogAndCampaigns(req);
     if (!found) return notFound(res);
 
-    const { blog, campaigns, articles, articleCount, serving } = found;
+    const { blog, campaigns, articles, articleCount, serving, pending } = found;
 
     /* WHAT THE PERSON TYPED, CARRIED BACK WHATEVER HAPPENS. A suggestion
      * that cleared the form would cost them the schedule and the campaign
@@ -2328,6 +2417,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
         articles,
         articleCount,
         serving,
+        pending,
         form,
         status: result.code,
         notice: `<div class="alert alert-warning">${esc(result.body.error)}</div>`,
@@ -2370,6 +2460,7 @@ router.post('/static-blogs/:id/suggest', requireAuth, async (req, res) => {
       articles,
       articleCount,
       serving,
+      pending,
       form,
       suggestions: topics,
       notice: `
@@ -2489,6 +2580,107 @@ router.post('/static-blogs/:id/campaigns/:campaignId/approve', requireAuth, asyn
       status: 500,
       title: 'Something went wrong',
       body: `<h1>We could not approve that campaign</h1>
+             <a href="/static-blogs/${esc(req.params.id)}" class="btn btn-primary mt-3">Back</a>`,
+    }));
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * Abandoning a campaign that was planned and never written
+ *
+ * ASKED FOR BY EDWIN, 29 October. A campaign could be planned and then left,
+ * and the table offered it exactly one exit: "Approve & write", which writes
+ * every post in it and charges for them. There was no way to say no.
+ *
+ * CANCELLED, NOT DELETED — and the model decided that long before this route
+ * existed. `status` has carried 'cancelled' and the row `cancelledAt` since
+ * it was written; approveCampaign already refuses a cancelled campaign by
+ * name; reportFilters.js already tells "cancelled halfway, then deleted"
+ * apart from "completed, then removed". Every part of this was here except
+ * the one route that sets it.
+ *
+ * DRAFT ONLY, AND CHECKED TWICE.
+ *
+ * `draft` means nothing written and nothing charged — credits are taken per
+ * slot as each post is claimed — so an abandoned plan costs nothing to
+ * unwind and there is no refund to get wrong.
+ *
+ * The status alone would almost always be enough. The post count is asked
+ * for anyway, because "almost always" is the category this file keeps
+ * finding: a write that died between claiming a slot and moving the
+ * campaign's own status leaves a draft holding real articles, and cancelling
+ * that would strand them behind a status saying there is nothing there.
+ *
+ *     THE BUTTON IS ONLY DRAWN ON A DRAFT. THAT IS NOT THE RULE.
+ *     A POST IS A POST — the same sentence the front-page picker and its
+ *     validator both carry, for the same reason.
+ * ---------------------------------------------------------------------- */
+
+router.post('/static-blogs/:id/campaigns/:campaignId/cancel', requireAuth, async (req, res) => {
+  try {
+    const blog = await ownedBlog(req);
+    if (!blog) return notFound(res);
+
+    /* SCOPED TO THIS BLOG IN THE QUERY, not compared afterwards. A find by
+     * id alone would load somebody else's campaign and then check — and the
+     * check is the line that gets dropped in a refactor. */
+    const campaign = await BlogCampaign.findOne({
+      _id: req.params.campaignId,
+      site: blog._id,
+    }).select('name status').lean();
+
+    if (!campaign) return notFound(res);
+
+    const written = await BlogPost.countDocuments({ campaign: campaign._id });
+
+    if ('draft' !== campaign.status || written) {
+      return send(res, page({
+        status: 409,
+        title: 'Not deleted',
+        body: `<h1 class="h3">This campaign has already started</h1>
+               <p class="lead">
+                 Only a campaign that was planned and never written can be
+                 deleted. This one is
+                 <strong>${esc(campaign.status)}</strong>${
+                   written
+                     ? ` and holds ${written} ${1 === written ? 'article' : 'articles'}`
+                     : ''
+                 }.
+               </p>
+               <p class="text-white-50">
+                 Nothing was changed. Articles that have been written and paid
+                 for are not thrown away by a button on a table.
+               </p>
+               <a href="/static-blogs/${blog._id}" class="btn btn-primary mt-3">Back to the blog</a>`,
+      }));
+    }
+
+    /* THE STATUS IS THE GUARD, IN THE UPDATE ITSELF. Two clicks on a slow
+     * connection, or a click racing an approve in another tab, both arrive
+     * as requests that each passed the check above. Matching on
+     * `status: 'draft'` means the second one changes nothing instead of
+     * cancelling a campaign that is by then writing. */
+    const done = await BlogCampaign.updateOne(
+      { _id: campaign._id, site: blog._id, status: 'draft' },
+      { $set: { status: 'cancelled', cancelledAt: new Date() } }
+    );
+
+    log.info('staticBlogs.campaignCancelled', {
+      requestId: req.id,
+      siteId: String(blog._id),
+      campaignId: String(campaign._id),
+      name: campaign.name || '(untitled)',
+      changed: done.modifiedCount,
+    });
+
+    res.redirect(`/static-blogs/${blog._id}`);
+
+  } catch (err) {
+    log.error('staticBlogs.campaignCancel.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: `<h1>We could not delete that campaign</h1>
              <a href="/static-blogs/${esc(req.params.id)}" class="btn btn-primary mt-3">Back</a>`,
     }));
   }
@@ -3563,6 +3755,21 @@ router.post('/static-blogs/:id/articles/:postId/edit', requireAuth, async (req, 
       sections,
     } });
 
+    /* AND THE SITE IS NOW BEHIND ITS OWN DATABASE — 29 October.
+     *
+     * The page below says "It goes live the next time you publish this
+     * blog", which is true and is said once, on a page the reader then
+     * leaves. Edwin edited an article, looked at the live site, saw the old
+     * words and reported a bug. The app had told him, in a sentence that no
+     * longer existed by the time he needed it.
+     *
+     * STAMPED AFTER THE UPDATE SUCCEEDS, so a failed edit does not leave
+     * the blog claiming changes it does not have. */
+    await BlogSite.updateOne(
+      { _id: blog._id },
+      { $set: { contentChangedAt: new Date() } }
+    );
+
     /* WHAT THE EDIT DID TO THE LINKS, COUNTED BEFORE AND AFTER.
      *
      * The tokens are plain text in a textarea, so they can be deleted by
@@ -3682,9 +3889,17 @@ router.post('/static-blogs/:id/home', requireAuth, async (req, res) => {
       }
     }
 
-    // Empty is a real choice: it means "whichever is oldest", which is also
-    // what an unset blog does.
-    await BlogSite.updateOne({ _id: blog._id }, { $set: { homeSlug: wanted } });
+    /* Empty is a real choice: it means "whichever is oldest", which is also
+     * what an unset blog does.
+     *
+     * contentChangedAt RIDES ALONG IN THE SAME UPDATE — 29 October. Which
+     * article answers at the domain root is part of what gets published, so
+     * changing it puts the live site behind exactly as an article edit does.
+     * Edwin hit both in one evening and reported both as bugs. */
+    await BlogSite.updateOne({ _id: blog._id }, { $set: {
+      homeSlug: wanted,
+      contentChangedAt: new Date(),
+    } });
 
     log.info('staticBlogs.homeSet', {
       requestId: req.id,
