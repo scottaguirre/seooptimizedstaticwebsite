@@ -22,7 +22,8 @@ const assert = require('assert');
 const crypto = require('crypto');
 
 const {
-  setupDomain, rootRepoFor, holdingPage, APEX_A, APEX_AAAA,
+  setupDomain, reprovisionDomain, reRequestCertificate,
+  rootRepoFor, holdingPage, APEX_A, APEX_AAAA,
 } = require('./utils/github/setupDomain');
 
 let passed = 0, failed = 0;
@@ -64,6 +65,9 @@ function hub({
    * lets the GET fail, because a repository with Pages off answers 404 to
    * it and that must not look like a refusal to enforce. */
   certState = '', httpsEnforced = false, pagesGet = 200,
+
+  /* The two halves of a re-check, which fail independently. */
+  clearStatus = 204, restoreStatus = 204,
 } = {}) {
   const calls = [];
   const state = {
@@ -145,6 +149,24 @@ function hub({
     }
 
     if ('PUT' === method && path.endsWith('/pages')) {
+      /* THE CLEAR IS A SEPARATE KNOB FROM THE SET. The interesting failure
+       * is the one where cname:null succeeds and putting it back does not —
+       * the domain is then attached to nothing and every site on it is
+       * down. A single cnameStatus could not express it. */
+      if (null === body.cname && 204 !== clearStatus) {
+        const err = new Error('GitHub: could not clear the custom domain');
+        err.status = clearStatus;
+        err.path = path;
+        throw err;
+      }
+
+      if (null !== body.cname && undefined !== body.cname && 204 !== restoreStatus) {
+        const err = new Error('GitHub: Custom domain is not properly configured');
+        err.status = restoreStatus;
+        err.path = path;
+        throw err;
+      }
+
       if (204 === cnameStatus) {
         if (undefined !== body.cname) state.cname = body.cname;
         if (undefined !== body.https_enforced) state.enforced = body.https_enforced;
@@ -393,6 +415,142 @@ test('and an unreadable Pages setting is reported rather than thrown', async () 
   assert.strictEqual(out.https.ok, false);
   assert.strictEqual(out.custom.ok, true, 'the rest of the setup was thrown away');
   assert.ok(/Could not read/.test(out.https.note));
+});
+
+/* ======================================================================= */
+
+section('MAKING GITHUB LOOK AT THE DNS AGAIN');
+
+/** No real waiting, and a record of how long it was asked to wait. */
+function noWait() {
+  const waited = [];
+  return { pause: async ms => { waited.push(ms); }, waited };
+}
+
+const recheck = (h, over = {}) => {
+  const w = noWait();
+
+  return reprovisionDomain({
+    installationId: 176399104,
+    domain: '7-y.xyz',
+    api: h.api,
+    pause: w.pause,
+    ...APP,
+    ...over,
+  }).then(out => ({ ...out, waited: w.waited }));
+};
+
+test('IT CLEARS THE DOMAIN BEFORE SETTING IT BACK — THAT IS THE WHOLE TRICK', async () => {
+  /* 2-r.net sat on "DNS Check in Progress" for five hours with records that
+   * had been correct the whole time. GitHub checks DNS when the domain is
+   * SET and never again, and the client had set the domain before editing
+   * the registrar.
+   *
+   *     SETTING A VALUE TO WHAT IT ALREADY IS, IS NOT A CHANGE,
+   *     AND ONLY A CHANGE MAKES ANYTHING LOOK AGAIN.
+   *
+   * Which is why "Run again" could not fix it, and why the order of these
+   * two calls IS the feature. */
+  const h = hub({ repoExists: true, hasCommits: true });
+
+  const out = await recheck(h);
+
+  const puts = h.calls
+    .filter(c => 'PUT' === c.method && c.path.endsWith('/pages'))
+    .map(c => c.body.cname);
+
+  assert.deepStrictEqual(puts.slice(0, 2), [null, '7-y.xyz'],
+    'it did not clear the domain before setting it back');
+
+  assert.strictEqual(out.again.ok, true);
+  assert.strictEqual(out.again.restored, true);
+  assert.strictEqual(h.state.cname, '7-y.xyz', 'the domain did not end up back on');
+});
+
+test('and it waits between the two, rather than firing them in one breath', async () => {
+  const h = hub({ repoExists: true, hasCommits: true });
+
+  const out = await recheck(h);
+
+  assert.strictEqual(out.waited.length, 1);
+  assert.ok(out.waited[0] >= 5000, `it waited only ${out.waited[0]}ms`);
+});
+
+test('A CLEAR THAT FAILS CHANGES NOTHING, AND SAYS SO', async () => {
+  /* The comfortable failure: the domain is still attached and the site is
+   * still up. Worth distinguishing from the other one. */
+  const h = hub({ repoExists: true, hasCommits: true, clearStatus: 403 });
+
+  const out = await recheck(h);
+
+  assert.strictEqual(out.again.ok, false);
+  assert.strictEqual(out.again.cleared, false);
+  assert.ok(/nothing was changed/i.test(out.again.error));
+});
+
+test('A RESTORE THAT FAILS IS AN OUTAGE, AND IS NAMED AS ONE', async () => {
+  /* The domain is off and did not go back on, so every site under it 404s.
+   * Whoever reads this has a dark site and needs the value and the place to
+   * type it — not a status code and a shrug. */
+  const h = hub({ repoExists: true, hasCommits: true, restoreStatus: 422 });
+
+  const out = await recheck(h);
+
+  assert.strictEqual(out.again.ok, false);
+  assert.strictEqual(out.again.cleared, true);
+  assert.strictEqual(out.again.restored, false);
+
+  assert.ok(out.again.error.includes('7-y.xyz'), 'it does not say what to put back');
+  assert.ok(/acme\.github\.io/.test(out.again.error), 'it does not say where to put it');
+  assert.ok(/down/i.test(out.again.error), 'it does not say the sites are down');
+});
+
+test('and it does not go on to fuss about HTTPS while the sites are down', async () => {
+  /* A second, duller message under the outage is a message that buries
+   * it. */
+  const h = hub({ repoExists: true, hasCommits: true, restoreStatus: 422 });
+
+  const out = await recheck(h);
+
+  assert.strictEqual(out.https.ok, false);
+  assert.strictEqual(out.https.note, '', 'it added noise on top of an outage');
+});
+
+test('IT REFUSES WITHOUT A DOMAIN, RATHER THAN CLEARING ONE IT CANNOT RESTORE', async () => {
+  /* Called with an empty domain it would clear the cname and have nothing
+   * to put back: the outage above, made permanent by a typo. */
+  const h = hub({ repoExists: true, hasCommits: true });
+
+  await assert.rejects(recheck(h, { domain: '   ' }), /needs an installation and a domain/);
+
+  await assert.rejects(
+    reRequestCertificate({ owner: 'acme', repo: 'acme.github.io', domain: '', api: h.api }),
+    /takes every site on it down/);
+
+  assert.strictEqual(
+    h.calls.filter(c => 'PUT' === c.method && c.path.endsWith('/pages')).length, 0,
+    'it cleared a domain it had no value to restore');
+});
+
+test('and a narrowed installation is refused before the domain comes off', async () => {
+  const h = hub({ permissions: { contents: 'write', pages: 'write' } });
+
+  await assert.rejects(recheck(h), /administration/);
+
+  assert.strictEqual(
+    h.calls.filter(c => 'PUT' === c.method && c.path.endsWith('/pages')).length, 0,
+    'it took the domain off an account it could not put it back on');
+});
+
+test('A CERTIFICATE ALREADY WAITING IS TICKED ON THE WAY PAST', async () => {
+  /* The happy second press: the DNS check passed after the last re-check
+   * and the certificate issued while nobody was looking. */
+  const h = hub({ repoExists: true, hasCommits: true, certState: 'approved' });
+
+  const out = await recheck(h);
+
+  assert.strictEqual(out.https.ok, true);
+  assert.strictEqual(h.state.enforced, true);
 });
 
 /* ======================================================================= */

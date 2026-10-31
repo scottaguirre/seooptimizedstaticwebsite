@@ -50,6 +50,13 @@ const DESIGNS = [
     imageSet: 'set-2',
     note: 'Sans headings on cards, a fact strip under the masthead, services as tiles.',
   },
+  {
+    id: '3',
+    label: 'Design 3',
+    structure: 'anvil',
+    imageSet: 'set-3',
+    note: 'Dark throughout, the headline over the photograph, services as a stacked ladder.',
+  },
 ];
 
 /**

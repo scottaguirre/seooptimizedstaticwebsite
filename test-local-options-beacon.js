@@ -644,7 +644,12 @@ test('every structure with a stylesheet has markup and prompts to go with it', (
     assert.ok(s.prompt && s.prompt.servicePagePrompt, `${key} has no prompts`);
   }
 
-  assert.deepStrictEqual(structureKeys(), ['ledger', 'beacon']);
+  /* THE LIST IS WRITTEN OUT RATHER THAN COUNTED, so that a stylesheet added
+   * without its markup fails HERE, loudly, instead of shipping a structure
+   * that renders as unstyled text. Anvil arrived on 31 October and this line
+   * was the only thing in this suite that had to change for it — which is
+   * the seam working. */
+  assert.deepStrictEqual(structureKeys(), ['ledger', 'beacon', 'anvil']);
 });
 
 test('THE THREE HOME PARAGRAPHS ARE ABOUT DIFFERENT THINGS, NOT REWORDED', () => {

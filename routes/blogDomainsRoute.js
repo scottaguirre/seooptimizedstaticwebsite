@@ -50,7 +50,7 @@ const { withAppHeader } = require('../utils/appHeader');
 const { pageTitle } = require('../utils/pageTitle');
 const { log } = require('../utils/logger');
 
-const { setupDomain } = require('../utils/github/setupDomain');
+const { setupDomain, reprovisionDomain } = require('../utils/github/setupDomain');
 
 const router = express.Router();
 
@@ -379,6 +379,32 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
             ${res.locals.csrfField || ''}
             <button class="btn btn-sm btn-outline-light" type="submit">${
               d.githubSetupAt ? 'Run again' : 'Set up GitHub'}</button>
+          </form>
+
+          ${/* THE SECOND BUTTON, AND WHY IT IS NOT THE FIRST ONE — 31
+                October. GitHub checks a domain's DNS when the domain is
+                SET and never again. Clients add the domain here and edit
+                their registrar afterwards, so the check runs against
+                records that do not exist, fails, and no certificate is
+                ever requested: 2-r.net sat on "DNS Check in Progress" for
+                five hours with correct records.
+
+                "Run again" cannot fix it — it writes the same cname back,
+                which is not a change, so nothing looks again. Only
+                clearing the domain first does, and that takes every site
+                on the domain down for ten seconds.
+
+                    THE SAFE BUTTON AND THE DISRUPTIVE ONE
+                    ARE DIFFERENT BUTTONS.
+
+                Hence a separate control, quieter than the first, with the
+                outage spelled out in the confirmation rather than in a
+                sentence beside it that nobody reads. */''}
+          <form method="post" action="/admin/blog-domains/${d._id}/recheck-github"
+                class="mt-1"
+                data-confirm="This clears the custom domain and sets it straight back, which is the only thing that makes GitHub re-check DNS. Every site on ${esc(d.domain)} will 404 for about ten seconds. Continue?">
+            ${res.locals.csrfField || ''}
+            <button class="btn btn-sm btn-outline-secondary" type="submit">Re-check DNS</button>
           </form>` : ''}</td>
       </tr>`;
     }).join('');
@@ -1432,6 +1458,135 @@ router.post('/admin/blog-domains/:id/setup-github', requireAdmin, async (req, re
       body: `<h1 class="h3">We could not set up that account</h1>
              <p class="lead text-white-50">${esc(err.message)}</p>
              <p class="text-white-50">Nothing was created.</p>
+             <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to domains</a>`,
+    }));
+  }
+});
+
+/**
+ * Make GitHub look at a domain's DNS again.
+ *
+ * THE BUTTON THAT EXISTS BECAUSE THE OTHER ONE CANNOT DO THIS. GitHub checks
+ * a custom domain's DNS at the moment it is set and never again, and a
+ * client sets the domain here before editing their registrar — so the check
+ * runs against records that do not exist yet, fails, and no certificate is
+ * ever requested. 2-r.net sat that way for five hours on records that had
+ * been correct the whole time.
+ *
+ * IT IS A SEPARATE ROUTE BECAUSE IT IS A DIFFERENT PROMISE. /setup-github
+ * cannot take a live site down. This one clears the custom domain for ten
+ * seconds, and every site on the domain 404s for those ten seconds.
+ */
+router.post('/admin/blog-domains/:id/recheck-github', requireAdmin, async (req, res) => {
+  let domain;
+
+  try {
+    domain = await Domain.findById(req.params.id).lean();
+  } catch (_) {
+    domain = null;
+  }
+
+  if (!domain) {
+    return problem(res, 'That domain is not here', 'It may have been removed.');
+  }
+
+  if ('github' !== domain.target || !domain.githubInstallationId) {
+    return problem(res, 'That is not a GitHub domain',
+      'Only a GitHub Pages custom domain has a DNS check to re-run.');
+  }
+
+  try {
+    const out = await reprovisionDomain({
+      installationId: domain.githubInstallationId,
+      domain: domain.domain,
+    });
+
+    log.info('blogDomains.recheckGithub', {
+      requestId: req.id,
+      domain: out.domain,
+      repo: `${out.owner}/${out.repo}`,
+      restored: out.again.restored,
+      dnsState: out.again.dnsState || '',
+      certState: out.again.certState || '',
+      httpsOk: out.https.ok,
+    });
+
+    /* THE OUTAGE GETS THE WHOLE SCREEN. If the domain came off and did not
+     * go back on, nothing else on this page matters — the sites are down,
+     * and what is needed is the value and the place to type it, not a
+     * status list with the bad news fourth in it. */
+    if (!out.again.restored) {
+      return send(res, page({
+        status: 502,
+        title: `${out.domain} needs attention`,
+        body: `
+          <h1 class="h3 text-warning">The custom domain is off and did not go back on</h1>
+          <p class="lead">${esc(out.again.error)}</p>
+          <p class="text-white-50">
+            Nothing else was changed. Setting the Custom domain box back to
+            <code>${esc(out.domain)}</code> on
+            <code>${esc(out.owner)}/${esc(out.repo)}</code> restores every
+            site on it.
+          </p>
+          <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to domains</a>`,
+      }));
+    }
+
+    send(res, page({
+      title: `Re-checked ${out.domain}`,
+      body: `
+        <h1 class="h3 mb-3">${esc(out.domain)}</h1>
+
+        <p class="lead text-white-50">
+          The custom domain was cleared and set straight back on
+          <code>${esc(out.owner)}/${esc(out.repo)}</code>, which is the only
+          thing that makes GitHub look at the DNS again.
+        </p>
+
+        <ul class="text-white-50">
+          <li>Custom domain: back on <code>${esc(out.domain)}</code></li>
+          <li>Enforce HTTPS: ${out.https.ok
+            ? (out.https.already ? 'was already on' : 'turned on')
+            : '<span class="text-warning">not yet</span>'}</li>
+        </ul>
+
+        ${/* NO PROMISE ABOUT WHAT HAPPENS NEXT, because this request does
+              not see it. The DNS check and the certificate are both done
+              out of band, over minutes — a screen that said "done" would
+              be guessing, and a screen that said "failed" would be
+              guessing too. */''}
+        <p class="text-white-50">
+          The DNS check runs now and the certificate is requested only if it
+          passes. That takes a few minutes, and neither of them reports back
+          to this screen. Give it ten minutes and press
+          <strong>Run again</strong> on this domain — that is what ticks
+          Enforce HTTPS once the certificate exists.
+        </p>
+
+        <p class="text-white-50">
+          If it is still not enforced an hour from now, the records
+          themselves are wrong rather than the check being stuck.
+        </p>
+
+        <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to domains</a>`,
+    }));
+
+  } catch (err) {
+    log.error('blogDomains.recheckGithub.failed', err, {
+      requestId: req.id,
+      domainId: req.params.id,
+    });
+
+    /* NOTHING WAS TOUCHED IN THIS BRANCH. reprovisionDomain() throws only
+     * before the first call — a missing installation, or a permission the
+     * client did not grant. A domain cleared and not restored comes back as
+     * a RESULT, and is handled above. */
+    send(res, page({
+      status: 500,
+      title: 'Could not re-check it',
+      body: `<h1 class="h3">We could not re-check that domain</h1>
+             <p class="lead text-white-50">${esc(err.message)}</p>
+             <p class="text-white-50">The custom domain was not changed.</p>
              <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to domains</a>`,
     }));
   }

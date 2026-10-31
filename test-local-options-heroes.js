@@ -106,6 +106,67 @@ test('and the trade name is matched case-insensitively', () => {
   assert.strictEqual(heroFiles('  PLUMBING ', { root: ROOT }).found.length, HERO_COUNT);
 });
 
+/* ITS OWN TREE, NOT THE SHARED ONE. The first version of these three built
+ * `lemon-law` inside ROOT and broke a test forty lines below that asserts
+ * which trades are ready — a fixture is shared state, and a test that adds to
+ * it is a test that changes another one's answer. */
+const LAW = fs.mkdtempSync(path.join(os.tmpdir(), 'localoptions-lemon-'));
+
+test('A TWO-WORD TRADE FINDS ITS HYPHENATED FOLDER', () => {
+  /* THE SITE THIS COST. A lemon-law site was published on 31 October with
+   * four broken hero images and everything else correct. The wizard was
+   * given "Lemon Law"; the folder is `lemon-law`. Lowercasing gives
+   * "lemon law", which is not a directory.
+   *
+   *     A LOOKUP THAT LOWERCASES AND A NAME THAT HYPHENATES
+   *     AGREE ON EVERY SINGLE-WORD TRADE AND ON NOTHING ELSE.
+   *
+   * Every test above this one uses `plumbing`. One word, so the old rule and
+   * the right rule gave the same answer, and the gap sat here unlit from the
+   * day the first folder was made.
+   *
+   * AND IT WAS NEVER ONLY LEMON LAW. `concrete-contractor` and
+   * `tree-service` are both two words on the form and both hyphenated on
+   * disk. Lemon law is simply the first multi-word trade anybody built. */
+  const dir = path.join(LAW, 'lemon-law');
+
+  fs.mkdirSync(dir, { recursive: true });
+
+  for (const name of heroNames()) {
+    fs.writeFileSync(path.join(dir, name), Buffer.from(`fake ${name}`));
+  }
+
+  fs.writeFileSync(
+    path.join(dir, 'alt.json'),
+    JSON.stringify({ cover: 1, 1: 'a', 2: 'b', 3: 'c', 4: 'd' }));
+
+  for (const typed of ['lemon-law', 'Lemon Law', 'lemon law', 'LEMON LAW', '  Lemon  Law  ']) {
+    assert.strictEqual(
+      heroFiles(typed, { root: LAW }).found.length, HERO_COUNT,
+      `"${typed}" did not find the lemon-law folder`);
+  }
+});
+
+test('and the ALT TEXT comes back with them, which is how this was spotted', () => {
+  /* The published page carried alt="" on every picture. That is the tell:
+   * the bytes and the words come from the same folder lookup, so a lookup
+   * that finds nothing leaves the site missing both — and the empty alt is
+   * the half that survives into the HTML where it can be read. */
+  const found = heroSet('Lemon Law', { root: LAW, set: '' });
+
+  assert.strictEqual(found.found.length, HERO_COUNT);
+  assert.strictEqual(Object.keys(found.alt).length, HERO_COUNT, 'the alt text is empty');
+  assert.strictEqual(found.cover, 1);
+});
+
+test('AND A TRADE WITH NO FOLDER IS STILL NOTHING, NOT A NEAR MISS', () => {
+  /* Slugifying must not make the lookup fuzzy. "Lemon Law Attorney" is not
+   * `lemon-law`, and a near-match that quietly served another trade's
+   * photographs would be worse than serving none. */
+  assert.strictEqual(heroFiles('Lemon Law Attorney', { root: LAW }).found.length, 0);
+  assert.strictEqual(heroFiles('lemonlaw', { root: LAW }).found.length, 0);
+});
+
 /* ------------------------------------------------------------------------ */
 
 section('A TRADE WITH NONE — THE CASE THIS FILE EXISTS FOR');
@@ -429,6 +490,7 @@ test('BOTH REAL PLUMBING SETS ARE COMPLETE AND DESCRIBED', () => {
 
 /* ------------------------------------------------------------------------ */
 
+fs.rmSync(LAW, { recursive: true, force: true });
 fs.rmSync(SETS, { recursive: true, force: true });
 fs.rmSync(ROOT, { recursive: true, force: true });
 

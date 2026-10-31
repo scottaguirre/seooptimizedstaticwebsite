@@ -1559,17 +1559,24 @@
 
              NO THUMBNAILS, AND NUMBERS RATHER THAN NAMES. The person
              building a second site for a client does not need to study four
-             photographs or learn that the layouts are called Ledger and
-             Beacon; they need to say "not the same as the last one".
+             photographs or learn that the layouts are called Ledger, Beacon
+             and Anvil; they need to say "not the same as the last one".
 
              CHOOSE FOR ME IS THE DEFAULT, because most trades have one set
              of pictures and most builds do not care.
 
              THE SAME LIST FOR EVERY TRADE, and the photographs are not the
-             same — only plumbing has a second set today. generate.js drops
-             a photo set the chosen trade does not have and falls back to
-             the automatic pick, rather than publishing a site with four
-             empty bands. The layout always applies.
+             same — only plumbing has more than one set today, and set-3 is
+             not filled in yet. generate.js drops a photo set the chosen
+             trade does not have and falls back to the automatic pick,
+             rather than publishing a site with four empty bands.
+
+             SO DESIGN 3 IS OFFERED BEFORE ITS PHOTOGRAPHS EXIST, and that is
+             deliberate rather than an oversight: the LAYOUT always applies,
+             and Anvil is a dark page with a stacked ladder whether its
+             pictures are its own or borrowed from set-1. The day set-3 has
+             four images AND an alt.json, it starts being used with no change
+             here — completeSets() is what decides, and it requires both.
 
              AND NO BACKTICKS IN HERE. -->
         ${isLocalOptions() ? `
@@ -1579,6 +1586,7 @@
             <option value="">Choose for me</option>
             <option value="1">Design 1</option>
             <option value="2">Design 2</option>
+            <option value="3">Design 3</option>
           </select>
           <div class="form-text">
             Each design has its own layout, its own photographs and its own

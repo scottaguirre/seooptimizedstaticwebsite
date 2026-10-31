@@ -557,6 +557,113 @@ await test('FIVE SERVICE NAMES IS REFUSED BEFORE A SINGLE CALL IS MADE', async (
   assert.strictEqual(calls.length, 0, 'it paid for pages before counting them');
 });
 
+await test('A SHORT SUGGESTION IS TOPPED UP, NOT FAILED', async () => {
+  /* THE BUILD THIS FIXES. A lemon-law site died on "expected 6 services,
+   * got 4". The model was asked for six and returned six; cleanServices()
+   * then dropped two, because it refuses a name that is the business
+   * CATEGORY rather than a service, and refuses two that collide. A plumber
+   * has six genuinely different jobs; a narrow practice has about two, so
+   * the model pads — and the padding is exactly what the cleaner removes.
+   *
+   *     THE SUGGESTER WAS NOT WRONG AND THE CLEANER WAS NOT WRONG.
+   *     NOBODY WAS ASKING AGAIN FOR THE ONES THAT WERE THROWN AWAY. */
+  const { ask } = stub();
+  const asks = [];
+
+  const pool = [...NAMES, 'Leased Vehicle Claims', 'Repair Order Review'];
+
+  const topUp = async (ctx, opts) => {
+    asks.push(opts);
+
+    const had = new Set(opts.exclude || []);
+    const left = pool.filter(n => !had.has(n));
+
+    /* Four the first time, then whatever was asked for. */
+    return suggestedShape(asks.length === 1 ? left.slice(0, 4) : left.slice(0, opts.count));
+  };
+
+  const { services } = await generateLocalOptionsSite(base({
+    ask, serviceNames: null, suggest: topUp,
+  }));
+
+  assert.strictEqual(services.length, SERVICE_COUNT);
+  assert.strictEqual(asks.length, 2, `it made ${asks.length} calls`);
+
+  assert.strictEqual(asks[0].count, SERVICE_COUNT);
+  assert.ok(!asks[0].exclude || !asks[0].exclude.length, 'the first call excluded something');
+
+  /* ASKING FOR SIX AGAIN WOULD HAND BACK THE SAME FOUR AND GET NOWHERE.
+   * cleanServices() compares against `exclude`, so the names already kept
+   * cannot come round a second time. */
+  assert.strictEqual(asks[1].exclude.length, 4, 'the second call could return the same four');
+
+  /* AND IT ASKS FOR MORE THAN THE SHORTFALL, WHICH IS NOT AN OVERSIGHT.
+   *
+   * The first version asked for exactly the two it was missing and took a
+   * lemon-law build from four services to five. The prompt already tells the
+   * model not to restate what it has been given, and it obeyed as far as it
+   * reads the word: asked to avoid "New Car Lemon Law" it offered "Used Car
+   * Lemon Law", which cleanServices() dropped as too similar.
+   *
+   *     THE MODEL'S IDEA OF A RESTATEMENT IS LOOSER THAN THE CLEANER'S.
+   *     ASKING FOR EXACTLY ONE MORE LEAVES NO ROOM TO DISAGREE.
+   *
+   * The spare names cost nothing: servicesFrom() has always trimmed to
+   * SERVICE_COUNT, and the test below this one still proves it. */
+  assert.ok(asks[1].count > 2, `the second call asked for only ${asks[1].count}`);
+});
+
+await test('A BUILD THAT IS NOT SHORT STILL MAKES EXACTLY ONE CALL', async () => {
+  /* The whole reason this is a top-up and not a bigger first request.
+   * Asking for nine up front would have been one call instead of two and
+   * would have changed the prompt for every trade — a plumbing site could
+   * come back with a different six than it does today. */
+  const { ask } = stub();
+  let calls = 0;
+
+  await generateLocalOptionsSite(base({
+    ask,
+    serviceNames: null,
+    suggest: async () => { calls += 1; return suggestedShape(); },
+  }));
+
+  assert.strictEqual(calls, 1, `a full suggestion cost ${calls} calls`);
+});
+
+await test('AND IT GIVES UP RATHER THAN LOOPING, WITH A MESSAGE THAT EXPLAINS', async () => {
+  /* A business with genuinely nothing more to suggest would otherwise ask
+   * for ever. Two extra tries: enough for a practice whose first answer was
+   * padded, cheap enough that the failure arrives in seconds.
+   *
+   * AND THE MESSAGE NAMES WHAT SURVIVED. "expected 6 services, got 4" is
+   * true and tells whoever reads it nothing — not which four, not why the
+   * other two went. It is the only thing a failed build in this mode ever
+   * says, on a screen with nothing else on it. */
+  const { ask, calls } = stub();
+  let tries = 0;
+
+  await assert.rejects(
+    generateLocalOptionsSite(base({
+      ask,
+      serviceNames: null,
+      suggest: async () => {
+        tries += 1;
+        return suggestedShape(tries === 1 ? NAMES.slice(0, 3) : []);
+      },
+    })),
+    err => {
+      assert.ok(/expected 6 services, got 3/.test(err.message), err.message);
+      assert.ok(err.message.includes(NAMES[0]), 'it does not name what survived');
+      assert.ok(/fewer distinct services/.test(err.message), 'it does not say why');
+
+      return true;
+    }
+  );
+
+  assert.strictEqual(tries, 2, `it asked ${tries} times`);
+  assert.strictEqual(calls.length, 0, 'it paid for pages before counting them');
+});
+
 await test('and more than six is trimmed rather than refused', async () => {
   /* suggestServices can return more than asked for. Seven names is not a
    * broken request, it is a list to take six from. */

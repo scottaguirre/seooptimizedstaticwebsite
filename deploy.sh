@@ -69,7 +69,17 @@ fi
 # refuses. The loop names the suite that failed instead of leaving you to find
 # it in the scrollback.
 echo "Running tests..."
-for suite in \
+
+# THE LIST IS AN ARRAY RATHER THAN THE WORD LIST OF A `for` — 1 November.
+# Not for style: a list the shell can count is a list the drift check below
+# can compare against what is actually on disk. It could not, before, and
+# seven suites sat outside it for days.
+#
+# The last seven entries were added the same day, after an audit found them
+# outside it: every GitHub suite, the second page structure, and the editor
+# screen — all of Local Website Options, in other words, which is the part of
+# the app that has changed most this fortnight.
+NODE_SUITES=( \
   test-generators-parse.js \
   test-suggest-prompt.js \
   test-site-kind.js \
@@ -164,7 +174,83 @@ for suite in \
   test-verification-tags.js \
   test-secret-box.js \
   test-cloudflare-accounts.js \
-  test-blog-domains.js
+  test-blog-domains.js \
+  test-github-commit.js \
+  test-github-publish.js \
+  test-github-setup.js \
+  test-github-adopt.js \
+  test-my-sites.js \
+  test-local-options-beacon.js \
+  test-local-options-anvil.js \
+  test-local-options-industry.js \
+  test-rich-text.js \
+)
+
+# THE SUITES THAT RUN SOMEWHERE OTHER THAN THE LOOP ABOVE.
+#
+# Named here, beside the list, because the drift check below has to know the
+# difference between a suite that is covered elsewhere and one that is
+# covered nowhere. The block that actually runs these is much further down —
+# it needs a database, and it starts one.
+DB_SUITES=(test-blog-batch.js test-blog-routes.js)
+
+# ---------------------------------------------------------------------------
+# A SUITE THAT IS NOT IN THE LIST IS A SUITE THAT DOES NOT RUN.
+# ---------------------------------------------------------------------------
+#
+# On 1 November seven suites were outside the list: every GitHub test and
+# every Local Website Options test written in the preceding fortnight. They
+# all passed — they were run by hand after each change — but nothing made
+# that happen, and the deploy was green either way.
+#
+# That is the same failure this file already records twice, in its own words:
+# test-deleted-posts.php "ran on the days somebody remembered to run it", and
+# test-blog-batch.js rotted for seven weeks because "nothing ran them, so
+# nothing complained".
+#
+#     A TEST NOBODY RUNS IS A TEST THAT ROTS, AND IT ROTS SILENTLY.
+#     WRITING THE LIST BY HAND IS WHAT LETS A SUITE FALL OUT OF IT.
+#
+# SO IT REFUSES RATHER THAN WARNS. A warning here would print once among
+# ninety lines of test output and be gone — which is precisely how the last
+# three of these went unnoticed. Refusing costs one line of editing at the
+# exact moment somebody adds a suite, and it is the only moment at which that
+# edit is obvious.
+#
+# IT RUNS BEFORE THE TESTS, not after, so the answer comes in a second rather
+# than after three minutes of suites that were going to pass anyway.
+#
+# SKIP_SUITE_DRIFT=1 is the way out, and it is deliberately ugly to type.
+# Skipping should be a decision, not a habit.
+if [[ -z "${SKIP_SUITE_DRIFT:-}" ]]; then
+  DRIFTED=""
+
+  for found in test-*.js; do
+    [[ -e "$found" ]] || continue
+
+    case " ${NODE_SUITES[*]} ${DB_SUITES[*]} " in
+      *" ${found} "*) ;;
+      *) DRIFTED="${DRIFTED}  ${found}"$'\n' ;;
+    esac
+  done
+
+  if [[ -n "$DRIFTED" ]]; then
+    echo
+    echo "These test files are on disk but in no list in this script, so"
+    echo "nothing runs them:"
+    echo
+    printf '%s' "$DRIFTED"
+    echo
+    echo "Add each to NODE_SUITES above, or to DB_SUITES if it needs a"
+    echo "database. Nothing was deployed."
+    echo
+    echo "If you really mean to leave one out:  SKIP_SUITE_DRIFT=1 ./deploy.sh"
+    echo
+    exit 1
+  fi
+fi
+
+for suite in "${NODE_SUITES[@]}"
 do
   # The wp-* suites skip cleanly when php is not installed; see the top of
   # each file.
@@ -254,7 +340,8 @@ fi
 # and delete them at the end, but a crash mid-run leaves rows behind. The name
 # below exists for this script and nothing else, and it is never the database
 # in .env.
-DB_SUITES=(test-blog-batch.js test-blog-routes.js)
+# DB_SUITES is set beside NODE_SUITES, up with the rest of the test lists, so
+# the drift check can see both. It is not set again here.
 SCRATCH_URI="mongodb://127.0.0.1:27017/tc-deploy-scratch"
 SCRATCH_DBPATH="${HOME}/mongo-scratch"
 

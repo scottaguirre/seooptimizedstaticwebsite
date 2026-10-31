@@ -309,8 +309,10 @@ async function generateLocalOptionsSite({
   if (!names) {
     const suggester = suggest || require('../suggestServices').suggestServices;
 
+    const where = [business.city, business.state].filter(Boolean).join(', ');
+
     const suggested = await suggester(
-      { businessType: business.trade, location: [business.city, business.state].filter(Boolean).join(', ') },
+      { businessType: business.trade, location: where },
       { count: SERVICE_COUNT }
     );
 
@@ -347,6 +349,68 @@ async function generateLocalOptionsSite({
     }
 
     names = suggested.services;
+
+    /* TOPPED UP WHEN THE CLEANER LEAVES A HOLE — 31 October.
+     *
+     * THE FAILURE THIS FIXES. A lemon-law build died on "expected 6
+     * services, got 4". The model was asked for six and returned six;
+     * cleanServices() then dropped two, because it refuses a name that is
+     * the business CATEGORY rather than a service, and refuses two names
+     * that collide. A plumber has six genuinely different jobs. A narrow
+     * practice has about two, so the model pads, and the padding is exactly
+     * what the cleaner is built to remove.
+     *
+     *     THE SUGGESTER WAS NOT WRONG AND THE CLEANER WAS NOT WRONG.
+     *     NOBODY WAS ASKING AGAIN FOR THE ONES THAT WERE THROWN AWAY.
+     *
+     * ASK AGAIN FOR THE SHORTFALL, NOT FOR SIX MORE. The names already kept
+     * go in as `exclude`, which cleanServices() compares against, so a
+     * second call cannot hand back what the first one already produced.
+     *
+     * ONLY WHEN SHORT, WHICH IS THE WHOLE DESIGN. Asking for nine up front
+     * would have been one call instead of two and would have changed the
+     * prompt for every trade — a plumbing site could come back with a
+     * different six than it does today. A build that is not short makes
+     * exactly the one call it always made, and every trade site is
+     * unaffected.
+     *
+     * BOUNDED, BECAUSE A TRADE WITH NOTHING TO SUGGEST WOULD LOOP. Two
+     * extra tries: enough for a practice whose first answer was padded,
+     * and cheap enough that the failure below is still reached in seconds
+     * rather than minutes. */
+    /* AND THE TOP-UP ASKS FOR MORE THAN IT NEEDS, which the first call does
+     * not and must not.
+     *
+     * THE FIRST ATTEMPT AT THIS ASKED FOR EXACTLY THE SHORTFALL AND GOT A
+     * LEMON-LAW BUILD FROM FOUR SERVICES TO FIVE. The prompt already tells
+     * the model not to restate what it has been given, and it obeyed as far
+     * as it reads the word: asked to avoid "New Car Lemon Law" it offered
+     * "Used Car Lemon Law", which cleanServices() then dropped as too
+     * similar.
+     *
+     *     THE MODEL'S IDEA OF A RESTATEMENT IS LOOSER THAN THE CLEANER'S.
+     *     ASKING FOR EXACTLY ONE MORE LEAVES NO ROOM FOR THEM TO DISAGREE.
+     *
+     * So the top-up asks for a few spare and the cleaner throws away what it
+     * does not like. servicesFrom() trims the result to SERVICE_COUNT, which
+     * it has always done — seven names was never an error, it was a list to
+     * take six from.
+     *
+     * CONTAINED TO THE TOP-UP, which is the point. The first call is
+     * untouched, so a trade still asks for six, gets six, and makes one
+     * call. The slack is paid for only by a business that needed it. */
+    for (let tries = 0; tries < 2 && names.length < SERVICE_COUNT; tries += 1) {
+      const short = SERVICE_COUNT - names.length;
+
+      const more = await suggester(
+        { businessType: business.trade, location: where },
+        { count: short + 3, exclude: names }
+      );
+
+      if (!more || !Array.isArray(more.services) || !more.services.length) break;
+
+      names = names.concat(more.services);
+    }
   }
 
   const services = servicesFrom(Array.from(names));
@@ -354,9 +418,20 @@ async function generateLocalOptionsSite({
   /* SIX, OR NOTHING. The mode is a FIXED eleven-page site and the customer
    * is charged for eleven. Five service pages is a different product sold at
    * the same price, and the ring breaks: page four's "onward" link points at
-   * a directory that was never written. */
+   * a directory that was never written.
+   *
+   * THE MESSAGE NAMES WHAT SURVIVED — 31 October. "expected 6 services, got
+   * 4" is true and tells whoever reads it nothing: not which four, not why
+   * the other two went, not whether the model or the cleaner is the problem.
+   * It is the only thing a failed build in this mode ever says, and it was
+   * said on a screen with no other detail on it. */
   if (services.length !== SERVICE_COUNT) {
-    throw new Error(`expected ${SERVICE_COUNT} services, got ${services.length}`);
+    throw new Error(
+      `expected ${SERVICE_COUNT} services, got ${services.length}`
+      + (services.length ? ` (${services.map(s => s.name).join(', ')})` : '')
+      + '. The model was asked again for the shortfall and still came up '
+      + 'short, which usually means this business has fewer distinct '
+      + 'services than a six-page site needs.');
   }
 
   /* ------------------------------------------------------------- the pages */

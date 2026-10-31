@@ -58,6 +58,7 @@ const path = require('path');
 
 const { HERO_COUNT } = require('./shape');
 const { log } = require('../../logger');
+const { slugify } = require('../../slugify');
 
 /** Where the predefined pictures live, per trade. */
 const IMAGES_ROOT = path.join(
@@ -69,9 +70,36 @@ function heroNames() {
   return Array.from({ length: HERO_COUNT }, (_, i) => `hero-${i + 1}.webp`);
 }
 
-/** The trade's own folder, whatever is inside it. */
+/**
+ * The trade's own folder, whatever is inside it.
+ *
+ * SLUGIFIED, NOT MERELY LOWERCASED — 31 October, after a lemon-law site went
+ * out with four broken hero images and everything else correct.
+ *
+ * THE TRADE IS TYPED BY A HUMAN AND THE FOLDER IS NAMED BY A DEVELOPER. The
+ * wizard was given "Lemon Law"; the folder is `lemon-law`. Lowercasing gives
+ * "lemon law", which is not a directory — so setsIn() found nothing,
+ * completeSets() returned nothing, the chosen set was dropped as unavailable,
+ * the automatic pick had nothing to pick from, and the build published a site
+ * whose every photograph 404s. Nothing threw. The COPY was right, because
+ * industryFor() matches both spellings; only the pictures were missing, which
+ * is the half nobody sees until they open the page.
+ *
+ *     A LOOKUP THAT LOWERCASES AND A NAME THAT HYPHENATES
+ *     AGREE ON EVERY SINGLE-WORD TRADE AND ON NOTHING ELSE.
+ *
+ * AND IT WAS NEVER ONLY LEMON LAW. `concrete-contractor` and `tree-service`
+ * are both two words on the form and both hyphenated on disk; either one
+ * typed naturally would have failed in exactly this way, silently, since the
+ * day those folders were made. Lemon law is simply the first multi-word trade
+ * anybody built.
+ *
+ * slugify() IS THE RULE THE REST OF THE APP ALREADY USES for turning typed
+ * words into a path — the same function that makes a service name into a
+ * directory. A second rule here is how the two drift apart again.
+ */
 function tradeDir(trade, root = IMAGES_ROOT) {
-  return path.join(root, String(trade || '').trim().toLowerCase());
+  return path.join(root, slugify(String(trade == null ? '' : trade)));
 }
 
 /**

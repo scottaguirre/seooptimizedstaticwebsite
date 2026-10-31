@@ -172,6 +172,123 @@ async function setCustomDomain({ owner, repo, domain, token, api = githubApi } =
   }
 }
 
+/** Injectable so the suite does not sit through the real wait. */
+const sleep = ms => new Promise(done => setTimeout(done, ms));
+
+/**
+ * Clear the custom domain and set it straight back, to make GitHub look at
+ * the DNS again.
+ *
+ * WHY THIS EXISTS — 31 October, after 2-r.net sat on "DNS Check in Progress"
+ * for five hours with records that had been correct the whole time.
+ *
+ * GITHUB CHECKS DNS WHEN THE DOMAIN IS SET, AND THEN NEVER AGAIN. The
+ * ordinary way a client does this is to add the domain in this app first and
+ * edit their registrar afterwards — so the check runs against records that do
+ * not exist yet, fails, and nothing retries it. No certificate is ever
+ * requested, because GitHub only asks for one after a check succeeds. The
+ * site then serves on http for ever and the browser calls it unsafe.
+ *
+ *     SETTING A VALUE TO WHAT IT ALREADY IS, IS NOT A CHANGE,
+ *     AND ONLY A CHANGE MAKES ANYTHING LOOK AGAIN.
+ *
+ * Which is why the "Run again" button could not fix it: setCustomDomain()
+ * writes the same cname back, GitHub sees no change, and the stuck check
+ * stays stuck. Clearing it first is the whole trick, and it is what GitHub's
+ * own documentation tells a person to do by hand — "Remove", retype, "Save",
+ * which "will cancel and restart the provisioning process". Checked against
+ * docs.github.com, "Securing your GitHub Pages site with HTTPS", 31 October.
+ *
+ * THE DANGEROUS MOMENT IS BETWEEN THE TWO CALLS. For those few seconds the
+ * domain is attached to nothing and every site under it 404s. If the second
+ * call fails, that is where it stays — so the failure is reported with the
+ * exact value to type back, rather than as "something went wrong".
+ *
+ * IT REFUSES WITHOUT A DOMAIN. Called with an empty one it would clear the
+ * cname and have nothing to restore, which is the outage above made
+ * permanent by a typo.
+ */
+async function reRequestCertificate({
+  owner, repo, domain, token, api = githubApi, pause = sleep, waitMs = 10000,
+} = {}) {
+  const want = String(domain || '').trim().toLowerCase();
+
+  if (!owner || !repo || !want) {
+    throw new Error(
+      'reRequestCertificate needs a repository and a domain. Without the '
+      + 'domain it would clear the custom domain and have nothing to put '
+      + 'back, which takes every site on it down.');
+  }
+
+  const put = body => api({
+    method: 'PUT',
+    path: `/repos/${owner}/${repo}/pages`,
+    token,
+    body,
+  });
+
+  try {
+    await put({ cname: null });
+
+  } catch (err) {
+    /* NOTHING HAS CHANGED YET, which is the one comfortable failure here.
+     * The domain is still attached and the site is still up. */
+    return {
+      ok: false,
+      cleared: false,
+      restored: false,
+      domain: want,
+      error: `Could not clear the custom domain [${err.status || '?'}]: ${err.message}`
+        + ' — nothing was changed and the site is untouched.',
+    };
+  }
+
+  await pause(waitMs);
+
+  try {
+    await put({ cname: want });
+
+  } catch (err) {
+    /* THE OUTAGE CASE. The domain is cleared and did not go back on. Say so
+     * in the plainest words available, with the value to restore, because
+     * whoever reads this has a dark site and needs the fix, not a
+     * diagnosis. */
+    return {
+      ok: false,
+      cleared: true,
+      restored: false,
+      domain: want,
+      error: `THE CUSTOM DOMAIN IS CLEARED AND COULD NOT BE SET BACK `
+        + `[${err.status || '?'}]: ${err.message}. Every site on ${want} is `
+        + `down until it is restored. Put "${want}" back in the Custom `
+        + `domain box on github.com/${owner}/${repo} under Settings, Pages.`,
+    };
+  }
+
+  /* WHAT IT LOOKS LIKE A MOMENT LATER, WHICH IS NOT THE ANSWER. The DNS
+   * check and the certificate are both done out of band — reading them here
+   * reports where they have got to in the first second, not where they end
+   * up. It is carried back so the screen can show something true rather than
+   * promise something it has not seen. */
+  let after = {};
+
+  try {
+    after = await api({ method: 'GET', path: `/repos/${owner}/${repo}/pages`, token }) || {};
+  } catch (_) {
+    after = {};
+  }
+
+  return {
+    ok: true,
+    cleared: true,
+    restored: true,
+    domain: want,
+    error: '',
+    dnsState: String((after.protected_domain_state || '')).trim(),
+    certState: String(((after.https_certificate || {}).state || '')).trim(),
+  };
+}
+
 /**
  * Tick "Enforce HTTPS", once there is a certificate to enforce with.
  *
@@ -389,12 +506,69 @@ async function setupDomain({
   };
 }
 
+/**
+ * Make GitHub look at the DNS again, and tick HTTPS if that was all it
+ * needed — the whole of what a person does by hand on the Pages screen.
+ *
+ * SEPARATE FROM setupDomain(), ON PURPOSE. setupDomain() is safe to press at
+ * any time because nothing it does can take a live site down. This clears
+ * the custom domain for ten seconds, and a site on that domain 404s for
+ * those ten seconds. Folding it into the ordinary button would mean every
+ * routine press carried an outage nobody asked for.
+ *
+ *     THE SAFE BUTTON AND THE DISRUPTIVE ONE ARE DIFFERENT BUTTONS,
+ *     EVEN WHEN THEY FIX THE SAME THING.
+ *
+ * It does not wait for the certificate. Issuing takes minutes and no HTTP
+ * request should be held open for them; the screen says to come back.
+ */
+async function reprovisionDomain({
+  installationId, domain, appId, privateKey, now, api = githubApi, pause, waitMs,
+} = {}) {
+  const want = String(domain || '').trim().toLowerCase();
+
+  if (!installationId || !want) {
+    throw new Error('reprovisionDomain needs an installation and a domain.');
+  }
+
+  const grant = await installationToken({ installationId, appId, privateKey, now, api });
+
+  const missing = ['administration', 'pages']
+    .filter(key => 'write' !== (grant.permissions || {})[key]);
+
+  if (missing.length) {
+    throw new Error(
+      `Installation ${installationId} does not grant write access to `
+      + `${missing.join(', ')}. Changing the custom domain needs both.`);
+  }
+
+  const owner = await ownerOf({ installationId, appId, privateKey, now, api });
+  const repo = rootRepoFor(owner);
+
+  const again = await reRequestCertificate({
+    owner, repo, domain: want, token: grant.token, api,
+    ...(pause ? { pause } : {}),
+    ...(undefined === waitMs ? {} : { waitMs }),
+  });
+
+  /* ONLY IF THE DOMAIN IS BACK ON. With it cleared there is no certificate
+   * to enforce and asking would bury the outage message under a second,
+   * duller one. */
+  const https = again.ok
+    ? await enforceHttps({ owner, repo, domain: want, token: grant.token, api })
+    : { ok: false, already: false, state: '', note: '' };
+
+  return { owner, repo, domain: want, again, https };
+}
+
 module.exports = {
   setupDomain,
+  reprovisionDomain,
   rootRepoFor,
   holdingPage,
   setCustomDomain,
   enforceHttps,
+  reRequestCertificate,
   APEX_A,
   APEX_AAAA,
 };

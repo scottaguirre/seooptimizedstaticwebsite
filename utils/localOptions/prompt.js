@@ -36,6 +36,12 @@
 
 'use strict';
 
+/* WHAT KIND OF BUSINESS THIS IS — 31 October, when lemon-law arrived and the
+ * trade assumption stopped being true. The profiles hold only vocabulary and
+ * the extra rules a field needs; every rule in this file stays in this file.
+ * See industries.js for what a profile may and may not change. */
+const { industryFor, stancesFor, sectionsFor } = require('./industries');
+
 /**
  * How a page ENTERS, rotating across the six.
  *
@@ -95,12 +101,22 @@ const STANCES = [
   },
 ];
 
-/** The stance for a page, by its position. Deterministic, never random. */
-function stanceFor(index) {
+/**
+ * The stance for a page, by its position. Deterministic, never random.
+ *
+ * THE INDUSTRY MAY REWORD A BRIEF AND MAY NOT MOVE ONE — 31 October.
+ * stancesFor() keeps the ids and the order, which it has to: the id is stored
+ * on every built page, and the position is what assigns it. A profile that
+ * reordered these would re-point the stance of every page of every site on
+ * its next rebuild.
+ */
+function stanceFor(index, industry = null) {
   const n = Number(index);
   const i = Number.isFinite(n) ? Math.abs(Math.trunc(n)) : 0;
 
-  return STANCES[i % STANCES.length];
+  const list = industry ? stancesFor(STANCES, industry) : STANCES;
+
+  return list[i % list.length];
 }
 
 /**
@@ -524,9 +540,18 @@ function servicePagePrompt({
   /* WHICH STRUCTURE'S VOICE. Defaults to Ledger's, so every caller written
    * before Beacon existed gets exactly what it got before. */
   voice = LEDGER_VOICE,
+
+  /* WHAT KIND OF BUSINESS THIS IS — 31 October, when lemon-law arrived and
+   * the trade assumption stopped being true. Derived from `business.trade`,
+   * which already reaches here and is already the image folder's name, so
+   * nothing new is threaded through generate.js or the wizard.
+   *
+   * INJECTABLE FOR THE SUITE ONLY. Nothing in the app passes it. */
+  industry = null,
 } = {}) {
   const words = (voice && voice.words) || WORDS;
-  const stance = stanceFor(index);
+  const kind = industry || industryFor(business.trade);
+  const stance = stanceFor(index, kind);
   const place = placeOf(business);
   const spelling = spellingFor(business);
 
@@ -536,7 +561,7 @@ function servicePagePrompt({
    * dictated heading got dictated. Separating them is also the only way the
    * heading brief can say anything — "a heading" on the end of a sentence
    * about the body gets whatever is left of the model's attention. */
-  const sectionSpec = SECTIONS.map((s, i) => {
+  const sectionSpec = sectionsFor(SECTIONS, kind).map((s, i) => {
     const head = s.headingJob
       ? `HEADING — write one yourself. It names ${s.headingJob}`
       : 'NO HEADING. Return "heading" as an empty string.';
@@ -552,7 +577,7 @@ function servicePagePrompt({
   const closed = hours.filter(h => h && !h.open).map(h => h.day);
 
   const system = [
-    'You write service pages for small local trade businesses.',
+    kind.pagesLine,
     '',
     'YOU ARE WRITING AS THE BUSINESS, not about it. First person plural — '
     + '"we check", "we cover", "we are out from" — throughout. Never "the '
@@ -567,9 +592,18 @@ function servicePagePrompt({
     + 'minutes a check takes, what age a part tends to fail at, what pressure '
     + 'something runs at, what size an opening has to be. Those are trade '
     + 'facts, not claims about this business.',
-    '- Every paragraph carries at least one concrete noun — a part, a '
-    + 'fixture, a room, a tool, a measurement. A paragraph of adjectives is a '
-    + 'paragraph to delete.',
+    /* THE RULES A TRADE NEVER NEEDED — 31 October. The block above was
+     * written for a trade, where "invent no figure, no guarantee, no review"
+     * covers the dangerous sentences. On a regulated profession's page the
+     * dangerous sentences are different ones, and none of them is a figure.
+     *
+     *     THE NO-INVENTED-FIGURES RULE DOES NOT CATCH
+     *     "WE WILL GET YOU A BUYBACK". IT IS NOT A FIGURE.
+     *
+     * Empty for a trade, so the prompt is byte-identical to what it was. */
+    ...((kind.bans) || []),
+    `- Every paragraph carries at least one concrete noun — ${kind.nouns}. `
+    + 'A paragraph of adjectives is a paragraph to delete.',
     '- No marketing register. No "nestled", "boasts", "state-of-the-art", '
     + '"unparalleled", "peace of mind", "your trusted partner", "look no '
     + 'further", "we pride ourselves".',
@@ -618,8 +652,8 @@ function servicePagePrompt({
     '',
     '- is two to six words, and reads as a label rather than a sentence;',
     '- is sentence case, with no full stop, no colon and no question mark;',
-    '- CARRIES AT LEAST ONE CONCRETE NOUN FROM THIS JOB — a part, a fixture, '
-    + 'a material, a tool, a room, a place. Every paragraph on this page is '
+    `- CARRIES AT LEAST ONE CONCRETE NOUN FROM THIS JOB — ${kind.headingNouns}`
+    + '. Every paragraph on this page is '
     + 'held to that rule and the heading is the line most people read. A '
     + 'heading built only from abstractions — cost, price, the bill, details, '
     + 'information, factors, signs, problems, process — names nothing, and '
@@ -750,10 +784,36 @@ function servicePagePrompt({
  * NO SERVICE DETAIL HERE. Six pages carry that. A home page that explains
  * water heaters is a home page competing with its own service page.
  */
-function homePagePrompt({ business = {}, services = [], areas = [], voice = LEDGER_VOICE } = {}) {
+function homePagePrompt({
+  business = {}, services = [], areas = [], voice = LEDGER_VOICE,
+
+  /* See servicePagePrompt. Derived from business.trade; injectable for the
+   * suite only. */
+  industry = null,
+} = {}) {
+  const kind = industry || industryFor(business.trade);
   const home = (voice && voice.home) || LEDGER_VOICE.home;
-  const jobs = (voice && voice.homeJobs) || LEDGER_VOICE.homeJobs;
-  const headingJob = (voice && voice.aboutHeading) || LEDGER_VOICE.aboutHeading;
+
+  /* THE THREE PARAGRAPHS ARE THE VOICE'S ANGLES IN THE INDUSTRY'S NOUNS.
+   *
+   * The subjects belong to the LAYOUT — that is why they were moved into the
+   * voices on 30 October, after Ledger and Beacon produced the same three
+   * paragraphs in the same order. So an industry does not replace them with
+   * one set; it supplies a set PER VOICE, and a voice the industry has not
+   * written for keeps its own.
+   *
+   *     AN INDUSTRY THAT OVERRODE ALL THREE WITH ONE SET WOULD UNDO THE
+   *     THING THE VOICES EXIST FOR: EVERY LEMON-LAW SITE WOULD HAVE THE
+   *     SAME HOME PAGE WHICHEVER DESIGN WAS PICKED. */
+  const ownJobs = (kind.homeJobs || {})[voice && voice.key];
+  const jobs = ownJobs || (voice && voice.homeJobs) || LEDGER_VOICE.homeJobs;
+
+  /* PER VOICE HERE TOO. A single industry-wide heading rule would have
+   * flattened Beacon's and Anvil's into one, which is the same mistake as
+   * one set of paragraphs for all three. */
+  const headingJob = (kind.aboutHeading || {})[voice && voice.key]
+    || (voice && voice.aboutHeading)
+    || LEDGER_VOICE.aboutHeading;
 
   /* UNDEFINED MEANS LEDGER'S ANSWER, NOT FALSE. A voice written before this
    * field existed must keep the behaviour it had. */
@@ -769,7 +829,7 @@ function homePagePrompt({ business = {}, services = [], areas = [], voice = LEDG
   const spelling = spellingFor(business);
 
   const system = [
-    'You write the front page for a small local trade business.',
+    kind.homeLine,
     '',
     'YOU ARE WRITING AS THE BUSINESS. First person plural throughout.',
     '',
@@ -781,8 +841,7 @@ function homePagePrompt({ business = {}, services = [], areas = [], voice = LEDG
     + '"unparalleled", "peace of mind", "your trusted partner", "we pride '
     + 'ourselves".',
     '- DO NOT explain any individual service in detail. Each of them has its '
-    + 'own page, and a front page that teaches water heaters is competing '
-    + 'with the page that should rank for them.',
+    + `own page, and ${kind.dontTeach}.`,
     '- Do not mention opening hours or days of the week. The page shows the '
     + 'hours in a table.',
     /* THE CONCRETE-NOUN RULE, WHICH THE HOME PAGE DID NOT HAVE — 30
@@ -794,11 +853,14 @@ function homePagePrompt({ business = {}, services = [], areas = [], voice = LEDG
      *
      * Eighteen words, no fixture, no room, no part. A rule in one of two
      * prompts is a rule half the pages do not have. */
-    '- Every paragraph carries at least one concrete noun — a room, a '
-    + 'fixture, a part, a tool, a measurement. A paragraph of adjectives is '
-    + 'a paragraph to delete. "Needs", "solutions", "services" and '
-    + '"communities" are not concrete nouns.',
+    `- Every paragraph carries at least one concrete noun — ${kind.homeNouns}`
+    + '. A paragraph of adjectives is '
+    + `a paragraph to delete. ${kind.notConcrete}`,
     `- SPELLING: ${spelling}.`,
+    /* THE SAME EXTRA RULES THE SERVICE PAGES GET. The home page is where a
+     * promise is most likely to land — it is the page that introduces the
+     * business — and it had none of these until the block was added to both. */
+    ...((kind.bans) || []),
     ...(extrasNote ? ['', extrasNote] : []),
     ...((voice && voice.lines) || []),
     '',
@@ -900,4 +962,9 @@ module.exports = {
   spellingFor,
   servicePagePrompt,
   homePagePrompt,
+
+  /* RE-EXPORTED so a caller that already has prompt.js does not need to know
+   * industries.js exists. prompt-beacon.js and prompt-anvil.js re-export in
+   * turn, which is what keeps generate.js reading one module per structure. */
+  industryFor,
 };

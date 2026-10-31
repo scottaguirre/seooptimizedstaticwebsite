@@ -32,14 +32,17 @@ const { STRUCTURES, DEFAULT_STRUCTURE, CSS_PATH } = require('./theme');
 
 const ledgerPages = require('./pages');
 const beaconPages = require('./beacon/pages');
+const anvilPages = require('./anvil/pages');
 
 const ledgerPrompt = require('../prompt');
 const beaconPrompt = require('../prompt-beacon');
+const anvilPrompt = require('../prompt-anvil');
 
 /** key -> the page builders and the prompts that belong to that stylesheet. */
 const PARTS = {
   ledger: { pages: ledgerPages, prompt: ledgerPrompt },
   beacon: { pages: beaconPages, prompt: beaconPrompt },
+  anvil: { pages: anvilPages, prompt: anvilPrompt },
 };
 
 /**

@@ -1245,6 +1245,45 @@ await test('and a Cloudflare row has no GitHub column content at all', async () 
 
   assert.ok(!out.html.includes('not set up'));
   assert.ok(!out.html.includes('setup-github'));
+  assert.ok(!out.html.includes('recheck-github'));
+});
+
+await test('A GITHUB ROW ALSO OFFERS THE RE-CHECK, WHICH THE OTHER BUTTON CANNOT DO', async () => {
+  /* GitHub checks a custom domain's DNS when the domain is SET and never
+   * again. A client sets it here and edits their registrar afterwards, so
+   * the check runs against records that do not exist, fails, and no
+   * certificate is ever requested — 2-r.net sat that way for five hours.
+   * "Run again" writes the same cname back, which is not a change, so
+   * nothing looks again. Only clearing it first does. */
+  install({
+    domains: [{ _id: 'd1', domain: 'acme.com', target: 'github',
+      githubInstallationId: '176399104', enabled: true }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('/recheck-github'), 'there is no way to re-check DNS');
+  assert.ok(out.html.includes('Re-check DNS'));
+});
+
+await test('and it warns that every site on the domain goes down for a few seconds', async () => {
+  /* The re-check clears the custom domain before setting it back, and the
+   * domain serves nothing in between. A disruptive button that looks like
+   * the safe one beside it is a button somebody presses on a Tuesday
+   * afternoon without knowing. */
+  install({
+    domains: [{ _id: 'd1', domain: 'acme.com', target: 'github',
+      githubInstallationId: '176399104', enabled: true }],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  const form = out.html.slice(out.html.indexOf('/recheck-github'));
+  const ask = /data-confirm="([^"]+)"/.exec(form);
+
+  assert.ok(ask, 'the re-check submits without asking');
+  assert.ok(/404|down/i.test(ask[1]), 'the confirmation does not mention the outage');
+  assert.ok(ask[1].includes('acme.com'), 'the confirmation does not name the domain');
 });
 
 /* ------------------------------------------------------------------------
