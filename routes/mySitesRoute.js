@@ -48,6 +48,19 @@ const { deleteSite } = require('../utils/github/deleteSite');
 const { findSites } = require('../utils/github/adoptSites');
 const { renderSite } = require('../utils/localOptions/render/renderSite');
 const { structureFor } = require('../utils/localOptions/render/structures');
+
+/* WHERE A SITE LIVES, WORKED OUT IN ONE PLACE — 1 November.
+ *
+ * This file built the address by hand, `domainName/repo/`, in SEVEN spots.
+ * When sites moved to a subdomain the builder changed and all seven went on
+ * printing the old shape beside a link that no longer resolved. Edwin found
+ * it by reading his own screen, one row at a time.
+ *
+ *     A COMMENT THAT SAYS A THING IS IN ONE PLACE IS NOT A TEST.
+ *     THE SEVENTH COPY DOES NOT KNOW IT IS A COPY. */
+const {
+  siteUrlFor, pageUrlFor, siteLabelFor,
+} = require('../utils/localOptions/siteAddress');
 const { parseVerificationTags } = require('../utils/blog/verificationTags');
 
 /* ------------------------------------------------------------------ page */
@@ -298,9 +311,9 @@ router.get('/my-sites', requireAuth, async (req, res) => {
         <td class="rownum">${i + 1}</td>
         <td>
           <strong>${esc(site.businessName || site.repo)}</strong><br>
-          <a href="https://${esc(site.domainName)}/${esc(site.repo)}/"
+          <a href="${esc(siteUrlFor({ repo: site.repo, domain: site.domainName }))}"
              target="_blank" rel="noopener" class="link-light small">
-            ${esc(site.domainName)}/${esc(site.repo)}/
+            ${esc(siteLabelFor({ repo: site.repo, domain: site.domainName }))}
           </a>
         </td>
         <td class="text-white-50">${esc(site.trade || '')}</td>
@@ -410,8 +423,8 @@ router.get('/my-sites/:id/edit', requireAuth, async (req, res) => {
       body: `
         <h1 class="h3 mb-1">${esc(site.businessName || site.repo)}</h1>
         <p class="text-white-50 mb-4">
-          <a href="https://${esc(site.domainName)}/${esc(site.repo)}/" target="_blank"
-             rel="noopener" class="link-light">${esc(site.domainName)}/${esc(site.repo)}/</a>
+          <a href="${esc(siteUrlFor({ repo: site.repo, domain: site.domainName }))}" target="_blank"
+             rel="noopener" class="link-light">${esc(siteLabelFor({ repo: site.repo, domain: site.domainName }))}</a>
         </p>
 
         <form method="post" action="/my-sites/${site._id}/edit">
@@ -522,7 +535,8 @@ router.get('/my-sites/:id/edit', requireAuth, async (req, res) => {
           ${(source.services || []).map((service, i) => `
           <h2 class="h5 mt-5 mb-2">${esc(service.name)}</h2>
           <p class="text-white-50 small mb-3">
-            ${esc(site.domainName)}/${esc(site.repo)}/${esc(service.slug)}/
+            ${esc(pageUrlFor({ repo: site.repo, domain: site.domainName, slug: service.slug })
+                   .replace(/^https:\/\//, ''))}
           </p>
 
           <label class="form-label small text-white-50">Page heading</label>
@@ -788,7 +802,7 @@ router.post('/my-sites/:id/edit', requireAuth, async (req, res) => {
         <p class="text-white-50">
           GitHub takes a minute or two to serve the new version.
         </p>
-        <a href="https://${esc(site.domainName)}/${esc(site.repo)}/" target="_blank"
+        <a href="${esc(siteUrlFor({ repo: site.repo, domain: site.domainName }))}" target="_blank"
            rel="noopener" class="btn btn-outline-light">Open the site</a>
         <a href="/my-sites" class="btn btn-primary ms-2">My sites</a>`,
     }));
@@ -850,8 +864,8 @@ function confirmBody(site, { error = '' } = {}) {
 
     <ul class="text-white-50">
       <li>The repository <code>${esc(site.owner)}/${esc(site.repo)}</code> is deleted.</li>
-      <li><code>${esc(site.domainName)}/${esc(site.repo)}/</code> stops working, with
-          every service page under it.</li>
+      <li><code>${esc(siteLabelFor({ repo: site.repo, domain: site.domainName }))}</code> stops
+          working, with every service page under it.</li>
       <li>The site's words go with it — the repository is the only copy, so the
           site cannot be edited back into existence. Building it again costs
           credits and writes new words.</li>

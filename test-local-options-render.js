@@ -126,11 +126,43 @@ test('and the eleven agree with pagesToBuild()', () => {
   assert.strictEqual(PAGES.length, pagesToBuild(MODES.LOCAL_OPTIONS, {}));
 });
 
-test('plus the stylesheet, the sitemap, robots and a 404', () => {
-  for (const path of ['assets/site.css', 'sitemap.xml', 'robots.txt', '404.html']) {
+test('plus the stylesheet, the sitemap, robots, a 404 and the CNAME', () => {
+  for (const path of ['assets/site.css', 'sitemap.xml', 'robots.txt', '404.html', 'CNAME']) {
     assert.ok(FILES[path], `${path} was not written`);
   }
-  assert.strictEqual(Object.keys(FILES).length, 15);
+  assert.strictEqual(Object.keys(FILES).length, 16);
+});
+
+test('THE CNAME IS THE CUSTOM DOMAIN, AND IT IS A FILE ON PURPOSE', () => {
+  /* A custom domain on GitHub Pages IS a file named CNAME in the repository
+   * root. The settings box writes one and the Pages API writes one; both are
+   * ways of putting this file there.
+   *
+   * IT IS RENDERED RATHER THAN SET THROUGH THE API because commit.js builds
+   * the tree FROM THE GIVEN FILES ALONE — deliberately, so a page deleted
+   * from a site is deleted from the repository. A CNAME placed by the API
+   * would survive exactly until the next publish and then vanish, taking the
+   * site off its subdomain on the SECOND deploy.
+   *
+   *     A FILE THE PUSH DOES NOT KNOW ABOUT IS A FILE THE PUSH DELETES. */
+  assert.strictEqual(FILES.CNAME, `${new URL(SITE).hostname}\n`);
+  assert.ok(!FILES.CNAME.includes('/'), 'the CNAME carries a path');
+  assert.ok(!FILES.CNAME.includes(':'), 'the CNAME carries a scheme');
+});
+
+test('and a site that SHARES a host writes none at all', () => {
+  /* A site served at `7-y.xyz/chicago-plumber/` shares its host with every
+   * other site on that apex. A CNAME in one of their repositories would
+   * claim the apex for that one repository, which is how a root site gets
+   * taken down. The path is the test.
+   *
+   * ABSENT, NOT EMPTY. An empty CNAME file is not "no custom domain" to
+   * GitHub — it is a custom domain of "", and nobody should find out what
+   * that does on a client's site. */
+  const shared = renderSite({ ...INPUT, url: 'https://7-y.xyz/chicago-plumber' });
+
+  assert.ok(!('CNAME' in shared), 'a subdirectory site claimed a host');
+  assert.strictEqual(Object.keys(shared).length, 15);
 });
 
 test('THE 404 IS NOT ONE OF THE ELEVEN', () => {
@@ -141,6 +173,19 @@ test('THE 404 IS NOT ONE OF THE ELEVEN', () => {
 
 test('nothing is empty', () => {
   for (const [path, body] of Object.entries(FILES)) {
+    /* THE CNAME IS ONE HOSTNAME AND IS MEANT TO BE. Forty characters is the
+       right floor for a page, a stylesheet or a sitemap — anything that
+       short is a render that went wrong. A CNAME holding more than a
+       hostname would be the bug here, so it gets the check it can fail:
+       non-empty, one line, no whitespace in it. */
+    if ('CNAME' === path) {
+      const line = String(body).trim();
+
+      assert.ok(line.length > 3, 'the CNAME is empty');
+      assert.ok(!/\s/.test(line), `the CNAME is not a bare hostname: ${line}`);
+      continue;
+    }
+
     assert.ok(String(body).trim().length > 40, `${path} is empty or near it`);
   }
 });

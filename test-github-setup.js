@@ -583,6 +583,52 @@ test('AND THE DNS RECORDS COME BACK, BECAUSE NOTHING HERE CAN SET THEM', async (
   assert.strictEqual(dns.www.type, 'CNAME');
 });
 
+test('THE WILDCARD IS IN THE LIST, AND IT IS THE ONE THAT MATTERS', async () => {
+  /* IT WAS MISSING FOR HALF A DAY AND IT COST EXACTLY WHAT YOU WOULD
+   * EXPECT. Sites moved to a subdomain each on 1 November; this list went on
+   * naming the apex records, the AAAA records and www, which was the
+   * complete list for the shape before. Edwin then built a site onto
+   * 7-y.xyz, which had every record the screen named. The build succeeded,
+   * the repository was correct, the CNAME file was in it, and the address
+   * answered DNS_PROBE_FINISHED_NXDOMAIN.
+   *
+   *     A SCREEN THAT LISTS THE RECORDS AND OMITS THE ONE THAT MATTERS
+   *     IS WORSE THAN A SCREEN THAT LISTS NONE. IT READS AS FINISHED. */
+  const h = hub();
+
+  const { dns } = await run(h);
+
+  assert.ok(dns.wildcard, 'the wildcard is not in the DNS list at all');
+  assert.strictEqual(dns.wildcard.type, 'CNAME');
+  assert.strictEqual(dns.wildcard.host, '*');
+  assert.strictEqual(dns.wildcard.value, 'acme.github.io');
+
+  /* It points at the ROOT site, like www does — not at a repository.
+   * `<login>.github.io/<repo>` is not a CNAME target and never was. */
+  assert.strictEqual(dns.wildcard.value, dns.www.value);
+  assert.ok(!dns.wildcard.value.includes('/'), 'the wildcard target carries a path');
+});
+
+test('and every record says what it is for', async () => {
+  /* Four look-alike rows of values, with one sentence above covering all of
+   * them, is how the row that cannot be skipped reads as the fourth of four
+   * optional things. */
+  const h = hub();
+
+  const { dns } = await run(h);
+
+  for (const [key, rec] of Object.entries(dns)) {
+    assert.ok(rec.why && rec.why.length > 10, `the ${key} record does not say what it is for`);
+  }
+
+  assert.ok(/nothing you build/i.test(dns.wildcard.why),
+    'the wildcard does not say what happens without it');
+
+  /* AND THE APEX SAYS IT IS NOT THE SITES. The two are easy to confuse and
+   * deleting either because it looked redundant is the failure. */
+  assert.ok(/holding page/i.test(dns.apex.why), 'the apex does not say what it serves');
+});
+
 test('the A records are the four GitHub publishes, exactly', () => {
   /* Checked against docs.github.com, "Managing a custom domain for your
    * GitHub Pages site", on 30 October. Written down rather than linked

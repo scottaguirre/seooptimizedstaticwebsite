@@ -498,10 +498,58 @@ async function setupDomain({
     /* THE PART NOBODY HERE CAN DO. Carried back with everything else so the
      * screen can show the whole job rather than the half of it that was
      * automatable. */
+    /* THE WILDCARD IS FIRST BECAUSE IT IS THE ONE THAT MATTERS — 1 November.
+     *
+     * This list used to be the apex A records, the AAAA records and www,
+     * which was complete while every site lived under the apex. Sites now
+     * live on a subdomain each, and `*` is the record without which NOTHING
+     * a customer builds resolves.
+     *
+     * IT WAS MISSING FOR HALF A DAY AND IT COST EXACTLY WHAT YOU WOULD
+     * EXPECT. Edwin built Expert Lemon Law Houston onto 7-y.xyz after the
+     * switch. The build succeeded, the repository was correct, the CNAME
+     * file was in it, and the address answered DNS_PROBE_FINISHED_NXDOMAIN
+     * — because the domain had every record this screen named and not the
+     * one it did not.
+     *
+     *     A SCREEN THAT LISTS THE RECORDS AND OMITS THE ONE THAT MATTERS
+     *     IS WORSE THAN A SCREEN THAT LISTS NONE. IT READS AS FINISHED.
+     *
+     * ONE RECORD PER DOMAIN, ONCE, AND NEVER AGAIN. That is the whole
+     * reason subdomains are automatable: tested on 9-x.org on 1 November,
+     * Hostinger accepts `*` as a CNAME, arbitrary subdomains resolve,
+     * GitHub's per-repo DNS check goes green immediately and the
+     * certificate issues. GitHub's own documentation does not mention
+     * wildcards at all, which is why it had to be tested rather than read.
+     *
+     * THE APEX RECORDS STAY, and they are not redundant: they serve the
+     * holding page at the bare domain. The wildcard serves the sites. A
+     * reader who understands that division will not delete either. */
     dns: {
-      apex: { type: 'A', host: '@', values: APEX_A },
-      apexIpv6: { type: 'AAAA', host: '@', values: APEX_AAAA },
-      www: { type: 'CNAME', host: 'www', value: `${owner}.github.io` },
+      wildcard: {
+        type: 'CNAME',
+        host: '*',
+        value: `${owner}.github.io`,
+        why: 'Every site on this domain. Without it nothing you build here resolves.',
+      },
+      apex: {
+        type: 'A',
+        host: '@',
+        values: APEX_A,
+        why: 'The domain on its own, which serves the holding page.',
+      },
+      apexIpv6: {
+        type: 'AAAA',
+        host: '@',
+        values: APEX_AAAA,
+        why: 'The same, for IPv6. Optional.',
+      },
+      www: {
+        type: 'CNAME',
+        host: 'www',
+        value: `${owner}.github.io`,
+        why: 'Only if the domain should answer with www in front of it.',
+      },
     },
   };
 }

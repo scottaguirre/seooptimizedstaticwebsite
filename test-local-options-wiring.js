@@ -1553,11 +1553,18 @@ const POOL_ROW = {
   githubInstallationId: '176399104',
 };
 
-asyncTest('A PICKED DOMAIN PUTS THE SITE IN A SUBDIRECTORY OF IT', async () => {
-  /* One GitHub account serves one domain with many sites under it —
-   * acme.com/quality-plumbing/, acme.com/roof-pros/. Edwin, 29 October:
-   * "only one can serve from the root and then other website will use a
-   * subdirectory." */
+asyncTest('A PICKED DOMAIN PUTS THE SITE ON A SUBDOMAIN OF IT', async () => {
+  /* WAS A SUBDIRECTORY UNTIL 1 NOVEMBER — acme.com/quality-plumbing/, which
+   * is how GitHub Pages behaves by default: a project repository with no
+   * custom domain of its own inherits the root repository's.
+   *
+   * WHY IT MOVED. To Google a subdirectory is the same site, so every client
+   * on an apex pooled authority with every other — which helps a new site
+   * and means one bad client taints the rest. A subdomain is only SOMETIMES
+   * the same site. Edwin chose separation on 1 November, and chose to
+   * rebuild the existing sites rather than migrate them: GitHub Pages cannot
+   * issue a 301, so migrating would have meant leaving redirect pages
+   * behind. */
   const baseDir = tmpdir('picked');
   const stub = fakeGenerate();
   const pub = fakePublish();
@@ -1576,10 +1583,16 @@ asyncTest('A PICKED DOMAIN PUTS THE SITE IN A SUBDIRECTORY OF IT', async () => {
    * schema @id are built by appending to this — and a canonical naming an
    * address that serves somebody else's site is the fault that made two
    * migrated domains invisible in October. */
-  /* The fixture business is "Leander Plumbing Gomanzo", and the path is
-   * its name — which is the point: the address and the repository are the
-   * same string, produced once. */
-  assert.strictEqual(stub.seen.args.url, 'https://acme.com/leander-plumbing-gomanzo');
+  /* The fixture business is "Leander Plumbing Gomanzo", and the LABEL is its
+   * name — which is the point: the address and the repository are the same
+   * string, produced once. */
+  assert.strictEqual(stub.seen.args.url, 'https://leander-plumbing-gomanzo.acme.com');
+
+  /* AND NOTHING IS LEFT OF THE OLD SHAPE. A URL that still carried a path
+   * would put every canonical one level deep on a host that serves the site
+   * at its root — a 200 on every page and the wrong address on all of
+   * them. */
+  assert.strictEqual(new URL(stub.seen.args.url).pathname, '/');
 });
 
 asyncTest('and it publishes to the GitHub account that domain belongs to', async () => {

@@ -1399,6 +1399,94 @@ await test('and the table is allowed to scroll rather than be clipped', async ()
   assert.ok(out.html.includes('table-responsive'), 'an overflow would be clipped');
 });
 
+/* ------------------------------------------------------------------------
+ * The record without which nothing resolves
+ * --------------------------------------------------------------------- */
+
+section('THE WILDCARD IS ON THE SCREEN');
+
+/* THE DETOUR THIS EXISTS TO PREVENT — 1 November. Sites moved to a subdomain
+ * each. The registrar table went on printing the apex A records, the AAAA
+ * records and www, which was the complete list for the shape before. Edwin
+ * built a site onto 7-y.xyz, which had every record the screen named. The
+ * build succeeded, the repository was correct, the CNAME file was in it, and
+ * the address answered DNS_PROBE_FINISHED_NXDOMAIN.
+ *
+ *     A SCREEN THAT LISTS THE RECORDS AND OMITS THE ONE THAT MATTERS
+ *     IS WORSE THAN A SCREEN THAT LISTS NONE. IT READS AS FINISHED.
+ *
+ * THE TABLE IS TESTED DIRECTLY because the handler around it requires
+ * setupDomain() and that call reaches github.com — the success path of that
+ * route has never been reachable from a suite, which is precisely how the
+ * table drifted unnoticed. */
+const { dnsTable } = require('./routes/blogDomainsRoute');
+
+const DNS = {
+  wildcard: { type: 'CNAME', host: '*', value: 'acme.github.io',
+    why: 'Every site on this domain. Without it nothing you build here resolves.' },
+  apex: { type: 'A', host: '@', values: ['185.199.108.153', '185.199.109.153'],
+    why: 'The domain on its own, which serves the holding page.' },
+  apexIpv6: { type: 'AAAA', host: '@', values: ['2606:50c0:8000::153'],
+    why: 'The same, for IPv6. Optional.' },
+  www: { type: 'CNAME', host: 'www', value: 'acme.github.io',
+    why: 'Only if the domain should answer with www in front of it.' },
+};
+
+await test('THE WILDCARD IS PRINTED, AND IT IS PRINTED FIRST', async () => {
+  const html = dnsTable(DNS);
+
+  assert.ok(html.includes('<code>*</code>'), 'the wildcard row is not on the screen');
+
+  /* FIRST IN THE TABLE. Among look-alike rows, the one that cannot be
+   * skipped reads as the fourth of four optional things. */
+  assert.ok(
+    html.indexOf('<code>*</code>') < html.indexOf('<code>@</code>'),
+    'the wildcard is printed below the apex records');
+});
+
+await test('and it says what happens without it', async () => {
+  const html = dnsTable(DNS);
+
+  assert.ok(/nothing you build/i.test(html),
+    'the screen does not say what happens without the wildcard');
+
+  /* AND THE APEX SAYS IT IS NOT THE SITES. The two are easy to confuse, and
+   * deleting either because it looked redundant is the next version of this
+   * failure. */
+  assert.ok(/holding page/i.test(html), 'the apex row does not say what it serves');
+});
+
+await test('THE ONE THAT CANNOT BE SKIPPED IS MARKED, NOT JUST ORDERED', async () => {
+  /* Order alone is a convention a reader has to notice. */
+  const html = dnsTable(DNS);
+  const first = html.slice(html.indexOf('<tbody'), html.indexOf('<code>@</code>'));
+
+  assert.ok(/text-warning/.test(first), 'the wildcard row is not marked');
+});
+
+await test('and a record that is missing renders nothing, not undefined', async () => {
+  /* A table built from a `dns` object that predates a field must not print
+   * "undefined" into a row a customer is about to copy into a registrar. */
+  const html = dnsTable({ apex: DNS.apex });
+
+  assert.ok(!/undefined/.test(html), 'a missing record printed undefined');
+  assert.ok(html.includes('<code>@</code>'), 'the record that was there did not print');
+  assert.ok(!html.includes('<code>*</code>'));
+
+  assert.ok(!/undefined/.test(dnsTable({})), 'an empty dns object printed undefined');
+  assert.ok(!/undefined/.test(dnsTable()), 'no dns object at all printed undefined');
+});
+
+await test('AND A SINGLE-VALUE RECORD PRINTS ONE VALUE, NOT A LIST OF ONE', async () => {
+  /* `values` for the A records, `value` for the CNAMEs. Reading only one of
+   * the two is how half the table would come out blank. */
+  const html = dnsTable(DNS);
+
+  assert.ok(html.includes('<code>acme.github.io</code>'));
+  assert.ok(html.includes('<code>185.199.108.153</code>'));
+  assert.ok(html.includes('<code>185.199.109.153</code>'), 'the second A record is missing');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
 

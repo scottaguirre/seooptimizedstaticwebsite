@@ -439,8 +439,55 @@ async function sitePlace({ global = {}, business = {}, ctx = {} }) {
    * on GitHub and the path in the canonical come to differ by a hyphen. */
   const repo = repoNameFor(business.name);
 
+  /* A SUBDOMAIN PER SITE, NOT A SUBDIRECTORY — Edwin, 1 November.
+   *
+   * WAS `https://${row.domain}/${repo}`. Every site on a domain was served
+   * beneath one apex, which is how GitHub Pages behaves by default: a
+   * project repository with no custom domain of its own inherits the root
+   * repository's.
+   *
+   * WHAT CHANGED IT. To Google a subdirectory is the same site, so every
+   * client on an apex pooled authority with every other — which helps a new
+   * site and means one bad client taints the rest. A subdomain is only
+   * SOMETIMES the same site, so each client stands or falls alone. Edwin
+   * chose separation, and chose to rebuild the existing sites rather than
+   * migrate them, which is what made it cheap: GitHub Pages cannot issue a
+   * 301, so migrating would have meant leaving redirect pages behind.
+   *
+   * THE WILDCARD IS WHAT MAKES IT AUTOMATABLE, and it was not knowable from
+   * the documentation — GitHub's custom-domain page does not mention
+   * wildcards at all. Tested on 9-x.org, 1 November: `* CNAME ->
+   * <login>.github.io` at the registrar, then a throwaway repository given
+   * the custom domain test.9-x.org. GitHub's DNS check went green
+   * immediately and the certificate issued. So a DOMAIN needs one record,
+   * once, and every site under it works with no DNS step of its own.
+   *
+   * THE URL IS BUILT HERE AND NOWHERE ELSE. The canonical, the sitemap, the
+   * robots line, every internal link and the My Sites row all derive from
+   * this string — which is why a change this wide is one line.
+   *
+   * AND THE HOST IS CLAIMED BY A FILE, NOT BY A CALL. renderSite() emits a
+   * CNAME holding this hostname; see cnameFor() there for why the Pages API
+   * would have lost it on the second deploy rather than the first.
+   *
+   * WHAT HAPPENS TO THE OLD SUBDIRECTORY URL: GITHUB REDIRECTS IT.
+   *
+   * Worth writing down because GitHub's documentation does not say so — its
+   * custom-domain page covers redirects between apex and www and is silent
+   * on project paths. Checked live on 1 November: after
+   * expert-lemon-law-houston moved onto its subdomain,
+   * 7-y.xyz/expert-lemon-law-houston/ redirected to
+   * expert-lemon-law-houston.7-y.xyz rather than 404ing or serving a second
+   * copy.
+   *
+   * SO MOVING A SITE COSTS NOTHING IN SEARCH. No duplicate — one address
+   * redirects to the other; nothing indexed breaks; and the redirect agrees
+   * with the canonical the pages already carry. The redirect was the reason
+   * migration looked expensive when this was costed (GitHub Pages cannot
+   * issue a 301 of its own, so the plan was to rebuild rather than migrate).
+   * It turns out GitHub issues this one itself. */
   return {
-    url: `https://${row.domain}/${repo}`,
+    url: `https://${repo}.${row.domain}`,
     installationId: String(row.githubInstallationId || ''),
     repo,
     domain: row.domain,

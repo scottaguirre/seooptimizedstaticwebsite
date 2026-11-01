@@ -1318,6 +1318,58 @@ router.post('/admin/blog-domains/domains', requireAdmin, async (req, res) => {
  * was not done, so the answer is a page listing what happened and what is
  * still owed.
  */
+/**
+ * The registrar table on the setup result screen.
+ *
+ * A FUNCTION, AND EXPORTED, BECAUSE THE ROUTE AROUND IT CANNOT BE TESTED.
+ * This handler requires setupDomain() directly and that call reaches
+ * github.com, so the suite has never been able to exercise the success
+ * path — which is exactly why the table could go half a day naming the
+ * wrong set of records with nothing failing.
+ *
+ *     A SCREEN NO TEST CAN REACH IS A SCREEN THAT DRIFTS.
+ *
+ * ONE ROW PER RECORD, AND EACH SAYS WHAT IT IS FOR. The table used to be
+ * four columns of values under one sentence covering all of them. That was
+ * fine while every record did roughly the same job. It stopped being fine
+ * when the wildcard arrived: it is the record without which nothing a
+ * customer builds resolves, and among look-alike rows it read as the fourth
+ * of four optional things.
+ *
+ * THE ORDER IS THE POINT. The wildcard is first and marked; the apex
+ * records follow. A reader who stops after the first row has the one that
+ * matters.
+ */
+function dnsTable(dns = {}) {
+  const row = (label, rec, lead = false) => {
+    if (!rec) return '';
+
+    const values = rec.values || [rec.value];
+
+    return `
+      <tr${lead ? ' class="table-active"' : ''}>
+        <td class="text-white-50">${lead
+          ? `<strong class="text-warning">${esc(label)}</strong>`
+          : esc(label)}</td>
+        <td><code>${esc(rec.type)}</code></td>
+        <td><code>${esc(rec.host)}</code></td>
+        <td>${values.map(v => `<code>${esc(v)}</code>`).join('<br>')}
+          ${rec.why ? `<div class="small text-white-50 mt-1">${esc(rec.why)}</div>` : ''}</td>
+      </tr>`;
+  };
+
+  return `
+        <table class="table table-navy align-middle">
+          <thead><tr><th></th><th>Type</th><th>Host</th><th>Value</th></tr></thead>
+          <tbody>
+            ${row('Every site', dns.wildcard, true)}
+            ${row('Apex', dns.apex)}
+            ${row('Apex, IPv6', dns.apexIpv6)}
+            ${row('www', dns.www)}
+          </tbody>
+        </table>`;
+}
+
 router.post('/admin/blog-domains/:id/setup-github', requireAdmin, async (req, res) => {
   let domain;
 
@@ -1372,10 +1424,6 @@ router.post('/admin/blog-domains/:id/setup-github', requireAdmin, async (req, re
       certState: out.https.state || '',
     });
 
-    const rows = (label, type, host, values) => `
-      <tr><td class="text-white-50">${esc(label)}</td><td><code>${esc(type)}</code></td>
-      <td><code>${esc(host)}</code></td>
-      <td>${values.map(v => `<code>${esc(v)}</code>`).join('<br>')}</td></tr>`;
 
     send(res, page({
       title: `Set up ${out.domain}`,
@@ -1409,19 +1457,19 @@ router.post('/admin/blog-domains/:id/setup-github', requireAdmin, async (req, re
         <h2 class="h5 mt-4 mb-2">What has to be done at the registrar</h2>
         <p class="text-white-50">
           GitHub has no say in DNS, so this is the half nothing here can do.
-          The A records are the ones that matter; the AAAA records are
-          optional and the <code>www</code> one is only needed if the domain
-          should answer with it.
+          <strong class="text-warning">The wildcard is the one that matters.</strong>
+          Every site built on this domain is served from a subdomain of it, so
+          without that record nothing you build here will resolve — the site
+          will publish, the repository will be correct, and the address will
+          answer with nothing at all.
+        </p>
+        <p class="text-white-50">
+          It is <strong>one record, once, per domain</strong>. The apex records
+          below are separate: they serve the holding page at the bare domain,
+          and they do not cover the sites.
         </p>
 
-        <table class="table table-navy align-middle">
-          <thead><tr><th></th><th>Type</th><th>Host</th><th>Value</th></tr></thead>
-          <tbody>
-            ${rows('Apex', out.dns.apex.type, out.dns.apex.host, out.dns.apex.values)}
-            ${rows('Apex, IPv6', out.dns.apexIpv6.type, out.dns.apexIpv6.host, out.dns.apexIpv6.values)}
-            ${rows('www', out.dns.www.type, out.dns.www.host, [out.dns.www.value])}
-          </tbody>
-        </table>
+        ${dnsTable(out.dns)}
 
         <p class="text-white-50">
           If the custom domain did not take, GitHub is usually refusing a
@@ -1594,3 +1642,4 @@ router.post('/admin/blog-domains/:id/recheck-github', requireAdmin, async (req, 
 
 module.exports = router;
 module.exports.normaliseDomain = normaliseDomain;
+module.exports.dnsTable = dnsTable;

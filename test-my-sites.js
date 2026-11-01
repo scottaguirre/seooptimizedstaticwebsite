@@ -13,6 +13,7 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 
 const { applyEdit, asList, typedMatches } = require('./routes/mySitesRoute');
 
@@ -373,6 +374,85 @@ test('AN EMPTY BOX CONFIRMS NOTHING, EVEN FOR A ROW WITH NO NAME', () => {
 });
 
 /* ---------------------------------------------------------------------- */
+
+/* ------------------------------------------------------------------------ */
+
+section('WHERE A SITE LIVES');
+
+/* THE BUG THESE EXIST FOR — 1 November. Sites moved from
+ * `domain.com/business/` to `business.domain.com`. The builder changed, every
+ * page inside every site was correct, and My Sites went on printing the old
+ * shape beside a link that no longer resolved. It built the address by hand
+ * in SEVEN places and this suite asserted none of them, which is why thirty
+ * tests passed while the list was wrong.
+ *
+ *     A COMMENT THAT SAYS A THING IS IN ONE PLACE IS NOT A TEST.
+ *     THE SEVENTH COPY DOES NOT KNOW IT IS A COPY. */
+const {
+  siteHostFor, siteUrlFor, pageUrlFor, siteLabelFor,
+} = require('./utils/localOptions/siteAddress');
+
+const WHERE = { repo: 'expert-lemon-law-houston', domain: '7-y.xyz' };
+
+test('A SITE IS A SUBDOMAIN OF ITS DOMAIN, NOT A FOLDER IN IT', () => {
+  assert.strictEqual(siteHostFor(WHERE), 'expert-lemon-law-houston.7-y.xyz');
+  assert.strictEqual(siteUrlFor(WHERE), 'https://expert-lemon-law-houston.7-y.xyz/');
+
+  /* The shape that was there before, asserted as ABSENT. A helper that
+   * quietly went back to a path would pass every check above. */
+  assert.ok(!siteUrlFor(WHERE).includes('7-y.xyz/expert-lemon-law-houston'));
+  assert.strictEqual(new URL(siteUrlFor(WHERE)).pathname, '/');
+});
+
+test('and a page inside it hangs off that host', () => {
+  assert.strictEqual(
+    pageUrlFor({ ...WHERE, slug: 'lemon-law-buybacks' }),
+    'https://expert-lemon-law-houston.7-y.xyz/lemon-law-buybacks/');
+
+  /* No slug is the site itself, not a trailing double slash. */
+  assert.strictEqual(pageUrlFor(WHERE), siteUrlFor(WHERE));
+});
+
+test('WHAT IS SHOWN IS THE HOST, WITHOUT THE SCHEME', () => {
+  /* A list of sites is read, not clicked through one at a time. `https://`
+   * in front of every row is eleven characters of nothing repeated down the
+   * page; the link still carries it. */
+  assert.strictEqual(siteLabelFor(WHERE), 'expert-lemon-law-houston.7-y.xyz');
+  assert.ok(!siteLabelFor(WHERE).startsWith('http'));
+});
+
+test('A SITE THAT LOST ITS DOMAIN GETS NOTHING, NOT A BROKEN LINK', () => {
+  /* The pool row was removed, or the record predates the field. My Sites
+   * already has a branch for a site whose domain has left the pool; this
+   * returns empty so that branch is reachable, rather than papering over it
+   * with `https://.undefined/`. */
+  for (const bad of [
+    { repo: 'x', domain: '' },
+    { repo: '', domain: 'y.com' },
+    { repo: 'x' },
+    { domain: 'y.com' },
+    {},
+    undefined,
+  ]) {
+    assert.strictEqual(siteUrlFor(bad), '', `${JSON.stringify(bad)} produced a link`);
+    assert.strictEqual(siteHostFor(bad), '');
+    assert.strictEqual(pageUrlFor(bad), '');
+  }
+});
+
+test('AND THE ROUTE BUILDS NO ADDRESS OF ITS OWN', () => {
+  /* The actual regression guard. Seven hand-built copies is how the list
+   * came to disagree with the sites it was listing; one more would do it
+   * again. The route may call the helper as often as it likes and may not
+   * concatenate a domain and a repo itself. */
+  const src = fs.readFileSync(require.resolve('./routes/mySitesRoute.js'), 'utf8');
+
+  assert.ok(
+    !/domainName\)}\/\$\{esc\(site\.repo/.test(src),
+    'mySitesRoute builds a site address by hand again');
+
+  assert.ok(src.includes('siteUrlFor'), 'mySitesRoute does not use the helper at all');
+});
 
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);

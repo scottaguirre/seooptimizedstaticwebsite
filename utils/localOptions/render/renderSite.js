@@ -76,6 +76,54 @@ function heroPaths() {
 }
 
 /**
+ * The host this site owns, or '' when it does not own one.
+ *
+ * WHY A FILE AND NOT AN API CALL — 1 November, when sites moved from
+ * `domain.com/business-name/` to `business-name.domain.com`.
+ *
+ * A CUSTOM DOMAIN ON GITHUB PAGES *IS* A FILE NAMED CNAME IN THE REPOSITORY
+ * ROOT. The settings box writes one; the Pages API writes one. Both are ways
+ * of putting this file there.
+ *
+ * AND THAT MATTERS BECAUSE OF HOW WE PUSH. commit.js builds the tree FROM THE
+ * GIVEN FILES ALONE — deliberately, so a page deleted from a site is deleted
+ * from the repository. A CNAME placed by the API would therefore survive
+ * exactly until the next publish, and then vanish: the site would come off
+ * its subdomain on the SECOND deploy, not the first, which is the worst way
+ * to find anything.
+ *
+ *     A FILE THE PUSH DOES NOT KNOW ABOUT IS A FILE THE PUSH DELETES.
+ *
+ * Rendering it makes the domain part of the site rather than a setting beside
+ * it, so it cannot drift, cannot be wiped, and needs no call to put it back.
+ *
+ * ONLY WHEN THE SITE OWNS THE WHOLE HOST. A site served at
+ * `7-y.xyz/chicago-plumber/` shares its host with every other site on that
+ * apex, and a CNAME in one of their repositories would try to claim the apex
+ * for that one repository — which is how a root site gets taken down. The
+ * path is the test: no path, the host is ours; any path, it is not.
+ *
+ * NO TRAILING NEWLINE QUESTION TO ARGUE ABOUT: GitHub writes the file with
+ * one, so this does too, and a re-render matches what is already there rather
+ * than showing as a change on every deploy.
+ */
+function cnameFor(url) {
+  let parsed;
+
+  try {
+    parsed = new URL(String(url || ''));
+  } catch (_) {
+    /* Not a URL at all. The suite builds sites with no url, and a renderer
+     * that threw on one would fail a test that is about something else. */
+    return '';
+  }
+
+  if ('/' !== parsed.pathname.replace(/\/+$/, '/')) return '';
+
+  return parsed.hostname;
+}
+
+/**
  * Every file this site is.
  *
  * @param {object}   site
@@ -123,7 +171,19 @@ function renderSite(site = {}) {
    * it automatically from the root. */
   files['404.html'] = notFoundPage(ctx);
 
+  /* THE CUSTOM DOMAIN, AS A FILE. See cnameFor() above for why it is
+   * rendered rather than set through the Pages API: the push rebuilds the
+   * tree from these files, so a CNAME it does not know about is a CNAME it
+   * deletes on the next deploy.
+   *
+   * ABSENT, NOT EMPTY, when the site shares a host. An empty CNAME file is
+   * not "no custom domain" to GitHub — it is a custom domain of "", and the
+   * behaviour of that is nobody's business to find out on a client's site. */
+  const host = cnameFor(ctx.site);
+
+  if (host) files.CNAME = `${host}\n`;
+
   return files;
 }
 
-module.exports = { renderSite, sitemap, robots, heroPaths };
+module.exports = { renderSite, sitemap, robots, heroPaths, cnameFor };

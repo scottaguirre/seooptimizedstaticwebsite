@@ -260,12 +260,19 @@ await test('and a suggester of the wrong shape fails by saying so', async () => 
   );
 });
 
-await test('FIFTEEN FILES PLUS FOUR PICTURES', async () => {
+await test('FIFTEEN FILES, THE CNAME, AND FOUR PICTURES', async () => {
+  /* The CNAME arrived on 1 November, when sites moved from a subdirectory
+   * of the domain to a subdomain of it. A custom domain on GitHub Pages IS
+   * a file in the repository root, and it is RENDERED rather than set
+   * through the Pages API because commit.js builds the tree from the given
+   * files alone — a CNAME the push does not know about is one the push
+   * deletes, on the second deploy rather than the first. */
   const { ask } = stub();
 
   const { files } = await generateLocalOptionsSite(base({ ask }));
 
-  assert.strictEqual(Object.keys(files).length, 19);
+  assert.strictEqual(Object.keys(files).length, 20);
+  assert.strictEqual(files.CNAME, `${new URL(base({}).url).hostname}\n`);
 
   for (let n = 1; n <= 4; n += 1) {
     assert.ok(Buffer.isBuffer(files[`assets/hero-${n}.webp`]), `hero-${n} is not bytes`);
@@ -798,7 +805,7 @@ await test('AND A TRADE WITH NO PICTURES STILL PRODUCES A SITE', async () => {
   assert.strictEqual(heroes.found.length, 0);
   assert.strictEqual(heroes.missing.length, 4);
   assert.ok(files['index.html']);
-  assert.strictEqual(Object.keys(files).length, 15);
+  assert.strictEqual(Object.keys(files).length, 16);
 });
 
 await test('a business with no trade is refused before anything is spent', async () => {
