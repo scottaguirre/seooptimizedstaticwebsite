@@ -1663,6 +1663,61 @@ test('both files read the checkbox through that one function', () => {
   assert.ok(/const wantsPricing = keptOn\(/.test(aboutSrc), 'the pricing render gate stopped using keptOn');
   assert.ok(/caps\.badges && keptOn\(globalValues\.showBadges\)/.test(aboutSrc),
     'the badge render gate lost its shape rule or its preference');
+
+  /* The example reviews read it too, as of 3 November. ONE gate, not two —
+   * see the test below for why that is the design here and not an omission. */
+  assert.ok(/const showReviews = keptOn\(/.test(runSrc),
+    'the example-reviews gate stopped using keptOn');
+});
+
+test('THE EXAMPLE REVIEWS HAVE ONE GATE, AND IT IS IN FRONT OF THE SPEND', () => {
+  /* WHY THIS SECTION IS DELIBERATELY UNLIKE THE OTHER TWO.
+   *
+   * Pricing and badges are read twice — once in runGeneration to decide
+   * whether to PAY, once in buildAboutUsPage to decide whether to RENDER —
+   * and utils/sectionToggle.js exists because those two readings drifted on
+   * `null`, producing a section that was generated, charged for, and then not
+   * displayed.
+   *
+   * The reviews cannot drift that way, because unticking the box does not
+   * produce a `false` that two files have to agree about. It produces no
+   * reviews at all, and every consumer downstream already handles that:
+   *
+   *     buildReviewsSection(null)  ->  ''      (nothing in the static page)
+   *     reviewRows(null)           ->  []
+   *     CM.reviewsSection([])      ->  null    (nothing in the model, so the
+   *                                             exported WP theme has no
+   *                                             reviews section either)
+   *
+   * So a second keptOn() in buildAboutUsPage would be the extra reading this
+   * codebase has already been bitten by, guarding against a value that cannot
+   * arrive. This test pins BOTH halves: the gate is in front of the model
+   * call, and there is not a second one. */
+  const runSrc = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
+  const aboutSrc = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
+
+  /* IN FRONT OF THE SPEND. generateSampleReviews is a model call; unticking
+   * the box has to stop the credits going, not just hide the output. */
+  assert.ok(/showReviews\s*\r?\n?\s*\?\s*await generateSampleReviews\(/.test(runSrc),
+    'the reviews gate no longer sits in front of generateSampleReviews');
+  assert.ok(/:\s*null;/.test(runSrc.slice(runSrc.indexOf('const reviews = '))),
+    'an unticked box no longer yields null reviews');
+
+  /* AND NOT A SECOND TIME. */
+  assert.ok(!/showReviews/.test(aboutSrc),
+    'buildAboutUsPage has grown its own reading of showReviews — one gate, in '
+    + 'runGeneration, is the design; see the comment on this test');
+
+  /* THE THREE NULL HANDLERS THE SINGLE GATE RELIES ON. If any of them ever
+   * stops tolerating null, the gate above silently becomes a crash on a
+   * build where the customer unticked a box. */
+  const { buildReviewsSection, reviewRows } = require('./utils/generateSampleReviews');
+  const CM = require('./utils/contentModel');
+
+  assert.strictEqual(buildReviewsSection(null), '', 'the static section no longer tolerates null');
+  assert.deepStrictEqual(reviewRows(null), [], 'reviewRows no longer tolerates null');
+  assert.strictEqual(CM.reviewsSection(reviewRows(null), {}), null,
+    'an empty reviews model section is no longer null, so the theme would carry an empty one');
 });
 
 test('THE BADGE GATES PUT THE SHAPE RULE FIRST TOO', () => {

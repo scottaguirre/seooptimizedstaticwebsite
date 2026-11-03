@@ -454,6 +454,123 @@ test('AND THE ROUTE BUILDS NO ADDRESS OF ITS OWN', () => {
   assert.ok(src.includes('siteUrlFor'), 'mySitesRoute does not use the helper at all');
 });
 
+/* ------------------------------------------------------------------------ */
+
+section('THE SOCIAL LINKS');
+
+/* WHY THEY ARE EDITABLE AT ALL — 1 November. The wizard collected these at
+ * build time and nothing could change them afterwards, so adding a Facebook
+ * page to a live site meant rebuilding it: credits spent and every word
+ * rewritten, to add one URL. */
+const { socialUrl } = require('./utils/localOptions/socialUrl');
+const { SOCIAL } = require('./utils/localOptions/render/common');
+
+const WITH_SOCIAL = () => ({
+  business: { phone: '(512) 555-0199', social: { facebook: 'https://facebook.com/old' } },
+});
+
+test('A LINK CAN BE ADDED TO A SITE THAT IS ALREADY LIVE', () => {
+  const out = applyEdit(WITH_SOCIAL(), { social: { instagram: 'instagram.com/new' } });
+
+  assert.strictEqual(out.business.social.instagram, 'https://instagram.com/new');
+  assert.strictEqual(out.business.social.facebook, 'https://facebook.com/old',
+    'adding one dropped another');
+});
+
+test('A SCHEME IS ADDED, BECAUSE A BARE DOMAIN IS A RELATIVE LINK', () => {
+  /* `facebook.com/acme` without https:// resolves relative to the page it
+   * is on, so the footer link on a service page would point at
+   * /drain-cleaning/facebook.com/acme — a 404 on somebody's own social
+   * link, on every page but the home page. */
+  assert.strictEqual(socialUrl('facebook.com/acme'), 'https://facebook.com/acme');
+  assert.strictEqual(socialUrl('https://facebook.com/acme'), 'https://facebook.com/acme');
+  assert.strictEqual(socialUrl('HTTP://facebook.com/acme'), 'HTTP://facebook.com/acme');
+});
+
+test('AND A PLACEHOLDER IS NOT A LINK', () => {
+  /* What somebody writes in a box they do not want to fill in. An icon
+   * linking to '#' looks like a working link until it is clicked. */
+  for (const junk of ['#', 'n/a', 'N/A', 'none', '-', '   ', '']) {
+    assert.strictEqual(socialUrl(junk), '', `"${junk}" became a link`);
+  }
+});
+
+test('EMPTYING A BOX TAKES THE ICON OFF THE SITE', () => {
+  /* The half of editing nobody tests. A field that could be set and never
+   * unset is a link the owner is stuck with. */
+  const out = applyEdit(WITH_SOCIAL(), { social: { facebook: '' } });
+
+  assert.ok(!('facebook' in out.business.social), 'the cleared link is still stored');
+});
+
+test('AND A FORM THAT SENDS NOTHING CHANGES NOTHING', () => {
+  /* ABSENT IS NOT EMPTY — the same rule as servicesLede. `undefined` is a
+   * field the form did not send; `''` is a box the owner cleared. Treating
+   * them alike would wipe every link the first time an older form posted. */
+  assert.strictEqual(
+    applyEdit(WITH_SOCIAL(), {}).business.social.facebook,
+    'https://facebook.com/old');
+
+  assert.strictEqual(
+    applyEdit(WITH_SOCIAL(), { social: { instagram: 'x.com/a' } }).business.social.facebook,
+    'https://facebook.com/old');
+});
+
+test('THE STORED SOURCE IS NOT MUTATED', () => {
+  /* applyEdit returns a new object. A social map edited in place would
+   * change the source the caller still holds — and the caller republishes
+   * from it. */
+  const src = WITH_SOCIAL();
+
+  applyEdit(src, { social: { facebook: '', youtube: 'youtube.com/x' } });
+
+  assert.deepStrictEqual(src.business.social, { facebook: 'https://facebook.com/old' });
+});
+
+test('THE FORM OFFERS EVERY NETWORK THE FOOTER CAN RENDER, AND NO OTHER', () => {
+  /* A list in two places is a form that offers a box the site will not
+   * show, or a site that shows an icon the form cannot edit. The route
+   * reads the keys from SOCIAL itself. */
+  const src = fs.readFileSync(require.resolve('./routes/mySitesRoute.js'), 'utf8');
+
+  assert.ok(src.includes('Object.keys(SOCIAL)'),
+    'mySitesRoute types its own list of networks');
+
+  assert.ok(Object.keys(SOCIAL).length >= 6, 'the renderer lost its networks');
+
+  /* And applyEdit honours whatever that list holds, including a network
+   * added to SOCIAL later. */
+  const body = { social: {} };
+
+  for (const key of Object.keys(SOCIAL)) body.social[key] = `${key}.example/acme`;
+
+  const out = applyEdit({ business: {} }, body);
+
+  for (const key of Object.keys(SOCIAL)) {
+    assert.strictEqual(out.business.social[key], `https://${key}.example/acme`,
+      `${key} was not editable`);
+  }
+});
+
+test('AND THE RULE IS NOT COPIED A THIRD TIME', () => {
+  /* It already lived in socialFrom() in runLocalOptions.js, whose comment
+   * accepts being a copy of usableUrl() in buildSocialLinks.js. The editor
+   * would have been the third, and then the same URL typed in two places in
+   * the same app would behave differently.
+   *
+   *     THE SECOND COPY IS A TRADE. THE THIRD IS A BUG WITH A ROTA. */
+  const runner = fs.readFileSync(require.resolve('./utils/runLocalOptions.js'), 'utf8');
+  const route = fs.readFileSync(require.resolve('./routes/mySitesRoute.js'), 'utf8');
+
+  for (const [name, src] of [['runLocalOptions', runner], ['mySitesRoute', route]]) {
+    assert.ok(src.includes('socialUrl'), `${name} does not use the shared rule`);
+
+    assert.ok(
+      !/\^https\?:\\\/\\\//.test(src),
+      `${name} tests for a scheme itself instead of calling socialUrl`);
+  }
+});
+
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);
 console.log('');

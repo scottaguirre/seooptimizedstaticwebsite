@@ -147,6 +147,32 @@ async function runGeneration(ctx) {
 
   const showBadges = keptOn(global?.showBadges);
 
+  /* The four example reviews on the About page: the same opt-OUT checkbox,
+   * added 3 November because there had never been one. Every build generated
+   * the section, so a customer who did not want it had to delete it after the
+   * fact — and in WordPress that meant the database, because the theme's
+   * reviews meta box could not save a deletion either.
+   *
+   * GATED HERE AND NOWHERE ELSE, which is the whole design and is different
+   * from how pricing and badges are done. Those are read twice, once to
+   * decide whether to PAY and once to decide whether to RENDER, and
+   * utils/sectionToggle.js exists because the two readings drifted. This one
+   * cannot drift, because an unticked box does not produce a `false` that two
+   * files have to agree about — it produces no reviews at all:
+   *
+   *   reviews === null  ->  buildReviewsSection(null)    returns ''
+   *                     ->  reviewRows(null)             returns []
+   *                     ->  CM.reviewsSection([])        returns null
+   *                     ->  nothing is pushed into the model, so the
+   *                         exported WordPress theme has no reviews section
+   *                         either, with no second rule to keep in step
+   *
+   * THE ABSENCE IS THE DECISION. buildAboutUsPage is the only caller and it
+   * already defaults `reviews = null`, so there is one gate, in front of the
+   * model call that costs the credits. Adding a keptOn() down there as well
+   * would be the second reading this codebase has already been bitten by. */
+  const showReviews = keptOn(global?.showReviews);
+
   const userId = ctx.user._id.toString();
   const { distDir, assetsDir, cssDir, jsDir, entryDir } = getUserDirs(baseDistDir, userId);
 
@@ -343,6 +369,7 @@ async function runGeneration(ctx) {
       showAboutForm,
       showPricingTable,
       showBadges,
+      showReviews,
       // Owner name is opt-in; when opted in, the name itself is optional and
       // the model invents one if left blank.
       //
@@ -932,6 +959,17 @@ async function runGeneration(ctx) {
     // the reviews section missing fails to show the one thing it was built to
     // show.
     //
+    // THAT IS A DEFAULT, NOT A REFUSAL, and the distinction arrived with the
+    // checkbox on 3 November. isSample still does not skip this section —
+    // only an unticked box does, in every mode including sample. "We think
+    // you want this" and "you may not decline this" are not the same
+    // sentence, and for eight months this code said the second one.
+    //
+    // THE SKIP IS BEFORE THE MODEL CALL, not around the render. Unticking the
+    // box has to stop the spend, which is the only reason the gate is up here
+    // rather than in buildAboutUsPage — see showReviews above for why there
+    // is no second gate down there.
+    //
     // Every review opens with "This is an example review, not a real customer
     // review." That sentence is added in code rather than asked of the model,
     // so it cannot be dropped, reworded, or lost to a retry. The customer
@@ -939,12 +977,14 @@ async function runGeneration(ctx) {
     // claims to be something it is not.
     //
     // None of it reaches the JSON-LD. See utils/generateSampleReviews.js.
-    console.log('⭐ Generating example reviews...');
-    const reviews = await generateSampleReviews({
-      businessType: globalValues.businessType,
-      businessName: globalValues.businessName,
-      location: globalValues.location,
-    });
+    console.log(showReviews ? '⭐ Generating example reviews...' : '⭐ Skipping example reviews (unticked)');
+    const reviews = showReviews
+      ? await generateSampleReviews({
+          businessType: globalValues.businessType,
+          businessName: globalValues.businessName,
+          location: globalValues.location,
+        })
+      : null;
 
 
     // Create about-us.html, & save in dist

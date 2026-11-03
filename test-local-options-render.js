@@ -752,5 +752,155 @@ test('and a different `now` changes only the sitemap and the footer year', () =>
 
 /* ------------------------------------------------------------------------ */
 
+section('THE FIRST MENTION LINKS HOME');
+
+/* WHY IT IS RENDERED AND NOT WRITTEN — Edwin, 2 November: "can we link back
+ * to the home page from the body of service pages so it looks more natural
+ * and relevant?"
+ *
+ * The obvious way is to ask the model for a link. That is the trap this
+ * codebase keeps relearning:
+ *
+ *     A PROMPT THAT DICTATES A SENTENCE GETS THAT SENTENCE, SIX TIMES.
+ *
+ * It cost the closing line of every service page, four identical h2s across
+ * six pages, five cost-headings that restated the brief that asked for them,
+ * and both structures opening paragraph three with "A visit starts with".
+ * Six pages ending "learn more about Acme Plumbing" is that failure wearing
+ * a link. So nothing is written: the copy already names the business
+ * somewhere, and this marks one of them up. */
+const { linkHome } = require('./utils/localOptions/render/linkHome');
+
+test('IT LINKS THE FIRST MENTION AND ONLY THE FIRST', () => {
+  /* A name linked every time it appears is not prose, it is a page that
+   * looks spammed — and the second link to the same URL on the same page is
+   * the one nobody argues is worth anything. */
+  const out = linkHome(
+    '<p>We are Acme Plumbing and we fix taps. Acme Plumbing again.</p>',
+    'Acme Plumbing', '../');
+
+  assert.strictEqual(
+    out,
+    '<p>We are <a href="../">Acme Plumbing</a> and we fix taps. Acme Plumbing again.</p>');
+});
+
+test('AND A PAGE THAT NEVER NAMES THE BUSINESS GETS NOTHING', () => {
+  /* The alternative is forcing a mention, and a forced mention is the
+   * dictated sentence again. Home is reachable from the masthead and the
+   * colophon of every page regardless, so nothing is stranded. */
+  const html = '<p>Nothing here names anyone.</p>';
+
+  assert.strictEqual(linkHome(html, 'Acme Plumbing', '../'), html);
+});
+
+test('IT NEVER NESTS INSIDE A LINK THE OWNER ALREADY MADE', () => {
+  /* richText() emits anchors, and an owner editing a live site can put one
+   * round the business name themselves. An anchor inside an anchor is
+   * markup no two browsers agree about. */
+  const out = linkHome(
+    '<p>See <a href="x">Acme Plumbing</a> and Acme Plumbing after.</p>',
+    'Acme Plumbing', '../');
+
+  assert.strictEqual(
+    out,
+    '<p>See <a href="x">Acme Plumbing</a> and <a href="../">Acme Plumbing</a> after.</p>');
+
+  /* And when the ONLY mention is already linked, nothing is added. */
+  const only = '<p>See <a href="x">Acme Plumbing</a>.</p>';
+
+  assert.strictEqual(linkHome(only, 'Acme Plumbing', '../'), only);
+});
+
+test('AND NEVER INSIDE A TAG, WHICH WOULD WRITE A TAG INTO A TAG', () => {
+  const out = linkHome('<p title="Acme Plumbing">Then Acme Plumbing.</p>', 'Acme Plumbing', '../');
+
+  assert.strictEqual(out, '<p title="Acme Plumbing">Then <a href="../">Acme Plumbing</a>.</p>');
+});
+
+test('THE NAME IS ESCAPED BEFORE IT IS SOUGHT', () => {
+  /* The haystack is escaped already, so "Smith & Sons" is in the HTML as
+   * "Smith &amp; Sons". Searching for the raw string would never find it —
+   * silently, and only for businesses whose names have punctuation. */
+  const out = linkHome('<p>Smith &amp; Sons work here.</p>', 'Smith & Sons', '../');
+
+  assert.strictEqual(out, '<p><a href="../">Smith &amp; Sons</a> work here.</p>');
+});
+
+test('AND THE MATCH IS EXACT, NOT CLOSE ENOUGH', () => {
+  /* Linking "acme plumbing" because it looked near enough is a sentence the
+   * owner did not write being turned into a link they did not ask for. */
+  const html = '<p>acme plumbing in lower case.</p>';
+
+  assert.strictEqual(linkHome(html, 'Acme Plumbing', '../'), html);
+});
+
+test('NOTHING MISSING PRODUCES A BROKEN ANCHOR', () => {
+  const html = '<p>Acme Plumbing.</p>';
+
+  assert.strictEqual(linkHome(html, '', '../'), html);
+  assert.strictEqual(linkHome(html, '   ', '../'), html);
+  assert.strictEqual(linkHome(html, 'Acme Plumbing', ''), html);
+  assert.strictEqual(linkHome(html, 'Acme Plumbing'), html);
+  assert.strictEqual(linkHome('', 'Acme Plumbing', '../'), '');
+});
+
+test('A SERVICE PAGE CARRIES IT, AND THE HOME PAGE DOES NOT', () => {
+  /* The home page linking to itself is the one case that is never useful.
+   * It is also the one a careless implementation produces first. */
+  const named = renderSite({
+    ...INPUT,
+    services: INPUT.services.map((s, i) => (0 === i ? {
+      ...s,
+      sections: [
+        { heading: '', paragraphs: [`Most calls to ${INPUT.business.name} start alike.`] },
+        ...s.sections.slice(1),
+      ],
+    } : s)),
+    home: { ...INPUT.home, about: [`${INPUT.business.name} on the home page.`] },
+  });
+
+  const page = named[fileFor(INPUT.services[0].slug)];
+  const home = named['index.html'];
+
+  const inBody = page.split('</header>')[1] || page;
+
+  assert.ok(
+    inBody.includes(`<a href="../">${INPUT.business.name}</a>`),
+    'the service page body does not link home from its first mention');
+
+  /* ASSERTED ON THE NAME, NOT ON THE HREF. The first version of this test
+   * looked for any link to `./` below the header and failed on the footer's
+   * own Home link, which is correct and has been there since the first
+   * build. What must not appear is the BUSINESS NAME turned into a
+   * self-link. */
+  assert.ok(
+    !home.includes(`<a href="./">${INPUT.business.name}</a>`),
+    'the home page links its own name back to itself');
+
+  assert.ok(
+    !home.includes(`<a href="">${INPUT.business.name}</a>`),
+    'the home page links its own name to an empty href');
+});
+
+test('and the link is relative to the page it is on', () => {
+  /* A service page sits one level down. An absolute `/` would be right by
+   * luck on a subdomain and wrong the moment anything is served from a
+   * folder again — which is what the whole site was doing last week. */
+  const named = renderSite({
+    ...INPUT,
+    services: INPUT.services.map((s, i) => (0 === i ? {
+      ...s,
+      sections: [{ heading: '', paragraphs: [`${INPUT.business.name} answers.`] }, ...s.sections.slice(1)],
+    } : s)),
+  });
+
+  const page = named[fileFor(INPUT.services[0].slug)];
+
+  assert.ok(page.includes(`<a href="../">${INPUT.business.name}</a>`));
+  assert.ok(!page.includes(`<a href="/">${INPUT.business.name}</a>`), 'the link is absolute');
+});
+
+/* ------------------------------------------------------------------------ */
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

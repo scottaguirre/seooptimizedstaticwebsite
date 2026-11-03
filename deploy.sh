@@ -138,6 +138,7 @@ NODE_SUITES=( \
   test-local-options-wiring.js \
   test-github-app.js \
   test-trust-points.js \
+  test-meta-save-parity.js \
   test-job-uploads.js \
   test-ping-detail.js \
   test-job-requeue.js \

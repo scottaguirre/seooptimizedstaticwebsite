@@ -62,6 +62,7 @@ const {
 
 const { contextFor, telFor, homeHeading } = require('../common');
 const { richText } = require('../richText');
+const { linkHome } = require('../linkHome');
 const { localBusiness, serviceNode } = require('../schema');
 const { legalSections } = require('../legalText');
 
@@ -231,6 +232,19 @@ ${divider({ line: copy.secondBreak })}
 }
 
 /**
+ * The service page's prose, with the first mention of the business linked
+ * home.
+ *
+ * A WRAPPER PER STRUCTURE AND ONE RULE BEHIND THEM. The three pages.js
+ * files each render prose differently and each call this with their own
+ * slug and depth; what "the first mention" means, and what must not be
+ * matched inside, lives in linkHome.js alone.
+ */
+function homeward(html, ctx, depth) {
+  return linkHome(html, (ctx.business || {}).name, linkTo('index', depth));
+}
+
+/**
  * One service page.
  *
  * THE RATIFIED SHAPE, 27 October, unchanged: the call button above the fold,
@@ -252,7 +266,11 @@ function servicePage(ctx, service) {
   const body = `
 ${stage({ order: ctx.order, slug: service.slug, h1: service.h1 || service.name, sub: service.blurb || '', alt: ctx.alt, business: ctx.business, depth: depthOf(service.slug) })}
 <section class="anvil-band"><div class="anvil-shell">
-  <div class="anvil-prose">${prose(service.sections)}</div>
+  ${/* THE FIRST MENTION OF THE BUSINESS LINKS HOME — 2 November.
+      Nothing is written for it: the copy already names the business
+      somewhere, in its own words, in a different place on each page, and
+      this marks one of them up. Asking the model for a link instead would
+      be the dictated sentence again, six times over. See linkHome.js. */''}\n  <div class="anvil-prose">${homeward(prose(service.sections), ctx, depthOf(service.slug))}</div>
   ${band}
   ${onward({ order: ctx.order, slug: service.slug, business: ctx.business, services: ctx.services, depth: depthOf(service.slug) })}
 </div></section>

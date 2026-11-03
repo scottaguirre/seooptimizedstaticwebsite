@@ -1849,6 +1849,45 @@
         </div>
         ` : ''}
 
+        <!-- The four EXAMPLE reviews on the About page.
+             WHY IT EXISTS — Edwin, 3 November. He built a Rank Fast site, took
+             it to WordPress, and wanted the reviews gone. There was no box to
+             untick: the section was generated on every build, and the only way
+             out was the database. A section nobody can decline is one the
+             customer deletes afterwards, every time.
+
+             NO SHAPE GATE, and that is the difference from the two boxes
+             above. Those are hidden where capabilities(businessType) forbids
+             them — a dentist cannot claim "licensed and insured" and is not
+             shown the option. There is no capabilities().reviews, so there is
+             nothing to hide this behind, and inventing a shape rule here would
+             be a product decision smuggled in as a checkbox. Every shape that
+             gets an About page gets the box.
+
+             SHOWN FOR DESIGN SAMPLES TOO, unlike pricing and badges. Those are
+             skipped on a sample because they are claims; this section exists to
+             be LOOKED at, so a sample keeps it by default — see the comment
+             beside generateSampleReviews in utils/runGeneration.js. Default is
+             not refusal, though: an unticked box is an instruction, and it is
+             honoured in every mode.
+
+             NOT IN LOCAL WEBSITE OPTIONS. That mode has no About page and
+             never calls generateSampleReviews. -->
+        ${isLocalOptions() ? '' : `
+        <hr>
+
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" id="showReviews" name="global[showReviews]" checked>
+          <label class="form-check-label" for="showReviews">
+            Include example reviews on About page
+          </label>
+          <div class="form-text">
+            Four placeholder reviews, each opening &ldquo;This is an example review&rdquo;.
+            Replace them with real ones before publishing, or untick this.
+          </div>
+        </div>
+        `}
+
         ${isLocalOptions() ? '' : `
         <hr>
 
@@ -3638,6 +3677,14 @@
     return includedSummary('showBadges');
   }
 
+  /* THE THIRD CALLER, and it reads through the same helper for the same
+   * reason: absent has to mean Included here because keptOn() means it on the
+   * server, and a review step that disagreed with the build would be the one
+   * screen that promises what is coming getting it wrong. */
+  function reviewsSummary() {
+    return includedSummary('showReviews');
+  }
+
   function hoursSummary() {
     const is24 = String(snapshotValue('is24Hours')).toLowerCase();
     if (is24 === 'true' || is24 === 'on' || is24 === '1') {
@@ -3876,6 +3923,15 @@
         ...(isLocalOptions() || state.siteMode === 'sample' || !canHaveBadges(state.businessType)
           ? []
           : [reviewRow('Trust badges', badgesSummary())]),
+        /* ONE CONDITION, NOT THREE. The two rows above carry a mode test and a
+         * shape test because their boxes are hidden in those cases, and a row
+         * about a box nobody saw reports a choice nobody made. This box is on
+         * the form for every mode but Local Website Options and for every
+         * shape, so the row follows it exactly — including on a design sample,
+         * where the section IS built and the choice is therefore real. */
+        ...(isLocalOptions()
+          ? []
+          : [reviewRow('Example reviews', reviewsSummary())]),
       ].join(''), STEP.MAIN),
 
       reviewCard('Contact', [

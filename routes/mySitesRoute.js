@@ -48,6 +48,13 @@ const { deleteSite } = require('../utils/github/deleteSite');
 const { findSites } = require('../utils/github/adoptSites');
 const { renderSite } = require('../utils/localOptions/render/renderSite');
 const { structureFor } = require('../utils/localOptions/render/structures');
+const { SOCIAL } = require('../utils/localOptions/render/common');
+const { socialUrl } = require('../utils/localOptions/socialUrl');
+
+/* THE NETWORKS THE FOOTER CAN RENDER, taken from the renderer rather than
+ * typed again here. A list in two places is a form that offers a box the
+ * site will not show, or a site that shows an icon the form cannot edit. */
+const SOCIAL_KEYS = Object.keys(SOCIAL);
 
 /* WHERE A SITE LIVES, WORKED OUT IN ONE PLACE — 1 November.
  *
@@ -460,6 +467,37 @@ router.get('/my-sites/:id/edit', requireAuth, async (req, res) => {
             </div>
           </div>
 
+          ${/* THE SOCIAL LINKS — 1 November. The wizard collected these at
+               build time and nothing could change them afterwards, so
+               adding a Facebook page to a live site meant rebuilding it:
+               credits spent and every word rewritten, to add one URL.
+
+               THE BOXES ARE BUILT FROM SOCIAL ITSELF, not from a list typed
+               here. The footer renders only the networks in that object, so
+               a seventh added there appears on this form the same day
+               rather than the day somebody remembers this file exists.
+
+               EMPTY MEANS REMOVE IT, and that is why each box is always
+               rendered rather than only the ones already set. A row that
+               appeared only when filled would give the owner no way to take
+               one away. */''}
+          <h2 class="h5 mt-5 mb-2">Social links</h2>
+          <p class="text-white-50 small mb-3">
+            These appear as icons in the footer. Leave one empty to take it
+            off the site. The address can be pasted in any form —
+            <code>facebook.com/yourpage</code> is enough.
+          </p>
+
+          <div class="row g-2 mb-3">
+            ${SOCIAL_KEYS.map(key => `
+            <div class="col-md-6">
+              <label class="form-label text-capitalize">${esc(key)}</label>
+              <input class="form-control" name="social[${esc(key)}]"
+                     value="${esc((b.social || {})[key] || '')}"
+                     spellcheck="false" autocomplete="off">
+            </div>`).join('')}
+          </div>
+
           <!-- LINKS, EXPLAINED WHERE THEY ARE TYPED. Nobody reads a help
                page for a syntax they use once a month. -->
           <div class="alert alert-secondary py-2 px-3 small">
@@ -668,6 +706,33 @@ function applyEdit(source, body) {
   }
 
   if (next.business.state) next.business.state = next.business.state.toUpperCase();
+
+  /* THE SOCIAL LINKS, WHERE ABSENT AND EMPTY MEAN DIFFERENT THINGS.
+   *
+   * The same rule as `servicesLede`: `undefined` is a field the form did not
+   * send — an older form, a different caller — and must leave what is stored
+   * alone. `''` is a box the owner cleared, and must take the icon off the
+   * site. Treating the two the same would make it impossible to remove a
+   * link that was set once, which is the half of editing nobody tests.
+   *
+   * THE KEY IS DELETED, NOT SET TO ''. chrome.js filters on the value being
+   * truthy, so an empty string would render nothing either way — but it
+   * would also sit in the stored source for ever, and the next reader of
+   * that JSON would have to know that rule to understand it. */
+  if (body.social && 'object' === typeof body.social) {
+    next.business.social = { ...(next.business.social || {}) };
+
+    for (const key of SOCIAL_KEYS) {
+      const given = body.social[key];
+
+      if (undefined === given) continue;
+
+      const href = socialUrl(given);
+
+      if (href) next.business.social[key] = href;
+      else delete next.business.social[key];
+    }
+  }
 
   const home = body.home || {};
 

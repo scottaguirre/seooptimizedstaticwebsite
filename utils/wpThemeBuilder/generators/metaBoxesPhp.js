@@ -831,6 +831,50 @@ function ${p}_save_meta( $post_id ) {
                 sanitize_textarea_field( wp_unslash( $_POST[ $base . 'notice' ] ) ) );
         }
 
+        // Reviews rows, and the note above them.
+        //
+        // WHY THIS BLOCK EXISTS — Edwin, 3 November: he cleared the review
+        // texts in wp-admin to make the section disappear, pressed Update, and
+        // nothing changed. Every other section type saved.
+        //
+        // IT WAS NOT A BUG IN THE SAVE, IT WAS AN ABSENCE OF ONE. The meta box
+        // rendered review_text_N / review_name_N / review_stars_N and the note,
+        // and ..._render_reviews read all four back, but no line here ever
+        // wrote them. The reviews box was a form that displayed the database
+        // and could not change it, which is worse than a box that errors:
+        // the values reappear filled in, so the screen says the save worked.
+        //
+        //     A FIELD THAT IS RENDERED AND READ BUT NEVER WRITTEN LOOKS
+        //     EXACTLY LIKE A FIELD THAT SAVES AND KEEPS BEING OVERRULED.
+        //
+        // The likely path in: pricing's footnote is 'notice' and reviews' is
+        // 'note'. Directly above this line, one character apart. Whatever the
+        // cause, the class of mistake is now covered by
+        // test-meta-save-parity.js, which refuses any field the meta box
+        // renders that has no branch here.
+        //
+        // CLEARING IS THE DELETE. ..._render_reviews returns early when every
+        // review_text_N is empty, so emptying the fields is how the owner
+        // removes the section — which means an empty string has to reach the
+        // database. isset() is what allows that: an empty text input is still
+        // submitted, so isset() is true and '' is written. An ! empty() test
+        // here would have reproduced the original bug exactly.
+        $review_count = (int) get_post_meta( $post_id, $base . 'review_count', true );
+        for ( $i = 0; $i < $review_count; $i++ ) {
+            foreach ( array( 'review_text_', 'review_name_', 'review_stars_' ) as $field ) {
+                $review_key = $base . $field . $i;
+                if ( isset( $_POST[ $review_key ] ) ) {
+                    update_post_meta( $post_id, $review_key,
+                        sanitize_text_field( wp_unslash( $_POST[ $review_key ] ) ) );
+                }
+            }
+        }
+
+        if ( isset( $_POST[ $base . 'note' ] ) ) {
+            update_post_meta( $post_id, $base . 'note',
+                sanitize_text_field( wp_unslash( $_POST[ $base . 'note' ] ) ) );
+        }
+
         // FAQ pairs
         $faq_count = (int) get_post_meta( $post_id, $base . 'faq_count', true );
         for ( $i = 0; $i < $faq_count; $i++ ) {

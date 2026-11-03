@@ -900,20 +900,122 @@ test('the description names what the two images actually say', () => {
   assert.ok(/Licensed and insured/.test(block.slice(0, 600)), 'the licensed claim is not named');
 });
 
-test('ONE SUMMARY HELPER, READ BY BOTH REVIEW ROWS', () => {
-  /* Both rows answer the same question — was an opt-out checkbox left ticked.
-   * Two copies would drift the moment one learned about a new truthy value,
-   * which is the same fault the server side had with its two coercions. */
+test('ONE SUMMARY HELPER, READ BY EVERY OPT-OUT ROW', () => {
+  /* Every row answers the same question — was an opt-out checkbox left
+   * ticked. Two copies would drift the moment one learned about a new truthy
+   * value, which is the same fault the server side had with its two
+   * coercions. THREE of them now, since the example-reviews box arrived; a
+   * count in this name is the thing most likely to go stale, so it no longer
+   * has one. */
   assert.ok(/function includedSummary\(field\)/.test(JS), 'the shared helper is gone');
-  assert.ok(/return includedSummary\('showPricingTable'\)/.test(JS),
-    'pricingSummary no longer reads through the shared helper');
-  assert.ok(/return includedSummary\('showBadges'\)/.test(JS),
-    'badgesSummary no longer reads through the shared helper');
+
+  for (const field of ['showPricingTable', 'showBadges', 'showReviews']) {
+    assert.ok(new RegExp(`return includedSummary\\('${field}'\\)`).test(JS),
+      `the ${field} summary no longer reads through the shared helper`);
+  }
 
   const body = bodyOf('renderReviewStep');
   assert.ok(/badgesSummary\(\)/.test(body), 'the review step does not report the badge choice');
   assert.ok(/canHaveBadges\(state\.businessType\)/.test(body),
     'the row shows where no badges are possible, reporting a choice nobody made');
+});
+
+
+/* -------------------------------------------------------------------------
+ * The example reviews checkbox
+ *
+ * WHY THIS BLOCK EXISTS — Edwin, 3 November. He built a Rank Fast site, took
+ * it to WordPress, and wanted the four example reviews gone. There was no box
+ * to untick: the section was generated on every build of every mode, so the
+ * only way out was editing wp_postmeta by hand, which is what he ended up
+ * doing.
+ *
+ *     A SECTION NOBODY CAN DECLINE IS ONE THE CUSTOMER DELETES AFTERWARDS.
+ *
+ * What these guard is the SHAPE of the choice, not its existence: that it
+ * ships ticked, so no draft or site built before today changes; that it is
+ * offered to every business shape rather than hidden behind a capability
+ * nobody wrote; and that it is offered on design samples too — because that
+ * is the mode where the section was most deliberately unconditional, and a
+ * default is not the same thing as a refusal.
+ * ------------------------------------------------------------------------- */
+
+test('THE EXAMPLE REVIEWS BOX IS THERE, AND IT SHIPS TICKED', () => {
+  /* Ticked matters more than it looks. This is an opt-OUT field: keptOn() in
+   * utils/sectionToggle.js reads absent as on, every site built before today
+   * has the section, and the WordPress plugin sends no such field. A box that
+   * shipped unticked would silently stop generating a section that every
+   * existing draft expects. */
+  const body = bodyOf('renderMainForm');
+  const tag = body.match(/<input[^>]*id="showReviews"[^>]*>/);
+
+  assert.ok(tag, 'the example-reviews checkbox is gone');
+  assert.ok(/\bchecked\b/.test(tag[0]), 'the example-reviews checkbox no longer ships ticked');
+  assert.ok(/name="global\[showReviews\]"/.test(body),
+    'the checkbox lost its field name, so nothing reaches the server');
+});
+
+test('it is offered to every business shape, unlike the other two', () => {
+  /* NOT A SHAPE RULE, and the absence is deliberate. The price table and the
+   * badges are hidden where capabilities(businessType) forbids them, because
+   * an unticked box says "you could turn this on" to somebody who cannot.
+   * There is no capabilities().reviews, so gating this on a shape would be a
+   * product decision invented inside a wizard template. If one is ever
+   * wanted it belongs in businessShape.js beside the others, and this test is
+   * what should fail when it is added. */
+  const html = mainFormHtml('rankfast');
+  const at = html.indexOf('id="showReviews"');
+
+  assert.notStrictEqual(at, -1, 'the box is gone from rankfast');
+
+  for (const shape of ['Plumbing', 'Dentist', 'Lemon Law', 'Web Design']) {
+    assert.ok(mainFormHtml('rankfast', shape).includes('id="showReviews"'),
+      `the box is missing for ${shape}`);
+  }
+});
+
+test('ON EVERY MODE THAT BUILDS THE SECTION — SAMPLES INCLUDED', () => {
+  /* The section runs on design samples by design: it EXISTS to be looked at,
+   * and a sample missing it fails to show the one thing it was built to show.
+   * That is a reason to tick the box by default, not a reason to withhold it.
+   * Pricing and badges are hidden on samples because they are never built
+   * there. This one is. */
+  for (const mode of ['rankfast', 'lead', 'sample']) {
+    assert.ok(mainFormHtml(mode).includes('id="showReviews"'),
+      `the example-reviews box is missing from ${mode}, which builds the section`);
+  }
+
+  /* AND NOT IN LOCAL WEBSITE OPTIONS, which has no About page and never calls
+   * generateSampleReviews. A box there would change nothing. */
+  assert.ok(!mainFormHtml('localoptions').includes('id="showReviews"'),
+    'the box is on the Local Website Options form, where it does nothing');
+});
+
+test('the review step reports the choice, in every mode that offers it', () => {
+  /* The rule on that screen cuts both ways: a choice the customer MADE and
+   * the build will not honour has to be shown, and a choice nobody was
+   * offered must not be. This box is offered for every shape and every mode
+   * but one, so the row carries exactly one condition — anything more would
+   * hide a real choice on design samples. */
+  const body = bodyOf('renderReviewStep');
+  const at = body.indexOf("'Example reviews'");
+
+  assert.notStrictEqual(at, -1, 'the review step does not report the example-reviews choice');
+
+  /* ITS OWN SPREAD, NOT A FIXED WINDOW OF CHARACTERS BEFORE IT. The first
+   * version of this read back 260 characters and failed — it had scooped up
+   * the trust-badges row's `siteMode === 'sample'` and its explanatory
+   * comment from above. Slicing to the last `...(` is the actual boundary of
+   * this row's condition, and it stays correct when the comment grows. */
+  const spreadAt = body.lastIndexOf('...(', at);
+  assert.notStrictEqual(spreadAt, -1, 'the example-reviews row is not a conditional spread');
+
+  const cond = body.slice(spreadAt, at);
+
+  assert.ok(/isLocalOptions\(\)/.test(cond),
+    'the row is shown in the mode that has no such control');
+  assert.ok(!/siteMode === 'sample'|canHaveBadges\(|canHavePricingTable\(/.test(cond),
+    'the row is hidden on a sample or by shape, where the choice is real');
 });
 
 

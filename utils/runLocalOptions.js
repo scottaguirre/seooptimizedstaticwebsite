@@ -75,6 +75,7 @@ const { MODES, normalizeSiteMode, LOCAL_OPTIONS_SERVICE_PAGES, FIXED_PAGES } = r
 const { generateLocalOptionsSite } = require('./localOptions/generate');
 const { buildOptionsFor } = require('./localOptions/designs');
 const { publishSite, repoNameFor } = require('./github/publishSite');
+const { socialUrl } = require('./localOptions/socialUrl');
 const { readSiteDir } = require('./github/readSite');
 
 /* THE SEARCH CONSOLE PARSER, FROM THE BLOG SIDE RATHER THAN A SECOND COPY.
@@ -221,11 +222,17 @@ function areasFrom(business = {}) {
  *                placeholder is NOT a link, and a bare "facebook.com/acme"
  *                without a scheme resolves relative to the page.
  *
- * Duplicated rather than imported, deliberately: buildSocialLinks exports
- * rendered HTML for a different markup, not this rule, and exporting one
- * four-line helper from it to be used here would be the smaller half of a
- * refactor nobody asked for. It is four lines and this comment names its
- * twin.
+ * THE VALUE RULE NOW LIVES IN utils/localOptions/socialUrl.js — 1 November,
+ * when the My Sites editor learned to change these fields. Two copies with
+ * a comment pointing at each other was a defensible trade; the editor would
+ * have been the third, and then the same URL typed in two places in the
+ * same app would behave differently.
+ *
+ *     THE SECOND COPY IS A TRADE. THE THIRD IS A BUG WITH A ROTA.
+ *
+ * buildSocialLinks keeps its own, because it returns rendered HTML for
+ * different markup and pulling this out of it is the smaller half of a
+ * refactor nobody asked for.
  */
 const SOCIAL_FIELDS = [
   'facebookUrl', 'instagramUrl', 'youtubeUrl',
@@ -236,12 +243,11 @@ function socialFrom(global = {}) {
   const social = {};
 
   for (const field of SOCIAL_FIELDS) {
-    const raw = String(global[field] || '').trim();
+    const href = socialUrl(global[field]);
 
-    if (!raw || raw === '#' || raw.toLowerCase() === 'n/a') continue;
+    if (!href) continue;
 
-    const key = field.replace(/Url$/, '');
-    social[key] = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    social[field.replace(/Url$/, '')] = href;
   }
 
   return social;
