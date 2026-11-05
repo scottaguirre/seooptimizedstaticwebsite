@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { fullAddress } = require('./fullAddress');
 const path = require('path');
 const { slugify } = require('./slugify');
 const { buildAltText } = require('./buildAltText');
@@ -365,6 +366,7 @@ const  buildAboutUsPage =  async function (
             // === Footer & misc replacements
             aboutus = aboutus
                 .replace(/{{ADDRESS}}/g, () => (globalValues.address))
+                .replace(/{{ADDRESS_FULL}}/g, () => (fullAddress(globalValues.address, globalValues.location)))
                 .replace(/{{EMAIL}}/g, () => (globalValues.email))
                 .replace(/{{HOURS_TIME}}/g, () => (getHoursTimeText(globalValues.is24Hours, globalValues.hours)))
                 .replace(/{{PHONE_RAW}}/g, () => (formatPhoneForHref(globalValues.phone)))

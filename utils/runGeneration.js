@@ -18,6 +18,8 @@
 // the user has already paid for.
 
 const User = require('../models/User');
+const { fullAddress } = require('./fullAddress');
+const { checkPlaceholders } = require('./checkPlaceholders');
 const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
@@ -706,6 +708,12 @@ async function runGeneration(ctx) {
         .replace(/{{SECTION4_P2}}/g, () => (sectionsWithLinks.section4.paragraphs[1]))
         .replace(/{{LOCATION_AREA}}/g, () => (globalValues.location))
         .replace(/{{ADDRESS}}/g, () => (globalValues.address))
+
+        /* The hero NAP bar's address, with the city and state added when the
+           Address box did not already have them. {{ADDRESS}} above is left
+           exactly as it was — the footer, the contact block and the map all
+           still get what the owner typed. */
+        .replace(/{{ADDRESS_FULL}}/g, () => (fullAddress(globalValues.address, globalValues.location)))
         .replace(/{{EMAIL}}/g, () => (globalValues.email))
         .replace(/{{HOURS_TIME}}/g, () => (getHoursTimeText(globalValues.is24Hours, globalValues.hours)))
         .replace(/{{PHONE_RAW}}/g, () => (formatPhoneForHref(globalValues.phone)))
@@ -1222,6 +1230,56 @@ async function runGeneration(ctx) {
     } catch (err) {
       // A bug in the checker must never take down a successful generation.
       console.warn('⚠️ structure check could not run:', err.message);
+    }
+
+
+    // UNFILLED PLACEHOLDERS — AND THIS ONE THROWS.
+    //
+    // Deliberately unlike the structure check directly above, which warns.
+    // The difference is what the customer ends up with. A parity drift means
+    // two internal representations disagree while the page itself is still
+    // right; an unfilled {{PLACEHOLDER}} means the PAGE is wrong, in public,
+    // in the place a street address or a phone number was meant to be.
+    //
+    //     IT THROWS BEFORE chargeCredits(), WHICH IS THE POINT.
+    //     A site with {{ADDRESS_FULL}} written across its hero is not a site
+    //     anybody should be billed for.
+    //
+    // This happened on 4 November and nothing caught it: the build reported
+    // success, every suite was green, and the placeholder was found by
+    // somebody looking at the page. utils/checkPlaceholders.js records why
+    // the scan is HTML and CSS only and why comments are stripped first —
+    // both were decided by scanning a real build, not by reasoning about it.
+    //
+    // NOT WRAPPED IN try/catch, unlike its neighbour. A checker that cannot
+    // run is a failed check, and the entire value of this one is that it
+    // stops the build instead of logging something nobody reads.
+    const placeholders = checkPlaceholders(distDir);
+
+    if (placeholders.ok) {
+      console.log(placeholders.text);
+    } else {
+      console.error(placeholders.text);
+
+      const names = [...new Set(placeholders.problems.map(p => p.name))];
+
+      log.generation('generation.unfilled_placeholders', {
+        requestId: ctx.requestId,
+        userId,
+        siteMode,
+        count: placeholders.problems.length,
+        names,
+        sample: placeholders.problems.slice(0, 5)
+          .map(p => `${p.file}:${p.line} {{${p.name}}}`),
+      });
+
+      throw new Error(
+        `The finished site still contains ${placeholders.problems.length} ` +
+        `unfilled placeholder(s): ${names.map(n => `{{${n}}}`).join(', ')}. ` +
+        `Nothing has been charged. If this server has been running since ` +
+        `before those templates changed, restart it — templates are read from ` +
+        `disk on every build, but the builders are require()d once at startup.`
+      );
     }
 
 

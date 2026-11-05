@@ -9,6 +9,7 @@
 // The hero is the only image on this page.
 
 const fs = require('fs');
+const { fullAddress } = require('./fullAddress');
 const path = require('path');
 
 const { slugify } = require('./slugify');
@@ -214,6 +215,7 @@ const buildContactPage = async function (
     .replace(/{{FORM}}/g, () => (formHtml || ''))
 
     .replace(/{{ADDRESS}}/g, () => (globalValues.address || ''))
+    .replace(/{{ADDRESS_FULL}}/g, () => (fullAddress(globalValues.address, globalValues.location)))
     .replace(/{{EMAIL}}/g, () => (globalValues.email || ''))
     .replace(/{{HOURS_TIME}}/g, () => (getHoursTimeText(globalValues.is24Hours, globalValues.hours)))
     .replace(/{{PHONE_RAW}}/g, () => (formatPhoneForHref(globalValues.phone)))

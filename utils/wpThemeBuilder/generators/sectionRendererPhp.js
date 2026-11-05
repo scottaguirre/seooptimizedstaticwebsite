@@ -472,7 +472,205 @@ function ${p}_render_hero( $post_id, $s ) {
       </div>
     </div>
     <?php endif; ?>
+
+    <?php if ( $layout === 'spotlight' ) : ?>
     <?php
+    // THE DESIGN 7 HERO. This block is the PHP twin of the
+    // <!--HERO:spotlight--> markup in the four src/*.html templates, and the
+    // two have to stay identical because ONE stylesheet serves both:
+    // src/css/themes/style7.css is copied into the exported theme. A class
+    // renamed on one side and not the other gives an unstyled hero, not an
+    // error.
+    //
+    // WHY THIS BRANCH WAS MISSING AND WHAT IT COST. The three above were
+    // written when there were three layouts. HERO_LAYOUT gained
+    // style7 -> 'spotlight', the static build started rendering it, and this
+    // function — whose conditions are positive precisely so an unknown
+    // layout renders nothing rather than everything — rendered nothing. A
+    // Design 7 site exported to WordPress had NO HERO AT ALL: no headline,
+    // no photograph, no buttons, no name/address/phone bar. Nothing threw.
+    // The page simply began at section one.
+    //
+    //     THE SAFE DEFAULT STILL HAS A COST, AND THE COST IS SILENCE.
+    //     test-hero-layouts.js now asserts a branch exists here for every
+    //     value in HERO_LAYOUT, so the next layout cannot repeat it.
+    $contact_url = ${p}_contact_url();
+    $phone_raw   = ${p}_get_setting( 'phone' );
+    $phone_href  = 'tel:' . preg_replace( '/[^0-9+]/', '', $phone_raw );
+    ?>
+    <div class="container-fluid hero-spotlight">
+      <div class="hero-spotlight__stage">
+
+        <div class="hero-spotlight__media">
+          <?php ${p}_hero_picture( $post_id, $key ); ?>
+        </div>
+
+        <div class="hero-spotlight__text">
+          <h1 class="hero-spotlight__title"><?php echo esc_html( $h1 ); ?></h1>
+          <div class="line-divider"></div>
+          <h2 class="lead hero-spotlight__sub"><?php echo esc_html( $tagline ); ?></h2>
+
+          <div class="hero-spotlight__actions">
+            <a class="hero-spotlight__btn hero-spotlight__btn--solid" href="<?php echo esc_url( $contact_url ); ?>">
+              <svg class="hero-spotlight__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M7 2v3M17 2v3M3.5 9.5h17M5 5h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 21H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 5Z"/>
+              </svg>
+              <span><?php esc_html_e( 'Book Appointment', '${themeSlug}' ); ?></span>
+            </a>
+
+            <?php if ( ! empty( $phone_raw ) ) : ?>
+            <a class="hero-spotlight__btn hero-spotlight__btn--ghost" href="<?php echo esc_attr( $phone_href ); ?>">
+              <svg class="hero-spotlight__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 6 6L16.5 12l4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/>
+              </svg>
+              <span><?php echo esc_html( $phone_raw ); ?></span>
+            </a>
+            <?php endif; ?>
+
+            <?php
+            // INSIDE .hero-spotlight__actions, NOT in the media wrapper.
+            // style7.css positions these at top: calc(100% + 10px) against
+            // the BUTTONS, and reserves a matching shelf of padding beneath
+            // the text for them. Emitted into the picture wrapper instead
+            // they land on the white bar below the hero — that exact bug
+            // shipped once on the static side.
+            ${p}_hero_badges( $post_id, $key );
+            ?>
+          </div>
+        </div>
+
+      </div>
+
+      <?php
+      // The name / address / phone bar. Every value is a global setting, so
+      // one edit in Theme Settings updates every page.
+      //
+      // THE LABELS ARE TEXT. They were CSS ::before content on the static
+      // side, which is the other half of why this bar could not simply be
+      // copied across: generated content never reaches a PHP renderer.
+      $nap_name    = ${p}_get_setting( 'business_name', get_bloginfo( 'name' ) );
+      $nap_address = ${p}_full_address();
+      ?>
+      <div class="hero-spotlight__nap">
+        <?php if ( $nap_name ) : ?>
+        <div class="hero-spotlight__nap-item">
+          <svg class="hero-spotlight__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 20V9.2L12 4l8 5.2V20h-5.5v-5.5h-5V20Z"/>
+          </svg>
+          <span class="hero-spotlight__nap-text">
+            <span class="hero-spotlight__nap-label"><?php esc_html_e( 'Business Name:', '${themeSlug}' ); ?></span>
+            <span class="hero-spotlight__nap-value"><?php echo esc_html( $nap_name ); ?></span>
+          </span>
+        </div>
+        <?php endif; ?>
+
+        <?php if ( $nap_address ) : ?>
+        <div class="hero-spotlight__nap-item">
+          <svg class="hero-spotlight__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"/>
+            <circle cx="12" cy="10" r="2.6"/>
+          </svg>
+          <span class="hero-spotlight__nap-text">
+            <span class="hero-spotlight__nap-label"><?php esc_html_e( 'Address:', '${themeSlug}' ); ?></span>
+            <span class="hero-spotlight__nap-value"><?php echo esc_html( $nap_address ); ?></span>
+          </span>
+        </div>
+        <?php endif; ?>
+
+        <?php if ( ! empty( $phone_raw ) ) : ?>
+        <div class="hero-spotlight__nap-item">
+          <svg class="hero-spotlight__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 6 6L16.5 12l4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/>
+          </svg>
+          <span class="hero-spotlight__nap-text">
+            <span class="hero-spotlight__nap-label"><?php esc_html_e( 'Phone:', '${themeSlug}' ); ?></span>
+            <a class="hero-spotlight__nap-value" href="<?php echo esc_attr( $phone_href ); ?>"><?php echo esc_html( $phone_raw ); ?></a>
+          </span>
+        </div>
+        <?php endif; ?>
+      </div>
+    </div>
+    <?php endif; ?>
+    <?php
+}
+
+/**
+ * The contact page's URL.
+ *
+ * The static side writes {{CONTACT_PAGE}} and fillLegalLinks resolves it to
+ * contact.html. WordPress has no such file, so the page is looked up by the
+ * slug the exporter created it under.
+ *
+ * FALLS BACK TO /contact/ RATHER THAN TO THE HOME PAGE. An owner who renamed
+ * or deleted that page should get a 404 they will notice, not a Book
+ * Appointment button that quietly reloads the page it is sitting on. The
+ * second failure is the one nobody reports.
+ */
+function ${p}_contact_url() {
+    $page = get_page_by_path( 'contact' );
+
+    $url = $page
+        ? get_permalink( $page )
+        : home_url( '/contact/' );
+
+    /** Lets a child theme point the hero button somewhere else. */
+    return apply_filters( '${p}_contact_url', $url );
+}
+
+/**
+ * The postal address, with the town and state added when they are missing.
+ *
+ * THIS IS A SECOND IMPLEMENTATION OF utils/fullAddress.js AND THAT IS A
+ * LIABILITY THIS FILE TAKES ON DELIBERATELY. The alternative was composing
+ * the string in JavaScript at export time and storing the result, which
+ * would freeze it: an owner who later corrects the address in Theme Settings
+ * would see the correction everywhere EXCEPT the hero — worse than
+ * duplicated logic, because it looks like it worked.
+ *
+ * So the rule lives in both languages, and test-hero-layouts.js runs the
+ * same table of cases through both to prove they still agree. Change one and
+ * that test tells you about the other.
+ *
+ * A ZIP CODE IS NEVER INVENTED. It appears only if the owner typed one.
+ */
+function ${p}_full_address() {
+    $street = trim( (string) ${p}_get_setting( 'address' ) );
+    $where  = trim( (string) ${p}_get_setting( 'location' ) );
+
+    if ( '' === $street ) {
+        return $where;
+    }
+    if ( '' === $where ) {
+        return $street;
+    }
+
+    $parts = array_map( 'trim', explode( ',', $where ) );
+    $city  = isset( $parts[0] ) ? $parts[0] : '';
+    $state = isset( $parts[1] ) ? $parts[1] : '';
+
+    // Lowercase, punctuation out, spaces collapsed — for COMPARING only.
+    // What is returned is always the owner's own text.
+    $flat = strtolower( $street );
+    $flat = preg_replace( '/[.,#]/', ' ', $flat );
+    $flat = trim( preg_replace( '/\\s+/', ' ', $flat ) );
+
+    // Space-padded, so "Leander" is not found inside "Leanderville".
+    $has_city = ( '' === $city )
+        || false !== strpos( ' ' . $flat . ' ', ' ' . strtolower( $city ) . ' ' );
+
+    // Word boundaries: "ME", "IN", "OR" and "OK" are ordinary words, so a
+    // plain substring test finds Maine inside "123 Maine Way".
+    $has_state = ( '' === $state )
+        || (bool) preg_match( '/\\b' . preg_quote( preg_replace( '/[^a-z0-9]/i', '', $state ), '/' ) . '\\b/i', $street );
+
+    if ( $has_city && $has_state ) {
+        return $street;
+    }
+    if ( $has_city && '' !== $state ) {
+        return $street . ', ' . $state;
+    }
+
+    return $street . ', ' . $where;
 }
 
 /**
@@ -481,9 +679,13 @@ function ${p}_render_hero( $post_id, $s ) {
  * Mirrors CTA_INSIDE_HERO in utils/stripUnusedHero.js, which removes the
  * standalone button from the static templates for the same layouts. Without
  * this the WordPress page shows the phone number twice in a row.
+ *
+ * SPOTLIGHT BELONGS HERE TOO. Its ghost button is the phone, exactly as
+ * split's is. This named only 'split' until the branch above existed for
+ * anyone to notice.
  */
 function ${p}_hero_has_cta() {
-    return '${heroLayout}' === 'split';
+    return in_array( '${heroLayout}', array( 'split', 'spotlight' ), true );
 }
 
 /**

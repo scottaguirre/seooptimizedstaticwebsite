@@ -1,0 +1,2514 @@
+/* ==========================================================================
+   style7.css — Design 7 "Spotlight"
+   ==========================================================================
+
+   HOW THIS FILE IS ORGANISED
+
+   Each component owns its own breakpoints. They sit directly under the rules
+   they modify, not in a block of media queries at the bottom.
+
+   That is not a filing preference. The hero's left padding drifted out of
+   alignment precisely because the headings were padded in one place and the
+   buttons in another, five hundred lines apart — nothing was wrong with
+   either rule, only with the distance between them. A component you can read
+   top to bottom is one whose breakpoints you cannot forget.
+
+   CONTENTS
+
+     1.  Palette
+     2.  Header and navigation
+     3.  Hero — spotlight
+           3.1  container and photograph
+           3.2  the overlay and its spacing
+           3.3  headings
+           3.4  divider
+           3.5  buttons
+           3.6  name, address and phone bar
+           3.7  badges
+     4.  Hero blocks this design does not use
+     5.  Standalone call-to-action button
+     6.  Sections and typography
+     7.  Images
+     8.  Two-image text section
+     9.  NAP, map and "near me"
+     10. Footer
+     11. Contact form
+     12. FAQ — numbered Q and A
+     13. Services — one navy band, numbered
+     14. Pricing — price blocks
+     15. Trust points
+     16. About-us video
+     17. Brush-stroke divider
+     18. Reviews
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. PALETTE
+   --------------------------------------------------------------------------
+   The same four colours were being written six ways — `green`, `darkgreen`,
+   `#53d353`, `#3ebe3e`, `#082d5b`, `#08203d`. Naming them means changing the
+   brand is one edit rather than a search.
+
+   THIS IS THE PURPLE OF THE FIRST DRAFT, and it is seven lines rather than a
+   search-and-replace through four hundred rules — which is the whole return
+   on having named them. The green is kept beside each value: putting it back
+   is editing this block and nothing else.
+   ========================================================================== */
+
+:root {
+    --brand:        #6d3df5;      /* buttons, FAQ bars, card icons   (was green)     */
+    --brand-dark:   #5a2ee0;      /* their hover                     (was darkgreen) */
+    --accent:       #8b63ff;      /* divider, active nav, focus      (was #53d353)   */
+    --navy:         #0f1733;      /* panels, dropdowns, dark sections (was #082d5b)  */
+    --navy-deep:    #1a1246;      /* sub-menu border, hero base      (was #08203d)   */
+    --faq-grey:     #e2e3e5;
+
+    /* THE SAME NAVY, AS THREE NUMBERS. The hero scrim needs that colour at
+       five different opacities, and `rgba()` cannot take a hex. Writing the
+       channels once means changing --navy above and this line keeps the
+       gradient in step; hard-coding rgba(15, 23, 51, …) five times is how a
+       scrim ends up a slightly different colour from the panel it sits on. */
+    --navy-rgb:     15, 23, 51;
+
+    /* THE TRUST-POINT CIRCLES, AND THEY FOLLOW THE BRAND NOW.
+
+       This was #17801a, held out of the repalette on the argument that a
+       tick only reads as "verified" when it is green. That was a judgement
+       call about the design, not a fact about it, and Edwin's call is that
+       the section should match the theme. It does.
+
+       The green is kept here so putting it back is one edit, exactly as the
+       old palette values are. */
+    --tick:         var(--brand);   /* was #17801a */
+}
+
+
+/* ==========================================================================
+   2. HEADER AND NAVIGATION
+   --------------------------------------------------------------------------
+   The header is ABSOLUTE and transparent, so it floats over the hero
+   photograph. Two things follow from that and both are handled here: the
+   links need to stay legible over whatever the photo happens to be doing,
+   and the hero needs padding to keep its headline out from under them
+   (see 3.2).
+   ========================================================================== */
+
+#headerColor {
+    width: 100%;
+    position: absolute;
+    z-index: 3;
+}
+
+#headerColor,
+#headerColor .navbar {
+    background-color: transparent !important;
+}
+
+/* Air above the logo and below the links. Without it the logo sits flush
+   against the top edge of the photograph. */
+#headerColor .navbar {
+    padding-top: 18px;
+    padding-bottom: 18px;
+}
+
+/* ---- THE LOGO IS CAPPED, AND THE HERO DEPENDS ON IT ----
+
+   The template writes the logo at whatever width and height the wizard was
+   given: <img width="{{LOGO_WIDTH}}" height="{{LOGO_HEIGHT}}">. A wide
+   wordmark is 150x40. A circular badge is 260x170 — and that one made the
+   header 216px tall at EVERY width, not just on a phone.
+
+   That matters here more than on the other designs, because this header is
+   absolute and floats over the hero. The hero reserves room for it with
+   padding-top, and padding-top is a number. A number cannot be right for
+   both a 40px logo and a 170px one, so the headline ran under the badge:
+
+       https://.../  →  "Quality Plumber Leander" printed through the logo
+
+   CAPPING IS WHAT MAKES THE NUMBER KNOWABLE. With a ceiling on the logo the
+   header has a ceiling too, and the padding in 3.2 is reserving space
+   against a height that cannot be exceeded rather than one that happened to
+   be true of the last logo anybody tested.
+
+   width: auto keeps the aspect ratio; the width attribute would otherwise
+   fight the capped height and squash wide logos. */
+#headerColor .navbar-brand img {
+    max-height: 72px;
+    width: auto;
+    height: auto;
+}
+
+@media (min-width: 992px) {
+    #headerColor .navbar-brand img {
+        max-height: 86px;
+    }
+}
+
+/* ---- THE COLLAPSED MENU IS A PANEL ----
+
+   #headerColor is position: absolute, so when the hamburger opens the menu
+   it does not push the hero down — it floats over it. With no background of
+   its own the links printed straight through the headline: "ABOUT US" and
+   "ROOF REPAIR" overlapping "Roofing You Can Trust", both white, neither
+   readable.
+
+   An absolute header has nothing beneath it to borrow a background from, so
+   the open menu has to bring its own.
+
+   Bootstrap only adds .show when the menu is open and keeps the element
+   display: none otherwise, so this panel is invisible until it is needed —
+   no extra rule required to hide it. */
+#headerColor .navbar-collapse {
+    background: var(--navy);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-top: 12px;
+    box-shadow: 0 18px 40px rgba(var(--navy-rgb), 0.45);
+}
+
+/* FLEX-START, NOT CENTER. Centring is right for a horizontal bar and wrong
+   for a stacked column — it put the links down the middle of the panel. It
+   also makes each item shrink to its text, which is what keeps the active
+   underline the width of the word instead of the width of the panel. */
+#headerColor .navbar-nav {
+    align-items: flex-start;
+    gap: 4px;
+}
+
+@media (min-width: 992px) {
+    #headerColor .navbar-collapse {
+        background: none;
+        border-radius: 0;
+        padding: 0;
+        margin-top: 0;
+        box-shadow: none;
+    }
+
+    /* Everything on one baseline. The items were sitting at different
+       heights because .nav-item carried a bottom margin meant for the
+       stacked menu. */
+    #headerColor .navbar-nav {
+        align-items: center;
+        gap: 0;
+    }
+}
+
+#headerColor .nav-item {
+    margin-bottom: 0;
+}
+
+.navbar-toggler {
+    background-color: #fff;
+}
+
+/* ---- the links ----
+   They were at Bootstrap's default size against a 4rem headline, which read
+   as an afterthought. The text-shadow is what keeps them readable where the
+   photograph is pale. */
+#headerColor .nav-link,
+#headerColor .menu-item a {
+    color: #fff;
+    font-size: 16.5px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    text-decoration: none;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+/* ---- EVERY LINK IS WHITE. THE UNDERLINE DOES THE TALKING. ----
+
+   Colour alone is what the nav used to use: #3ebe3e first, then --accent.
+   Both failed for the same reason, which is worth writing down because it
+   will be tempting to put colour back.
+
+   THE HEADER IS TRANSPARENT AND SITS ON A PHOTOGRAPH THE GENERATOR CHOSE.
+   There is no background to tune the colour against — the pixels behind
+   ABOUT US are a bathroom wall on one build and a dark roof on the next, so
+   any single accent is unreadable on some of them. White with a shadow is
+   legible over all of them, which is why every link is white and stays
+   white, hover and active included.
+
+   So "which page am I on" is carried by a shape instead: a 3px purple bar
+   under the word. A shape keeps its meaning at any contrast, and it is not
+   the only cue — the browser's own focus ring still works on top of it.
+
+   ::before, NOT ::after, AND THAT IS NOT A STYLE CHOICE. Bootstrap draws the
+   dropdown caret with .dropdown-toggle::after. An underline on ::after would
+   have silently deleted the little triangle beside SERVICES and LOCATIONS. */
+
+#headerColor a.nav-link,
+#headerColor .menu-item a,
+#headerColor a.nav-link:hover,
+#headerColor .menu-item a:hover,
+#headerColor a.nav-link.active,
+#headerColor .current-menu-item a,
+#headerColor a.nav-link.active:hover,
+#headerColor .current-menu-item a:hover {
+    color: #fff !important;
+    background: none;
+}
+
+#headerColor .navbar-nav .nav-link,
+#headerColor .menu-item a {
+    position: relative;
+}
+
+/* THE CONTACT BUTTON IS EXCLUDED. It is a filled purple block and already
+   says it is current with a white ring; a purple bar inside it would be
+   invisible, and a bar under it would look like a fault. */
+#headerColor .navbar-nav .nav-link:not([href$="contact.html"])::before,
+#headerColor .menu-item a::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--accent);
+    opacity: 0;
+    transform: scaleX(0.55);
+    transition: opacity .15s ease, transform .15s ease;
+}
+
+#headerColor .navbar-nav .nav-link:not([href$="contact.html"]):hover::before,
+#headerColor .menu-item a:hover::before {
+    opacity: 0.55;
+    transform: scaleX(1);
+}
+
+#headerColor .navbar-nav a.nav-link.active:not([href$="contact.html"])::before,
+#headerColor .current-menu-item a::before {
+    opacity: 1;
+    transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #headerColor .navbar-nav .nav-link::before,
+    #headerColor .menu-item a::before {
+        transition: none;
+    }
+}
+
+/* ---- CONTACT, as a button ----
+
+   SELECTED BY ITS href, NOT BY A CLASS, and that is the whole reason this is
+   possible without touching anything shared.
+
+   utils/buildNavMenu.js REPLACES the nav block in every template and writes
+   CONTACT last, as a plain .nav-link. Adding a class to it would mean editing
+   that file — which builds the nav for all seven designs, so Designs 1-6
+   would start carrying a class for a button only this stylesheet draws.
+
+       THE MARKUP ALREADY SAYS WHICH LINK THIS IS. It says it in the href.
+
+   `$=` matches the end of the attribute, so it holds whether the href is
+   "contact.html" or "../contact.html" on a nested page. Dropdown entries
+   cannot match: they are .dropdown-item inside .dropdown-menu, and none of
+   them point at the contact page. */
+
+/* BASE IS THE COLLAPSED MENU, where the links stack full width and a button
+   sitting in that column should not stretch across it. The inline placement
+   beside the other links is the enhancement, added at 992px with the rest of
+   the horizontal nav. */
+#headerColor .navbar-nav .nav-link[href$="contact.html"] {
+    display: inline-block;
+    background: var(--brand);
+    color: #fff;
+    border-radius: 8px;
+    padding: 11px 24px;
+    margin-left: 0;
+    margin-top: 8px;
+    text-shadow: none;
+    transition: background-color .15s ease, transform .15s ease;
+}
+
+#headerColor .navbar-nav .nav-link[href$="contact.html"]:hover,
+#headerColor .navbar-nav .nav-link[href$="contact.html"]:focus {
+    background: var(--brand-dark);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+/* ON THE CONTACT PAGE THE LINK ALSO CARRIES .active, which colours nav links
+   --accent. On a filled purple button that is purple text on purple. The
+   button keeps white type and marks itself as current with a ring instead. */
+#headerColor .navbar-nav a.nav-link.active[href$="contact.html"] {
+    color: #fff !important;
+    background: var(--brand);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+
+#headerColor .navbar-nav a.nav-link.active[href$="contact.html"]:hover {
+    color: #fff !important;
+    background: var(--brand-dark);
+}
+
+#headerColor .navbar-nav .nav-link[href$="contact.html"]:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #headerColor .navbar-nav .nav-link[href$="contact.html"] { transition: none; }
+    #headerColor .navbar-nav .nav-link[href$="contact.html"]:hover { transform: none; }
+}
+
+/* Collapsed menu: the links stack full width, and a button sitting in that
+   column should not stretch across it. */
+/* ---- dropdowns ---- */
+
+.dropdown-menu,
+.sub-menu {
+    border: 0.5px solid #b2b2b269;
+    background: var(--navy);
+}
+
+.dropdown-menu .nav-item,
+.sub-menu .menu-item {
+    border-bottom: solid gray 1px;
+    padding-left: 10px;
+}
+
+.dropdown-menu li:only-child,
+.sub-menu li:only-child,
+.dropdown-menu li:last-of-type,
+.sub-menu li:last-of-type {
+    border-bottom: none;
+}
+
+.dropdown-item {
+    padding: 8px;
+    white-space: initial;
+}
+
+/* ---- navigation: 992px and up ---- */
+
+@media (min-width: 992px) {
+
+    /* Hover to open, matching .navbar-expand-lg */
+    .navbar .dropdown:hover > .dropdown-menu {
+        display: block;
+    }
+
+    .navbar .dropdown-menu,
+    .sub-menu {
+        margin-top: 0;
+    }
+
+    /* Hovering the dropdown trigger shows the same bar the links use, rather
+       than recolouring the word — see the note in section 2. */
+    #headerColor .navbar .dropdown:hover > .nav-link {
+        color: #fff;
+    }
+
+    #headerColor .navbar .dropdown:hover > .nav-link::before {
+        opacity: 0.55;
+        transform: scaleX(1);
+    }
+
+    /* MORE AIR BETWEEN THE ITEMS. 15px each side read as a dense block
+       against a 4rem headline; 22px lets them breathe without pushing the
+       CONTACT button off the end on a 1024px laptop. */
+    .nav-link,
+    .menu-item a {
+        margin-right: 22px;
+        margin-left: 22px;
+    }
+
+    /* The button brings its own padding, so it needs less margin than the
+       plain links or the gap beside it reads as a mistake. */
+    #headerColor .navbar-nav .nav-link[href$="contact.html"] {
+        margin-left: 10px;
+        margin-right: 0;
+        margin-top: 0;
+    }
+
+    .menu-item-has-children {
+        position: relative;
+        z-index: 1;
+        padding-bottom: 20px;
+    }
+
+    .sub-menu {
+        display: none;
+        position: absolute;
+        z-index: 3;
+        border: 2px solid var(--navy-deep);
+        border-radius: 10px;
+        padding: 0;
+        margin-top: 10px;
+    }
+
+    .menu-item-has-children:hover .sub-menu {
+        display: block;
+        -webkit-transition: all 1s ease;
+                transition: all 1s ease;
+    }
+
+    .sub-menu .menu-item {
+        padding: 10px;
+    }
+
+    .dropdown .dropdown-menu li,
+    .sub-menu .menu-item {
+        width: 250px;
+    }
+
+    .nav-item.dropdown .dropdown-menu,
+    .sub-menu {
+        left: -100px !important;
+    }
+
+    .dropdown .dropdown-menu li a,
+    .sub-menu .menu-item a {
+        white-space: normal;
+    }
+}
+
+
+/* ==========================================================================
+   3. HERO — SPOTLIGHT
+   --------------------------------------------------------------------------
+   Full-width photograph with a blue gradient over it and the text on the
+   left. The markup is the <!--HERO:spotlight--> block in the templates; no
+   other design uses it, and stripUnusedHero removes it for every styleKey
+   but style7.
+   ========================================================================== */
+
+/* ---- 3.1 container and photograph ---- */
+
+.hero-spotlight {
+    position: relative;
+    margin: 0;
+    padding: 0;
+
+    /* The panel behind everything. It shows in the band around the NAP card,
+       before the image loads, and in any sliver left by an odd aspect ratio.
+       Deep indigo rather than the browser's white, so none of those moments
+       is a flash of blank page. */
+    background: linear-gradient(118deg, var(--navy) 0%, var(--navy-deep) 100%);
+
+    /* Keeps any child margin inside the hero rather than letting it collapse
+       out through the bottom edge. The NAP box has none today, but it had
+       them for an afternoon and the space silently landed below the hero on
+       the white page instead of inside it. One line, and that cannot recur. */
+    display: flow-root;
+}
+
+/* THE PHOTOGRAPH AND THE WORDS SHARE ONE GRID CELL.
+
+   This started as absolute positioning and went wrong twice, in opposite
+   directions, which is why it is worth the paragraph.
+
+   FIRST the text layer was anchored to .hero-spotlight — which contains the
+   photograph AND the name/address/phone bar below it. It spanned both, so
+   `justify-content: center` centred the headline against the combined
+   height, and with the bar briefly 4000px tall (see 3.6) the headline sat
+   two thousand pixels below the fold.
+
+   THEN it was anchored to the stage. That fixed the desktop and broke the
+   phone: an absolutely positioned layer takes its height from its anchor, so
+   on a 390px screen the text was locked to the photo\'s height, overflowed
+   it, and the two buttons were cut off entirely. Nothing errored. The hero
+   quietly lost its calls to action.
+
+       AN ABSOLUTE OVERLAY IS A PROMISE THAT THE WORDS WILL NEVER BE TALLER
+       THAN THE PICTURE. On a phone that promise is false.
+
+   Stacking both children in ONE grid cell withdraws the promise. The cell is
+   as tall as whichever is taller — the photograph on a desktop, the text on
+   a phone — and object-fit: cover makes the image fill whatever that turns
+   out to be. No height is assumed anywhere, so there is no width at which
+   this can clip. */
+.hero-spotlight__stage {
+    position: relative;
+    display: grid;
+    grid-template-areas: "hero";
+}
+
+.hero-spotlight__media,
+.hero-spotlight__text {
+    grid-area: hero;
+
+    /* Grid items are min-content wide by default; without this a long
+       unbroken word in the headline would stretch the hero sideways. */
+    min-width: 0;
+}
+
+.hero-spotlight__media {
+    width: 100%;
+}
+
+/* COVER, NOT CONTAIN, and the override has to beat Bootstrap.
+
+   The grid cell is as tall as whichever child is taller, so on a phone the
+   text makes it taller than the photograph's own aspect ratio. `height: 100%`
+   plus `object-fit: cover` fills that extra height by cropping rather than
+   stretching. Bootstrap's .img-fluid — which the template puts on this img
+   for every design — sets `height: auto`, so the selector names both classes
+   to win on specificity. */
+.hero-spotlight__media img.hero-img,
+.hero-spotlight__media img.hero-img.img-fluid {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    object-fit: cover;
+    display: block;
+}
+
+
+/* ---- 3.2 the overlay, and ALL of the hero's spacing ----
+
+   ONE SOURCE OF LEFT ALIGNMENT, and this is the important part of the file.
+
+   The headings, the divider and the buttons each carried their own
+   padding-left. At 400px the headings moved to 10% and the buttons stayed at
+   30px, so they stopped lining up — a bug that is invisible in the CSS and
+   obvious on the page.
+
+       THE CONTAINER PADS. THE CHILDREN PAD NOTHING.
+
+   The vertical padding does a second job: #headerColor is absolute, so the
+   headline was running under the nav. 110px is the header's height plus air.
+
+   And the content is CENTRED rather than pinned to the top, which replaces
+   the padding-top ladder that used to run 4% → 12% → 7% → 10% → 6% → 9% → 8%
+   across seven breakpoints to chase the same effect. */
+
+.hero-spotlight__text {
+    /* IN FLOW, NOT ABSOLUTE — see the note on .hero-spotlight__stage above.
+       It shares a grid cell with the photograph, so it sits on top without
+       being bound to the photograph's height. */
+    position: relative;
+    z-index: 2;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+
+    /* THE TOP VALUE IS THE HEADER'S CEILING PLUS AIR.
+
+       MEASURED, NOT CALCULATED. The first version of this comment added the
+       logo cap to the navbar's padding and claimed 108px; the header is
+       actually 118px, because the brand's margin, the toggler's height and
+       the container's own padding are in there too. The numbers below come
+       from rendering a 260x170 badge logo at four widths and reading the
+       header box:
+
+           up to 991px   header 118px   ->  142px here  (24px clear)
+           992px and up  header 132px   ->  158px       (26px clear)
+
+       Change the cap in section 2 and these change with it. They are one
+       measurement written in two places and the comment is the only thing
+       joining them, so re-measure rather than re-deriving. */
+    /* The bottom value is the BADGE SHELF: 10px gap + the badge height in
+       section 3.7, which is 28px here and 40px from 992 up. The hero has no
+       overflow rule, so a badge taller than this spills onto the white box
+       below — these two numbers are one measurement written in two places.
+       Change 28 in 3.7 and change this with it. */
+    padding: 142px 30px 38px;
+    text-align: left;
+    color: #fff;
+
+    /* THE SCRIM, and it has one job: keep white text readable over a
+       photograph nobody has seen yet. The generator picks the hero image, so
+       the left third of it could be bright sky or a white wall on any given
+       build — the gradient is what makes that not matter.
+
+       NEARLY OPAQUE FOR THE FIRST FIFTH, then away quickly. The headline sits
+       in that band; everything past 70% is the photograph, barely touched.
+       A flat tint across the whole image would have cost the photo to protect
+       type that only occupies the left of it. */
+    background-image: linear-gradient(100deg,
+        rgba(var(--navy-rgb), 1.00)   0%,
+        rgba(var(--navy-rgb), 0.92)  18%,
+        rgba(var(--navy-rgb), 0.38)  48%,
+        rgba(var(--navy-rgb), 0.05)  72%,
+        rgba(var(--navy-rgb), 0.00) 100%) !important;
+}
+
+@media (min-width: 400px) {
+    .hero-spotlight__text {
+        padding-left: 10%;
+        padding-right: 10%;
+    }
+}
+
+@media (min-width: 992px) {
+    .hero-spotlight__text {
+        padding-top: 158px;
+
+        /* THIS PADDING IS THE BADGE SHELF, and its value is not free.
+
+           Between 992 and ~1366 the hero's height IS the text's height: the
+           words are the taller child, so the box is exactly as tall as they
+           are. There is no slack under the buttons to put anything in —
+           shrinking the headline just shrinks the hero with it, which was
+           measured, not assumed.
+
+           So the room has to be MADE. 10px of gap plus a 40px badge is 50,
+           and that is what this is. The hero pays for it: 636 -> 670 at 992.
+
+               ASKING FOR BADGES UNDER THE BUTTONS AND FOR A SHORTER HERO AT
+               THE SAME BREAKPOINT IS ASKING FOR THE SAME PIXELS TWICE.
+
+           Change 40 in section 3.7 and change this with it — they are one
+           measurement in two places. */
+        padding-bottom: 50px;
+    }
+}
+
+/* ---- 50px off the hero on a laptop ----
+
+   Above about 1366px the PHOTOGRAPH is taller than the words, so the hero's
+   height comes from the image's 2:1 ratio and trimming text padding does
+   nothing. 50vw is that natural height; 50px less is what was asked for.
+
+   CAPPED ON THE MEDIA, NOT ON THE STAGE, and the difference is the whole
+   point. A max-height on the stage caps the grid cell — so on any build
+   whose headline wraps one line further, the text would overflow the cell
+   and spill over the box below it. Capping the MEDIA leaves the stage free
+   to be as tall as the words need; the photograph crops (object-fit: cover
+   is already set) and the text never can.
+
+       THE CAP IS A CEILING FOR THE PICTURE, NOT FOR THE PAGE.
+
+   From 1250px because that is where the <source> switches to the 1400x700
+   image; below it the ratio is different and 50vw would be wrong. */
+@media (min-width: 1250px) {
+    .hero-spotlight__media {
+        /* was -50px; -70px carries the extra 20px into the widths
+           where the photograph sets the height. */
+        max-height: calc(50vw - 70px);
+    }
+}
+
+
+/* ---- 3.3 headings ----
+   No padding of their own. See 3.2. */
+
+.hero-spotlight__title {
+    color: #fff !important;
+    font-weight: bold;
+    font-size: 26px;
+    line-height: 1.2;
+    max-width: 60%;
+    padding: 0;
+    margin: 0 0 6px;
+}
+
+.hero-spotlight__sub {
+    color: #fff;
+    font-size: 18px;
+    font-weight: bold;
+    line-height: 1;
+    max-width: 60%;
+    padding: 0;
+    margin: 0;
+}
+
+@media (min-width: 550px) {
+    .hero-spotlight__title { font-size: 2rem; }
+    .hero-spotlight__sub   { font-size: 1.75rem; }
+}
+
+@media (min-width: 766px) {
+    .hero-spotlight__title { font-size: 2.5rem; }
+    .hero-spotlight__sub   { font-size: 2rem; }
+}
+
+@media (min-width: 992px) {
+    .hero-spotlight__title { font-size: 3.5rem; }
+    .hero-spotlight__sub   { font-size: 3rem; }
+}
+
+@media (min-width: 1250px) {
+    .hero-spotlight__title { font-size: 4rem; }
+    .hero-spotlight__sub   { font-size: 3.5rem; max-width: 65%; }
+}
+
+
+/* ---- 3.4 divider ----
+
+   WAS DRAWING TWICE: a 2px border-bottom AND a background-color, which read
+   as a hairline with a smear under it. One rounded bar now.
+
+   The three `none` declarations at the bottom are not decoration. Section 17
+   turns every .line-divider on the site into a brush stroke with a CSS mask.
+   This selector is two classes deep so it wins on specificity, but it has to
+   switch the mask OFF explicitly or the hero gets the brush stroke too. */
+
+.hero-spotlight .line-divider {
+    position: relative;
+    left: 0;
+    width: 150px;
+    height: 4px;
+    border: 0;
+    border-radius: 3px;
+    margin: 14px 0 16px;
+    background-color: var(--accent);
+    background-image: none;
+    -webkit-mask-image: none;
+            mask-image: none;
+}
+
+@media (min-width: 992px) {
+    .hero-spotlight .line-divider { width: 190px; }
+}
+
+
+/* ---- 3.5 buttons ----
+   Book Appointment is solid, the phone is outlined. No padding-left: the
+   container handles it (3.2). */
+
+.hero-spotlight__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding-left: 0;
+    margin-top: 22px;
+}
+
+.hero-spotlight__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 24px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-decoration: none;
+    transition: transform .15s ease, background-color .15s ease, border-color .15s ease;
+}
+
+.hero-spotlight__btn--solid {
+    background: var(--brand);
+    color: #fff;
+    border: 2px solid var(--brand);
+}
+
+.hero-spotlight__btn--solid:hover {
+    background: var(--brand-dark);
+    border-color: var(--brand-dark);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.hero-spotlight__btn--ghost {
+    background: transparent;
+    color: #fff;
+    border: 2px solid rgba(255, 255, 255, 0.85);
+}
+
+.hero-spotlight__btn--ghost:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: #fff;
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+/* The photograph swallows the browser's default focus ring, and these are
+   the two things on the page anyone is here to press. */
+.hero-spotlight__btn:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+}
+
+.hero-spotlight__icon {
+    width: 19px;
+    height: 19px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hero-spotlight__btn { transition: none; }
+    .hero-spotlight__btn:hover { transform: none; }
+}
+
+
+/* ---- 3.6 name, address and phone bar ----
+
+   WITHOUT THESE RULES THE PAGE BREAKS, and not subtly.
+
+   The template puts three inline <svg> icons in this bar with a viewBox and
+   no width or height. An SVG sized that way falls back to the replaced-element
+   default of 300x150 — so three unstyled icons made the bar 4392px tall, the
+   hero 5112px tall, and the headline centred itself somewhere around y=2350.
+   The hero looked empty.
+
+   Nothing in the markup is wrong. An icon with no size is simply an icon the
+   stylesheet has to size, and this bar had no stylesheet at all.
+
+   IF YOU DO NOT WANT THIS BAR, deleting these rules is not how to remove it —
+   that is what produced the 5000px hero. Delete the .hero-spotlight__nap block
+   from the four templates instead, and then this whole section can go. */
+
+/* ONE BOX, FULL WIDTH, STARTING WHERE THE PHOTOGRAPH ENDS.
+
+   This was briefly an inset rounded card floating on a navy band, which
+   Edwin read — correctly — as a box inside a box. The band was the second
+   box, and nothing needed it.
+
+   SO THE STRIP IS THE BOX. Edge to edge, no margin, flush under the image.
+   There is no navy gap above it because there is no gap: the photograph's
+   bottom edge IS the box's top edge.
+
+   THE SPACE MOVED INSIDE. When this had margins, the air around it came
+   from the navy showing through. Full-bleed has no outside, so the breathing
+   room is padding now — the box is roomier rather than smaller. */
+.hero-spotlight__nap {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    width: 100%;
+    margin: 0;
+    padding: 10px 18px;
+
+    background: #fff;
+    border: 0;
+    border-bottom: 1px solid #e8eaf2;
+    border-radius: 0;
+    box-shadow: 0 6px 18px rgba(var(--navy-rgb), 0.07);
+}
+
+.hero-spotlight__nap-item {
+    display: flex;
+    align-items: center;
+
+    /* CENTRED AT EVERY WIDTH. Stacked on a phone the three lines centre on
+       each other; in a row each one centres in its own third. Left-aligned
+       they drifted against a card that is itself centred. */
+    justify-content: center;
+    text-align: center;
+    gap: 13px;
+    padding: 15px 6px;
+    color: #1b2340;
+    font-weight: 600;
+    font-size: 1.02rem;
+    line-height: 1.35;
+}
+
+.hero-spotlight__nap-item + .hero-spotlight__nap-item {
+    border-top: 1px solid #e8eaf2;
+}
+
+.hero-spotlight__nap-item a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.hero-spotlight__nap-item a:hover {
+    color: var(--brand);
+    text-decoration: underline;
+}
+
+/* ---- THE LABELS ----
+
+   "Business Name:", "Address:", "Phone:" ARE NOW IN THE MARKUP, in the
+   <!--HERO:spotlight--> block of the four templates. This styles them; it
+   no longer writes them.
+
+   WHAT WAS HERE AND WHY IT HAD TO GO. The words were ::before content:
+
+       .hero-spotlight__nap-item:nth-child(2) > span::before
+           { content: "Address:"; }
+
+   which cannot be selected or copied, is invisible to translation, never
+   reaches the WordPress renderer, and — the part that would have bitten
+   somebody eventually — was chosen by POSITION. Reordering those three
+   divs in the template would have relabelled them silently: the phone
+   number would have sat under "Address:" and nothing would have errored.
+
+       A LABEL THAT IS PICKED BY ROW NUMBER IS NOT LABELLING THE CONTENT.
+       IT IS LABELLING THE SLOT.
+
+   The text wrapper holds the label and the value together, so the item's
+   13px gap stays between the ICON and the words rather than being spent
+   between "Address:" and the address. */
+
+.hero-spotlight__nap-text {
+    display: inline;
+}
+
+.hero-spotlight__nap-label {
+    font-weight: 600;
+    opacity: 0.55;
+    margin-right: 2px;
+}
+
+.hero-spotlight__nap-value {
+    font-weight: 700;
+}
+
+/* The size that stops the 300x150 fallback. */
+.hero-spotlight__nap-icon {
+    width: 25px;
+    height: 25px;
+    flex: 0 0 auto;
+    margin-right: 0;
+    fill: none;
+    stroke: var(--brand);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: none;
+}
+
+@media (min-width: 992px) {
+    .hero-spotlight__nap {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: stretch;
+        gap: 0;
+        margin: 0;
+        padding: 14px 26px;
+    }
+
+    .hero-spotlight__nap-item {
+        flex: 1 1 0;
+        justify-content: center;
+        padding: 28px 18px;
+        font-size: 1.08rem;
+    }
+
+    .hero-spotlight__nap-icon {
+        width: 28px;
+        height: 28px;
+    }
+
+    .hero-spotlight__nap-item + .hero-spotlight__nap-item {
+        border-top: 0;
+        border-left: 1px solid #e8eaf2;
+    }
+}
+
+
+/* ---- 3.7 badges ----
+
+   EXACTLY 10px BELOW THE BUTTONS — WHEN THE MARKUP PUTS THEM THERE.
+
+   SCOPED TO .hero-spotlight__actions, AND THAT SCOPE IS THE BUG FIX.
+   `top: calc(100% + 10px)` means "the bottom of my containing block, plus
+   ten pixels". Written as a bare .badges rule it fired on pages whose
+   template still had the images in the media wrap — where the containing
+   block is the whole stage, so 100% was the bottom of the HERO and the
+   badges landed on the white box below it, left-aligned to the viewport.
+
+       A SELECTOR THAT ASSUMES WHERE AN ELEMENT LIVES HAS TO SAY SO.
+
+   Generated pages and the template they came from are not updated together:
+   a site built this morning has the old shape and is still being looked at.
+   Both are handled below.
+
+   THE SIZE IS CAPPED BY THE ROOM. Nothing clips these — the hero has no
+   overflow rule — so a badge taller than the space under the buttons spills.
+   That is why every badge height here has a matching shelf in 3.2:
+
+       shelf = 10px gap + badge height
+
+   base    28px badge -> padding-bottom 38px
+   992+    40px badge -> padding-bottom 50px
+
+   CHANGE ONE AND YOU MUST CHANGE THE OTHER.
+*/
+
+.hero-spotlight__actions {
+    position: relative;
+}
+
+/* ---- MOBILE AND UP. They were hidden below 992px, from when the shelf did
+   not exist there and anything placed under the buttons spilled. It exists
+   now, so they show at every width.
+
+   Both markups are covered: current pages have the images inside the actions
+   block, pages built before the placeholder moved still have them in the
+   media wrap. ---- */
+
+.hero-spotlight__actions .badges {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    right: auto;
+    bottom: auto;
+    z-index: 3;
+}
+
+/* No button to measure from in this one — the containing block is the stage.
+   `bottom: 0` lands 10px under the buttons anyway, because the shelf above
+   makes the stage end exactly 10px + the badge height below them. */
+.hero-spotlight__media .badges {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+
+    position: absolute;
+    top: auto;
+    left: 30px;
+    right: auto;
+    bottom: 5px;
+    z-index: 3;
+}
+
+.hero-spotlight .award,
+.hero-spotlight .licensed {
+    width: auto;
+    height: auto;
+    max-width: 92px;
+    max-height: 28px;
+}
+
+@media (min-width: 400px) {
+    .hero-spotlight__media .badges { left: 10%; }
+}
+
+@media (min-width: 839px) {
+    .hero-spotlight__media .badges {
+        gap: 10px;
+        bottom: 20px;
+    }
+
+}
+
+@media (min-width: 992px) {
+    .hero-spotlight__actions .badges  { gap: 10px; }
+
+    .hero-spotlight__media .badges { gap: 10px; bottom: 5px; }
+
+    /* 40px, and the shelf in 3.2 is 10 + 40. Change one, change both. */
+    .hero-spotlight .award,
+    .hero-spotlight .licensed {
+        max-width: 130px;
+        max-height: 40px;
+    }
+}
+
+@media (min-width: 1110px) {
+    .hero-spotlight__media .badges {
+        gap: 10px;
+        bottom: 3%;
+    }
+
+}
+
+
+@media (min-width: 1200px) {
+    .hero-spotlight__media .badges {
+        gap: 10px;
+        bottom: 30px;
+    }
+
+}
+
+
+
+/* From here the room is real, so the badges can be the size they were drawn
+   to be rather than the size that happens to fit. */
+@media (min-width: 1600px) {
+    /* 190px of room here, so they go where they were asked to go. */
+    .hero-spotlight__actions .badges {
+        display: flex;
+        align-items: flex-end;
+        position: absolute;
+        top: calc(100% + 10px);
+        left: 0;
+        right: auto;
+        bottom: auto;
+        z-index: 3;
+    }
+
+    .hero-spotlight__actions .badges,
+    .hero-spotlight__media .badges { gap: 14px; }
+
+    /* 103px of room at 1600 minus the 10px gap leaves 93; 86 keeps a
+       margin so a slightly taller badge image cannot spill. Measured, not
+       guessed — 96 here overflowed by 3px. */
+    .hero-spotlight .award,
+    .hero-spotlight .licensed { max-width: 150px; max-height: 86px; }
+}
+
+@media (min-width: 1920px) {
+    .hero-spotlight .award,
+    .hero-spotlight .licensed { max-width: 180px; max-height: 170px; }
+}
+
+
+/* The other designs keep their own placement; these are the shared defaults
+   the overlay and split heroes rely on. */
+.badges {
+    position: absolute;
+    left: 8%;
+    bottom: 5%;
+    z-index: 3;
+}
+
+.award,
+.licensed {
+    width: 15%;
+}
+
+@media (min-width: 601px) { .badges { bottom: 12%; } }
+@media (min-width: 720px) { .badges { bottom: 15%; left: 9%; } }
+@media (min-width: 992px) { .badges { bottom: 12%; } }
+@media (min-width: 1250px) { .badges { bottom: 15%; } }
+
+
+/* ==========================================================================
+   4. HERO BLOCKS THIS DESIGN DOES NOT USE
+   --------------------------------------------------------------------------
+   stripUnusedHero removes the standard, overlay and split blocks from the
+   HTML for style7, so these never match anything in a real build. They stay
+   as a safety net: if the stripper is ever bypassed, the page shows ONE hero
+   rather than four stacked on top of each other.
+   ========================================================================== */
+
+.hero-container,
+.hero-container img,
+.text-hero {
+    display: none;
+}
+
+.hero-img-tablet,
+.hero-img-desktop,
+.hero-img-large {
+    display: none;
+}
+
+@media (min-width: 601px) {
+    .hero-img-mobile { display: none; }
+    .hero-img-tablet { display: block; }
+}
+
+@media (min-width: 720px) {
+    .hero-img-tablet  { display: none; }
+    .hero-img-desktop { display: block; }
+}
+
+@media (min-width: 1250px) {
+    .hero-img-desktop { display: none; }
+
+    .hero-img {
+        display: block;
+        min-width: 100%;
+        max-width: 100%;
+    }
+}
+
+
+/* ==========================================================================
+   5. STANDALONE CALL-TO-ACTION BUTTON
+   --------------------------------------------------------------------------
+   The phone button that sits below the hero on designs whose hero has no
+   button of its own. Spotlight carries its own pair, so stripUnusedHero
+   removes the FIRST of these for style7 (CTA_INSIDE_HERO) — but the second,
+   further down the page, still renders.
+   ========================================================================== */
+
+.btn-container {
+    padding: 25px;
+    background-color: var(--navy);
+}
+
+.btn-container-2 {
+    padding-top: 50px;
+    padding-bottom: 50px;
+}
+
+.cta-btn a {
+    text-decoration: none;
+}
+
+.cta-btn a p {
+    color: #fff;
+    padding: 20px;
+    font-size: 26px;
+    border: 2px solid #fff;
+    width: 270px;
+    margin: auto;
+    background-color: var(--brand);
+}
+
+.cta-btn a p:hover {
+    background-color: var(--brand-dark);
+}
+
+@media (min-width: 720px) {
+    .btn-container {
+        padding-top: 40px;
+        padding-bottom: 40px;
+    }
+}
+
+
+/* ==========================================================================
+   6. SECTIONS AND TYPOGRAPHY
+   ========================================================================== */
+
+.section-padding {
+    padding-top: 60px;
+    padding-bottom: 60px;
+    padding-left: 30px;
+    padding-right: 30px;
+}
+
+.section-padding h2 {
+    padding-bottom: 0;
+    font-size: 28px;
+    line-height: 1.5;
+}
+
+.section-padding h3 {
+    font-size: 22px;
+    padding-bottom: 20px;
+    line-height: 1.5;
+}
+
+.section-padding p,
+.ul-second-section li {
+    font-size: 19px;
+    line-height: 1.6;
+}
+
+.section-padding p:last-child {
+    margin-bottom: 0;
+}
+
+.section-padding a {
+    text-decoration: none;
+}
+
+/* `.text-two-images-section .col-lg-10 h2 { padding-top: 60px }` LIVED HERE
+   and has moved to section 8, with the rest of that component. It was the
+   exact fault the note at the top of this file describes: one component's
+   spacing set in section 6, its images in section 7, and nothing wrong with
+   either rule except the distance between them. */
+
+.div-text-padding-bottom,
+.image-padding-bottom {
+    padding-bottom: 60px;
+}
+
+
+/* ==========================================================================
+   7. IMAGES
+   --------------------------------------------------------------------------
+   WHAT IS LEFT HERE IS THE ABOUT-PAGE MEDIA AND NOTHING ELSE.
+
+   This section used to read:
+
+       .col-md-6 img,
+       .col-md-5 img { box-shadow: 10px 10px 5px #aaa; border-radius: 10px; }
+
+   .col-md-6 img matched EVERY column-six image on the site, but there is
+   only one kind: the pair in .text-two-images-section, which the four
+   templates use and nothing else does. Checked, not assumed — twelve
+   matches across template.html, aboutUsTemplate.html and
+   locationPagesTemplate.html, all of them that pair. So the rule was
+   unscoped for no gain, and it has moved into section 8 where the pair is
+   now styled as one component.
+
+   .col-md-5 img is a different thing: {{ABOUT_MEDIA}} on the About page,
+   which is a single image or the intro video. It keeps its own rule.
+   ========================================================================== */
+
+.col-md-5 img {
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(var(--navy-rgb), .13);
+}
+
+
+/* ==========================================================================
+   8. TWO-IMAGE TEXT SECTION — TEXT BESIDE THE IMAGES
+   --------------------------------------------------------------------------
+   WAS A WIDE BAND OF TWO PHOTOGRAPHS WITH THE HEADING STRANDED UNDER IT.
+   From 992px the section is two columns instead: the words on the left, the
+   two photographs stacked on the right.
+
+   THE MARKUP IS UNTOUCHED. It is sibling rows inside the container:
+
+       .container.section-padding
+         .row.row-first-section-2-img      two .col-md-6, one image each
+         .row                              one .col-lg-10, h2 + two <p>
+         .row.service-cards                ON THE ABOUT PAGE ONLY
+
+   Two rows cannot sit side by side as rows. The CONTAINER becomes the grid
+   and the two that pair up are placed into cells of it — images in column
+   2, text in column 1, both on row 1. Below 992px no grid is declared at
+   all, so the rows stay rows and the section reads as it always did.
+
+   ---- THE THIRD ROW, AND THE BUG IT CAUSED ----
+
+   The first version of this said "the row that is NOT the image row", which
+   is true of the text — and equally true of anything else that ever lands
+   in this section. aboutUsTemplate.html puts {{SERVICE_CARDS}} inside
+   section-2, so the services band matched too: it was placed in the same
+   cell as the paragraphs and crushed into half the page, on top of them.
+
+       AN EXCLUSION SELECTOR DOES NOT SAY WHICH ROW YOU MEAN. IT SAYS
+       "EVERYTHING ELSE", AND IT SILENTLY ADOPTS THE NEXT THING ADDED.
+
+   So the rules below are the other way round. Every direct .row child
+   defaults to spanning BOTH columns on a row of its own — which is how the
+   section already looked — and exactly two of them opt in to the side-by-
+   side pair:
+
+       the picture row   by its own [class*="section-2-img"]
+       the prose row     by :has(> .col-lg-10) — what it HOLDS, not what
+                         it is not
+
+   Anything added to this section later lands on the default and keeps
+   working. Where :has() is unsupported the prose row also keeps the
+   default, so the section degrades to the stack it is today rather than
+   to a broken layout.
+
+   THE PHOTOGRAPHS ARE CROPPED TO 2:1, AND THAT NUMBER IS LOAD-BEARING. At
+   their natural 16:10 two stacked frames are far taller than the paragraphs
+   beside them, so the section came out TALLER than the stacked version it
+   was meant to shorten — measured, not assumed. 2:1 brings the picture
+   column to roughly the height of the words. object-fit: cover does the
+   cropping, so no photograph is ever distorted to fit.
+   ========================================================================== */
+
+.text-two-images-section {
+    --tti-gap:     52px;    /* between the words and the pictures */
+    --tti-stack:   18px;    /* between the two pictures           */
+    --tti-radius:  14px;
+}
+
+/* NARROW FIRST: one image, then the other, then the text — the order the
+   markup is already in. */
+.text-two-images-section .img-1-div {
+    margin-bottom: var(--tti-stack);
+}
+
+/* SCOPED TO THE PICTURE ROW, not to the section. The old rule this replaces
+   was `.col-md-6 img` — unscoped — and scoping it to `.text-two-images-section
+   img` would have been the same mistake one level in: the About page has the
+   services band inside this section too. Naming the picture row means these
+   rules reach the two photographs and nothing else, whatever else arrives.
+   The old hard grey offset shadow (10px 10px 5px #aaa) goes with it. */
+.text-two-images-section [class*="section-2-img"] img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    aspect-ratio: 16 / 10;
+    border-radius: var(--tti-radius);
+    box-shadow: none;
+}
+
+/* The heading's old 60px top padding was for the stacked layout, where it
+   followed a wide band of pictures. 60px was too much even there; stacked
+   it needs air, and beside the pictures it needs none at all. */
+.text-two-images-section .col-lg-10 h2 {
+    padding-top: 0;
+    margin-top: 22px;
+}
+
+@media (min-width: 992px) {
+    /* THE CONTAINER IS THE GRID. align-items: center keeps the words
+       vertically centred against the picture column, which is still the
+       taller of the two by a little. */
+    .text-two-images-section .section-padding {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 var(--tti-gap);
+        align-items: center;
+    }
+
+    /* ---- THE DEFAULT: full width, own row. ----
+       Everything in this section behaves as it does today unless it opts
+       in below. This is the rule that keeps the services band — and
+       anything added later — out of the two-column pair. */
+    .text-two-images-section .section-padding > .row {
+        grid-column: 1 / -1;
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    /* ---- OPT-IN 1: the pictures, right-hand column. ---- */
+    .text-two-images-section .section-padding > [class*="section-2-img"] {
+        grid-column: 2;
+        grid-row: 1;
+        margin: 0;
+    }
+
+    /* ---- OPT-IN 2: the prose, left-hand column. ----
+       Selected by what it HOLDS. The row has no class of its own, and the
+       templates use row-first-section-2-img on one section and
+       row-second-section-2-img on the other, so there was nothing on the
+       row itself to name. .col-lg-10 is the prose column in all six
+       occurrences across the four templates — checked, not assumed. */
+    .text-two-images-section .section-padding > .row:has(> .col-lg-10) {
+        grid-column: 1;
+        grid-row: 1;
+        margin: 0;
+    }
+
+    /* FULL WIDTH ONLY INSIDE THE TWO ROWS THAT PAIRED UP. Applying this to
+       every .row was the other half of the services bug: it forced that
+       band's three columns to 100% and collapsed it to a single column. */
+    .text-two-images-section .section-padding > [class*="section-2-img"] > [class*="col-"],
+    .text-two-images-section .section-padding > .row:has(> .col-lg-10) > [class*="col-"] {
+        flex: 0 0 100%;
+        max-width: 100%;
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    /* Beside the pictures rather than under them, so the air above the
+       heading would be a gap against nothing. */
+    .text-two-images-section .col-lg-10 h2 {
+        margin-top: 0;
+    }
+
+    /* 2:1 — see the note above. This is the number that decides whether the
+       section is shorter than the stacked version or taller than it. */
+    .text-two-images-section [class*="section-2-img"] img {
+        aspect-ratio: 2 / 1;
+    }
+}
+
+
+/* ==========================================================================
+   9. NAP, MAP AND "NEAR ME"
+   ========================================================================== */
+
+.nearme {
+    border-bottom: 1px solid #000;
+    background: var(--navy);
+    color: #fff;
+}
+
+.nap-map-section {
+    background: var(--navy);
+    color: #fff;
+}
+
+.nap p {
+    font-size: 20px;
+    padding-bottom: 10px;
+}
+
+.google-map iframe {
+    width: 100%;
+}
+
+
+/* ==========================================================================
+   10. FOOTER
+   ========================================================================== */
+
+footer a {
+    text-decoration: none;
+    font-size: 18px;
+    color: darkblue;
+}
+
+a svg {
+    width: 24px;
+    height: 24px;
+    margin-right: 10px;
+    transition: fill 0.3s ease;
+}
+
+a:hover svg {
+    fill: #0d6efd;
+}
+
+
+/* ==========================================================================
+   11. CONTACT FORM
+   --------------------------------------------------------------------------
+   Two selector sets throughout: the generated static form (.contact-form,
+   .form-group) and Contact Form 7 on the WordPress export (.wpcf7).
+   ========================================================================== */
+
+.form-container {
+    overflow: hidden;
+    width: 90%;
+    margin: auto auto 60px;
+    border-radius: 16px;
+}
+
+.contact-form,
+.wpcf7 {
+    padding: 50px 50px 60px;
+    max-width: 700px;
+    margin: auto;
+}
+
+.wpcf7 {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+.contact-form h2,
+.wpcf7 h2 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #2d3748;
+    margin-bottom: 8px;
+    text-align: center;
+    padding: 30px 25px;
+}
+
+.form-subtitle {
+    color: #718096;
+    text-align: center;
+    margin-bottom: 32px;
+    font-size: 0.95rem;
+}
+
+/* ---- fields ---- */
+
+.form-group,
+.wpcf7 p {
+    font-size: 1rem;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #4a5568;
+}
+
+.wpcf7 label {
+    text-align: left;
+    font-size: 1rem;
+    margin-bottom: 8px;
+}
+
+.form-group input,
+.form-group textarea,
+.wpcf7 input,
+.wpcf7-textarea {
+    width: 100%;
+    padding: 14px 0;
+    border: none;
+    border-bottom: 1px solid var(--navy);
+    border-radius: 0;
+    font-size: 1rem;
+    font-family: inherit;
+    background-color: transparent;
+    resize: vertical;
+}
+
+.form-group input:hover,
+.form-group textarea:hover {
+    border-bottom-color: #cbd5e0;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.wpcf7 input:focus,
+.wpcf7-textarea:focus {
+    outline: none;
+    border-bottom-color: #667eea;
+    box-shadow: 0 2px 0 0 var(--brand);
+    transform: translateY(-2px);
+}
+
+.form-group textarea,
+.wpcf7-textarea {
+    height: 80px;
+    min-height: 80px;
+    resize: vertical;
+}
+
+/* ---- validation ---- */
+
+.form-group input:invalid:not(:focus):not(:placeholder-shown),
+.form-group textarea:invalid:not(:focus):not(:placeholder-shown) {
+    border-bottom-color: var(--navy);
+}
+
+.form-group input:valid:not(:focus):not(:placeholder-shown),
+.form-group textarea:valid:not(:focus):not(:placeholder-shown) {
+    border-bottom-color: red;
+}
+
+/* ---- submit ---- */
+
+.submit-btn,
+.wpcf7-submit {
+    width: 100%;
+    background: var(--brand) !important;
+    color: #fff;
+    border: none;
+    padding: 16px 24px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-radius: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+.wpcf7-submit {
+    border-radius: 8px !important;
+}
+
+/* The sweep of light that crosses the button on hover */
+.submit-btn::before,
+.wpcf7-submit::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.6s ease;
+}
+
+.submit-btn:hover::before,
+.wpcf7-submit:hover::before {
+    left: 100%;
+}
+
+.submit-btn:hover,
+.wpcf7-submit:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+}
+
+.submit-btn:active,
+.wpcf7-submit:active {
+    transform: translateY(0);
+}
+
+.submit-btn:focus,
+.wpcf7-submit:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.4);
+}
+
+.submit-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.submit-btn:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-text {
+    position: relative;
+    z-index: 1;
+}
+
+.btn-icon {
+    position: relative;
+    z-index: 1;
+    transition: transform 0.3s ease;
+}
+
+.submit-btn:hover .btn-icon {
+    transform: translateX(4px);
+}
+
+
+/* ==========================================================================
+   12. FAQ — NUMBERED Q AND A
+   --------------------------------------------------------------------------
+   WAS EIGHT PURPLE BARS. Every question was a filled brand-coloured block
+   whether anyone had opened it or not, so the loudest thing on the page was
+   a list of questions nobody had asked yet. This keeps the accordion and
+   drops the bars: a numeral, the question as a heading, and the answer
+   indented behind a purple rule.
+
+   THE MARKUP IS BOOTSTRAP'S AND IS NOT TOUCHED. utils/buildFaqSection.js
+   emits .accordion-item / .accordion-button / .accordion-collapse and the
+   collapse plugin drives them; sectionRendererPhp.js mirrors it for the
+   WordPress export, and buildFaqSchema() emits the FAQPage JSON-LD from the
+   same answers. Nothing here changes any of that — only how it looks.
+
+   THE NUMERALS ARE A CSS COUNTER, and the reset is on .faq-section ON
+   PURPOSE. buildFaqSection() emits TWO .accordion elements, one per column,
+   with the first half of the questions on the left and the second half on
+   the right. Resetting on .accordion — which is the obvious place — numbers
+   each column from one, so the page shows 01-04 twice. Resetting on the
+   SECTION numbers straight through, 01-04 down the left and 05-08 down the
+   right, which is also the order the two columns read in when they stack on
+   a phone.
+
+       THE COUNTER HAS TO RESET WHERE THE SEQUENCE STARTS, NOT WHERE THE
+       MARKUP HAPPENS TO BE NESTED.
+
+   ::before IS THE NUMERAL AND ::after IS THE CHEVRON, and they cannot swap.
+   Bootstrap draws its own chevron with .accordion-button::after and a
+   background image; that image is turned off below and the element reused
+   for a chevron drawn from two borders, so it follows the brand colour
+   instead of being a baked-in SVG.
+   ========================================================================== */
+
+.faq-section {
+    --faq-num:        var(--brand);        /* the numeral and the chevron  */
+    --faq-rule:       rgba(109, 61, 245, .30);   /* the answer's left rule */
+    --faq-q:          var(--navy);         /* a closed question            */
+    --faq-q-open:     var(--brand);        /* the one that is open         */
+    --faq-a:          #4e5564;             /* answer text                  */
+    --faq-gap:        14px;
+
+    background: var(--faq-grey);
+
+    /* Across BOTH columns. See the note above — this is the whole reason
+       the numbering is right. */
+    counter-reset: faq;
+}
+
+/* Strip Bootstrap's card chrome so the questions sit on the page cleanly */
+.faq-section .accordion,
+.faq-section .accordion-item {
+    background: transparent;
+    border: 0;
+}
+
+.faq-section .accordion-item {
+    counter-increment: faq;
+    margin-bottom: var(--faq-gap);
+}
+
+.faq-section .accordion-item:last-child {
+    margin-bottom: 0;
+}
+
+/* THE HEADER IS AN <h3>, AND THE SECTION STYLES h3 FOR PROSE.
+
+   buildFaqSection() wraps each button in <h3 class="accordion-header">, and
+   that h3 sits inside .container.section-padding — so section 6's
+   `.section-padding h3 { font-size: 22px; padding-bottom: 20px }` applies
+   to it. The padding opened a 20px hole between every question and its own
+   answer, measured, and the line-height made the header box taller than the
+   button inside it.
+
+   Two classes beat one class and a type, so this wins without !important.
+   The same reset is in section 13 for the service titles, for the same
+   reason: a heading inside a component is not a heading in prose. */
+.faq-section .accordion-header {
+    margin: 0;
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* ---- the question ----
+   position: relative is what the numeral and the chevron are placed
+   against. The left padding is the gutter the numeral sits in; the right
+   padding keeps a long question clear of the chevron. */
+.faq-section .accordion-button {
+    position: relative;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 4px 34px 4px 46px;
+
+    font-size: 16.5px;
+    font-weight: 700;
+    line-height: 1.4;
+    color: var(--faq-q);
+    transition: color .15s ease;
+}
+
+.faq-section .accordion-button:hover {
+    color: var(--faq-q-open);
+}
+
+/* OPEN. Bootstrap also sets its own background and box-shadow on this
+   state, so both are cleared here or a pale blue block appears behind the
+   question the moment it is opened. */
+.faq-section .accordion-button:not(.collapsed) {
+    background: none;
+    box-shadow: none;
+    color: var(--faq-q-open);
+}
+
+/* The photograph-and-colour tricks elsewhere in this file do not apply
+   here, but the focus ring still has to be visible on the grey panel. */
+.faq-section .accordion-button:focus {
+    box-shadow: none;
+}
+
+.faq-section .accordion-button:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ---- the numeral ----
+   decimal-leading-zero gives 01 rather than 1: a bare digit beside a bold
+   question reads as a stray list marker. It is generated content, so it is
+   decoration — the question itself carries the meaning. */
+.faq-section .accordion-button::before {
+    content: counter(faq, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 3px;
+    width: 34px;
+    text-align: left;
+
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: .02em;
+    color: var(--faq-num);
+    opacity: .75;
+}
+
+/* ---- the chevron ----
+   Bootstrap's ::after is a background-image chevron that bakes in its own
+   colour. Clearing the image and drawing the arrowhead from two borders
+   means it inherits --faq-num and follows the brand. */
+.faq-section .accordion-button::after {
+    content: "";
+    display: block;
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    margin-top: -6px;
+
+    background-image: none;
+    border-right: 2px solid var(--faq-num);
+    border-bottom: 2px solid var(--faq-num);
+    transform: rotate(45deg);
+    transition: transform .25s ease;
+}
+
+/* Pointing up when the answer is showing. The extra margin re-centres it:
+   rotating a right-angle about its own box moves the visual centre. */
+.faq-section .accordion-button:not(.collapsed)::after {
+    transform: rotate(-135deg);
+    margin-top: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .faq-section .accordion-button,
+    .faq-section .accordion-button::after {
+        transition: none;
+    }
+}
+
+/* ---- the answer ----
+   Indented to the same 46px gutter as the question, so the numeral column
+   runs unbroken down the page. */
+.faq-section .accordion-body {
+    background: none;
+    border-radius: 0;
+    padding: 10px 18px 4px 46px;
+}
+
+.faq-section .accordion-body p {
+    margin: 0;
+    padding: 2px 0 2px 16px;
+    font-size: 15.5px;
+    line-height: 1.7;
+    color: var(--faq-a);
+    border-left: 3px solid var(--faq-rule);
+}
+
+/* The two columns stack until lg, so the first one needs breathing room.
+   From 992px Bootstrap puts them side by side and the gap is the grid's. */
+.faq-section .col-lg-6:not(:last-child) {
+    margin-bottom: var(--faq-gap);
+}
+
+@media (min-width: 992px) {
+    .faq-section .col-lg-6:not(:last-child) {
+        margin-bottom: 0;
+    }
+}
+
+
+/* ==========================================================================
+   13. SERVICES — ONE NAVY BAND, NUMBERED
+   --------------------------------------------------------------------------
+   WAS SIX CARDS. Six navy tiles outweighed the hero and read as six buttons
+   that cannot be clicked. This is the same six services as ONE band: a
+   purple rule and a large numeral carry each item, and no item has a box.
+
+   NOTHING OUTSIDE THIS FILE CHANGED, AND THAT IS THE POINT.
+
+   utils/buildServiceCards.js builds this markup for ALL SEVEN designs, and
+   sectionRendererPhp.js mirrors it for the WordPress export. Editing either
+   one to suit this design would have handed Designs 1-6 markup their
+   stylesheets do not style. So the markup stays exactly as it is:
+
+       .service-cards      the Bootstrap row   -> becomes the band
+       .col-md-6.col-lg-4  the column          -> carries the counter
+       .service-card       the tile            -> becomes a rule + text
+       .service-card-icon  the purple circle   -> hidden
+       .service-card-title / -text             -> recoloured
+
+   THE NUMERALS ARE A CSS COUNTER, not text in the HTML, and that is a real
+   decision rather than a shortcut. "01" through "06" tell a reader nothing
+   the heading beneath them does not already say — they are ordinal
+   decoration, so generating them is correct and they are correctly absent
+   from the accessibility tree. (Contrast the NAP labels in 3.6, which ARE
+   content and are in CSS only until they move into the markup.)
+
+   It also means the WordPress export gets them for free: the exported theme
+   ships this stylesheet and emits the same classes, so the band renders
+   there without a line of PHP changing.
+
+   THE ICONS ARE HIDDEN, NOT DELETED. ICONS[] in buildServiceCards.js still
+   emits all six. Putting them back is deleting one `display: none`.
+   ========================================================================== */
+
+.service-cards {
+    --band-bg:      var(--navy);
+    --band-radius:  16px;
+    --rule:         rgba(139, 99, 255, .45);   /* --accent, held back */
+    --rule-hover:   var(--accent);
+
+    margin-top: 40px;
+
+    /* THE ROW IS THE BAND. A .row carries negative side margins so its
+       columns' gutters line up with the container; zeroing them is what
+       turns it from a grid into a panel with an edge of its own. The gutter
+       survives as padding INSIDE each column, which is where the space
+       between the three items comes from. */
+    margin-left: 0;
+    margin-right: 0;
+    padding: 30px 18px 6px;
+
+    background: var(--band-bg);
+    border-radius: var(--band-radius);
+
+    counter-reset: svc;
+}
+
+/* EVERY COLUMN, not .col-md-6 alone. The attribute selector catches whatever
+   column classes buildServiceCards() emits, so renumbering survives a change
+   from col-lg-4 to col-lg-6. The old rule's 1.5rem bottom margin is gone —
+   the spacing between rules is the item's own padding now, so the gap above
+   a rule equals the gap below the one before it. */
+.service-cards > [class*="col-"] {
+    counter-increment: svc;
+    margin-bottom: 0;
+}
+
+/* NOT A CARD ANY MORE. Background, radius and box padding all go; what is
+   left is a rule across the top and the text under it. height: 100% stays —
+   it is what keeps the three rules in a row on one line when one service
+   has a longer description than its neighbours. */
+.service-card {
+    height: 100%;
+    background: none;
+    border: 0;
+    border-top: 2px solid var(--rule);
+    border-radius: 0;
+    padding: 24px 0 26px;
+    transition: border-color .2s ease;
+}
+
+@media (hover: hover) {
+    .service-card:hover {
+        border-top-color: var(--rule-hover);
+    }
+}
+
+/* THE NUMERAL. decimal-leading-zero is what gives 01 rather than 1 — six
+   single digits read as a stray list marker, "01" reads as a label.
+   aria-hidden is not needed: generated content is not exposed by name here,
+   and the heading below carries the meaning. */
+.service-card::before {
+    content: counter(svc, decimal-leading-zero);
+    display: block;
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -.03em;
+    color: var(--accent);
+    margin-bottom: 12px;
+}
+
+/* HIDDEN, NOT REMOVED — see the note at the top of this section. */
+.service-card-icon {
+    display: none;
+}
+
+.service-card-title {
+    color: #fff;
+    font-size: 19px;
+    line-height: 1.3;
+    margin: 0 0 7px;
+    padding: 0;   /* the section's h3 padding would be far too much here */
+}
+
+.service-card-text {
+    color: #fff;
+    font-size: 15.5px;
+    line-height: 1.6;
+    margin: 0;
+    opacity: .72;
+}
+
+/* The band sits inside .section-padding, which styles headings and prose for
+   full-width text. Reset the parts that do not suit an item in a list. */
+.section-padding .service-card-title,
+.section-padding .service-card-text {
+    padding-bottom: 0;
+}
+
+@media (min-width: 768px) {
+    .service-cards {
+        padding: 38px 26px 10px;
+    }
+}
+
+@media (min-width: 992px) {
+    .service-cards {
+        padding: 46px 38px 16px;
+    }
+
+    .service-card {
+        padding: 26px 0 30px;
+    }
+
+    .service-card::before {
+        font-size: 40px;
+        margin-bottom: 14px;
+    }
+}
+
+
+/* ==========================================================================
+   14. PRICING — PRICE BLOCKS
+   --------------------------------------------------------------------------
+   WAS A TWO-COLUMN TABLE, zebra-striped, service on the left and range on
+   the right. This is the same six rows as six blocks: the figure large at
+   the top of each one, the service named underneath it.
+
+   THE MARKUP IS STILL A <table>, AND NOTHING OUTSIDE THIS FILE CHANGED.
+
+   utils/buildPricingTable.js emits a real table on purpose — it is tabular
+   data, screen readers announce the column header with each cell, and it
+   survives with no CSS at all. That file serves all seven designs and
+   sectionRendererPhp.js mirrors it for the WordPress export, so the markup
+   is not ours to rearrange. Only its `display` is:
+
+       table   -> block
+       thead   -> none        (the column headings have no place in a block)
+       tbody   -> grid        (1 column, 2 from 576px)
+       tr      -> flex column (one block)
+       th, td  -> block
+
+   THE PRICE IS SHOWN FIRST BUT IS NOT WRITTEN FIRST. `order` moves the
+   cells on screen only; the DOM keeps service-then-range, so the table is
+   still read in its proper order by a screen reader and by anything parsing
+   the page. Reversing it in the generator would have changed the meaning of
+   the markup to get a visual effect.
+
+   READ THE NOTE ON SPECIFICITY BELOW BEFORE ADDING ANYTHING HERE.
+   ========================================================================== */
+
+.pricing-section {
+    --price-card-bg:     #ffffff;
+    --price-card-border: rgba(var(--navy-rgb), .13);
+    --price-accent:      var(--brand);
+    --price-rule:        rgba(109, 61, 245, .25);   /* --brand, held back */
+    --price-gap:         14px;
+}
+
+.pricing-table {
+    display: block;
+    width: 100%;
+    margin: 28px 0 0;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+/* SERVICE / TYPICAL RANGE have nothing to label once the rows are blocks —
+   each block carries its own figure and name. The <caption> in the markup
+   is still there and still read aloud, so nothing is lost. */
+.pricing-table thead {
+    display: none;
+}
+
+/* NARROW FIRST: one block per row. Two from 576px, below. */
+.pricing-table tbody {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--price-gap);
+}
+
+.pricing-table tbody tr {
+    display: flex;
+    flex-direction: column;
+
+    background: var(--price-card-bg);
+    border: 1px solid var(--price-card-border);
+    border-radius: 12px;
+    padding: 20px 22px 18px;
+}
+
+/* ---- THE SPECIFICITY NOTE, AND IT IS NOT HISTORICAL ----
+
+   `.pricing-table tbody th` is (0,1,2). `.pricing-service` is (0,1,0), so
+   anything set on the shared cell rule below SILENTLY BEATS a rule written
+   against the class alone — no warning, no error, the declaration simply
+   never applies.
+
+   That has now bitten twice. First the prices went left-aligned at every
+   width when `text-align` was set here. Then the price-block layout failed
+   outright, because `display: flex` on `.pricing-service` lost to the
+   `display: block` three lines down and the cell never became a flex box.
+
+       EVERY RULE IN THIS SECTION THAT TARGETS A CELL IS QUALIFIED WITH
+       `.pricing-table tbody`, INCLUDING ONES THAT LOOK LIKE THEY DO NOT
+       NEED IT. Add the next one the same way.
+
+   This rule holds ONLY what is true of both cells. Anything either one has
+   an opinion about belongs in its own qualified rule. */
+.pricing-table tbody th,
+.pricing-table tbody td {
+    display: block;
+    padding: 0;
+    border: 0;
+    background: none;
+}
+
+/* ---- the figure, shown first ---- */
+.pricing-table tbody td.pricing-range {
+    order: 1;
+    text-align: left;
+    white-space: nowrap;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--price-rule);
+}
+
+.pricing-amount {
+    display: block;
+    font-weight: 800;
+    font-size: 25px;
+    line-height: 1.1;
+    letter-spacing: -.02em;
+    color: var(--price-accent);
+}
+
+/* "PER SQ FT" rather than "per sq ft": at this size beneath a large figure
+   the lower case read as part of the price. */
+.pricing-unit {
+    display: block;
+    font-size: 12.5px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    opacity: .55;
+    margin-top: 5px;
+}
+
+/* ---- the service, underneath ---- */
+.pricing-table tbody th.pricing-service {
+    order: 2;
+    text-align: left;
+    font-weight: 700;
+    font-size: 16.5px;
+    line-height: 1.35;
+    margin-top: 12px;
+}
+
+.pricing-note {
+    display: block;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.45;
+    opacity: .66;
+    margin-top: 5px;
+}
+
+/* The estimate notice. Understated but not hidden — it is what keeps the
+   figures honest. */
+.pricing-disclaimer {
+    margin-top: 20px;
+    font-size: 14px;
+    line-height: 1.6;
+    opacity: .8;
+    padding: 14px 16px;
+    border-left: 3px solid var(--price-rule);
+    background: rgba(var(--navy-rgb), .035);
+}
+
+/* TWO ACROSS. 576px rather than 768 because the blocks are shallow — the
+   figure, a rule, a name and a line of detail — so two of them fit a tablet
+   comfortably and six stacked would be a long scroll for no reason. */
+@media (min-width: 576px) {
+    .pricing-table tbody {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (min-width: 992px) {
+    .pricing-table tbody {
+        gap: 16px;
+    }
+
+    .pricing-table tbody tr {
+        padding: 22px 24px 20px;
+    }
+
+    .pricing-amount {
+        font-size: 28px;
+    }
+}
+
+
+/* ==========================================================================
+   15. TRUST POINTS (About Us, section 1)
+   --------------------------------------------------------------------------
+   A white check inside a brand-coloured circle, drawn in CSS: no extra
+   request, and it scales with the text.
+
+   WAS GREEN. The note that used to sit here argued a tick has to be green
+   to read as "verified" — see the palette in section 1, where the old value
+   is kept. White on #6d3df5 is about 5.4:1, so the check is as legible as
+   it was on the green.
+   ========================================================================== */
+
+.trust-points {
+    --trust-bg:   var(--tick);
+    --trust-tick: #ffffff;
+
+    list-style: none;
+    padding: 0;
+    margin: 20px 0 24px;
+
+    /* Two columns on wider screens; one on mobile. Six points then read as
+       3 + 3 rather than a long vertical run. */
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px 28px;
+}
+
+@media (min-width: 576px) {
+    .trust-points { grid-template-columns: 1fr 1fr; }
+}
+
+.trust-points li {
+    position: relative;
+    padding-left: 40px;
+    line-height: 1.5;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+.trust-points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    margin-top: -13px;
+    border-radius: 50%;
+    background: var(--trust-bg);
+}
+
+/* The tick: two borders rotated into a check, sitting on the circle. */
+.trust-points li::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    width: 10px;
+    height: 5px;
+    margin-top: -4px;
+    border-left: 2px solid var(--trust-tick);
+    border-bottom: 2px solid var(--trust-tick);
+    transform: rotate(-45deg);
+}
+
+
+/* ==========================================================================
+   16. ABOUT-US INTRO VIDEO
+   --------------------------------------------------------------------------
+   The markup uses Bootstrap's .ratio helper, which is not in the PurgeCSS
+   safelist. These rules make the sizing self-contained, so the video renders
+   correctly whether or not .ratio survives the build — without them a bare
+   <iframe> falls back to the browser default of 300x150.
+   ========================================================================== */
+
+.about-video-wrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 8px;
+}
+
+.about-video-wrapper iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+/* Stacked below the text under 768px, so give it room to breathe */
+/* Stacked below the text until 768px, so it needs room above it. Side by
+   side from there, where the margin would be a gap nobody asked for. */
+.about-video-section {
+    margin-top: 24px;
+}
+
+@media (min-width: 768px) {
+    .about-video-section { margin-top: 0; }
+}
+
+
+/* ==========================================================================
+   17. BRUSH-STROKE DIVIDER
+   --------------------------------------------------------------------------
+   Restyles the .line-divider elements OUTSIDE the hero — the one under the
+   H2 in section 1, and any others the templates place.
+
+   HOW IT WORKS. The SVG is a CSS *mask*, not a background image. A background
+   image bakes its colour into the SVG; as a mask it only defines the SHAPE
+   and background-color fills it, so the stroke can follow the theme.
+
+   THE HERO IS DELIBERATELY EXCLUDED. Section 3.4 is two classes deep and
+   switches the mask off, so the hero keeps its solid --accent bar. If you ever
+   want the brush stroke up there instead, delete the three `none` lines in
+   3.4 rather than changing anything here.
+   ========================================================================== */
+
+.line-divider {
+    --divider-color: var(--brand);
+    --divider-width: 190px;   /* 250px from 576px up */
+    --divider-height: 25px;
+
+    /* Reset whatever the straight-line version set */
+    border: 0;
+    background-image: none;
+
+    width: var(--divider-width);
+    height: var(--divider-height);
+    margin: 10px 0;
+
+    /* The colour; the mask decides which parts of it show through */
+    background-color: var(--divider-color);
+
+    -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/><path d='M222,9 C226,8 230,10 233,9 L233,13 C230,14 226,12 222,13 Z'/><path d='M239,10 C241,9 243,11 245,10 L245,13 C243,14 241,12 239,13 Z'/></svg>");
+            mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/><path d='M222,9 C226,8 230,10 233,9 L233,13 C230,14 226,12 222,13 Z'/><path d='M239,10 C241,9 243,11 245,10 L245,13 C243,14 241,12 239,13 Z'/></svg>");
+
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+            mask-size: 100% 100%;
+}
+
+/* Centred headings want a centred stroke */
+.text-center .line-divider,
+.text-center > .line-divider {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+@media (min-width: 576px) {
+    .line-divider {
+        --divider-width: 250px;
+    }
+}
+
+
+/* ==========================================================================
+   18. REVIEWS — "What Customers Are Saying"
+   --------------------------------------------------------------------------
+   The stars are the one hard-coded colour here. Everything else inherits,
+   but a star only reads as a rating when it is amber; in the body text
+   colour it reads as an icon. #f5a623 holds its contrast on a white card and
+   on a navy one, which plain yellow does not.
+
+   THE NOTE ABOVE THE CARDS IS NOT DECORATION. It says the reviews are
+   examples and have to be replaced — see utils/generateSampleReviews.js.
+   ========================================================================== */
+
+.reviews-section {
+    --review-card-bg: rgba(0, 0, 0, .03);
+    --review-border:  rgba(0, 0, 0, .10);
+    --review-star:    #f5a623;
+    --review-radius:  10px;
+}
+
+.reviews-section .reviews-note {
+    margin: 6px 0 28px;
+    font-size: 15px;
+    opacity: .75;
+}
+
+.review-card {
+    height: 100%;
+    padding: 18px;   /* 22px from 576px up */
+    background: var(--review-card-bg);
+    border: 1px solid var(--review-border);
+    border-radius: var(--review-radius);
+
+    /* Cards in a row are only as tall as their content unless told
+       otherwise, and four reviews are never the same length. */
+    display: flex;
+    flex-direction: column;
+}
+
+.review-stars {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 12px;
+    color: var(--review-star);
+}
+
+.review-star {
+    /* fill, not stroke: the path in buildStars() is a solid star */
+    fill: currentColor;
+    flex: 0 0 auto;
+}
+
+.review-text {
+    margin: 0 0 16px;
+    font-size: 15px;
+    line-height: 1.6;
+
+    /* Pushes the author line to the bottom of the card so the four names sit
+       on one line across the row regardless of review length. */
+    flex: 1 1 auto;
+}
+
+.review-author {
+    margin: 0;
+    font-weight: 600;
+    font-size: 14px;
+    opacity: .85;
+}
+
+@media (min-width: 576px) {
+    .review-card { padding: 22px; }
+}

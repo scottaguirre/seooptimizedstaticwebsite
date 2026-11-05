@@ -222,6 +222,9 @@ css-loader, postcss and purgecss are runtime dependencies here despite living in
     node test-theme-header.js      # the WordPress theme header: who built it, and no placeholder links; 10
     node test-brand-name.js        # where the product's name may be typed out, and nowhere else; 7
     node test-dashboard-card.js    # the dashboard card while a build is still running; 15
+    node test-hero-layouts.js      # which hero each design ships, incl. the WordPress branch; 21
+    node test-nap-bar.js           # the Design 7 name/address/phone bar and fullAddress(); 22
+    node test-placeholder-guard.js # the build refuses to ship a page with {{BRACES}} left in it; 19
 
     php wp-plugin/test-deleted-posts.php  # deleted/live slot reconciliation, 34 cases
     php wp-plugin/test-topic-merge.php    # the Suggest topics button adds, it does not replace
@@ -5837,6 +5840,59 @@ nine-post campaign. The old comment's example was one of the cases where the
 bug does not bite — an example chosen from those argues for the wrong thing.
 Checked by running `bucketCounts(9)` rather than by hand, which is how the
 previous version got it wrong.
+
+## A site shipped with {{ADDRESS_FULL}} across its hero — 4 November 2026
+
+A generated site was served with
+
+    Address: {{ADDRESS_FULL}}
+
+in the hero's name/address/phone bar, where the street address goes. The
+build reported success. Every suite was green. It was found by looking at the
+page.
+
+**The cause is structural and will come back wearing something else.**
+`utils/runGeneration.js` reads `src/template.html` from disk INSIDE the build
+function, so every build picks up the current template. The builders
+themselves are `require()`d once, when the server starts. A server that was
+already running therefore pairs a NEW template with an OLD builder, and a
+placeholder the builder has never heard of travels straight through to the
+page.
+
+    A PLACEHOLDER THAT REACHES THE PAGE IS NOT AN ERROR. IT IS A STRING THAT
+    RENDERS. Nothing throws. Nothing logs. The only check is somebody's eyes.
+
+`npm run dev` is plain `node server.js` — no nodemon, no watch — so nothing
+restarts on its own. **After changing anything in `utils/`, restart before
+generating.** Changing a template alone needs no restart, which is exactly
+what makes the pairing possible.
+
+**The guard: `utils/checkPlaceholders.js`.** After the site is written it is
+read back and scanned for anything still wearing `{{BRACES}}`. It is called
+from `runGeneration.js` immediately before `chargeCredits()` and it THROWS —
+deliberately unlike the structure-parity check three lines above it, which
+warns. The difference is what the customer gets: a parity drift means two
+internal representations disagree while the page is still right; an unfilled
+placeholder means the page itself is wrong, in public. Nobody should be
+billed for that.
+
+**What it scans, and why it is that narrow.** `.html` and `.css` only, with
+comments blanked first. Both rules came from scanning a real build rather
+than from reasoning:
+
+- `assets/logo.png` and `assets/hero-1.webp` contain the bytes `{{` by
+  coincidence. Binary files are not read.
+- `css/index.css` contains `{{LOGO_WIDTH}}` and `{{LOGO_HEIGHT}}` inside a
+  COMMENT in `style7.css`, explaining what the template writes. Documentation
+  quoting a placeholder is not a placeholder.
+
+Comments are BLANKED, not deleted, so reported line numbers still match the
+file on disk. Only `{{UPPER_CASE}}` counts — every placeholder this app
+writes has that shape, and matching any `{{...}}` would fail builds over a
+customer's pasted content.
+
+`node test-placeholder-guard.js` — 19 assertions, nine mutations all caught,
+including "warn instead of throwing" and "move the check after the charge".
 
 ## The first-word check, and the exemption that was not working — 7 October 2026 (server)
 

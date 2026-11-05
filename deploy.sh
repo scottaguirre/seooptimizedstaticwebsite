@@ -139,6 +139,9 @@ NODE_SUITES=( \
   test-github-app.js \
   test-trust-points.js \
   test-meta-save-parity.js \
+  test-hero-layouts.js \
+  test-nap-bar.js \
+  test-placeholder-guard.js \
   test-job-uploads.js \
   test-ping-detail.js \
   test-job-requeue.js \

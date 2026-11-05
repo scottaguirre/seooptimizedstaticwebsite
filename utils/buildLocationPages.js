@@ -1,5 +1,6 @@
 // buildLocationPages.js
 const fs = require('fs');
+const { fullAddress } = require('./fullAddress');
 const path = require('path');
 const { slugify } = require('./slugify');
 const { googleMap } = require('./googleMap');
@@ -352,6 +353,14 @@ const buildLocationPages = async function (
       .replace(/{{SECTION5_P2}}/g, () => (sectionsWithLinks.section5?.paragraphs?.[1] || ''))
       .replace(/{{LOCATION_AREA}}/g, () => (globalForLoc.location))
       .replace(/{{ADDRESS}}/g, () => (locationPage.display.toUpperCase()))
+
+      /* THE BUSINESS'S OWN ADDRESS, NOT THIS PAGE'S TOWN.
+         {{ADDRESS}} above is the location name uppercased, which is what the
+         footer of a location page wants. The hero NAP bar is a different
+         claim: it says where the business IS. A page about Cedar Park still
+         belongs to a company in Leander, so this reads globalValues, not
+         globalForLoc. */
+      .replace(/{{ADDRESS_FULL}}/g, () => (fullAddress(globalValues.address, globalValues.location)))
       .replace(/{{EMAIL}}/g, () => (globalForLoc.email))
       .replace(/{{HOURS_TIME}}/g, () => (getHoursTimeText(globalValues.is24Hours, globalValues.hours)))
       .replace(/{{PHONE_RAW}}/g, () => (formatPhoneForHref(globalValues.phone)))

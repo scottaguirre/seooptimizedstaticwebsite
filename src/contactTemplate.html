@@ -141,6 +141,114 @@
   </div>
 </div>
 <!--/HERO:split-->
+<!--HERO:spotlight-->
+<!-- Hero Section for style7: dark panel, photo bleeding off the right, two
+     calls to action, and the business's name, address and phone on the pale
+     bar beneath it.
+
+     THE BAR IS NAP, NOT TRUST CLAIMS. The design this came from had "Fast
+     response / Licensed & insured / Satisfaction guaranteed" there. Those are
+     assertions about a business nobody has checked, and the same three words
+     are why capabilities().badges is home-services only — a dentist or an
+     attorney picking this design would have had an unverified credential
+     claim written across the top of their site. Name, address and phone are
+     facts the owner typed, they are the thing a local search engine wants to
+     find in one piece, and they cannot be wrong about anybody.
+
+     THE BUTTONS LIVE INSIDE THIS HERO, so stripUnusedHero removes the
+     standalone CTA block below for the spotlight layout — see
+     CTA_INSIDE_HERO. Without that the page would show the phone twice.
+
+     {{CONTACT_PAGE}} is resolved by fillLegalLinks, which is also what makes
+     it point back at the page itself on a one-page design sample instead of
+     404ing. -->
+<div class="container-fluid hero-spotlight">
+  <div class="hero-spotlight__stage">
+
+    <div class="hero-spotlight__media">
+      <picture>
+        <source media="(min-width:1250px)" srcset="{{HERO_IMG_LARGE}}"   width="1400" height="700">
+        <source media="(min-width:720px)"  srcset="{{HERO_IMG_DESKTOP}}" width="1250" height="700">
+        <source media="(min-width:601px)"  srcset="{{HERO_IMG_TABLET}}"  width="750"  height="400">
+        <img class="hero-img img-fluid" src="{{HERO_IMG_MOBILE}}" width="600" height="350"
+             alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}" fetchpriority="high">
+      </picture>
+    </div>
+
+    <div class="hero-spotlight__text">
+      <h1 class="hero-spotlight__title">{{PAGE_NAME}}</h1>
+      <div class="line-divider"></div>
+      <h2 class="lead hero-spotlight__sub">{{LOCATION_AREA}}</h2>
+
+      <div class="hero-spotlight__actions">
+        <a class="hero-spotlight__btn hero-spotlight__btn--solid" href="{{CONTACT_PAGE}}">
+          <svg class="hero-spotlight__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M7 2v3M17 2v3M3.5 9.5h17M5 5h14a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 19 21H5a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 5 5Z"/>
+          </svg>
+          <span>Book Appointment</span>
+        </a>
+
+        <a class="hero-spotlight__btn hero-spotlight__btn--ghost" href="{{PHONE_RAW}}">
+          <svg class="hero-spotlight__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 6 6L16.5 12l4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/>
+          </svg>
+          <span>{{PHONE_DISPLAY}}</span>
+        </a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- THE NAP BAR. The three labels are TEXT, not CSS.
+
+       They were written as ::before content in style7.css while this design
+       was being styled by pasting CSS into a built site. Generated content
+       cannot be selected or copied, is not translated, never reaches the
+       WordPress renderer, and was keyed to nth-child — so the labels
+       followed the ROW ORDER rather than the meaning, and reordering these
+       three divs would have relabelled them in silence.
+
+       {{ADDRESS_FULL}}, NOT {{ADDRESS}}. The plain placeholder is the
+       Address box as typed, which in three of the four wizard modes is
+       whatever one free-text field received — often just a street.
+       utils/fullAddress.js adds the city and state when they are missing
+       and leaves the address alone when they are not. A ZIP shows only if
+       somebody typed one; nothing in this app can invent it. -->
+  <div class="hero-spotlight__nap">
+    <div class="hero-spotlight__nap-item">
+      <svg class="hero-spotlight__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 20V9.2L12 4l8 5.2V20h-5.5v-5.5h-5V20Z"/>
+      </svg>
+      <span class="hero-spotlight__nap-text">
+        <span class="hero-spotlight__nap-label">Business Name:</span>
+        <span class="hero-spotlight__nap-value">{{BUSINESS_NAME}}</span>
+      </span>
+    </div>
+
+    <div class="hero-spotlight__nap-item">
+      <svg class="hero-spotlight__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"/>
+        <circle cx="12" cy="10" r="2.6"/>
+      </svg>
+      <span class="hero-spotlight__nap-text">
+        <span class="hero-spotlight__nap-label">Address:</span>
+        <span class="hero-spotlight__nap-value">{{ADDRESS_FULL}}</span>
+      </span>
+    </div>
+
+    <div class="hero-spotlight__nap-item">
+      <svg class="hero-spotlight__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 6 6L16.5 12l4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/>
+      </svg>
+      <span class="hero-spotlight__nap-text">
+        <span class="hero-spotlight__nap-label">Phone:</span>
+        <a class="hero-spotlight__nap-value" href="{{PHONE_RAW}}">{{PHONE_DISPLAY}}</a>
+      </span>
+    </div>
+  </div>
+</div>
+<!--/HERO:spotlight-->
+
 
 
 
