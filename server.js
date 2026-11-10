@@ -56,6 +56,13 @@ const blogTopicsRoute = require('./routes/blogTopicsRoute');
 const blogSitesRoute = require('./routes/blogSitesRoute');
 const staticBlogsRoute = require('./routes/staticBlogsRoute');
 
+/* /cloudflare-sites — a generated WEBSITE on a Cloudflare subdomain, as
+ * against staticBlogsRoute's blogs. Edwin, 5 November, on why it is a third
+ * screen rather than a change to either of the two working ones: "I want to
+ * keep github as we have it right now. I don't want to replace it, and I
+ * dont want to replace what we have with the blog cloudflares either." */
+const cloudflareSitesRoute = require('./routes/cloudflareSitesRoute');
+
 // Every post ever published, across every site, with the page it links to —
 // and a CSV of it. Read-only, and built from the campaign records rather than
 // from anything the plugin has to keep, so a campaign removed in WordPress
@@ -126,6 +133,64 @@ app.use(express.static('public'));
 // down, after the session middleware, because its other routes use
 // requireAuth and req.session does not exist yet at this point.
 app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }));
+
+/* THE EDIT SCREEN POSTS THE WHOLE SITE, AND 100 KB IS NOT THE WHOLE SITE.
+ *
+ * express.urlencoded() defaults to a 100 KB body and 1000 fields. Nobody
+ * chose those; they came with the library. Edwin's 38-page site posts about
+ * 150 KB from /cloudflare-sites/:id/edit, so every save was answered with
+ *
+ *     PayloadTooLargeError: request entity too large
+ *
+ * — thrown HERE, before the requestId middleware further down has run. That
+ * is why the error page read "(Reference: undefined)": the request never got
+ * an id. On this app an undefined reference means the body parser refused
+ * the request, and nothing else does.
+ *
+ * MEASURED, NOT GUESSED, off a real content.json: about 4 KB of form per
+ * page of site.
+ *
+ *      38 pages  0.15 MB         500 pages  2 MB
+ *     100 pages  0.4  MB        1000 pages  4 MB
+ *
+ * 8 MB therefore clears a thousand-page site with room over. parameterLimit
+ * is raised for the same reason — roughly seven fields per page, so a
+ * 1000-page site posts about 7000 of them and the default 1000 would refuse
+ * it just as flatly, with the same unhelpful page.
+ *
+ * SCOPED TO ONE PREFIX, AND THAT IS THE POINT. A body limit is also a cap on
+ * how much memory a stranger can make this server hold. Raised globally, the
+ * login and signup pages — the ones reachable without an account — would each
+ * accept eighty times more junk per request. Everything under
+ * /cloudflare-sites sits behind requireAuth, so the wider limit is only ever
+ * reachable by somebody already signed in.
+ *
+ * IT MUST BE MOUNTED BEFORE THE GLOBAL PARSER BELOW. body-parser skips a
+ * request whose body another parser has already read (`req._body`), so this
+ * one wins for its prefix and the global one still handles everything else.
+ * Swap the two lines and this does nothing whatever, silently.
+ *
+ * NOT THE BUILD FORM, AND AN EARLIER NOTE HERE SAID OTHERWISE.
+ *
+ * logs/error.log carries two PayloadTooLargeErrors from 20 September on
+ * `POST /`, thrown by the JSON parser. That is not the generator: the wizard
+ * posts multipart/form-data to `/generate`, where multer handles it under
+ * limits of its own (see routes/generateRoute.js — 200 fields, 100 KB a
+ * field, 4 files, 5 MB a file). Nothing in this app posts JSON to `/`, so
+ * those two were almost certainly a scanner, which is the traffic the 100 KB
+ * default on the public paths exists to blunt.
+ *
+ * THE BUILD FORM'S OWN CEILING IS A FIELD COUNT, NOT A BYTE COUNT. The
+ * wizard posts one field per service row and one per town, so a submission
+ * is refused at about 190 rows — roughly a 200-page site — with multer's
+ * LIMIT_FIELD_COUNT, caught further down this file and answered as "Too many
+ * files or fields in that request." A different wall, a different door, and
+ * raising this limit does nothing for it. */
+app.use('/cloudflare-sites', express.urlencoded({
+  extended: true,
+  limit: '8mb',
+  parameterLimit: 50000,
+}));
 
 app.use(express.urlencoded({ extended: true }));
 
@@ -384,6 +449,7 @@ app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
 app.use('/', requireAuth, blogSitesRoute);    // /blog-sites — licence keys
 app.use('/', requireAuth, staticBlogsRoute);  // /static-blogs — Cloudflare blogs, planned here rather than in wp-admin
+app.use('/', requireAuth, cloudflareSitesRoute); // /cloudflare-sites — generated websites on a Cloudflare subdomain
 app.use('/', requireAuth, blogReportRoute);   // /blog-report(.csv) — every post, every site
 app.use('/', requireAuth, pluginDownloadRoute); // /plugin/download — the WP plugin
 
@@ -466,6 +532,16 @@ jobRunner.registerGenerator('site', generateForJob);
 // an older instance during a deploy is still claimable.
 jobRunner.registerGenerator('blog', writeCampaign);
 jobRunner.registerGenerator('build', buildForJob);
+
+/* The edit screen's re-render. It was done inside the save handler until
+ * nginx started answering every save with a 504 at sixty seconds, on builds
+ * that take more than ten minutes and were finishing perfectly well behind
+ * the closed connection. See utils/cloudflareSites/rebuildJob.js.
+ *
+ * Required here rather than at the top of this file: it reaches runGeneration
+ * lazily, and keeping the require beside the registration is what makes a
+ * kind registered-but-unimplemented impossible to miss. */
+jobRunner.registerGenerator('cfedit', require('./utils/cloudflareSites/rebuildJob').rebuildForJob);
 
 // Wakes each customer's WordPress when a post is due. The schedule lives here
 // rather than in WP-Cron because WP-Cron fires on a visit, and a brand new

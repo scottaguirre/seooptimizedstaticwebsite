@@ -202,10 +202,18 @@ test('EVERY DESTRUCTIVE FORM CARRIES A QUESTION', () => {
    *
    * 30 October: the site delete is the second. It deletes the GitHub
    * repository, which is the only copy of the site's words, so it asks for
-   * the business name in full. */
+   * the business name in full.
+   *
+   * 7 November: the Cloudflare website delete is the third, and it is here
+   * for the shape rather than for convenience. Its row carries an <a> to a
+   * page of its own — not a form that posts — and that page names the
+   * address, says the Pages project and DNS record go with it, and makes
+   * you type the hostname. It also carries a CHECKBOX for the Cloudflare
+   * side, which a confirm() box cannot offer at all. */
   const ASKED_ANOTHER_WAY = [
     '/static-blogs/${blog._id}/delete',
     '/my-sites/${site._id}/delete',
+    '/cloudflare-sites/${site._id}/delete',
   ];
 
   const DESTRUCTIVE = /\/(delete|revoke|remove|destroy)\b/;

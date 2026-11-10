@@ -67,6 +67,15 @@ const { canonicalTag } = require('./canonicalUrl');
 const { siteBaseUrl } = require('./buildSitemap');
 const { imageExtension } = require('./uploadExtension');
 const CM = require('./contentModel');
+
+/* THE OTHER DIRECTION: a stored content.json read back as the shapes the
+ * generators return, so an edited site can be rendered again without paying
+ * for the same words twice. See utils/reuseModel.js. */
+const { reuseFrom } = require('./reuseModel');
+
+/* AND WHAT THE WIZARD WAS ASKED FOR — the half of a re-render that
+ * content.json cannot carry. See utils/buildRecipe.js. */
+const { writeRecipe } = require('./buildRecipe');
 const {
     slugify,
     googleMap,
@@ -123,6 +132,34 @@ async function runGeneration(ctx) {
   const alreadyDone = new Set(ctx.alreadyCompleted || []);
 
   let pagesDone = alreadyDone.size;
+
+  /* RENDERING A SITE THAT ALREADY HAS ITS WORDS.
+   *
+   * `ctx.reuse` is a parsed content.json from an earlier build of this site.
+   * When it is present, every generation call below asks it first and only
+   * reaches the model for what it cannot answer.
+   *
+   * NULL IS THE NORMAL CASE, and must behave exactly as this function always
+   * did. Every test below is written `reuse && …` in that order so that an
+   * absent or unreadable model falls through to generating rather than
+   * rendering a shell — and reuseFrom() returns null for a model version it
+   * does not understand, for the same reason.
+   *
+   * WHAT IT DOES NOT COVER: generateReview, which produces the JSON-LD review
+   * and is not recorded in the model. It still runs, once per service page.
+   * So a re-render is CHEAPER, NOT FREE, and no screen should say otherwise.
+   */
+  const reuse = ctx.reuse ? reuseFrom(ctx.reuse) : null;
+
+  if (ctx.reuse && !reuse) {
+    /* ASKED FOR AND REFUSED. Falling through silently would charge for a
+     * site the customer was told would cost nothing — the one outcome here
+     * worth a line in the log. */
+    log.generation('generation.reuse_refused', {
+      requestId: ctx.requestId,
+      version: ctx.reuse && ctx.reuse.version,
+    });
+  }
 
   // ---------------------------------------------------------------------
   // Setup the route used to do before calling this.
@@ -223,7 +260,29 @@ async function runGeneration(ctx) {
     locationPages: locationCount,
   });
 
-  if (!credit.ok) {
+  /* THE CHECK HAS TO MATCH THE CHARGE, AND FOR A WHILE IT DID NOT.
+   *
+   * A re-render charges nothing — `const charged = reuse ? 0 : credit.totalCost`
+   * further down, because the words were paid for when they were generated
+   * and fixing a sentence is not new words. The CHECK was left asking for
+   * the full price anyway, so editing two paragraphs on a published site
+   * was refused with
+   *
+   *     Not enough credits: this build needs 3500, you have 0.
+   *
+   * for a build that was about to take nothing. Nobody hit it until the
+   * re-render got far enough to reach this line; the logo guard above was
+   * failing first.
+   *
+   *     A CHECK THAT REFUSES MORE THAN THE CHARGE TAKES IS A CHECK FOR A
+   *     DIFFERENT FEATURE. One condition, written once, read twice.
+   *
+   * NOT FREE IN REAL TERMS, and the distinction is worth keeping straight:
+   * generateReview still makes one model call per service page, so a
+   * re-render costs the business money even though it costs the customer no
+   * credits. If that is ever to be charged for, it is a price to add here —
+   * not a refusal to leave in place and hope nobody notices. */
+  if (!reuse && !credit.ok) {
     throw new Error(
       `Not enough credits: this build needs ${credit.totalCost}, you have ${credit.available}.`
     );
@@ -351,7 +410,51 @@ async function runGeneration(ctx) {
     // before it was attached (see the comment on jobId in generateRoute.js).
     // Re-uploading an innocent file is the one action that cannot help, and
     // being told to do it hides a bug in the queue behind a bug in the logo.
+    /* A RE-RENDER HAS NO UPLOADS, AND THE LOGO IS STILL REQUIRED.
+     *
+     * The edit screen calls this with `files: []` on purpose — the images are
+     * not regenerated, they are copied back out of the site's own store after
+     * the build (see utils/cloudflareSites/siteStore.js). But the guard below
+     * only ever saw a request with no files as a job that outran its upload,
+     * so every save on a published website failed with
+     *
+     *     "This build started before its logo was attached. Nothing is wrong
+     *      with the file — please press Generate again."
+     *
+     * — advice that could not be followed, on a screen with no Generate
+     * button, for a file that was sitting in the store the whole time.
+     *
+     * THE PATHS ARE IN THE STORED MODEL, which is the same place the words
+     * come from: `global.logo` and `global.favicon` hold the exact filenames
+     * the previous build wrote, and restoreAssets puts those same files back
+     * under those same names. Taking them from there is not a fallback — it
+     * is the only correct source for a rebuild, because a re-uploaded logo
+     * would land under a NEW hashed filename and the restored assets would
+     * then be the ones nothing references.
+     *
+     * Seeded before the check rather than special-casing the check, so
+     * everything downstream — the <img>, the JSON-LD, the favicon link — goes
+     * on reading one field and does not learn that two kinds of build
+     * exist. */
+    if (reuse && !uploadedImages.global.logo) {
+      const stored = reuse.global || {};
+
+      if (stored.logo) uploadedImages.global.logo = String(stored.logo);
+      if (stored.favicon) uploadedImages.global.favicon = String(stored.favicon);
+    }
+
     if (!uploadedImages.global.logo) {
+      /* A THIRD FAILURE, AND IT NEEDS ITS OWN SENTENCE TOO. Neither message
+       * below fits a re-render: there was no upload to outrun and no file to
+       * try again. This one means the stored site never recorded a logo, so
+       * it cannot be rebuilt from what was kept. */
+      if (reuse) {
+        throw new Error(
+          'This website was published without a logo recorded, so its words ' +
+          'cannot be re-rendered. Generate the site again to repair it.'
+        );
+      }
+
       if (!files.length) {
         throw new Error(
           'This build started before its logo was attached. Nothing is wrong ' +
@@ -617,7 +720,15 @@ async function runGeneration(ctx) {
       // Number(index) decides this page's section topics and heading style.
       // Every service page used to get the same four briefs in the same order,
       // which is how two related services came back near-identical.
-      const sections = await generatePagesContent(globalValues, page, contentKeywords, Number(index));
+      //
+      /* UNLESS THIS SITE ALREADY HAS ITS WORDS. reuse.pageContent() returns
+       * null for a page the stored model does not hold — a service added
+       * since the last build, most obviously — so a part-matching model
+       * generates the new pages and reuses the rest. */
+      const storedContent = reuse ? reuse.pageContent(page.slug) : null;
+
+      const sections = storedContent
+        || await generatePagesContent(globalValues, page, contentKeywords, Number(index));
 
       // Skip this service page rather than failing the whole generation.
       // The same guard the location pages needed: unparseable model output
@@ -644,7 +755,21 @@ async function runGeneration(ctx) {
       // Verified against the empty list: MAX_BACKLINKS becomes 0, the guard
       // on the first line returns the stripped paragraph, and the injection
       // loop never runs.
-      const sectionsWithLinks = injectPagesInterlinks(
+      /* NOT ON A REUSED PAGE, AND THIS IS THE ONE PLACE REUSE CHANGES THE
+       * RULE RATHER THAN SKIPPING A COST.
+       *
+       * The paragraphs in content.json are POST-injection: the model is built
+       * from `sectionsWithLinks`, so the <a href> tags are already in the
+       * stored text. Running the injector over them again would find the
+       * phrases it is meant to link already inside anchors and nest them.
+       *
+       * Its other job is already done too. stripMarkdownLinks() ran on the
+       * way in, which is why the note above says this is called in every mode
+       * including the ones with no interlinks — stored text has no [text](url)
+       * left for it to strip. */
+      const sectionsWithLinks = storedContent
+        ? sections
+        : injectPagesInterlinks(
                                         globalValues,
                                         pagesArray,
                                         page,
@@ -864,8 +989,21 @@ async function runGeneration(ctx) {
     //
     // Fetched in Rank Fast too: that mode drops the FAQPage JSON-LD, not the
     // visible questions on the page.
-    console.log(isSample ? '❓ Skipping FAQ (design sample)' : '❓ Fetching People Also Ask questions...');
-    const paaQuestions = isSample ? [] : await fetchPeopleAlsoAsk({
+    /* THE STORED ANSWERS SKIP BOTH CALLS, NOT ONE.
+     *
+     * The questions come from a People Also Ask lookup and the answers from
+     * the model, so a reused FAQ has to short-circuit the fetch as well —
+     * otherwise the cheaper half of this still costs a third-party request
+     * on every edit, to produce questions that are then thrown away. */
+    const storedFaqs = reuse ? reuse.faqs() : null;
+
+    console.log(
+      storedFaqs ? '❓ Reusing the stored FAQ'
+        : isSample ? '❓ Skipping FAQ (design sample)'
+        : '❓ Fetching People Also Ask questions...'
+    );
+
+    const paaQuestions = (storedFaqs || isSample) ? [] : await fetchPeopleAlsoAsk({
       keyword: globalValues.useNearMe === 'true'
         ? `${globalValues.businessType} near me`
         : globalValues.businessType,
@@ -873,14 +1011,14 @@ async function runGeneration(ctx) {
       location: globalValues.location,
     });
 
-    const faqs = paaQuestions.length
+    const faqs = storedFaqs || (paaQuestions.length
       ? await generateFaqAnswers({
           questions: paaQuestions,
           businessName: globalValues.businessName,
           businessType: globalValues.businessType,
           location: globalValues.location,
         })
-      : [];
+      : []);
 
 
     // Every FAQ question used anywhere on this site, keyed on a normalised
@@ -898,8 +1036,11 @@ async function runGeneration(ctx) {
 
     // Six service cards for the home page. These sit under the existing
     // Services paragraphs rather than replacing them.
-    console.log('🧩 Generating service cards...');
-    const serviceCards = await generateServiceCards({
+    const storedCards = reuse ? reuse.serviceCards() : null;
+
+    console.log(storedCards ? '🧩 Reusing the stored service cards' : '🧩 Generating service cards...');
+
+    const serviceCards = storedCards || await generateServiceCards({
       businessType: globalValues.businessType,
       businessName: globalValues.businessName,
       location: globalValues.location,
@@ -935,10 +1076,22 @@ async function runGeneration(ctx) {
         : '💲 Skipping pricing (turned off on the form)'
     );
 
-    const pricing = wantPricing ? await generatePricing({
-      businessType: globalValues.businessType,
-      location: globalValues.location,
-    }) : [];
+    /* THE THREE GATES ABOVE STILL DECIDE, AND REUSE DOES NOT OVERRIDE THEM.
+     *
+     * `wantPricing` is the answer to "should this site have a price table" —
+     * the mode, the checkbox and the business shape. A stored table from a
+     * build made before the customer unticked the box, or before the shape
+     * was corrected, must not come back: untick it, re-render, and the table
+     * has to go. So the stored rows are consulted INSIDE the gate, never
+     * instead of it. */
+    const storedPricing = (wantPricing && reuse) ? reuse.pricing() : null;
+
+    const pricing = wantPricing
+      ? (storedPricing || await generatePricing({
+          businessType: globalValues.businessType,
+          location: globalValues.location,
+        }))
+      : [];
 
 
     // A short case study for the home page, above the FAQ.
@@ -950,12 +1103,22 @@ async function runGeneration(ctx) {
     //
     // Returns null for medical and legal practices, where a case study is a
     // past-results claim.
-    console.log(isSample ? '📄 Skipping case study (design sample)' : '📄 Generating case study...');
-    const caseStudy = isSample ? null : await generateCaseStudy({
+    /* INSIDE THE isSample GATE, for the same reason pricing is inside its
+     * own: a case study is a claim about work done, and a design sample does
+     * not get to make one just because an earlier build did. */
+    const storedCaseStudy = (!isSample && reuse) ? reuse.caseStudy() : null;
+
+    console.log(
+      storedCaseStudy ? '📄 Reusing the stored case study'
+        : isSample ? '📄 Skipping case study (design sample)'
+        : '📄 Generating case study...'
+    );
+
+    const caseStudy = isSample ? null : (storedCaseStudy || await generateCaseStudy({
       businessType: globalValues.businessType,
       businessName: globalValues.businessName,
       location: globalValues.location,
-    });
+    }));
 
 
     // Four EXAMPLE reviews for the home page, below the case study.
@@ -978,20 +1141,45 @@ async function runGeneration(ctx) {
     // rather than in buildAboutUsPage — see showReviews above for why there
     // is no second gate down there.
     //
-    // Every review opens with "This is an example review, not a real customer
-    // review." That sentence is added in code rather than asked of the model,
-    // so it cannot be dropped, reworded, or lost to a retry. The customer
-    // replaces the text before publishing; until they do, nothing on the page
-    // claims to be something it is not.
-    //
     // None of it reaches the JSON-LD. See utils/generateSampleReviews.js.
-    console.log(showReviews ? '⭐ Generating example reviews...' : '⭐ Skipping example reviews (unticked)');
+    //
+    // A PARAGRAPH WAS REMOVED HERE ON 7 NOVEMBER, and what it said is worth
+    // recording because it was not true. It read:
+    //
+    //     Every review opens with "This is an example review, not a real
+    //     customer review." That sentence is added in code rather than asked
+    //     of the model, so it cannot be dropped, reworded, or lost to a retry.
+    //
+    // Nothing in the codebase adds that sentence. generateSampleReviews.js
+    // has no such prefix, buildReviewsSection() renders r.text as it is, and
+    // SECTION_NOTE — the line above the cards that said the same thing — is
+    // now the empty string.
+    //
+    //     A COMMENT DESCRIBING A SAFEGUARD THAT IS NOT IN THE CODE
+    //     IS WORSE THAN NO COMMENT. It stops the next reader looking.
+    //
+    // Found while wiring the re-render path, because the stored reviews had
+    // to be checked field by field. The behaviour is deliberate and unchanged
+    // — Edwin, 7 November: "leave the reviews section alone" — so only the
+    // claim went.
+    /* INSIDE showReviews, like the two gates above it. The comment above is
+     * explicit that unticking the box has to stop the spend; it also has to
+     * stop the SECTION, and a stored copy returned past the gate would put
+     * back the thing the customer just turned off. */
+    const storedReviews = (showReviews && reuse) ? reuse.sampleReviews() : null;
+
+    console.log(
+      storedReviews ? '⭐ Reusing the stored example reviews'
+        : showReviews ? '⭐ Generating example reviews...'
+        : '⭐ Skipping example reviews (unticked)'
+    );
+
     const reviews = showReviews
-      ? await generateSampleReviews({
+      ? (storedReviews || await generateSampleReviews({
           businessType: globalValues.businessType,
           businessName: globalValues.businessName,
           location: globalValues.location,
-        })
+        }))
       : null;
 
 
@@ -1009,7 +1197,12 @@ async function runGeneration(ctx) {
             serviceCards,
             pricing,
             caseStudy,
-            reviews
+            reviews,
+
+            /* The About page's OWN copy comes from in there, so the resolver
+             * has to go in with it. The five blocks above were already
+             * resolved from the model up here. */
+            { reuse }
     );
 
 
@@ -1066,7 +1259,10 @@ async function runGeneration(ctx) {
             showAboutForm ? buildContactFormHtml(globalValues) : '',
             // Contact's targets from the ring, so its copy interlinks the
             // same way every other page does.
-            interlinkMap['contact'] || []
+            interlinkMap['contact'] || [],
+
+            // The contact intro is generated in there, so the resolver goes too.
+            { reuse }
     );
 
 
@@ -1130,7 +1326,12 @@ async function runGeneration(ctx) {
                 current: written.display,
                 done: pagesDone,
               });
-            }
+            },
+
+            /* Towns generate their own copy and their own FAQ in there, so
+             * the resolver goes with them. It answers per town, which is
+             * what lets a site that has gained one reuse the rest. */
+            { reuse }
     );
 
 
@@ -1196,6 +1397,18 @@ async function runGeneration(ctx) {
     // the exporter two fields that could disagree.
 
     CM.writeModel(distDir, contentModel);
+
+    /* AND WHAT THE WIZARD WAS ASKED FOR, beside what it produced.
+     *
+     * content.json is the site's words. It cannot rebuild the site on its
+     * own, because the checkboxes are decisions and the model records
+     * outcomes — a site whose owner unticked the price table looks exactly
+     * like a trade that is not allowed one. See utils/buildRecipe.js.
+     *
+     * Written inside _src/, which siteFiles.js refuses to publish, so the
+     * owner's email address does not end up at a guessable URL on their own
+     * domain. */
+    writeRecipe(distDir, ctx.body);
 
     // STRUCTURE PARITY.
     //
@@ -1283,9 +1496,38 @@ async function runGeneration(ctx) {
     }
 
 
-    // Charge only now that the build has succeeded
-    const remaining = await chargeCredits(ctx.user, credit.totalCost);
-    console.log(`💳 Charged ${credit.totalCost} credit(s); ${remaining} remaining`);
+    /* CHARGE ONLY NOW THAT THE BUILD HAS SUCCEEDED — AND NOT AT ALL FOR A
+     * RE-RENDER.
+     *
+     * The words were paid for the first time. Re-rendering a site whose copy
+     * came out of its own stored model is not new words, and utils/pricing.js
+     * has no concept of a cheaper build — it charges a flat base plus per
+     * page, which is the right shape for a generation and the wrong one for
+     * an edit.
+     *
+     * `reuse`, NOT `ctx.reuse`. A model that was offered and refused —
+     * unreadable, or a version this build does not understand — generated
+     * everything from scratch, and that genuinely costs what a build costs.
+     * Testing the raw input here would hand out free sites on a corrupt
+     * file, which is the expensive direction to be wrong in.
+     *
+     * NOT FREE, THOUGH. generateReview still runs once per service page; it
+     * is simply not something utils/pricing.js itemises. */
+    let remaining = null;
+
+    /* THE NUMBER REPORTED IS THE NUMBER TAKEN, computed once here and used
+     * by both the log and the return value below. Written separately in the
+     * two places, a re-render would have gone on announcing `credit.totalCost`
+     * while charging nothing — a figure that is wrong in the customer's
+     * favour and therefore the kind nobody reports. */
+    const charged = reuse ? 0 : credit.totalCost;
+
+    if (reuse) {
+      console.log('💳 Not charged — rendered from this site\'s stored content');
+    } else {
+      remaining = await chargeCredits(ctx.user, charged);
+      console.log(`💳 Charged ${charged} credit(s); ${remaining} remaining`);
+    }
 
     // The counterpart to generation.started. Without it there is no record of
     // how long a build took or what it cost — which is exactly what you want
@@ -1297,8 +1539,12 @@ async function runGeneration(ctx) {
       durationMs: Date.now() - startedAt,
       servicePages: Object.keys(pages || {}).length,
       locationPages: locationCount,
-      creditsCharged: credit.totalCost,
+      creditsCharged: charged,
+      /* null ON A RE-RENDER: nothing was taken, so nothing was counted back.
+       * A number here would have to come from a second query, and a stale
+       * one read as a balance is worse than an absent one. */
       creditsRemaining: remaining,
+      reused: Boolean(reuse),
     });
 
 
@@ -1311,8 +1557,12 @@ async function runGeneration(ctx) {
 
 
   return {
-    creditsCharged: credit.totalCost,
+    creditsCharged: charged,
     creditsRemaining: remaining,
+    /* SO THE CALLER CAN SAY WHICH HAPPENED. A screen that reports "0 credits"
+     * after a re-render reads like a bug; one that says the site was rendered
+     * from its stored content reads like the feature. */
+    reused: Boolean(reuse),
     buildId,
     distDir,
   };

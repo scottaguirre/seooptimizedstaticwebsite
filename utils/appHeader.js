@@ -40,7 +40,7 @@
 // The product's name. It lives in its own module so a SIGNED-OUT page can
 // brand its tab without importing the logged-in header — see pageTitle.js.
 const {
-  APP_NAME, TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT,
+  APP_NAME, TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT, TOOL_CF_SITES,
 } = require('./pageTitle');
 
 /**
@@ -466,6 +466,17 @@ function appSidebar(current = '') {
      * A tool that is not linked from somewhere a customer looks is a tool
      * nobody uses. */
     { href: '/static-blogs', icon: 'bi-cloud', label: TOOL_CF_BLOGS },
+
+    /* ADDED 7 November, IN THE SAME COMMIT AS THE ROUTE — which is the only
+     * lesson the line above it has to teach. That one shipped a day late
+     * because the screen went live with nothing linking to it, and Edwin
+     * had to ask where the feature was.
+     *
+     * NEXT TO THE BLOGS ONE, because the two are one choice made twice:
+     * same Cloudflare accounts, same domain pool, same Pages deploy, and
+     * the labels differ in one word. Dropped at the end of the list it
+     * would read as a fourth unrelated tool. */
+    { href: '/cloudflare-sites', icon: 'bi-globe', label: TOOL_CF_SITES },
 
     { href: '/dashboard', icon: 'bi-speedometer2', label: 'Dashboard' },
   ];

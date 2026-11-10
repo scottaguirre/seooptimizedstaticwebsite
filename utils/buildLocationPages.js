@@ -23,7 +23,10 @@ const { imageAlt, getPreset, normalizeSiteMode, MODES } = require('./seoPresets'
 const { canonicalTag } = require('./canonicalUrl');
 const { interlinkSlugs } = require('./buildRankFastLinks');
 const { buildFaqSection, buildFaqSchemaTag } = require('./buildFaqSection');
-const { generateLocationFaq } = require('./generateLocationFaq');
+/* addUsedQuestions COMES WITH IT, for the reused-town case: a town whose FAQ
+ * was read back out of the model never calls generateLocationFaq, so nothing
+ * else would add its questions to the shared no-repeat map. */
+const { generateLocationFaq, addUsedQuestions } = require('./generateLocationFaq');
 const { LOCATION_ANGLES } = require('./createLocationPagesPrompt');
 
 
@@ -63,7 +66,18 @@ const buildLocationPages = async function (
     // has to come from in here.
     //
     // Optional, and last, so every existing caller is untouched.
-    onPageWritten = null
+    onPageWritten = null,
+
+    /* RE-RENDERING A SITE THAT ALREADY HAS ITS WORDS.
+     *
+     * An options object, after onPageWritten and for the same stated reason:
+     * every existing caller is untouched. `reuse` is a utils/reuseModel.js
+     * resolver, and absent, every town generates exactly as it always did.
+     *
+     * TOWN BY TOWN, NOT ALL OR NOTHING. reuse.locationContent() answers per
+     * slug, so a site that has gained a town since its last build reuses the
+     * towns it has and generates the new one. */
+    { reuse = null } = {}
 ) {
 
   if (!(globalValues.wantsLocationPages && globalValues.locationPages.length)) return [];
@@ -172,7 +186,15 @@ const buildLocationPages = async function (
     // Page content + alts
     // Pass the index so each location page gets a different angle — without
     // it every page opens on the same topic and reads as templated.
-    const sections = await generateLocationPagesContent(globalForLoc, contentKeywords, Number(index));
+    /* THE SLUG THE MODEL USES, NOT THE LOOP'S OWN KEY. buildLocationPages
+     * stores this page as `location-<slug>` further down; `locKey` below is
+     * the bare slug, and passing that would quietly find nothing and
+     * regenerate every town on every edit. */
+    const storedSlug = `location-${locationSlug}`;
+    const storedLocation = reuse ? reuse.locationContent(storedSlug) : null;
+
+    const sections = storedLocation
+      || await generateLocationPagesContent(globalForLoc, contentKeywords, Number(index));
 
     // Skip this location rather than taking the whole generation with it.
     //
@@ -216,7 +238,16 @@ const buildLocationPages = async function (
 
     const angle = LOCATION_ANGLES[Number(index) % LOCATION_ANGLES.length] || {};
 
-    const faqs = isSample ? [] : await generateLocationFaq({
+    /* INSIDE THE isSample GATE, like every other reused block: a design
+     * sample has no FAQ, whatever an earlier build of this site had.
+     *
+     * AND THE SHARED usedFaqQuestions MAP IS STILL FED BELOW — a reused town
+     * must still declare the questions it is using, or the next town is free
+     * to generate the same ones and the no-repeat guarantee quietly stops
+     * holding on exactly the builds that reuse. */
+    const storedLocationFaqs = (!isSample && reuse) ? reuse.locationFaqs(storedSlug) : null;
+
+    const faqs = storedLocationFaqs || (isSample ? [] : await generateLocationFaq({
       businessName: globalValues.businessName,
       businessType: globalValues.businessType,
       // THIS town, not the site's main location — the FAQ is about the page
@@ -231,7 +262,19 @@ const buildLocationPages = async function (
         ...locationPages.map(l => (l && l.display) || '').filter(Boolean),
         globalValues.location,
       ],
-    });
+    }));
+
+    /* THE NO-REPEAT GUARANTEE, HELD ACROSS REUSED TOWNS TOO.
+     *
+     * generateLocationFaq is handed `usedQuestions` and adds to it as it
+     * goes, which is what stops town three asking town one's question. A
+     * reused town never calls it — so without this line its questions are
+     * invisible to every town after it, and a half-reused build (one new
+     * town among four stored ones) could generate a duplicate.
+     *
+     * The symptom would be two pages on one site answering the same
+     * question, on exactly the builds this feature makes cheap to run. */
+    if (storedLocationFaqs) addUsedQuestions(usedFaqQuestions, storedLocationFaqs);
 
     // globalForLoc carries siteMode, so buildAltText applies the mode's
     // format: "…in Austin, TX" for Rank GBPs, the bare description for
@@ -268,7 +311,11 @@ const buildLocationPages = async function (
     // Called even when locInterlinks is empty — every Rank Fast build, and
     // any build whose ring is empty. The injector also strips stray markdown
     // links out of the AI's paragraphs, and that has to happen in every mode.
-    const sectionsWithLinks = injectPagesInterlinks(
+    /* NOT OVER STORED COPY — the same rule as the service pages and the
+     * About page. The model is built from `sectionsWithLinks` at the bottom
+     * of this loop, so stored paragraphs already carry their anchors and have
+     * already had their markdown stripped. */
+    const sectionsWithLinks = storedLocation ? sections : injectPagesInterlinks(
                                     globalForLoc,   // per-location globals
                                     pages,          // service pages (used to detect service vs location)
                                     pseudoPage,     // identifies current page as a location

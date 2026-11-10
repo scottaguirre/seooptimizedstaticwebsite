@@ -113,6 +113,10 @@ ${appHeaderScripts()}
     // watched here. Pointing it at the dashboard rather than a WordPress path
     // that does not exist on this server.
     blog:  { title: 'Writing your post',      done: 'Your post is ready',     cta: 'My Dashboard',     href: '/dashboard' },
+    /* The edit screen's re-render. "Updating" rather than "building":
+     * nothing new is being made, and somebody who has just pressed Save on
+     * two sentences should not be told their website is being built. */
+    cfedit: { title: 'Updating your website', done: 'Your website is updated', cta: 'My websites', href: '/cloudflare-sites' },
   };
   const copy = COPY[kind] || COPY.site;
 
@@ -202,7 +206,12 @@ ${appSidebar('/jobs')}
           // fraction — webpack reports nothing through exec(). Forcing the
           // indeterminate bar is more honest than a bar that sits at 0% and
           // then jumps to 100%.
-          const indeterminate = job.kind === 'build' || job.kind === 'blog';
+          /* NO BAR FOR THESE THREE. A ZIP, a campaign and a re-render each
+           * run in one pass with no countable units — a re-render writes its
+           * pages from a stored recipe rather than generating them one at a
+           * time. A bar claiming a total it cannot measure is a worse lie
+           * than no bar: it stalls at a number and looks stuck. */
+          const indeterminate = job.kind === 'build' || job.kind === 'blog' || job.kind === 'cfedit';
 
           // Indeterminate until the first page lands.
           //

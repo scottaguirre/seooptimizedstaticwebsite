@@ -142,6 +142,7 @@ NODE_SUITES=( \
   test-hero-layouts.js \
   test-nap-bar.js \
   test-placeholder-guard.js \
+  test-lead-scout.js \
   test-job-uploads.js \
   test-ping-detail.js \
   test-job-requeue.js \
@@ -179,6 +180,13 @@ NODE_SUITES=( \
   test-secret-box.js \
   test-cloudflare-accounts.js \
   test-blog-domains.js \
+  test-cloudflare-sites.js \
+  test-template-placeholders.js \
+  test-reuse-model.js \
+  test-reuse-generation.js \
+  test-site-store.js \
+  test-safe-paragraph.js \
+  test-editable-text.js \
   test-github-commit.js \
   test-github-publish.js \
   test-github-setup.js \

@@ -115,7 +115,26 @@ const TOOL_CF_BLOGS = 'Build Cloudflare Blogs';
  */
 const TOOL_BLOG_REPORT = 'Blog Report';
 
+/**
+ * Websites on Cloudflare, as opposed to blogs on Cloudflare.
+ *
+ * ADDED 7 NOVEMBER 2026, and Edwin named it himself: *"I want to create its
+ * own route and add that option in the sidebar of the three comets menu that
+ * reads Clouflare Websites, just as we have for the blogs = Clouflare
+ * blogs."*
+ *
+ * THE PAIRING IS THE POINT. "Build Cloudflare Blogs" and "Build Cloudflare
+ * Websites" sit next to each other and differ in one word, which is exactly
+ * how much they differ: same account pool, same domain pool mechanics, same
+ * Pages deploy. What changes is what gets published.
+ *
+ * SPELT CORRECTLY HERE. Edwin wrote "Clouflare" twice; the sidebar is not
+ * the place to reproduce a typo, and the label is one string in one file
+ * precisely so a correction is one edit.
+ */
+const TOOL_CF_SITES = 'Build Cloudflare Websites';
+
 module.exports = {
   pageTitle, APP_NAME, TITLE_SEPARATOR,
-  TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT,
+  TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT, TOOL_CF_SITES,
 };

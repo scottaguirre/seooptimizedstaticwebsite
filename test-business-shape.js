@@ -590,6 +590,34 @@ test('the numbered list and the JSON skeleton agree on section order', () => {
   assert.ok(jsonServices < jsonStandOut, 'the skeleton still has them the other way round');
 });
 
+test('and the model labels agree with the prompt about which is which', () => {
+  // THE OTHER HALF OF THE FIX ABOVE, FOUND MONTHS LATER. The prompt was
+  // corrected so that section2 is the services block; buildAboutUsPage's
+  // labels were not, and went on calling section2 "What Makes Us Stand Out"
+  // and section3 "Services We Offer".
+  //
+  // A label is the only human-readable name either block has — it names the
+  // panel in the WordPress export and the block on the Cloudflare edit
+  // screen — and nothing in the app READS one, which is exactly why a
+  // mislabelling survives. It surfaced only when the edit screen printed the
+  // label and the heading one above the other and they disagreed.
+  //
+  // Tied to servicesHeading() rather than to a literal, so the two files
+  // cannot drift apart again without this failing.
+  const src = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
+
+  const label = key => {
+    const m = src.match(new RegExp(`key:\\s*'${key}',\\s*label:\\s*'([^']*)'`));
+    assert.ok(m, `${key} has no label in buildAboutUsPage`);
+    return m[1];
+  };
+
+  assert.strictEqual(label('section2'), servicesHeading(''),
+    'section2 holds the services block but is not labelled as one');
+  assert.match(label('section3'), /Stand Out/,
+    'section3 holds the stand-out block but is not labelled as one');
+});
+
 test('the service cards sit in the services section, once', () => {
   const tpl = fs.readFileSync(path.join(__dirname, 'src', 'aboutUsTemplate.html'), 'utf8');
 
@@ -1697,10 +1725,45 @@ test('THE EXAMPLE REVIEWS HAVE ONE GATE, AND IT IS IN FRONT OF THE SPEND', () =>
   const aboutSrc = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
 
   /* IN FRONT OF THE SPEND. generateSampleReviews is a model call; unticking
-   * the box has to stop the credits going, not just hide the output. */
-  assert.ok(/showReviews\s*\r?\n?\s*\?\s*await generateSampleReviews\(/.test(runSrc),
-    'the reviews gate no longer sits in front of generateSampleReviews');
-  assert.ok(/:\s*null;/.test(runSrc.slice(runSrc.indexOf('const reviews = '))),
+   * the box has to stop the credits going, not just hide the output.
+   *
+   * REWORDED 7 NOVEMBER, AND THE REASON MATTERS. This read
+   * `/showReviews\s*\?\s*await generateSampleReviews\(/` — the gate and the
+   * call adjacent, spelled exactly. Adding the re-render path put a stored
+   * copy between them:
+   *
+   *     const reviews = showReviews
+   *       ? (storedReviews || await generateSampleReviews({ … }))
+   *       : null;
+   *
+   * The INVARIANT held — showReviews still gates the whole expression, and
+   * unticking still stops the spend — but the regex did not, because it was
+   * pinned to the spelling rather than to the rule.
+   *
+   *     A TEST THAT BREAKS ON A CORRECT REFACTOR IS A TEST THAT
+   *     TEACHES PEOPLE TO EDIT TESTS UNTIL THEY GO GREEN.
+   *
+   * So it now pins the rule in three parts: the expression opens with the
+   * gate, the model call happens exactly once and inside it, and the stored
+   * copy is behind the same gate. */
+  const reviewsExpr = runSrc.slice(runSrc.indexOf('const reviews = '));
+
+  assert.ok(/^const reviews = \s*showReviews\s*\r?\n?\s*\?/.test(reviewsExpr),
+    'the reviews expression no longer opens with the showReviews gate');
+
+  assert.strictEqual((runSrc.match(/await generateSampleReviews\(/g) || []).length, 1,
+    'generateSampleReviews is called more than once — only the gated call may exist');
+
+  assert.ok(reviewsExpr.indexOf('await generateSampleReviews(') > -1,
+    'the model call has moved outside the gated expression');
+
+  /* AND THE STORED COPY IS BEHIND THE SAME GATE. Without this, a re-render
+   * would put back the section the customer had just turned off: the words
+   * are already paid for, so nothing else would have stopped it. */
+  assert.ok(/const storedReviews = \(showReviews && reuse\)/.test(runSrc),
+    'the re-render path can return example reviews past the showReviews gate');
+
+  assert.ok(/:\s*null;/.test(reviewsExpr),
     'an unticked box no longer yields null reviews');
 
   /* AND NOT A SECOND TIME. */

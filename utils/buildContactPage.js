@@ -62,7 +62,17 @@ const buildContactPage = async function (
   globalValues,
   pages,
   formHtml = '',
-  contactInterlinks = []
+  contactInterlinks = [],
+
+  /* RE-RENDERING A SITE THAT ALREADY HAS ITS WORDS.
+   *
+   * An options object rather than a seventh positional parameter, and last,
+   * so every existing caller is untouched — the shape onPageWritten takes in
+   * buildLocationPages, for the same reason.
+   *
+   * `reuse` is a utils/reuseModel.js resolver. Absent, this page generates
+   * its intro exactly as it always did. */
+  { reuse = null } = {}
 ) {
   const contactPath = path.join(distDir, 'contact.html');
   if (fs.existsSync(contactPath)) {
@@ -120,8 +130,13 @@ const buildContactPage = async function (
     { suffix: globalValues.location }
   );
 
-  // The intro
-  const intro = await generateContactContent({
+  /* The intro — from the stored model when this site already has one.
+   *
+   * generateContactContent returns {heading, paragraphs} and the model stores
+   * it as the `contactIntro` section, so the round trip is exact. */
+  const storedIntro = reuse ? reuse.contactIntro() : null;
+
+  const intro = storedIntro || await generateContactContent({
     businessName: globalValues.businessName,
     businessType: globalValues.businessType,
     location: globalValues.location,
@@ -133,37 +148,47 @@ const buildContactPage = async function (
   // cannot find a natural place, so a failure here never blanks the page.
   let introSections = { section1: { heading: intro.heading, paragraphs: intro.paragraphs } };
 
-  try {
-    // Called even with NO targets — which is every Rank Fast build, and any
-    // build whose ring is empty.
-    //
-    // Injecting links is not all this does: its first act on each paragraph
-    // is stripMarkdownLinks(), turning the [text](url) the content generator
-    // sometimes emits back into plain text. Handed an empty list it strips
-    // that markdown and injects nothing. The old `if (contactInterlinks.length)`
-    // guard skipped the call, so a stray markdown link in the intro shipped
-    // raw — the one page on the site where that is most visible.
-    introSections = injectPagesInterlinks(
-      globalValues,
-      // Array form: the injector calls .find on this, and `pages` arrives
-      // from the form as an object keyed by index.
-      Array.isArray(pages) ? pages : Object.values(pages || {}),
-      { slug: 'contact' },     // so the injector does not self-link
-      contactInterlinks,
-      introSections,
-      globalValues.location,
-      {
-        // Link the trade, not the business name. The intro is written to
-        // say "our plumbing company", and this turns that phrase into the
-        // link home.
-        // businessNoun picks the right word: "our law firm", "our practice",
-        // "our plumbing company". Appending "company" to everything gave
-        // "our law firm company".
-        homeAnchor: `our ${businessNoun(globalValues.businessType)}`,
-      }
-    );
-  } catch (err) {
-    console.warn('   ⚠️ Could not interlink the contact intro:', err.message);
+  /* NOT OVER STORED COPY. The paragraphs in content.json were written from
+   * `introSections` AFTER this ran, so they already carry their <a href>
+   * tags and have already had their markdown stripped. Running the injector
+   * again would find the phrases it means to link already inside anchors and
+   * nest them — which renders, and looks almost right.
+   *
+   * The same rule, for the same reason, as the service-page injection in
+   * runGeneration.js. */
+  if (!storedIntro) {
+    try {
+      // Called even with NO targets — which is every Rank Fast build, and any
+      // build whose ring is empty.
+      //
+      // Injecting links is not all this does: its first act on each paragraph
+      // is stripMarkdownLinks(), turning the [text](url) the content generator
+      // sometimes emits back into plain text. Handed an empty list it strips
+      // that markdown and injects nothing. The old `if (contactInterlinks.length)`
+      // guard skipped the call, so a stray markdown link in the intro shipped
+      // raw — the one page on the site where that is most visible.
+      introSections = injectPagesInterlinks(
+        globalValues,
+        // Array form: the injector calls .find on this, and `pages` arrives
+        // from the form as an object keyed by index.
+        Array.isArray(pages) ? pages : Object.values(pages || {}),
+        { slug: 'contact' },     // so the injector does not self-link
+        contactInterlinks,
+        introSections,
+        globalValues.location,
+        {
+          // Link the trade, not the business name. The intro is written to
+          // say "our plumbing company", and this turns that phrase into the
+          // link home.
+          // businessNoun picks the right word: "our law firm", "our practice",
+          // "our plumbing company". Appending "company" to everything gave
+          // "our law firm company".
+          homeAnchor: `our ${businessNoun(globalValues.businessType)}`,
+        }
+      );
+    } catch (err) {
+      console.warn('   ⚠️ Could not interlink the contact intro:', err.message);
+    }
   }
 
   const introHeading = introSections.section1?.heading || intro.heading;

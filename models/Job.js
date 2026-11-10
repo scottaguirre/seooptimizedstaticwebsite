@@ -34,18 +34,30 @@ const jobSchema = new mongoose.Schema({
   /**
    * What kind of work this is. Decides which generator the runner hands it to.
    *
-   *   'site'   the wizard's full site build (the original, and the only one
-   *            that existed when this model was written)
-   *   'blog'   one Interlink Engine post
-   *   'build'  webpack + zip for download
+   *   'site'    the wizard's full site build (the original, and the only one
+   *             that existed when this model was written)
+   *   'blog'    one Interlink Engine post
+   *   'build'   webpack + zip for download
+   *   'cfedit'  re-render a published Cloudflare website from its stored
+   *             words and deploy it again
    *
    * Defaults to 'site' so every row written before this field existed keeps
    * running exactly as it did. Do NOT make this required: a migration that
    * missed a queued job would leave it unclaimable forever.
+   *
+   * ⚠️ A KIND ADDED ANYWHERE ELSE MUST BE ADDED HERE TOO. The enum below is
+   * the trap this file has already sprung once — see the note on siteMode,
+   * where 'rankfast' was added to the wizard, the pricing and the normaliser
+   * and not to the enum, so every Rank Fast build failed at Job.create()
+   * AFTER the customer had been charged and told it was starting.
+   *
+   * The failure is identical for a kind: Job.create throws a ValidationError
+   * the enqueuing route reports as its own generic 500, with nothing
+   * anywhere saying which field was wrong.
    */
   kind: {
     type: String,
-    enum: ['site', 'blog', 'build'],
+    enum: ['site', 'blog', 'build', 'cfedit'],
     default: 'site',
     index: true,
   },

@@ -34,6 +34,10 @@ const Domain = require('./models/Domain');
  * exist in this suite. */
 const BlogSite = require('./models/BlogSite');
 
+/* AND SO IS THE WEBSITES COLLECTION, for the same reason: referencesTo()
+ * counts it before an account may be removed. See install(). */
+const CloudflareSite = require('./models/CloudflareSite');
+
 /* STUBBED THE SAME WAY THE MODELS ARE. The add handler calls
  * cloudflare.verifyAccount() — a property read at call time — so replacing it
  * here replaces it for the route.
@@ -111,6 +115,7 @@ function install(over = {}) {
      * "nothing references it" is the only state in which a removal is
      * allowed, so it is the state every other test wants to be in. */
     blogCount: 0,
+    siteCount: 0,
     domainCount: 0,
     countCalls: [],
     deleted: null,
@@ -146,13 +151,49 @@ function install(over = {}) {
   CloudflareAccount.find = () => ({ sort: () => ({ lean: async () => db.accounts }) });
   CloudflareAccount.findById = async (id) =>
     db.accounts.find(a => String(a._id) === String(id)) || null;
-  CloudflareAccount.findOne = async (where) =>
-    db.accounts.find(a => !where.accountId || a.accountId === where.accountId) || null;
+  /* THE FILTER IS APPLIED, NOT IGNORED — and it had to be.
+   *
+   * This read `find(a => !where.accountId || a.accountId === where.accountId)`,
+   * which answered every other query with the FIRST account. Harmless while
+   * the only lookup was by accountId; the moment the duplicate-name guard
+   * asked by label, every rename came back as a clash with itself.
+   *
+   *     A STUB THAT IGNORES THE FILTER ANSWERS A QUESTION
+   *     NOBODY ASKED, AND DOES IT CONFIDENTLY.
+   *
+   * It now honours the three shapes this route uses: accountId, a
+   * case-insensitive label regex, and `_id: { $ne }` for "anybody but me". */
+  CloudflareAccount.findOne = async (where = {}) => db.accounts.find(a => {
+    if (where.accountId && a.accountId !== where.accountId) return false;
+
+    if (where._id && where._id.$ne && String(a._id) === String(where._id.$ne)) return false;
+
+    if (where.label && where.label.$regex) {
+      const flags = where.label.$options || '';
+      if (!new RegExp(where.label.$regex, flags).test(String(a.label || ''))) return false;
+    }
+
+    return true;
+  }) || null;
   CloudflareAccount.create = async (doc) => { db.created = doc; return { _id: 'new-acct', ...doc }; };
 
   BlogSite.countDocuments = async (where) => {
     db.countCalls.push({ blogs: where });
     return db.blogCount;
+  };
+
+  /* THE THIRD COLLECTION THAT POINTS AT AN ACCOUNT — added 7 November with
+   * Cloudflare Websites, and the reason this suite went red six times the
+   * moment referencesTo() grew a third count: an unstubbed countDocuments()
+   * reaches for a Mongo connection this suite does not have, and the whole
+   * removal section answered 500 instead of 400.
+   *
+   * Which is the suite doing its job. A count added to the guard and not to
+   * the harness is indistinguishable, from the handler's point of view,
+   * from a count that is always zero. */
+  CloudflareSite.countDocuments = async (where) => {
+    db.countCalls.push({ sites: where });
+    return db.siteCount;
   };
 
   Domain.countDocuments = async (where) => {
@@ -1485,6 +1526,554 @@ await test('AND A SINGLE-VALUE RECORD PRINTS ONE VALUE, NOT A LIST OF ONE', asyn
   assert.ok(html.includes('<code>acme.github.io</code>'));
   assert.ok(html.includes('<code>185.199.108.153</code>'));
   assert.ok(html.includes('<code>185.199.109.153</code>'), 'the second A record is missing');
+});
+
+/* ========================================================================
+ * RENAMING AN ACCOUNT
+ * ===================================================================== */
+
+section('RENAMING AN ACCOUNT');
+
+/* WHY THIS EXISTS — Edwin, 8 November. Eight accounts, most named after a
+ * domain or an email, in a dropdown labelled "Cloudflare account": it reads
+ * as a list of domains and is a list of accounts. */
+
+await test('THE LABEL CHANGES AND NOTHING ELSE DOES', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: 'Bryan — u-sites' } }));
+
+  assert.strictEqual(db.updates.length, 1, 'nothing was written');
+
+  const { update } = db.updates[0];
+
+  assert.deepStrictEqual(Object.keys(update.$set), ['label'],
+    `a rename wrote more than the label: ${Object.keys(update.$set).join(', ')}`);
+
+  assert.strictEqual(update.$set.label, 'Bryan — u-sites');
+});
+
+await test('AND IT IS WRITTEN BY _id, SO NOTHING IS RE-POINTED', async () => {
+  /* Domain.account and BlogSite.cloudflareAccount hold this row's _id. A
+   * rename that touched it would orphan every reference — credsForAccountId
+   * throws "a Cloudflare account that no longer exists" and the blog cannot
+   * deploy. The obvious fear about a rename, so it is asserted. */
+  install({ accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: 'Renamed' } }));
+
+  assert.deepStrictEqual(db.updates[0].where, { _id: 'acct-3' });
+});
+
+await test('AN EMPTY NAME IS REFUSED', async () => {
+  /* The label is how every other screen identifies this row — the
+   * dropdowns, the removal guard's sentence, the error credsFor() throws.
+   * A blank one is a blank option in a list of eight. */
+  for (const label of ['', '   ', undefined]) {
+    install({ accounts: [ACCOUNT] });
+
+    const out = await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+      req({ params: { id: 'acct-3' }, body: { label } }));
+
+    assert.strictEqual(out.status, 400, `"${label}" was accepted`);
+    assert.strictEqual(db.updates.length, 0, `"${label}" was written`);
+  }
+});
+
+await test('AND THE SAME NAME WRITES NOTHING', async () => {
+  install({ accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: ACCOUNT.label } }));
+
+  assert.strictEqual(db.updates.length, 0, 'an unchanged name was written anyway');
+});
+
+await test('AN ACCOUNT THAT IS NOT THERE IS REFUSED', async () => {
+  install({ accounts: [] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'nope' }, body: { label: 'New name' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.updates.length, 0);
+});
+
+const SECOND = { _id: 'acct-9', label: 'Bryan — u-sites', accountId: 'd'.repeat(32), tokenLast4: 'xxxx', enabled: true, projects: 2 };
+
+await test('A NAME ANOTHER ACCOUNT ALREADY HAS IS REFUSED', async () => {
+  /* The label is the ONLY thing the dropdowns show. Two rows sharing one
+   * means an admin picks between them by guesswork — and picking wrong
+   * binds a customer's domain to the wrong Cloudflare account, so their
+   * site publishes into somebody else's. */
+  install({ accounts: [ACCOUNT, SECOND] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: SECOND.label } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.updates.length, 0, 'a duplicate name was written');
+  assert.ok(/already used/i.test(out.html), out.html.slice(0, 200));
+});
+
+await test('AND SO IS ONE THAT DIFFERS ONLY IN CASE OR SPACING', async () => {
+  /* "Bryan" and "bryan" are the same guess in a dropdown, and a trailing
+   * space is invisible in one. */
+  for (const label of ['bryan — u-sites', 'BRYAN — U-SITES', '  Bryan — u-sites  ']) {
+    install({ accounts: [ACCOUNT, SECOND] });
+
+    const out = await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+      req({ params: { id: 'acct-3' }, body: { label } }));
+
+    assert.strictEqual(out.status, 400, `"${label}" was accepted`);
+    assert.strictEqual(db.updates.length, 0, `"${label}" was written`);
+  }
+});
+
+await test('BUT AN ACCOUNT MAY CORRECT ITS OWN CAPITALISATION', async () => {
+  /* Excluded by _id, so a row is never a clash with itself. Without that,
+   * fixing your own name is impossible — the only error being your own
+   * existence. */
+  install({ accounts: [ACCOUNT, SECOND] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: ACCOUNT.label.toUpperCase() } }));
+
+  assert.strictEqual(db.updates.length, 1, 'an account could not re-case its own name');
+  assert.strictEqual(db.updates[0].$set ? db.updates[0].$set.label : db.updates[0].update.$set.label,
+    ACCOUNT.label.toUpperCase());
+});
+
+await test('A NAME WITH REGEX CHARACTERS IS TEXT, NOT A PATTERN', async () => {
+  /* `Acme (US)` is an ordinary name and also a regex with a group in it.
+   * `.*` as a label would match every account and block every rename. */
+  const odd = { _id: 'acct-7', label: 'Acme (US) [prod]', accountId: 'e'.repeat(32), enabled: true, projects: 0 };
+
+  install({ accounts: [ACCOUNT, odd] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: 'Acme (US) [prod]' } }));
+
+  assert.strictEqual(out.status, 400, 'an exact duplicate with regex characters was accepted');
+
+  install({ accounts: [ACCOUNT, odd] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: 'Acme US prod' } }));
+
+  assert.strictEqual(db.updates.length, 1,
+    'a name was refused because another account\'s name was read as a pattern');
+});
+
+await test('A NAME THAT MERELY OVERLAPS ANOTHER IS ALLOWED', async () => {
+  /* THE ANCHORS IN THE PATTERN. Without `^` and `$`, "Bryan" clashes with
+   * "Bryan — u-sites" and the admin is told a name is taken that nobody
+   * has. They are different names; only an identical one is a duplicate. */
+  install({ accounts: [ACCOUNT, SECOND] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: 'Bryan' } }));
+
+  assert.strictEqual(db.updates.length, 1,
+    '"Bryan" was refused because "Bryan — u-sites" exists');
+
+  install({ accounts: [ACCOUNT, SECOND] });
+
+  await call(handler('post', '/admin/blog-domains/accounts/:id/label'),
+    req({ params: { id: 'acct-3' }, body: { label: 'Bryan — u-sites extra' } }));
+
+  assert.strictEqual(db.updates.length, 1,
+    'a longer name containing an existing one was refused');
+});
+
+await test('AND THE ADD FORM REFUSES A DUPLICATE NAME TOO', async () => {
+  /* Guarding only the rename would be half a rule: the add form is where
+   * eight accounts got their names in the first place. */
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/accounts'),
+    req({ body: { label: ACCOUNT.label, accountId: 'f'.repeat(32), token: TOKEN } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.created, null, 'a second account took an existing name');
+  assert.ok(/already used/i.test(out.html));
+});
+
+await test('AND THE ADD FORM TRIMS THE NAME BEFORE IT COMPARES OR STORES IT', async () => {
+  /* A trailing space is invisible in a dropdown, so " Client 3" and
+   * "Client 3" are the same guess — and a label stored with one sorts and
+   * reads oddly for ever after. */
+  install({ accounts: [ACCOUNT] });
+
+  const padded = await call(handler('post', '/admin/blog-domains/accounts'),
+    req({ body: { label: `  ${ACCOUNT.label}  `, accountId: 'f'.repeat(32), token: TOKEN } }));
+
+  assert.strictEqual(padded.status, 400, 'a padded duplicate name was accepted');
+  assert.strictEqual(db.created, null);
+
+  install({ accounts: [] });
+
+  await call(handler('post', '/admin/blog-domains/accounts'),
+    req({ body: { label: '  Fresh Name  ', accountId: 'f'.repeat(32), token: TOKEN } }));
+
+  assert.ok(db.created, 'nothing was created');
+  assert.strictEqual(db.created.label, 'Fresh Name', 'the stored name kept its padding');
+});
+
+await test('THE FORM IS ON THE PAGE, AND IT IS NOT THE TOKEN FORM', async () => {
+  /* TWO <details>, NOT ONE. A rename needs no Cloudflare call; replacing a
+   * token makes one and refuses the whole submission if it fails. Together,
+   * a correct new name is rejected by an unrelated token check — and the
+   * form asks for a token from somebody who only wanted to fix a name. */
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('action="/admin/blog-domains/accounts/acct-3/label"'),
+    'nothing on the page posts to the rename handler');
+
+  assert.ok(out.html.includes('action="/admin/blog-domains/accounts/acct-3/token"'),
+    'the token form went missing');
+
+  /* AND THE NAME IS PREFILLED, so a rename is an edit rather than a retype.
+   * At eight accounts, retyping is how two end up with the same name. */
+  assert.ok(new RegExp(`id="label-acct-3"[^>]*value="${ACCOUNT.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(out.html)
+         || out.html.includes(`value="${ACCOUNT.label}"`),
+    'the rename box does not start from the current name');
+});
+
+/* ========================================================================
+ * DOMAINS FOR CLOUDFLARE WEBSITES, SEVERAL AT A TIME
+ * ===================================================================== */
+
+section('ADDING DOMAINS FOR CLOUDFLARE WEBSITES');
+
+/* WHAT THIS SECTION IS ABOUT. Edwin, 5 November: *"I will add multiple
+ * domains at once so I can have different options to choose from."* So the
+ * handler is a batch, and a batch has failure modes a single add does not:
+ * a line that is not a domain, a line already in the pool, a line whose
+ * zone is on another account, and the same line twice. Every one of them
+ * must be REPORTED rather than dropped — a batch that quietly adds nine of
+ * twelve is one somebody finds out about from a short dropdown.
+ *
+ * listZones IS STUBBED HERE AND NOT IN install(), because only this handler
+ * calls it. Unstubbed it would make a live HTTPS call to Cloudflare and hang
+ * inside ./deploy.sh — the same trap the top of this file records. */
+function installZones(names, over = {}) {
+  install(over);
+
+  db.zonesAnswer = Object.prototype.hasOwnProperty.call(over, 'zonesAnswer')
+    ? over.zonesAnswer
+    : { ok: true, names };
+
+  db.zoneListCalls = 0;
+  cfDeploy.listZones = async () => { db.zoneListCalls += 1; return db.zonesAnswer; };
+
+  /* EVERY CREATE IS KEPT, not just the last one. db.createdDomain holds one
+   * row, which is all a single add ever makes; a batch that overwrote it
+   * would be asserted against its final line only. */
+  db.createdDomains = [];
+  Domain.create = async (doc) => {
+    db.createdDomain = doc;
+    db.createdDomains.push(doc);
+    db.domains.push(doc);
+    return { _id: `new-${doc.domain}`, ...doc };
+  };
+}
+
+await test('SEVERAL DOMAINS IN ONE POST, ALL TARGETED AT WEBSITES', async () => {
+  installZones(['acmesites.com', 'clientsites.net'], { accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com\nclientsites.net', account: 'acct-3' } }));
+
+  assert.strictEqual(out.status, 200);
+  assert.deepStrictEqual(db.createdDomains.map(d => d.domain),
+    ['acmesites.com', 'clientsites.net']);
+
+  for (const doc of db.createdDomains) {
+    /* 'cfsite', NOT 'cloudflare'. A batch stored with the default target
+     * would appear in the BLOG dropdown, which is the one thing Edwin
+     * asked this feature not to do. */
+    assert.strictEqual(doc.target, 'cfsite', `${doc.domain} went to the wrong dropdown`);
+    assert.strictEqual(String(doc.account), 'acct-3');
+  }
+});
+
+await test('AND THE ZONES ARE CHECKED ONCE FOR THE BATCH, NOT ONCE PER DOMAIN', async () => {
+  /* The single-add form calls findZone(), which walks the labels one API
+   * request at a time. Twelve domains would be twelve walks. This lists the
+   * account's zones once and matches locally — which is what listZones()'
+   * own comment asked the next caller to do rather than write a third
+   * copy. */
+  installZones(['a.com', 'b.com', 'c.com'], { accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'a.com\nb.com\nc.com', account: 'acct-3' } }));
+
+  assert.strictEqual(db.createdDomains.length, 3);
+  assert.strictEqual(db.zoneListCalls, 1, `the zone list was fetched ${db.zoneListCalls} times`);
+  assert.strictEqual(db.zoneCalls.length, 0, 'it walked the labels per domain as well');
+});
+
+await test('A ZONE NOT ON THAT ACCOUNT IS REFUSED AND NAMED, AND THE REST GO IN', async () => {
+  /* REFUSED RATHER THAN WARNED, for the reason the blog form gives: the
+   * pool exists precisely because the zone is on the same account as the
+   * Pages project, which is what makes Cloudflare write the DNS record
+   * itself. A row where that is untrue turns the automatic half of the
+   * product off for every site ever created on it.
+   *
+   * AND THE REST STILL GO IN. One bad line in a batch of ten is not a
+   * reason to make somebody retype the other nine. */
+  installZones(['acmesites.com'], { accounts: [ACCOUNT], zone: { ok: false, noZone: true, error: 'no zone' } });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com\nsomebodyelse.com', account: 'acct-3' } }));
+
+  assert.deepStrictEqual(db.createdDomains.map(d => d.domain), ['acmesites.com']);
+  assert.ok(/somebodyelse\.com/.test(out.html), 'the refused domain was not named');
+  assert.ok(/Not a zone on that Cloudflare account/i.test(out.html));
+});
+
+await test('AND A MISS IS CONFIRMED BEFORE IT IS REFUSED, BECAUSE THE LIST MAY BE SHORT', async () => {
+  /* listZones() ASKS FOR per_page=50. An account with more zones than that
+   * returns a TRUNCATED list — and a domain missing from a truncated list
+   * is not a domain that is absent. Refusing on that would reject correct
+   * domains on exactly the accounts where the mistake costs most.
+   *
+   *     A LIST THAT MIGHT BE INCOMPLETE CANNOT BE USED
+   *     TO PROVE SOMETHING IS NOT IN IT.
+   *
+   * Here the list does not have it and findZone does. It must be added. */
+  installZones(['something-else.com'], {
+    accounts: [ACCOUNT],
+    zone: { ok: true, id: 'z9', name: 'acmesites.com' },
+  });
+
+  await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com', account: 'acct-3' } }));
+
+  assert.strictEqual(db.zoneCalls.length, 1, 'a miss was refused without being confirmed');
+  assert.deepStrictEqual(db.createdDomains.map(d => d.domain), ['acmesites.com']);
+});
+
+await test('A DOMAIN ALREADY IN THE POOL IS LEFT EXACTLY AS IT WAS', async () => {
+  /* ONE ROW PER DOMAIN ACROSS ALL THREE PRODUCTS. The dangerous version of
+   * this handler would $set target:'cfsite' on a row that is somebody's
+   * blog domain — moving every blog on it into a dropdown that cannot
+   * publish blogs, with nothing on screen to say so. */
+  const existing = { _id: 'dom-1', domain: 'acmehvac.com', account: 'acct-3', enabled: true };
+
+  installZones(['acmehvac.com', 'acmesites.com'], { accounts: [ACCOUNT], domains: [existing] });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmehvac.com\nacmesites.com', account: 'acct-3' } }));
+
+  assert.deepStrictEqual(db.createdDomains.map(d => d.domain), ['acmesites.com']);
+  assert.strictEqual(existing.target, undefined, 'an existing blog domain was re-targeted');
+  assert.ok(/Already in the pool/i.test(out.html), 'the skip was not reported');
+  assert.ok(/acmehvac\.com/.test(out.html));
+});
+
+await test('LINES THAT ARE NOT DOMAINS ARE NAMED, NOT DROPPED', async () => {
+  /* A paste out of a spreadsheet brings commas, quotes and blank lines with
+   * it. A batch that silently drops three of twelve rows is a batch
+   * somebody finds out about from an empty dropdown. */
+  installZones(['acmesites.com'], { accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com\nnot a domain\nhttp://\n\n  ', account: 'acct-3' } }));
+
+  assert.deepStrictEqual(db.createdDomains.map(d => d.domain), ['acmesites.com']);
+  assert.ok(/Not usable as a domain/i.test(out.html), 'the bad lines were swallowed');
+  assert.ok(/not a domain/.test(out.html), 'the bad line was not quoted back');
+});
+
+await test('A URL OR A TRAILING DOT IS NORMALISED RATHER THAN REFUSED', async () => {
+  installZones(['acmesites.com'], { accounts: [ACCOUNT] });
+
+  await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'https://acmesites.com/\n', account: 'acct-3' } }));
+
+  assert.deepStrictEqual(db.createdDomains.map(d => d.domain), ['acmesites.com']);
+});
+
+await test('THE SAME DOMAIN TWICE IN ONE BATCH IS ADDED ONCE, QUIETLY', async () => {
+  /* Added once and then reported as "already in the pool" would be
+   * technically true and a confusing thing to read about a line you just
+   * typed yourself. */
+  installZones(['acmesites.com'], { accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com\nACMESITES.COM\n', account: 'acct-3' } }));
+
+  assert.deepStrictEqual(db.createdDomains.map(d => d.domain), ['acmesites.com']);
+  assert.ok(!/Already in the pool/i.test(out.html), 'it complained about a line it deduped');
+});
+
+await test('A ZONE CHECK THAT COULD NOT RUN ADDS THEM AND SAYS SO', async () => {
+  /* A FAILURE TO ASK IS NOT AN ANSWER. If the token cannot read zones,
+   * refusing would block correct domains over a permissions problem on the
+   * account's own row — which is fixed two sections up this same screen. */
+  installZones([], { accounts: [ACCOUNT], zonesAnswer: { ok: false, error: 'Zone:Read missing' } });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com\nclientsites.net', account: 'acct-3' } }));
+
+  assert.strictEqual(db.createdDomains.length, 2, 'a permissions problem refused correct domains');
+  assert.ok(/could not be completed/i.test(out.html), 'the page claimed the check passed');
+  assert.ok(/Zone:Read missing/.test(out.html));
+});
+
+await test('AND NEITHER THE TOKEN NOR THE ACCOUNT ID REACHES THAT PAGE', async () => {
+  /* THE CREDENTIAL THE HANDLER IS HOLDING, not some other token — which
+   * this test learned by failing. The first version injected the add-form's
+   * TOKEN constant into Cloudflare's error and asserted it was removed, and
+   * of course it was not: scrub() redacts the values it is GIVEN, and the
+   * handler gives it the creds it made the call with. A test asserting that
+   * an unrelated secret is removed would be asserting that scrub() searches
+   * for anything token-shaped, which it does not and should not.
+   *
+   * What matters is that the pair in hand is redacted, because that is the
+   * pair Cloudflare's own error messages echo back. */
+  const leaky = { token: 'cf-live-abcdefghijklmnop', account: ACCOUNT_ID };
+
+  installZones([], {
+    accounts: [ACCOUNT],
+    creds: leaky,
+    zonesAnswer: {
+      ok: false,
+      error: `token ${leaky.token} on account ${leaky.account} cannot read zones`,
+    },
+  });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com', account: 'acct-3' } }));
+
+  assert.ok(!out.html.includes(leaky.token), 'a live Cloudflare token reached the page');
+  assert.ok(!out.html.includes(leaky.account), 'the account id reached the page');
+  assert.ok(/could not be completed/i.test(out.html), 'it scrubbed the message out of existence');
+});
+
+await test('A CREDENTIAL THAT WILL NOT RESOLVE DOES NOT STOP THE BATCH EITHER', async () => {
+  installZones([], { accounts: [ACCOUNT], credsError: 'That account is disabled (Client 3).' });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com', account: 'acct-3' } }));
+
+  assert.strictEqual(db.createdDomains.length, 1);
+  assert.ok(/could not be completed/i.test(out.html));
+  assert.strictEqual(db.zoneListCalls, 0, 'it asked Cloudflare with no credentials');
+});
+
+await test('AN ACCOUNT THAT IS NOT THERE ADDS NOTHING', async () => {
+  installZones([], { accounts: [] });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com', account: 'nope' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.createdDomains.length, 0);
+});
+
+await test('AND NO ACCOUNT AT ALL IS A SENTENCE, NOT A CAST ERROR', async () => {
+  /* The field is a required select, so an empty one only arrives on a
+   * posted request — which is to say, from anybody.
+   *
+   * THIS TEST WAS WRONG AND MUTATION TESTING SAID SO. Written against the
+   * ordinary findById stub, deleting the `!accountId` guard changed
+   * nothing: the stub answers undefined for '' and the next check — "that
+   * account is not here" — produced the same 400. The test passed for a
+   * reason that does not exist in production.
+   *
+   * REAL MONGOOSE THROWS A CastError on an id that is not an ObjectId, and
+   * an unhandled throw in here is a 500 with "We could not add those
+   * domains" — no mention of the account, on a form the admin has already
+   * left. So the stub is made to behave like the real thing for the one
+   * input this guard exists to catch.
+   *
+   *     A GUARD WHOSE REMOVAL CHANGES NOTHING IS NOT PROVEN
+   *     BY A TEST THAT PASSES EITHER WAY. */
+  installZones([], { accounts: [ACCOUNT] });
+
+  CloudflareAccount.findById = async (id) => {
+    if (!/^[a-f0-9]{24}$|^acct-/.test(String(id || ''))) {
+      const err = new Error(`Cast to ObjectId failed for value "${id}"`);
+      err.name = 'CastError';
+      throw err;
+    }
+    return db.accounts.find(a => String(a._id) === String(id)) || null;
+  };
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: 'acmesites.com' } }));
+
+  assert.strictEqual(out.status, 400, 'an empty account select produced a 500');
+  assert.ok(/no account/i.test(out.html), 'the page does not say what is missing');
+  assert.strictEqual(db.createdDomains.length, 0);
+});
+
+await test('A BATCH LONGER THAN 50 IS CAPPED AND THE CAP IS REPORTED', async () => {
+  /* A pasted file must not become a job: 300 lines is 300 Mongo lookups and
+   * up to 300 findZone walks, from one button. */
+  const many = Array.from({ length: 60 }, (_, i) => `site${i}.com`).join('\n');
+
+  installZones(Array.from({ length: 60 }, (_, i) => `site${i}.com`), { accounts: [ACCOUNT] });
+
+  const out = await call(handler('post', '/admin/blog-domains/cf-site-domains'),
+    req({ body: { domains: many, account: 'acct-3' } }));
+
+  assert.strictEqual(db.createdDomains.length, 50);
+  assert.ok(/10 further lines/.test(out.html), 'the ignored lines were not mentioned');
+});
+
+await test('THE FORM IS ON THE POOL PAGE, AND SAYS WHICH DROPDOWN IT FEEDS', async () => {
+  /* THE WIRING, WHICH IS THE GAP THIS PROJECT KEEPS FINDING. A handler with
+   * no form posting to it is a feature that exists and cannot be reached —
+   * the failure appSidebar()'s own comment describes, and the one Edwin had
+   * to ask about the day Static Blogs shipped. */
+  install({ accounts: [ACCOUNT] });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('action="/admin/blog-domains/cf-site-domains"'),
+    'nothing on the pool page posts to the websites-domain handler');
+  assert.ok(/name="domains"/.test(out.html), 'the batch field is missing');
+  assert.ok(/never in the blogs dropdown/i.test(out.html),
+    'the form does not say the two lists are separate');
+});
+
+await test('AND A WEBSITES DOMAIN IS BADGED APART FROM BOTH OTHER KINDS', async () => {
+  /* Three kinds in one table. "websites" alone is now ambiguous between two
+   * products that both publish websites, so both say where they publish. */
+  install({
+    accounts: [ACCOUNT],
+    domains: [
+      { _id: 'd1', domain: 'blogs.com', target: 'cloudflare', account: 'acct-3', enabled: true },
+      { _id: 'd2', domain: 'gh.com', target: 'github', githubInstallationId: '1', enabled: true },
+      { _id: 'd3', domain: 'cf.com', target: 'cfsite', account: 'acct-3', enabled: true },
+      { _id: 'd4', domain: 'firstweek.com', account: 'acct-3', enabled: true },
+    ],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  const row = (domain) => {
+    const at = out.html.indexOf(`<code>${domain}</code>`);
+    assert.ok(at > -1, `${domain} is not on the page`);
+    return out.html.slice(at, at + 400);
+  };
+
+  assert.ok(/CF websites/.test(row('cf.com')), 'a Cloudflare website domain is not badged as one');
+  assert.ok(/GitHub websites/.test(row('gh.com')));
+  assert.ok(/>blogs</.test(row('blogs.com')));
+
+  /* AND THE OLDEST ROWS, WHICH HAVE NO `target` AT ALL, STILL READ AS
+   * BLOGS. A bare `d.target === 'cloudflare'` would badge them "unknown". */
+  assert.ok(/>blogs</.test(row('firstweek.com')),
+    'a domain added before the field existed is no longer shown as a blog domain');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

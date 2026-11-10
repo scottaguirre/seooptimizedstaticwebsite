@@ -74,6 +74,18 @@ const ALLOWED = [
        + 'address built from a display name would be invalid the moment the '
        + 'name had a space in it',
   },
+  {
+    file: 'utils/leadScout/scanSite.js',
+    count: 1,
+    why: 'the crawler\'s User-Agent, and the hit is the DOMAIN inside it, so '
+       + 'the reasoning is the From address\'s above. A UA lands in thousands '
+       + 'of strangers\' server logs carrying a URL they can open to find out '
+       + 'who crawled them: a wire identifier pointing at a DNS fact, not a '
+       + 'display string. Built from APP_NAME the token would be "Three '
+       + 'Comets", with a space, which no UA may contain — and the URL would '
+       + 'still be written out, because renaming the product does not move '
+       + 'the website',
+  },
   { file: 'src/views/form.html', count: 1, why: 'static HTML tab title' },
   { file: 'src/views/login.html', count: 1, why: 'static HTML tab title' },
   { file: 'src/views/signup.html', count: 1, why: 'static HTML tab title' },

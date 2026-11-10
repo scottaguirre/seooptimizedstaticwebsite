@@ -32,6 +32,18 @@ const Domain = require('../models/Domain');
 /* ONLY EVER COUNTED, NEVER WRITTEN, by this file. A blog names the account
  * it publishes into, so it is the first thing a removal has to ask about. */
 const BlogSite = require('../models/BlogSite');
+
+/* COUNTED FOR THE SAME REASON AS BlogSite, for the Cloudflare Websites
+ * rows: a site names the account it publishes into, so removing an account
+ * has to ask about those too. Added 7 November — without it, deleting an
+ * account would report "no blogs on it" while taking every website on it
+ * with it. */
+const CloudflareSite = require('../models/CloudflareSite');
+
+/* WHICH KIND OF ROW IS THIS? The pool holds three and the oldest rows do not
+ * say, because the field is newer than they are. See utils/domainPool.js. */
+const { targetOf } = require('../utils/domainPool');
+
 const { seal } = require('../utils/blog/cloudflare/secretBox');
 const { scrub } = require('../utils/blog/cloudflare/deploy');
 /* REQUIRED AS A MODULE, NOT DESTRUCTURED, so verifyAccount is looked up when
@@ -270,6 +282,39 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
                   in a way that matches the buttons beside it. */ ''}
             <summary class="small text-white-50 d-inline-block"
                      style="cursor:pointer; list-style:none">
+              Rename &rsaquo;
+            </summary>
+
+            ${/* RENAME AND REPLACE-TOKEN ARE TWO <details>, NOT ONE FORM.
+                  A rename needs no Cloudflare call; replacing a token makes
+                  one and refuses the whole submission if it fails. Together,
+                  a correct new name gets rejected by an unrelated token
+                  check — and the form asks for a token from somebody who
+                  only wanted to fix a name. */''}
+            <form method="post" action="/admin/blog-domains/accounts/${esc(a._id)}/label"
+                  class="row g-2 mt-1 align-items-end">
+              ${res.locals.csrfField || ''}
+              <div class="col-md-7">
+                <label class="form-label small mb-1" for="label-${esc(a._id)}">
+                  Name for this account
+                </label>
+                <input class="form-control form-control-sm" id="label-${esc(a._id)}"
+                       name="label" required maxlength="120"
+                       value="${esc(a.label)}">
+              </div>
+              <div class="col-auto">
+                <button class="btn btn-sm btn-outline-light" type="submit">Rename</button>
+              </div>
+              <div class="form-text text-white-50">
+                Only the name changes. Nothing is keyed on it — the domains
+                and blogs on this account hold its id, not its label.
+              </div>
+            </form>
+          </details>
+
+          <details>
+            <summary class="small text-white-50 d-inline-block"
+                     style="cursor:pointer; list-style:none">
               Replace API token &rsaquo;
             </summary>
             <form method="post" action="/admin/blog-domains/accounts/${esc(a._id)}/token"
@@ -306,26 +351,40 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
       </tr>`;
     }).join('');
 
-    /* TWO KINDS OF ROW IN ONE TABLE — 29 October, when Local Website
-     * Options needed the same "pick one from a list" that blogs have had
-     * since this pool was built. The question a customer answers is
-     * identical, so the list is one list and the row says what is behind
-     * it: a Cloudflare account, or a GitHub installation. */
+    /* THREE KINDS OF ROW IN ONE TABLE — two from 29 October, when Local
+     * Website Options needed the same "pick one from a list" that blogs
+     * have had since this pool was built, and a third on 7 November for
+     * Cloudflare Websites. The question a customer answers is identical in
+     * all three cases, so the list is one list and the row says what is
+     * behind it: a Cloudflare account, or a GitHub installation.
+     *
+     * targetOf() RATHER THAN READING d.target — the field is newer than the
+     * oldest rows, which have no `target` key at all, and a bare
+     * comparison reads as if it handles that while returning false. */
     const domainRows = domains.map((d, i) => {
-      const github = 'github' === d.target;
+      const kind = targetOf(d);
+      const github = 'github' === kind;
 
       const owner = github
         ? `installation ${esc(d.githubInstallationId || '—')}`
         : esc((byId.get(String(d.account)) || {}).label || '— account missing —');
+
+      /* THE THREE BADGES SAY WHICH DROPDOWN THE ROW APPEARS IN, which is
+       * the only question this column exists to answer. "websites" alone
+       * would now be ambiguous between two products that both publish
+       * websites, so both of those name where they publish. */
+      const badge = {
+        github:     '<span class="badge bg-dark">GitHub websites</span>',
+        cfsite:     '<span class="badge bg-info text-dark">CF websites</span>',
+        cloudflare: '<span class="badge bg-secondary">blogs</span>',
+      }[kind] || '<span class="badge bg-danger">unknown</span>';
 
       return `
       <tr>
         <td class="rownum">${i + 1}</td>
         <td><code>${esc(d.domain)}</code></td>
         <td class="text-white-50 col-tight">${esc(d.label || '')}</td>
-        <td>${github
-          ? '<span class="badge bg-dark">websites</span>'
-          : '<span class="badge bg-secondary">blogs</span>'}</td>
+        <td>${badge}</td>
         ${/* col-tight — 31 October. An account here is commonly one
               unbroken word: an email address, or
               `Aguirre_Negro:https://southbayhomeinspections.com`. A
@@ -600,7 +659,59 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
             <code>&lt;login&gt;.github.io</code> repository must carry this
             domain, or the sites will only answer on github.io.
           </div>
-        </form>`,
+        </form>
+
+        <!-- DOMAINS FOR CLOUDFLARE WEBSITES — 7 November.
+
+             A THIRD FORM, FOR THE SAME REASON THERE IS A SECOND ONE. This
+             has the shape of the blog form — a registrable domain and the
+             Cloudflare account its zone is on — and differs in one field
+             that matters more than it looks: it takes SEVERAL domains at
+             once. Edwin, 5 November: "I will add multiple domains at once
+             so I can have different options to choose from. Then after
+             chosing one domain I will add the name that will be a subdomain
+             and generate a websie and upload it."
+
+             ONE ACCOUNT FOR THE WHOLE BATCH, because the zone has to be on
+             the same account as the Pages project or Cloudflare will not
+             write the DNS record — and his own plan is one account per
+             domain anyway: "one website with one account, on domain,
+             multiple subdomains. Another website with another new account,
+             another new domaing". So a batch is one account's worth, and
+             several accounts means several submissions.
+
+             NO LABEL FIELD. One label cannot describe a batch, and a label
+             per line would turn a textarea into a CSV format nobody asked
+             for. The domain is the label, which is what it already is for
+             most rows. -->
+        ${accounts.length ? `
+        <h2 class="h4 mt-5 mb-3">Domains for Cloudflare websites</h2>
+
+        <form method="post" action="/admin/blog-domains/cf-site-domains" class="row g-2">
+          ${res.locals.csrfField || ''}
+          <div class="col-md-7">
+            <label class="form-label" for="cfSiteDomains">Domains, one per line</label>
+            <textarea class="form-control" id="cfSiteDomains" name="domains" rows="4"
+                      required spellcheck="false" autocorrect="off" autocapitalize="off"
+                      placeholder="acmesites.com&#10;clientsites.net"></textarea>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="cfSiteAccount">Cloudflare account</label>
+            <select class="form-select" id="cfSiteAccount" name="account" required>
+              ${accountOptions}
+            </select>
+          </div>
+          <div class="col-md-1 d-flex align-items-end">
+            <button class="btn btn-outline-light" type="submit">Add</button>
+          </div>
+          <div class="form-text text-white-50">
+            These appear in <strong>Build Cloudflare Websites</strong> only —
+            never in the blogs dropdown. Registrable domains only; the
+            customer supplies the subdomain. Every zone in the batch must
+            already be on the account chosen, or Cloudflare will not write
+            the DNS record and the address will answer on nothing.
+          </div>
+        </form>` : ''}`,
     }));
 
   } catch (err) {
@@ -733,6 +844,16 @@ router.post('/admin/blog-domains/accounts', requireAdmin, async (req, res) => {
        * and nothing would say which is current. */
       return problem(res, 'That account is already here',
         `There is already an entry for ${accountId}.`);
+    }
+
+    const clash = await labelTaken(label);
+
+    if (clash) {
+      return problem(res, 'That name is already used',
+        `"${esc(clash.label)}" is already an account on this screen. The name `
+        + 'is all the dropdowns show, so two rows sharing one means picking '
+        + 'between them by guesswork — and picking wrong publishes a '
+        + "customer's site into somebody else's Cloudflare account.");
     }
 
     /* USED ONCE BEFORE THEY ARE STORED.
@@ -907,35 +1028,186 @@ router.post('/admin/blog-domains/accounts/:id/token', requireAdmin, async (req, 
 });
 
 /* -------------------------------------------------------------------------
+ * Renaming an account
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Is some other account already called this?
+ *
+ * WHY THE NAME HAS TO BE UNIQUE, AND IT IS NOT TIDINESS. The label is the
+ * ONLY thing the dropdowns show — `<option value="<id>">{label}</option>`.
+ * Two rows sharing one means an admin picks between them by guesswork, and
+ * picking wrong binds a customer's domain to the wrong Cloudflare account:
+ * their site publishes into somebody else's, and the error is a permissions
+ * failure weeks later naming neither.
+ *
+ * CASE-INSENSITIVE, because "Bryan" and "bryan" are the same guess in a
+ * dropdown. Trimmed for the same reason — a trailing space is invisible.
+ *
+ * DISABLED ROWS COUNT. They are still on this screen with their own badge,
+ * they still hold blogs, and they can be re-enabled. A name freed by
+ * disabling a row is a name that collides the day somebody turns it back on.
+ *
+ * @param {string} label
+ * @param {*} [exceptId]  the row being renamed, which may keep its own name
+ */
+async function labelTaken(label, exceptId = null) {
+  /* NOT TRIMMED HERE. Both callers trim before they get this far — the add
+   * form and the rename both store what they trimmed — so a second trim is
+   * a line no test can reach, which mutation testing duly proved by
+   * deleting it and changing nothing. The callers own it. */
+  const wanted = String(label || '');
+  if (!wanted) return null;
+
+  /* ESCAPED BEFORE IT BECOMES A PATTERN. An account named `Acme (US)` is
+   * ordinary and is also a regex with a group in it; `.*` as a label would
+   * match everything. A label is text an admin typed, so it is text. */
+  const escaped = wanted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const where = { label: { $regex: `^${escaped}$`, $options: 'i' } };
+
+  if (exceptId) where._id = { $ne: exceptId };
+
+  return CloudflareAccount.findOne(where);
+}
+
+/**
+ * The label, and only the label.
+ *
+ * WHY A ROUTE OF ITS OWN RATHER THAN A FIELD ON THE TOKEN FORM. Replacing a
+ * token makes a live call to Cloudflare and refuses the whole submission if
+ * the pair does not work. A rename needs none of that, and bundling them
+ * would mean a correct new name being rejected because an unrelated token
+ * check failed — or, worse, somebody pasting a token they did not mean to
+ * change because the form asked for one.
+ *
+ * NOTHING KEYS ON THE LABEL. Domain.account and BlogSite.cloudflareAccount
+ * hold the row's _id; credsForAccountId() reads the label only to name the
+ * account in an error. So this is as safe as a rename gets — which is worth
+ * stating, because a rename that silently re-pointed a customer's blogs
+ * would be the obvious fear.
+ *
+ * WHY IT EXISTS AT ALL — Edwin, 8 November. Eight accounts, most named after
+ * a domain or an email, in a dropdown labelled "Cloudflare account": it reads
+ * as a list of domains and is a list of accounts. He asked which one his new
+ * domain was in. The answer was that none of them were domains.
+ */
+router.post('/admin/blog-domains/accounts/:id/label', requireAdmin, async (req, res) => {
+  try {
+    const found = await CloudflareAccount.findById(req.params.id);
+
+    if (!found) {
+      return problem(res, 'That account is not here',
+        'It may have been removed already. Reload the screen.');
+    }
+
+    const label = String(req.body.label || '').trim().slice(0, 120);
+
+    if (!label) {
+      /* THE NAME IS HOW EVERY OTHER SCREEN IDENTIFIES THIS ROW — the
+       * dropdowns, the removal guard's sentence, the error credsFor()
+       * throws. An account with no name is a blank option in a list of
+       * eight. */
+      return problem(res, 'An account needs a name',
+        'It is what the dropdowns and the error messages call this row.');
+    }
+
+    if (label === found.label) {
+      return res.redirect('/admin/blog-domains');
+    }
+
+    /* `found._id` EXCLUDED, so correcting your own capitalisation is not a
+     * clash with yourself. Everything else on the screen counts — see
+     * labelTaken() for why a duplicate name is a wrong account, not an
+     * untidy one. */
+    const clash = await labelTaken(label, found._id);
+
+    if (clash) {
+      return problem(res, 'That name is already used',
+        `"${esc(clash.label)}" is already an account on this screen, and `
+        + `"${esc(found.label)}" is still called what it was. The name is all `
+        + 'the dropdowns show, so two rows sharing one means picking between '
+        + 'them by guesswork.');
+    }
+
+    await CloudflareAccount.updateOne({ _id: found._id }, { $set: { label } });
+
+    /* BOTH NAMES, because the old one is what anybody searching the log for
+     * this account will have. A rename that records only the new name makes
+     * every line before it unfindable. */
+    log.info('blogDomains.accountRenamed', {
+      requestId: req.id,
+      from: found.label,
+      to: label,
+      accountId: found.accountId,
+    });
+
+    res.redirect('/admin/blog-domains');
+
+  } catch (err) {
+    log.error('blogDomains.renameAccount.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1>We could not rename that account</h1>',
+    }));
+  }
+});
+
+/* -------------------------------------------------------------------------
  * Removing an account
  * ---------------------------------------------------------------------- */
 
 /**
  * What would be orphaned by removing this row.
  *
- * BOTH COLLECTIONS, BECAUSE BOTH REFER TO IT. A blog names the account it
- * deploys into; a pool domain names the account its zone is on. The domain
- * list on this very screen already renders "— account missing —" for a row
- * whose account went away, which is this bug's symptom written down months
- * before there was a way to cause it.
+ * EVERY COLLECTION THAT REFERS TO IT. A blog names the account it deploys
+ * into; a Cloudflare website names the same thing; a pool domain names the
+ * account its zone is on. The domain list on this very screen already
+ * renders "— account missing —" for a row whose account went away, which is
+ * this bug's symptom written down months before there was a way to cause it.
+ *
+ * CloudflareSite ADDED 7 NOVEMBER, WITH THE PRODUCT THAT NEEDED IT. Left
+ * out, this function would have gone on being right about blogs and domains
+ * and silently wrong about the new thing — reporting an account as unused
+ * while deleting it took down every website published through it, and the
+ * only sign would be credsForAccountId() throwing "a Cloudflare account that
+ * no longer exists" at the next publish.
+ *
+ *     A COUNT THAT DOES NOT COUNT THE NEWEST KIND READS EXACTLY
+ *     LIKE A COUNT OF ZERO.
  */
 async function referencesTo(account) {
-  const [blogs, domains] = await Promise.all([
+  const [blogs, sites, domains] = await Promise.all([
     BlogSite.countDocuments({ cloudflareAccount: account._id }),
+    CloudflareSite.countDocuments({
+      cloudflareAccount: account._id,
+      /* A REMOVED SITE IS NOT A REASON TO KEEP AN ACCOUNT. Its project and
+       * DNS record are already gone from Cloudflare and nothing will ever
+       * publish to it again — the row survives only so the hostname is not
+       * silently handed to somebody else. Counting it would make an account
+       * undeletable for ever after one deleted site. */
+      status: { $ne: 'removed' },
+    }),
     Domain.countDocuments({ account: account._id }),
   ]);
 
-  return { blogs, domains, total: blogs + domains };
+  return { blogs, sites, domains, total: blogs + sites + domains };
 }
 
 /** "2 blogs and 1 domain", or "1 blog", in the order they are counted. */
-function saysWhat({ blogs, domains }) {
+function saysWhat({ blogs, sites, domains }) {
   const parts = [];
 
   if (blogs) parts.push(`${blogs} ${1 === blogs ? 'blog' : 'blogs'}`);
+  if (sites) parts.push(`${sites} ${1 === sites ? 'website' : 'websites'}`);
   if (domains) parts.push(`${domains} ${1 === domains ? 'domain' : 'domains'}`);
 
-  return parts.join(' and ');
+  /* AN OXFORD-LESS JOIN FOR THREE, which is what "a, b and c" wants in the
+   * English this app is written in. With two it is unchanged. */
+  if (parts.length < 3) return parts.join(' and ');
+
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 function refusesRemoval(res, account, refs) {
@@ -946,9 +1218,9 @@ function refusesRemoval(res, account, refs) {
       <p class="lead">${esc(saysWhat(refs))} still point at it.</p>
       <p class="text-white-50">
         Removing it would leave them naming an account that no longer exists,
-        and a blog in that state cannot be deployed at all — not even to the
-        address it already answers on. Move them to another account first, or
-        leave this row in place and disable it.
+        and a blog or website in that state cannot be deployed at all — not
+        even to the address it already answers on. Move them to another
+        account first, or leave this row in place and disable it.
       </p>
       <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back</a>`,
   }));
@@ -1149,6 +1421,262 @@ router.post('/admin/blog-domains/site-domains', requireAdmin, async (req, res) =
     }));
   }
 });
+
+/* -------------------------------------------------------------------------
+ * Adding domains for CLOUDFLARE WEBSITES — several at a time
+ * ---------------------------------------------------------------------- */
+
+/** At most this many lines are read, so a pasted file cannot become a job. */
+const MAX_BATCH = 50;
+
+/**
+ * Split the textarea into normalised domains, keeping the order typed.
+ *
+ * NEVER THROWS AND NEVER SKIPS SILENTLY. Every line that is not a usable
+ * domain comes back in `bad` with its original text, so the answer page can
+ * show which lines were wrong rather than a count that does not add up.
+ * A paste out of a spreadsheet brings commas, quotes and blank lines with
+ * it, and a batch that quietly drops three of twelve rows is a batch
+ * somebody finds out about from an empty dropdown.
+ */
+function splitDomains(raw) {
+  const lines = String(raw == null ? '' : raw)
+    .split(/[\r\n,;]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const good = [];
+  const bad = [];
+  const seen = new Set();
+
+  for (const line of lines.slice(0, MAX_BATCH)) {
+    const domain = normaliseDomain(line);
+
+    if (!domain) { bad.push(line); continue; }
+
+    /* DEDUPED WITHIN THE BATCH. The same domain twice would otherwise be
+     * added once and then reported as "already in the pool" — technically
+     * true, and a confusing thing to read about a line you just typed. */
+    if (seen.has(domain)) continue;
+
+    seen.add(domain);
+    good.push(domain);
+  }
+
+  return { good, bad, overflow: lines.length > MAX_BATCH ? lines.length - MAX_BATCH : 0 };
+}
+
+router.post('/admin/blog-domains/cf-site-domains', requireAdmin, async (req, res) => {
+  try {
+    const { good, bad, overflow } = splitDomains(req.body.domains);
+    const accountId = String(req.body.account || '').trim();
+
+    if (!good.length) {
+      return problem(res, 'No usable domains in that',
+        'One registrable domain per line, such as acmesites.com — not a '
+        + 'subdomain, since the customer supplies the prefix.');
+    }
+
+    if (!accountId) {
+      return problem(res, 'Those domains have no account',
+        'Pick the Cloudflare account their zones are on.');
+    }
+
+    /* THE ACCOUNT HAS TO EXIST. A domain pointing at one that does not is a
+     * domain whose websites cannot deploy — and credsFor() would throw at
+     * publish time, a long way from the form that caused it. */
+    const account = await CloudflareAccount.findById(accountId);
+
+    if (!account) {
+      return problem(res, 'That Cloudflare account is not here',
+        'Add the account first, then the domains.');
+    }
+
+    /* ARE THE ZONES ACTUALLY ON THAT ACCOUNT? — the same question the blog
+     * form asks, for the same reason, asked ONCE for the whole batch.
+     *
+     * The single-domain form calls findZone(), which walks the labels one
+     * API request at a time. Twelve domains would be twelve walks. So this
+     * lists the account's zones once and matches locally — which is exactly
+     * what listZones()' own comment asked the next caller to do rather than
+     * write a third copy of.
+     *
+     * AND THE PAGE SIZE IS WHY THERE IS STILL A findZone() BELOW.
+     * listZones() asks for `per_page=50`, so an account with more zones
+     * than that returns a TRUNCATED list — and a domain missing from a
+     * truncated list is not a domain that is absent. Refusing on that would
+     * reject correct domains on exactly the accounts where the mistake
+     * costs most. So a miss is CONFIRMED one domain at a time before it is
+     * refused, and the fast path only ever saves work.
+     *
+     *     A LIST THAT MIGHT BE INCOMPLETE CANNOT BE USED
+     *     TO PROVE SOMETHING IS NOT IN IT.
+     *
+     * A FAILURE TO ASK IS NOT AN ANSWER. If the token cannot read zones,
+     * every domain is added and the page says the check could not run —
+     * refusing would block correct domains over a permissions problem on
+     * the account's own row, which is fixed two sections up this screen. */
+    let creds;
+    let unchecked = '';
+    let zoneNames = null;
+
+    try {
+      creds = await cloudflare.credsForAccountId(account._id);
+    } catch (err) {
+      unchecked = scrub(err.message, { account: account.accountId });
+    }
+
+    if (creds) {
+      const zones = await cfDeploy.listZones({ creds });
+
+      if (zones.ok) {
+        zoneNames = new Set(zones.names.map(n => n.toLowerCase()));
+      } else {
+        unchecked = scrub(zones.error || 'Cloudflare did not answer.',
+          { token: creds.token, account: creds.account });
+      }
+    }
+
+    const added = [];
+    const already = [];
+    const notOnAccount = [];
+
+    for (const domain of good) {
+      if (await Domain.findOne({ domain })) {
+        /* ONE ROW PER DOMAIN ACROSS ALL THREE PRODUCTS. Two rows for one
+         * domain pointing at different accounts is an ambiguity made
+         * permanent — and a domain already in the pool as a BLOG domain
+         * must not be quietly re-targeted here, which is the separation
+         * Edwin asked for. The row is left exactly as it is. */
+        already.push(domain);
+        continue;
+      }
+
+      /* THE FAST PATH, THEN THE CONFIRMATION. Present in the listed zones
+       * means present, full stop. Absent means absent-or-truncated, and
+       * only findZone() can tell those apart. */
+      if (zoneNames && !onAccount(domain, zoneNames)) {
+        const zone = await cfDeploy.findZone({ domain, creds });
+
+        if (!zone.ok && zone.noZone) {
+          log.info('blogDomains.cfSiteDomainNotOnAccount', {
+            requestId: req.id,
+            domain,
+            account: account.label,
+          });
+
+          notOnAccount.push(domain);
+          continue;
+        }
+
+        if (!zone.ok) {
+          /* The walk failed for a reason that is not "no zone" — a rate
+           * limit mid-batch, most likely. Not a refusal, and not silence
+           * either: the domain is added and the page says the check on it
+           * could not be completed. */
+          unchecked = scrub(zone.error || 'Cloudflare did not answer.',
+            { token: creds.token, account: creds.account });
+        }
+      }
+
+      await Domain.create({
+        domain,
+        account: account._id,
+        target: 'cfsite',
+        enabled: true,
+      });
+
+      added.push(domain);
+    }
+
+    log.info('blogDomains.cfSiteDomainsAdded', {
+      requestId: req.id,
+      account: account.label,
+      added: added.length,
+      already: already.length,
+      notOnAccount: notOnAccount.length,
+      unusable: bad.length,
+      zoneChecked: !unchecked,
+    });
+
+    /** A list of domains as a <ul>, or nothing at all when there are none. */
+    const listOf = (title, items, klass = 'text-white-50') => items.length
+      ? `<p class="${klass} mb-1">${esc(title)}</p>
+         <ul class="small ${klass}">${items.map(d => `<li><code>${esc(d)}</code></li>`).join('')}</ul>`
+      : '';
+
+    return send(res, page({
+      status: added.length ? 200 : 400,
+      title: added.length ? 'Domains added' : 'Nothing was added',
+      body: `<h1 class="h3">${added.length
+               ? `${added.length} domain${1 === added.length ? '' : 's'} added for websites`
+               : 'Nothing was added'}</h1>
+
+             ${added.length ? `<p class="lead">
+               Build Cloudflare Websites can publish to ${1 === added.length
+                 ? 'it' : 'them'} now. They do not appear in the blogs
+               dropdown.
+             </p>` : ''}
+
+             ${listOf('Added:', added)}
+             ${listOf('Already in the pool, left as they were:', already)}
+             ${listOf('Not a zone on that Cloudflare account, so not added:', notOnAccount, 'text-warning')}
+             ${listOf('Not usable as a domain:', bad, 'text-warning')}
+
+             ${overflow ? `<p class="text-warning small">
+               ${overflow} further line${1 === overflow ? '' : 's'} ${1 === overflow
+                 ? 'was' : 'were'} ignored — ${MAX_BATCH} at a time.
+             </p>` : ''}
+
+             ${unchecked ? `<div class="alert alert-warning mt-3">
+               <strong>The zone check could not be completed.</strong>
+               <div class="small mt-1">${esc(unchecked)}</div>
+               <div class="small mt-1">
+                 Anything added above is in the pool. If a zone turns out not
+                 to be on this account, Cloudflare will not write the DNS
+                 record and the subdomain will answer on nothing until
+                 somebody adds a CNAME by hand.
+               </div>
+             </div>` : ''}
+
+             <a href="/admin/blog-domains" class="btn btn-primary mt-3">Back to the pool</a>`,
+    }));
+
+  } catch (err) {
+    log.error('blogDomains.addCfSiteDomains.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1>We could not add those domains</h1>',
+    }));
+  }
+});
+
+/**
+ * Is this domain covered by one of the zone names we listed?
+ *
+ * WALKS UP THE LABELS, exactly as findZone() does, because a domain may be
+ * hosted as a zone at any level above it: `x.9-x.org` is covered by the
+ * `9-x.org` zone, and a plain `Set.has()` would miss it and then — worse —
+ * report a correct domain as not being on the account.
+ *
+ * TODAY THE LOOP RUNS EXACTLY ONCE, and that is worth saying rather than
+ * implying. normaliseDomain() above refuses anything but two labels, so
+ * every domain reaching here is already registrable and matches on the
+ * first candidate or not at all. The walk is here so that this function
+ * stays correct on the day that regex is loosened — the alternative is a
+ * `has()` that is right until then and silently refuses correct domains
+ * afterwards.
+ */
+function onAccount(domain, zoneNames) {
+  const labels = String(domain || '').trim().toLowerCase().split('.').filter(Boolean);
+
+  for (let i = 0; i <= labels.length - 2; i += 1) {
+    if (zoneNames.has(labels.slice(i).join('.'))) return true;
+  }
+
+  return false;
+}
 
 /* -------------------------------------------------------------------------
  * Adding a domain for BLOGS

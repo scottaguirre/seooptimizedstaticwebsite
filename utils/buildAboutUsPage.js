@@ -79,7 +79,21 @@ const  buildAboutUsPage =  async function (
             // Example reviews for the "What Customers Are Saying" section.
             // Defaults to null so every existing caller keeps working and
             // simply renders no section — same contract as caseStudy above.
-            reviews = null
+            reviews = null,
+
+            /* RE-RENDERING A SITE THAT ALREADY HAS ITS WORDS.
+             *
+             * An options object rather than a twelfth positional parameter,
+             * and last, so every existing caller is untouched. `reuse` is a
+             * utils/reuseModel.js resolver; absent, this page generates its
+             * sections exactly as it always did.
+             *
+             * THE FIVE BLOCKS ABOVE ARE ALREADY RESOLVED BY THE CALLER —
+             * runGeneration reads faqs, serviceCards, pricing, caseStudy and
+             * reviews out of the model before calling this. What is left for
+             * this parameter is the page's OWN copy, generated in here and
+             * nowhere else. */
+            { reuse = null } = {}
 
     ){
         // This file used to keep its own categoryMap, keyed on SLUGS while
@@ -215,8 +229,15 @@ const  buildAboutUsPage =  async function (
 
 
 
-            //Generate content for About Us page
-            const sections = await generateAboutUsContent(globalValues, indexInterlinks);
+            /* Generate content for About Us page — unless this site already
+             * has its own, in which case reuse.aboutContent() returns the
+             * sections the last build wrote, keyed the way this generator
+             * keys them. (The model calls the Near Me block `nearMe`;
+             * reuseModel maps it back to section5. See SECTION_ALIASES.) */
+            const storedAbout = reuse ? reuse.aboutContent() : null;
+
+            const sections = storedAbout
+                || await generateAboutUsContent(globalValues, indexInterlinks);
 
 
             if (!sections || !sections.section1 || !sections.section1.heading) {
@@ -237,7 +258,15 @@ const  buildAboutUsPage =  async function (
             // paragraph, turning the [text](url) the content generator
             // sometimes emits back into plain text. Guard the call away and
             // that markdown ships raw.
-            const sectionsWithLinks = injectIndexInterlinks(globalValues, pages, indexInterlinks, sections);
+            //
+            /* NOT OVER STORED COPY. The model is built from
+             * `sectionsWithLinks` further down this same file, so stored
+             * paragraphs already carry their <a href> tags and have already
+             * had their markdown stripped. Injecting again nests anchors
+             * inside anchors — which renders, and looks almost right. */
+            const sectionsWithLinks = storedAbout
+                ? sections
+                : injectIndexInterlinks(globalValues, pages, indexInterlinks, sections);
 
 
             // Alt text for images
@@ -479,8 +508,31 @@ const  buildAboutUsPage =  async function (
                         ? { trustPoints: sectionsWithLinks.section1.trustPoints.slice(0, 8) }
                         : {}
                 ),
+                /* THE LABELS WERE THE WRONG WAY ROUND, AND THIS IS THE SECOND
+                 * HALF OF A FIX THAT ONLY EVER LANDED ON THE FIRST.
+                 *
+                 * createAboutUsPrompt once disagreed with itself — its
+                 * numbered list said section2 was "What Makes Us Stand Out?"
+                 * while its JSON skeleton said section2 was the services
+                 * block. The model follows the skeleton, so services is
+                 * section2, and the prompt was corrected to match. See
+                 * test-business-shape.js, "the numbered list and the JSON
+                 * skeleton agree on section order".
+                 *
+                 * These two labels were left behind at the old reading. They
+                 * are the only human-readable name either block has, so for
+                 * months the WordPress export's admin panel has labelled the
+                 * services block "What Makes Us Stand Out" and vice versa.
+                 * Nothing broke, because nothing reads a label — and that is
+                 * exactly why it survived.
+                 *
+                 * It surfaced when the Cloudflare edit screen started showing
+                 * the label and the heading together: a grey "What Makes Us
+                 * Stand Out" sitting on top of a box reading "Plumbing
+                 * Services We Offer" looks like two blocks in the wrong
+                 * order, and was reported as one. */
                 CM.section({
-                    key: 'section2', label: 'What Makes Us Stand Out',
+                    key: 'section2', label: 'Services We Offer',
                     type: CM.SECTION_TYPES.TEXT_IMAGES,
                     source: sectionsWithLinks.section2 || {},
                     imageList: [
@@ -491,7 +543,7 @@ const  buildAboutUsPage =  async function (
                     ],
                 }),
                 CM.section({
-                    key: 'section3', label: 'Services We Offer',
+                    key: 'section3', label: 'What Makes Us Stand Out',
                     type: CM.SECTION_TYPES.TEXT_IMAGES,
                     source: sectionsWithLinks.section3 || {},
                     imageList: [

@@ -83,6 +83,11 @@ const { postUrl } = require('../utils/blog/render/postPage');
 const CloudflareAccount = require('../models/CloudflareAccount');
 const Domain = require('../models/Domain');
 
+/* WHICH ROWS OF THE SHARED POOL ARE BLOG ROWS. The pool holds three kinds
+ * now and this file wants one of them; see the note at the top of
+ * utils/domainPool.js for what asking for none of them used to do. */
+const { blogDomains } = require('../utils/domainPool');
+
 /* THE SAME CONVERSION THE SCHEDULER USES, not a second one. A start date
  * resolved here by different arithmetic than publishDates() resolves the
  * rest of the run by is a campaign whose first post is a day out from the
@@ -443,8 +448,23 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
 
     /* THE DOMAINS ON OFFER. Disabled ones are left out rather than shown
      * greyed: a client who has left is not a choice somebody should have
-     * to understand, and their existing blogs go on deploying regardless. */
-    const pool = await Domain.find({ enabled: true }).sort({ domain: 1 }).lean();
+     * to understand, and their existing blogs go on deploying regardless.
+     *
+     * blogDomains() RATHER THAN `{ enabled: true }` — 7 November, and it is
+     * a bug fix rather than a tidy-up.
+     *
+     * This query was correct the day it was written, when every row in the
+     * pool was a blog row. On 29 October `target: 'github'` arrived for
+     * Local Website Options, and from that moment this dropdown offered
+     * GitHub website domains too — rows with NO CLOUDFLARE ACCOUNT, so a
+     * blog created on one would pass every check on this page and then
+     * throw in credsFor() at publish time, naming an account id that is
+     * empty. Nothing announced it; it was found while adding a third kind.
+     *
+     * The filter also has to allow a MISSING `target`, because the field is
+     * newer than Edwin's first domains. The reasoning is in
+     * utils/domainPool.js, which is the only place it is written down. */
+    const pool = await Domain.find(blogDomains()).sort({ domain: 1 }).lean();
 
     /* NUMBERED FROM THE POSITION, NOT FROM THE BLOG. The sort above is
        newest-first, so the only thing that knows a row is "the fourth one"
@@ -561,8 +581,7 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
  * Creating one
  * ---------------------------------------------------------------------- */
 
-/**
- * A prefix typed by a customer, as a hostname label.
+/* A PREFIX TYPED BY A CUSTOMER, AS A HOSTNAME LABEL.
  *
  * IT BECOMES TWO THINGS — the first label of a hostname, and part of a
  * Cloudflare Pages project name — so anything that is not a plain DNS label
@@ -570,26 +589,12 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
  * address nobody expected. A dot is the dangerous one: "blog.news" would
  * quietly produce a third level nobody asked for.
  *
- * `www` IS REFUSED rather than normalised away. A blog at www.acmehvac.com
- * is a claim on the client's main site, not a blog, and the customer who
- * typed it meant something else.
- *
- * Returns '' for anything unusable.
- */
-function normalisePrefix(raw) {
-  const text = String(raw == null ? '' : raw).trim().toLowerCase();
-
-  if (!text || text.length > 63) return '';
-  if ('www' === text) return '';
-
-  /* A DNS LABEL: letters, digits and inner hyphens. No dots, no leading or
-   * trailing hyphen — the last of which Cloudflare accepts in a project
-   * name and refuses in a hostname, so it would fail halfway through
-   * creating a blog rather than before. */
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(text)) return '';
-
-  return text;
-}
+ * MOVED TO utils/dnsLabel.js ON 7 NOVEMBER, unchanged, when Cloudflare
+ * Websites needed the identical rule for the identical reason. The full
+ * reasoning — including why `www` is refused rather than normalised away —
+ * went with it. A second copy of a validator is a duplicate that says
+ * nothing when it drifts. */
+const { normalisePrefix } = require('../utils/dnsLabel');
 
 router.post('/static-blogs', requireAuth, async (req, res) => {
   try {
@@ -616,8 +621,17 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
      * deploy into OURS.
      *
      * The `enabled` check is the same door: a domain taken off the list
-     * when a client left must not come back through a replayed form. */
-    const pick = await Domain.findOne({ domain: String(req.body.domain || '').trim().toLowerCase() });
+     * when a client left must not come back through a replayed form.
+     *
+     * AND SO IS THE `target` CHECK — 7 November. The dropdown above now
+     * offers blog domains only, but a posted form is not the dropdown: a
+     * stale page, or anybody at all, can name a GitHub or Cloudflare
+     * Websites domain here. Filtering only the list would have made the
+     * mistake harder to reach by accident and no harder on purpose. */
+    const pick = await Domain.findOne({
+      domain: String(req.body.domain || '').trim().toLowerCase(),
+      ...blogDomains(false),
+    });
 
     if (!pick || false === pick.enabled) {
       return send(res, page({

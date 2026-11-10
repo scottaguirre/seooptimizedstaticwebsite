@@ -176,9 +176,16 @@
     </div>
 
     <div class="hero-spotlight__text">
-      <h1 class="hero-spotlight__title">{{PAGE_NAME}}</h1>
+      <!-- {{HERO_H1}} AND {{LOCATION}}, WHICH ARE THIS TEMPLATE'S NAMES.
+           This block was copied from template.html and arrived carrying that
+           file's names, {{PAGE_NAME}} and {{LOCATION_AREA}} — which
+           runGeneration.js fills and buildContactPage.js has never heard of.
+           Pick any other hero and the contact page builds; pick this one and
+           two placeholders reach the page. The other three heroes above use
+           the pair below. -->
+      <h1 class="hero-spotlight__title">{{HERO_H1}}</h1>
       <div class="line-divider"></div>
-      <h2 class="lead hero-spotlight__sub">{{LOCATION_AREA}}</h2>
+      <h2 class="lead hero-spotlight__sub">{{LOCATION}}</h2>
 
       <div class="hero-spotlight__actions">
         <a class="hero-spotlight__btn hero-spotlight__btn--solid" href="{{CONTACT_PAGE}}">

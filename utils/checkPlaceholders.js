@@ -188,4 +188,15 @@ function report(problems, filesScanned) {
   return lines.join('\n');
 }
 
-module.exports = { checkPlaceholders, PLACEHOLDER, SCANNED };
+/* withoutComments IS EXPORTED, AND NOT BECAUSE ANYTHING IN THE APP CALLS IT.
+ *
+ * test-template-placeholders.js reads the SOURCE templates and asks whether
+ * every placeholder in them is one its builder fills. To do that it has to
+ * ignore commented-out markup exactly as this file does — locationPagesTemplate
+ * has a disabled <img> carrying {{MAP_IMAGE}}, {{MAP_ALT}} and {{MAP_TITLE}},
+ * none of which any builder fills and none of which ever ships.
+ *
+ * A SECOND COMMENT-STRIPPER WOULD BE THE BUG THAT TEST EXISTS TO CATCH, one
+ * level up: two rules about what counts, drifting apart, with the symptom
+ * being a suite that passes while a build fails. One rule, exported. */
+module.exports = { checkPlaceholders, PLACEHOLDER, SCANNED, withoutComments };

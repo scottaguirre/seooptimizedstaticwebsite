@@ -92,8 +92,35 @@ const upload = multer({
   limits: {
     fileSize: 5 * 1024 * 1024,  // 5 MB — a logo is far smaller
     files: 4,                   // logo, favicon, and room to spare
-    fields: 200,                // the wizard posts a lot of fields
     fieldSize: 100 * 1024,      // 100 KB per field
+
+    /* THE FIELD COUNT IS A PAGE COUNT IN DISGUISE, which is why 200 was the
+     * wrong number and why it is written out here rather than left as a
+     * round figure somebody picked.
+     *
+     * The wizard posts ONE FIELD PER ROW the customer types:
+     *
+     *     pages[N][filename]          one per service page
+     *     global[locationPages][]     one per town
+     *
+     * plus the business details. So this is not a cap on how big a request
+     * may be — fieldSize does that — it is a cap on HOW MANY PAGES A SITE
+     * MAY HAVE. At 200 it refused any build past roughly 190 rows, about a
+     * 200-page site, and it refused it with multer's LIMIT_FIELD_COUNT:
+     * "Too many files or fields in that request", a sentence about form
+     * fields shown to somebody who was thinking about towns.
+     *
+     * 2500 covers a thousand service pages and a thousand towns at once,
+     * with the wizard's own fields and room over.
+     *
+     * STILL A LIMIT, AND DELIBERATELY. /generate is mounted behind
+     * requireAuth, so only a signed-in account reaches this at all; the
+     * number is here to stop a runaway script, not a stranger.
+     *
+     * NOT THE ONLY CEILING AT THAT SIZE. A thousand-page build is a long
+     * job and a large bill; this line only stops the form being refused
+     * before any of that is considered. */
+    fields: 2500,
   },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname || '').toLowerCase();

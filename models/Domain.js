@@ -60,10 +60,35 @@ const domainSchema = new mongoose.Schema({
    * 'cloudflare' IS THE DEFAULT, AND EVERY STORED ROW IS ONE. This field did
    * not exist until now, so an unset value has to mean the thing every
    * existing row already is — anything else silently re-targets the blogs.
+   *
+   * 'cfsite' ADDED 7 November, for Cloudflare Websites. Edwin, on why it is
+   * a third value rather than a reuse of the first: *"these domains will be
+   * separate than the ones for blogs. So the dropdown for these domains has
+   * to be separate from the dropdown of those for blogs."*
+   *
+   * THE NAME IS 'cfsite' AND NOT 'website' BECAUSE 'github' IS ALREADY A
+   * WEBSITE. Both of those serve generated sites; they differ in where. A
+   * value called `website` would read as the opposite of "blog" and leave
+   * the GitHub rows looking like some third thing.
+   *
+   * ADDING IT FOUND A BUG RATHER THAN CAUSING ONE. /static-blogs asked for
+   * `{ enabled: true }` and nothing else, so from the day `github` was
+   * added, GitHub domains have been sitting in the blog dropdown. A third
+   * value is only what made somebody look.
+   *
+   *     AN UNFILTERED QUERY DOES NOT MEAN "THE ORIGINAL KIND".
+   *     IT MEANS "AND WHATEVER GETS ADDED NEXT" — the same mistake
+   *     as an exclusion selector in CSS, in a different language.
+   *
+   * SO THE FILTERS LIVE IN ONE PLACE: utils/domainPool.js. In particular a
+   * filter for the DEFAULT has to allow a MISSING field — mongoose applies
+   * `default` on save, not retroactively, so every row written before 29
+   * October has no `target` key and `{ target: 'cloudflare' }` does not
+   * match it. Only `{ target: { $in: ['cloudflare', null] } }` does.
    */
   target: {
     type: String,
-    enum: ['cloudflare', 'github'],
+    enum: ['cloudflare', 'github', 'cfsite'],
     default: 'cloudflare',
     index: true,
   },

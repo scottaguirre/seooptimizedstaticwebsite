@@ -85,6 +85,11 @@
     <div class="col-lg-6 order-lg-1 text-hero">
       <h1 class="display-4 text-primary">{{BUSINESS_NAME}}</h1>
       <div class="line-divider"></div>
+      <!-- {{LOCATION_AREA}}, NOT {{LOCATION}} — the same slip as the contact
+           template's spotlight hero, found the same way. buildLocationPages.js
+           fills LOCATION_AREA, which the overlay, split and spotlight heroes
+           below all use; only this one said LOCATION, so any design mapped to
+           the standard hero shipped a placeholder on every location page. -->
       <h2 class="lead">{{LOCATION_AREA}}</h2>
     </div>
   </div> 
@@ -181,7 +186,7 @@
     </div>
 
     <div class="hero-spotlight__text">
-      <h1 class="hero-spotlight__title">{{PAGE_NAME}}</h1>
+      <h1 class="hero-spotlight__title">{{BUSINESS_NAME}}</h1>
       <div class="line-divider"></div>
       <h2 class="lead hero-spotlight__sub">{{LOCATION_AREA}}</h2>
 

@@ -389,5 +389,65 @@ test('and the stage line is still cleared when the batch finishes', function () 
     'nothing clears the page name after the location batch');
 });
 
+// ---------------------------------------------------------------------------
+section('Every job kind the runner can produce has a page to land on');
+// ---------------------------------------------------------------------------
+
+test('the progress page knows every kind the Job model accepts', function () {
+  /* A KIND IS ADDED IN FOUR PLACES AND FORGOTTEN IN ONE. The Job model's
+   * enum, the route that enqueues it, the generator registered with the
+   * runner, and the wording on this page. Miss the last and the job runs
+   * perfectly while the person watching it is told their WEBSITE IS BEING
+   * BUILT and sent to the dashboard when it finishes — the COPY table falls
+   * back to `site` for anything it does not recognise, so nothing breaks and
+   * nothing is right.
+   *
+   * Read off the model rather than listed here, so adding a kind without
+   * giving it wording fails at this line instead of in front of a
+   * customer. */
+  const Job = require('./models/Job');
+  const kinds = Job.schema.path('kind').enumValues;
+
+  const table = routeSrc.slice(routeSrc.indexOf('const COPY = {'),
+                               routeSrc.indexOf('const copy = COPY['));
+
+  assert.ok(table, 'could not find the wording table in routes/jobRoute.js');
+
+  for (const kind of kinds) {
+    assert.ok(new RegExp(`\\b${kind}\\s*:`).test(table),
+      `job kind '${kind}' has no wording on the progress page, so it would be `
+      + 'described as a website build');
+  }
+});
+
+test('and every kind has a generator registered for it', function () {
+  /* WORSE THAN FAILING: NEVER RUNNING. claimNextJob only claims kinds this
+   * process has a generator for — a guard that exists so a half-deployed
+   * instance does not grab work it cannot do. A kind in the model with
+   * nothing registered therefore queues jobs that are never claimed, never
+   * fail, never time out and never appear anywhere. The person watches a
+   * progress page that will say "queued" until they give up.
+   *
+   * Read off the model again, so the two halves cannot drift. */
+  const Job = require('./models/Job');
+  const serverSrc = code('./server.js');
+
+  for (const kind of Job.schema.path('kind').enumValues) {
+    assert.match(serverSrc, new RegExp(`registerGenerator\\(\\s*'${kind}'`),
+      `job kind '${kind}' has no generator registered in server.js, so a job of `
+      + 'that kind would sit queued for ever without being claimed');
+  }
+});
+
+test('and a re-render shows no progress bar, because it can count nothing', function () {
+  /* A re-render writes its pages from a stored recipe in one pass. A bar
+   * claiming a total it cannot measure stalls at a number and looks stuck,
+   * which is worse than no bar at all. */
+  const line = routeSrc.slice(routeSrc.indexOf('const indeterminate ='));
+
+  assert.match(line.slice(0, 200), /cfedit/,
+    'a re-render is given a progress bar it cannot fill');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
