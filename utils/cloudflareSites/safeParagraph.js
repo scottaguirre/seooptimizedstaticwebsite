@@ -286,6 +286,35 @@ function safeTrustPoint(text) {
 }
 
 /**
+ * A review's body, or the name above it.
+ *
+ * THE SAME RULE AS A TRUST POINT, AND ITS OWN FUNCTION FOR THE SAME REASON:
+ * which end escapes is a fact about THIS field's renderers, so the answer is
+ * recorded beside the field rather than borrowed from a neighbour that
+ * happens to agree today.
+ *
+ * Both of this one's renderers escape on the way OUT —
+ *
+ *     buildReviewsSection()     escapeHtml(r.text) and escapeHtml(r.name)
+ *     the exported PHP theme    esc_html( $row['text'] )
+ *
+ * — so escaping here would double it, and an owner pasting a real review
+ * that says "Fitted a new heater & cleaned up after" would read
+ * "&amp; cleaned up" on their own published page.
+ *
+ * WHITESPACE COLLAPSED, NEWLINES INCLUDED, because the card renders one <p>.
+ * A review pasted out of Google with a blank line in the middle would
+ * otherwise keep a break the markup has nowhere to put.
+ *
+ * AN EMPTY RESULT IS MEANINGFUL FOR THE BODY and is how a review is removed:
+ * contentModel.reviewsSection() and buildReviewsSection both drop a row with
+ * no text. It is NOT meaningful for the name — see applyReviews().
+ */
+function safeReview(text) {
+  return String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+}
+
+/**
  * The five entities escapeAll() produces, turned back — IN ONE PASS.
  *
  * WHY NOT unescapeEntities(), WHICH IS RIGHT ABOVE AND LOOKS IDENTICAL. That
@@ -378,7 +407,7 @@ function forEditing(text) {
 }
 
 module.exports = {
-  safeParagraph, safeParagraphs, safeHeading, safeTrustPoint, forEditing,
+  safeParagraph, safeParagraphs, safeHeading, safeTrustPoint, safeReview, forEditing,
   safeHref, escapeAll, unescapeEntities,
   ALLOWED_SCHEMES, ESCAPED_ANCHOR,
 };

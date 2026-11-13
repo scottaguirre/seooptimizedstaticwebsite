@@ -297,19 +297,45 @@ test('the Book Appointment button resolves through fillLegalLinks', () => {
     'a design sample links at a contact page it never builds');
 });
 
-test('ONLY STYLE7 HAS CSS FOR IT', () => {
-  /* The whole mechanism rests on this. If a second stylesheet started styling
-   * .hero-spotlight, the stripper would still remove the block for that
-   * design and the CSS would be dead — or worse, somebody would map that
-   * design to spotlight and change what an existing customer's site looks
-   * like. */
+test('A STYLESHEET STYLES .hero-spotlight ONLY IF ITS DESIGN IS MAPPED TO IT', () => {
+  /* THIS READ "ONLY STYLE7 HAS CSS FOR IT" until style8 arrived — a copy of
+   * style7, mapped to spotlight like it. The old assertion was `has === (file
+   * === 'style7.css')`, which failed on style8 for having exactly the CSS it
+   * is supposed to have.
+   *
+   *     THE RULE WAS NEVER "ONE DESIGN". IT WAS "CSS AND MAPPING AGREE."
+   *
+   * Both failures the original guarded against are still caught, and now for
+   * every design rather than for one:
+   *
+   *   styles it, not mapped to it   the stripper removes the block for that
+   *                                 design, so the CSS is dead weight
+   *   mapped to it, does not style  the block survives and renders unstyled,
+   *                                 which is the worse of the two
+   *
+   * And the third worry in the original comment — somebody mapping a design
+   * to spotlight and changing an existing customer's site — is not something
+   * a test can see. It is a review question, and it stays one. */
+  /* TWO LISTS BUILT FROM DIFFERENT PLACES, COMPARED. A per-file
+   * `assert(has === mapped)` says the same thing and is one keystroke from
+   * saying nothing — `mapped = has` passes for every input, and mutation
+   * testing found exactly that. Deriving each side separately and comparing
+   * the sets cannot be collapsed that way. */
   const dir = path.join(__dirname, 'src', 'css', 'themes');
 
-  for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.css'))) {
-    const has = fs.readFileSync(path.join(dir, file), 'utf8').includes('.hero-spotlight');
-    assert.strictEqual(has, file === 'style7.css',
-      `${file} ${has ? 'styles' : 'does not style'} .hero-spotlight`);
-  }
+  const stylesSpotlight = fs.readdirSync(dir)
+    .filter(f => f.endsWith('.css'))
+    .filter(f => fs.readFileSync(path.join(dir, f), 'utf8').includes('.hero-spotlight'))
+    .map(f => f.replace(/\.css$/, ''))
+    .sort();
+
+  const mappedToSpotlight = Object.keys(HERO_LAYOUT)
+    .filter(key => 'spotlight' === HERO_LAYOUT[key])
+    .sort();
+
+  assert.deepStrictEqual(stylesSpotlight, mappedToSpotlight,
+    'the designs whose stylesheet contains .hero-spotlight and the designs '
+    + 'mapped to spotlight in HERO_LAYOUT are not the same list');
 });
 
 test('and style7.css exists where resolveThemeCss will look for it', () => {

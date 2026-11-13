@@ -671,7 +671,25 @@ router.post('/static-blogs', requireAuth, async (req, res) => {
       }));
     }
 
-    const limit = Number(process.env.BLOG_MAX_SITES_PER_USER) || 50;
+    /* A RUNAWAY GUARD, NOT A PRODUCT LIMIT, and the difference matters
+     * because it was read as one.
+     *
+     * The oldest of the three copies, in routes/blogSitesRoute.js, says what
+     * it is for: "a cap, because nothing else limits this and a loop against
+     * the form would otherwise fill the collection." The two later copies
+     * took the number and left the sentence behind, so a bare `|| 50` sat
+     * here looking like a decision about how many sites a customer may have.
+     * It is not. Nothing about 50 was ever chosen.
+     *
+     *     A NUMBER WITH NO REASON BESIDE IT GETS READ AS A REASON.
+     *
+     * 300 rather than 50 because the guard has to be past what a person
+     * reaches by hand and nowhere near what a loop reaches in seconds — and
+     * at 50 it was the FIRST ceiling hit, in front of the real one.
+     *
+     * Counted across BlogSite, so the two entry points that create one —
+     * here and the other route sharing this variable — draw on one cap. */
+    const limit = Number(process.env.BLOG_MAX_SITES_PER_USER) || 300;
     const existing = await BlogSite.countDocuments({
       user: req.user._id,
       status: { $ne: 'revoked' },

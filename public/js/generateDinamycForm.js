@@ -9,12 +9,17 @@
     { key: 'style4', label: 'Design 4', preview: '/previews/style4.png' },
     { key: 'style5', label: 'Design 5', preview: '/previews/style5.png' },
     { key: 'style6', label: 'Design 6', preview: '/previews/style6.png' },
-    { key: 'style7', label: 'Design 7', preview: '/previews/style7.png' }
-    // ADDING ONE IS TWO FILES, NOT ONE. A key here offers the tile; the key
+    { key: 'style7', label: 'Design 7', preview: '/previews/style7.png' },
+    { key: 'style8', label: 'Design 8', preview: '/previews/style8.png' }
+    // ADDING ONE IS THREE FILES, NOT ONE. A key here offers the tile; the key
     // also has to exist in HERO_LAYOUT in utils/stripUnusedHero.js, which
-    // decides what that tile actually renders. When they disagree nothing
-    // throws — the page ships two heroes and two <h1>s, looking like the
-    // stylesheet failed to load. test-hero-layouts.js compares the two lists.
+    // decides what that tile actually renders, and in THEME_INK in
+    // utils/wordmarkLogo.js, which decides what colour a generated logo is
+    // drawn in. When any of them disagree nothing throws — a missing
+    // HERO_LAYOUT entry ships two heroes and two <h1>s, looking like the
+    // stylesheet failed to load, and a missing THEME_INK entry draws the
+    // logo in the fallback dark on a header that may well be dark too.
+    // test-hero-layouts.js and test-wordmark-logo.js compare the lists.
   ];
 
   
@@ -69,6 +74,7 @@
   const STATE_OWNED_FIELDS = [
     'global[styleKey]',
     'global[logoType]',
+    'global[logoSource]',
     'global[businessType]',
     'global[siteMode]',
   ];
@@ -301,6 +307,8 @@
         styleKey: state.styleKey,
         businessType: state.businessType,
         logoType: state.logoType,
+        logoSource: state.logoSource,
+        logoShapeTouched: state.logoShapeTouched,
         mainFormSnapshot: state.mainFormSnapshot,
         pages: currentPageNames(),
         addLocations: state.addLocations,
@@ -358,6 +366,10 @@
     state.styleKey = draft.styleKey || state.styleKey;
     state.businessType = draft.businessType || '';
     state.logoType = draft.logoType || state.logoType;
+    // A draft saved before wordmarks existed has no logoSource and meant
+    // 'upload', which is what the || falls through to.
+    state.logoSource = draft.logoSource === 'wordmark' ? 'wordmark' : 'upload';
+    state.logoShapeTouched = !!draft.logoShapeTouched;
     state.mainFormSnapshot = draft.mainFormSnapshot || null;
     state.pages = Array.isArray(draft.pages) ? draft.pages : [];
     state.addLocations = draft.addLocations !== false;
@@ -580,7 +592,21 @@
     siteMode: 'rankfast',
     styleKey: 'style',
     businessType: '',
-    logoType: 'square',     // 'square' | 'rect'
+    logoType: 'square',     // 'square' | 'rect' | 'wide'
+
+    // 'upload' — the customer has a logo file.
+    // 'wordmark' — they have none, and the server draws their business name
+    // instead. Nothing is uploaded in that case, so all three "must have a
+    // logo" gates (this step's Next, the locations step, the submit handler)
+    // read this before they refuse.
+    logoSource: 'upload',
+
+    // Whether the customer has picked a shape themselves. Switching to a
+    // wordmark moves the default to Wide, because a long business name in a
+    // square box renders tiny — but only while the shape is still OURS to
+    // choose. Overriding a deliberate choice is a bug, not a convenience.
+    logoShapeTouched: false,
+
     logoFile: null,
     logoPreviewURL: '',
     mainFormSnapshot: null, // snapshot of main form fields
@@ -1119,7 +1145,7 @@
 
     const header = el('div', { class: 'd-flex align-items-center justify-content-between mb-3' });
     header.innerHTML = `
-      <h4 class="m-0"><legend class="form-label mb-2">${stepNumber(STEP.LOGO)}. Choose logo shape &amp; upload</legend></h4>
+      <h4 class="m-0"><legend class="form-label mb-2">${stepNumber(STEP.LOGO)}. Your logo</legend></h4>
       <span class="badge ${BADGE_CLASS}">Business Type: ${escapeHtml(state.businessType)}</span>
     `;
     container.appendChild(header);
@@ -1157,6 +1183,24 @@
           <div class="form-text" id="logoWideHint"></div>
         </div>
 
+        <!-- The alternative to uploading, UNDER the file box rather than in
+             front of it. An earlier version put two cards above the shape
+             radios and made the whole step about a question most customers
+             do not have: they came here with a logo. This is one line that
+             the people without one will find, and everyone else reads past.
+
+             ONE LINE, AND NOTHING UNDER IT. There was a paragraph explaining
+             the typeface, the colour, the shape and where the preview would
+             appear. The option says what it does; the review step shows the
+             result before any money is spent. -->
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="radio" name="logoSourceStep"
+                 id="logoSourceWordmark" value="wordmark" ${state.logoSource==='wordmark'?'checked':''}>
+          <label class="form-check-label" for="logoSourceWordmark">
+            Let the app create a logo for you from your business name
+          </label>
+        </div>
+
         <div id="logoPreview" class="mt-3" style="display:none;">
           <div class="form-text mb-1"><strong></strong> <span id="logoFileName"></span></div>
           <img id="logoImgPreview" alt="Logo preview" style="max-height:120px; max-width:260px; display:block;">
@@ -1166,7 +1210,17 @@
     container.appendChild(wrap);
 
     const radios = container.querySelectorAll('input[name="logoTypeStep"]');
-    radios.forEach(r => r.addEventListener('change', () => applyLogoTypeForStep(container, r.value)));
+    radios.forEach(r => r.addEventListener('change', () => {
+      // A `change` event only fires for a real interaction — setting .checked
+      // from script does not raise one — so reaching here IS the customer
+      // choosing a shape, and the wordmark default must stop overriding it.
+      state.logoShapeTouched = true;
+      applyLogoTypeForStep(container, r.value);
+    }));
+
+    container.querySelectorAll('input[name="logoSourceStep"]').forEach(r => {
+      r.addEventListener('change', () => applyLogoSource(r.value));
+    });
 
     // Wrapper + file input for each logo shape, so adding a shape means
     // adding one entry rather than another branch.
@@ -1180,13 +1234,61 @@
       if (!LOGO_SHAPES[type]) type = 'square';
       state.logoType = type;
 
+      /* THE FILE BOX STAYS, EVEN WHEN THE NAME IS BEING DRAWN.
+       *
+       * It was hidden for one version, and that made the step a trap: the
+       * wordmark option is a SINGLE radio, which cannot be clicked off, and
+       * choosing a file is the only thing that turns it back off — so hiding
+       * the file box removed the only way out of the option. Tick it by
+       * mistake with no logo to hand and the step could not be undone
+       * without reloading the page and losing the form.
+       *
+       * Left visible it costs nothing: the hint under the radio already says
+       * no file is needed, and picking one is a clear enough statement of
+       * "actually, I do have a logo" to switch back on. */
       Object.entries(LOGO_SHAPES).forEach(([shape, sel]) => {
         const wrap = container.querySelector(sel.wrap);
         if (wrap) wrap.style.display = shape === type ? '' : 'none';
         container.querySelector(sel.input)?.classList.remove('is-invalid');
       });
     }
-    applyLogoTypeForStep(container, state.logoType);
+
+    /**
+     * Switch between uploading a file and drawing the name.
+     *
+     * The file the customer may already have picked is KEPT in state rather
+     * than cleared, so flipping to the wordmark and back does not make them
+     * find it again. It simply stops being read: the submit handler mirrors
+     * state.logoFile into the upload field only on the 'upload' branch, so
+     * nothing is posted that contradicts the choice.
+     */
+    function applyLogoSource(value) {
+      const drawing = String(value) === 'wordmark';
+      state.logoSource = drawing ? 'wordmark' : 'upload';
+
+      // The radio is SET here as well as read from, because this is called
+      // programmatically too — by the file inputs above, which turn it off.
+      const sourceRadio = container.querySelector('#logoSourceWordmark');
+      if (sourceRadio) sourceRadio.checked = drawing;
+
+      // Wide, because a business name of any length in a square box has to
+      // shrink to fit. Only while the shape is still ours to choose.
+      if (drawing && !state.logoShapeTouched) {
+        state.logoType = 'wide';
+        const wideRadio = container.querySelector('#logoTypeWide');
+        if (wideRadio) wideRadio.checked = true;
+      }
+
+      const preview = container.querySelector('#logoPreview');
+      if (preview && drawing) preview.style.display = 'none';
+      if (preview && !drawing && state.logoFile && state.logoPreviewURL) {
+        preview.style.display = 'block';
+      }
+
+      applyLogoTypeForStep(container, state.logoType);
+    }
+
+    applyLogoSource(state.logoSource);
 
     const squareInput = container.querySelector('#logoSquare');
     const rectInput   = container.querySelector('#logoRect');
@@ -1197,6 +1299,23 @@
     const previewWrap = container.querySelector('#logoPreview');
     const previewImg  = container.querySelector('#logoImgPreview');
     const previewName = container.querySelector('#logoFileName');
+
+    /* CHOOSING A FILE IS HOW YOU GO BACK.
+     *
+     * There is one radio, not a pair, so nothing else can unselect it — a
+     * radio cannot be clicked off. Picking a file is the only other thing
+     * this step accepts, and it says plainly "I have a logo", so it turns
+     * the option off and restores the upload branch.
+     *
+     * A listener of its own rather than three lines added to the three
+     * change handlers below: those are about which SHAPE was chosen, and a
+     * fourth copy of this in each of them is three places to forget. */
+    [squareInput, rectInput, wideInput].forEach(input => {
+      input?.addEventListener('change', (e) => {
+        if (!e.target.files?.[0]) return;
+        applyLogoSource('upload');
+      });
+    });
 
     // restore chosen file if returning to this step
     if (state.logoFile) {
@@ -1266,6 +1385,13 @@
       nextText: 'Continue',
       onBack: () => go(STEP.TYPE),
       onNext: () => {
+        // Nothing to validate when the server draws it: there is no file, and
+        // the business name this needs is two steps away.
+        if (state.logoSource === 'wordmark') {
+          go(STEP.DESIGN);
+          return;
+        }
+
         const activeEl = state.logoType === 'square' ? squareInput
                        : state.logoType === 'wide'   ? wideInput
                        : rectInput;
@@ -2683,15 +2809,24 @@
       // there is nothing to read out of the DOM for them here.
 
       // ensure logo mirrored to backend field name="global[logo]"
-      if (!state.logoFile) {
-        showAlert(container, 'Please choose a logo to continue.');
-        go(STEP.LOGO);
-        return;
+      //
+      // A WORDMARK HAS NO FILE AND MUST NOT BE SENT ONE. The upload field is
+      // emptied rather than left alone, because the customer may have picked
+      // a file and then changed their mind — and runGeneration prefers an
+      // uploaded logo over drawing one, so a stale file would quietly win
+      // over the choice they actually made.
+      if (state.logoSource === 'wordmark') {
+        hiddenLogoInput.files = new DataTransfer().files;
+      } else {
+        if (!state.logoFile) {
+          showAlert(container, 'Please choose a logo to continue.');
+          go(STEP.LOGO);
+          return;
+        }
+        const dt2 = new DataTransfer();
+        dt2.items.add(state.logoFile);
+        hiddenLogoInput.files = dt2.files;
       }
-      // ===== ensure logo mirrored to backend field name="global[logo]" =====
-      const dt2 = new DataTransfer();
-      dt2.items.add(state.logoFile);
-      hiddenLogoInput.files = dt2.files;
 
       // ===== inject hidden inputs for pages/locations (your existing code) =====
       // Clean any old mirrors (defense)
@@ -2753,6 +2888,17 @@
       }
 
       logoTypeHidden.value = state.logoType; // "square" | "rect" | "wide"
+
+      // === Inject logoSource hidden field ===
+      // Travels with logoType because the server needs both to know what to
+      // draw and how big: see the wordmark branch in utils/runGeneration.js.
+      form.querySelectorAll('input[name="global[logoSource]"]').forEach(n => n.remove());
+      const logoSourceEarly = document.createElement('input');
+      logoSourceEarly.type = 'hidden';
+      logoSourceEarly.name = 'global[logoSource]';
+      logoSourceEarly.classList.add('js-hidden-mirror', 'js-hidden-logo-shape');
+      logoSourceEarly.value = state.logoSource; // "upload" | "wordmark"
+      form.appendChild(logoSourceEarly);
 
       // === Inject styleKey here too ===
       // The submit handler also sets this, but injecting it now means the
@@ -3818,6 +3964,51 @@
     host.appendChild(warning);
   }
 
+  /**
+   * The wordmark as the site will actually ship it.
+   *
+   * SERVER-RENDERED ON PURPOSE. Drawing it here in a canvas with a web font
+   * would be faster and would show the customer a picture the build does not
+   * produce — different font file, different hinting, different idea of where
+   * the baseline sits. /logo-preview runs the generator itself, so what is
+   * approved here is what gets built.
+   *
+   * This is also the first step at which the preview is POSSIBLE: the logo
+   * step comes before the business details, so until now there has been no
+   * name to draw.
+   *
+   * No cache-buster. The name, the shape and the theme are all in the query
+   * string, so changing any of them changes the URL and the browser fetches
+   * again by itself.
+   */
+  function wordmarkPreviewHtml() {
+    const name = snapshotValue('businessName');
+
+    if (!name) {
+      return '<div class="form-text mt-2">Add the business name and this will show your logo.</div>';
+    }
+
+    /* WHICH ONE OF THESE COLOURS IT DEPENDS ON THE MODE.
+     *
+     * Local Website Options has no Design & Theme step, so state.styleKey
+     * there is a value nobody chose and the build discards. Its colour comes
+     * from the STRUCTURE behind the Design dropdown, and the endpoint
+     * resolves that through the same designs.js call the build makes — an
+     * empty value included, which both sides read as Ledger.
+     *
+     * Sending the theme anyway would be worse than useless: it would look
+     * like an answer. */
+    const q = new URLSearchParams(isLocalOptions()
+      ? { name, shape: state.logoType, design: snapshotValue('design') }
+      : { name, shape: state.logoType, theme: state.styleKey });
+
+    // The header colour is painted into the PNG by the endpoint, so there is
+    // no background here — a white one would hide a white wordmark, which is
+    // the exact failure the backdrop exists to prevent.
+    return `<img src="/logo-preview?${q.toString()}" alt="Logo preview" class="mt-3"
+                 style="max-height:80px;max-width:200px;padding:0;border-radius:6px;">`;
+  }
+
   function renderReviewStep() {
     container.innerHTML = '';
 
@@ -3859,13 +4050,19 @@
         reviewRow('Category', state.businessType, { strong: true }),
       ].join(''), STEP.TYPE),
 
-      reviewCard('Logo', [
-        reviewRow('Shape', logoShapeLabel(state.logoType)),
-        reviewRow('File', state.logoFile ? (state.logoFile.name || 'selected') : ''),
-      ].join('') + (state.logoPreviewURL
-        ? `<img src="${state.logoPreviewURL}" alt="Logo preview" class="mt-3"
-               style="max-height:80px;max-width:200px;background:#fff;padding:6px;border-radius:6px;">`
-        : ''), STEP.LOGO),
+      reviewCard('Logo', (state.logoSource === 'wordmark'
+        ? [
+            reviewRow('Source', 'Drawn from your business name'),
+            reviewRow('Shape', logoShapeLabel(state.logoType)),
+          ].join('') + wordmarkPreviewHtml()
+        : [
+            reviewRow('Shape', logoShapeLabel(state.logoType)),
+            reviewRow('File', state.logoFile ? (state.logoFile.name || 'selected') : ''),
+          ].join('') + (state.logoPreviewURL
+            ? `<img src="${state.logoPreviewURL}" alt="Logo preview" class="mt-3"
+                   style="max-height:80px;max-width:200px;background:#fff;padding:6px;border-radius:6px;">`
+            : '')
+      ), STEP.LOGO),
 
       /* NO DESIGN CARD WHERE THERE WAS NO DESIGN STEP. The card carries an
        * edit link to STEP.DESIGN; go() would step straight past it, so the
@@ -4104,6 +4301,8 @@
     state.logoPreviewURL = '';
     state.logoFile = null;
     state.logoType = 'square';
+    state.logoSource = 'upload';
+    state.logoShapeTouched = false;
 
     // Clear visible file inputs if they’re present in the current step
     const square = container?.querySelector('#logoSquare');
@@ -4175,8 +4374,10 @@
 
     // Defensive guard if someone submits outside the final step
     form.addEventListener('submit', (e) => {
-      // Guard: must have a logo
-      if (!state.logoFile) {
+      // Guard: must have a logo — unless the server is drawing one, in which
+      // case there is nothing to guard and nothing the customer could fix by
+      // being sent back to this step.
+      if (state.logoSource !== 'wordmark' && !state.logoFile) {
         e.preventDefault();
         e.stopImmediatePropagation(); // stop spinner.js submitting anyway
         go(STEP.LOGO);
@@ -4376,10 +4577,38 @@
       state.addLocations = addLoc;
       state.locations = locVals;
     
-      // Mirror logo into the hidden input the backend expects
-      const dt = new DataTransfer();
-      dt.items.add(state.logoFile);
-      hiddenLogoInput.files = dt.files;
+      /* Mirror logo into the hidden input the backend expects.
+       *
+       * THE FOURTH PLACE THAT HAD TO LEARN ABOUT THE WORDMARK, and the one
+       * that was missed. The three "must have a logo" GATES were taught to
+       * let a wordmark past; this is not a gate, it is the line that runs
+       * afterwards, and `dt.items.add(null)` throws:
+       *
+       *     TypeError: Failed to execute 'add' on 'DataTransferItemList':
+       *     parameter 1 is not of type 'File'.
+       *
+       * NOTHING CAUGHT IT AND NOTHING LOOKED LIKE IT. A listener that throws
+       * does not stop the listeners registered after it, so spinner.js ran
+       * exactly as usual — over a form that had just lost every hidden field
+       * this handler had not reached yet: siteMode, styleKey, businessType,
+       * logoType, logoSource and the whole main-form snapshot.
+       *
+       * So the credit pre-check read no siteMode, defaulted to 'lead', found
+       * no service pages, and priced the site at the 200-credit base fee with
+       * nothing on top. checkCredits answers ok:false for a lead site with no
+       * pages — which spinner.js shows as "Not Enough Credits".
+       *
+       *     This website needs 200 credits and you have 13100.
+       *
+       * A money error, on the review step, for a customer with sixty times
+       * the credits — and not one word of it was about money. */
+      if (state.logoSource === 'wordmark') {
+        hiddenLogoInput.files = new DataTransfer().files;
+      } else {
+        const dt = new DataTransfer();
+        dt.items.add(state.logoFile);
+        hiddenLogoInput.files = dt.files;
+      }
     
       // Ensure we have the latest snapshot of the Main Form (includes hours)
       if (!state.mainFormSnapshot) {
@@ -4400,6 +4629,15 @@
       logoTypeHidden.classList.add('js-hidden-mirror', 'js-hidden-logo-shape');
       logoTypeHidden.value = state.logoType; // "square" | "rect" | "wide"
       form.appendChild(logoTypeHidden);
+
+      // === Inject logoSource hidden field (safety for Enter/other submits) ===
+      form.querySelectorAll('input[name="global[logoSource]"]').forEach(n => n.remove());
+      const logoSourceHidden = document.createElement('input');
+      logoSourceHidden.type = 'hidden';
+      logoSourceHidden.name = 'global[logoSource]';
+      logoSourceHidden.classList.add('js-hidden-mirror', 'js-hidden-logo-shape');
+      logoSourceHidden.value = state.logoSource; // "upload" | "wordmark"
+      form.appendChild(logoSourceHidden);
 
 
 

@@ -196,6 +196,7 @@ NODE_SUITES=( \
   test-local-options-anvil.js \
   test-local-options-industry.js \
   test-rich-text.js \
+  test-wordmark-logo.js \
 )
 
 # THE SUITES THAT RUN SOMEWHERE OTHER THAN THE LOOP ABOVE.

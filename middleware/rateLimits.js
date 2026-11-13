@@ -271,10 +271,30 @@ const keywordVolumesLimiter = rateLimit({
   message: (req, res) => retryJson(req, res, 'keyword lookups'),
 });
 
+/**
+ * The wordmark preview on the review step.
+ *
+ * SPENDS NOTHING BUT CPU — no model call, no third-party balance, no disk.
+ * It rasterises a few hundred glyph outlines and answers. So the limit is
+ * generous on purpose: it exists to stop a loop hammering sharp, not to
+ * ration a resource, and a customer stepping back and forth between Review
+ * and the design tiles to compare themes is EXACTLY the behaviour this
+ * feature was built to encourage. A tight limit here would punish the one
+ * use the preview has.
+ */
+const logoPreviewLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.LOGO_PREVIEW_RATE_LIMIT) || 200,
+  keyGenerator: userOrIp,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 module.exports = {
   authLimiter,
   emailLimiter,
   generateLimiter,
+  logoPreviewLimiter,
   generalLimiter,
   blogApiLimiter,
   blogActivateLimiter,

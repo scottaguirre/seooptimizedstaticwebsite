@@ -122,7 +122,7 @@ test('AND NO STORED SECTION IS READ WITHOUT ITS GATE', () => {
 
   assert.ok(decls.length >= 5, `only ${decls.length} stored lookups found`);
 
-  /* THE TWO THAT ARE DELIBERATELY UNGATED, with the reason, because a bare
+  /* THE ONES THAT ARE DELIBERATELY UNGATED, with the reason, because a bare
    * allow-list would quietly accept the next one too.
    *
    *   storedContent  service-page copy. Every service page has copy; there
@@ -134,8 +134,21 @@ test('AND NO STORED SECTION IS READ WITHOUT ITS GATE', () => {
    *                  There is no gate to sit behind. (This entry is here
    *                  because the test demanded it, which is the check
    *                  working: it made somebody go and look rather than
-   *                  assume.) */
-  const UNGATED = ['storedContent', 'storedFaqs', 'storedCards'];
+   *                  assume.)
+   *   storedLogoSource
+   *                  NOT A SECTION AT ALL. A two-value label — 'upload' or
+   *                  'wordmark' — recording how the logo was made, read so a
+   *                  rebuild can tell a logo it can DRAW AGAIN from the
+   *                  business name from one whose file is simply gone.
+   *                  Every site has a logo, so there is no box to untick and
+   *                  no gate to sit behind.
+   *
+   *                  The gates above exist to stop PAID content being handed
+   *                  back for a section the customer switched off. This line
+   *                  generates nothing, fetches nothing and charges nothing;
+   *                  the worst a wrong answer costs is a logo redrawn from a
+   *                  name we already have. */
+  const UNGATED = ['storedContent', 'storedFaqs', 'storedCards', 'storedLogoSource'];
 
   for (const decl of decls) {
     const varName = decl.match(/const (stored[A-Za-z]+)/)[1];

@@ -60,6 +60,7 @@ const {
   safeParagraph,
   safeHeading,
   safeTrustPoint,
+  safeReview,
   forEditing,
 } = require('./safeParagraph');
 
@@ -92,6 +93,12 @@ const HEADING = 'h';
 const SUBHEADING = 's';
 const TRUST = 't';
 
+/* A review's body and the name above it. TWO KINDS, NOT ONE WITH A SUFFIX,
+ * because nameFor() already splits on SEP and a composite kind would make
+ * the parse in apply() depend on how many pieces came back. */
+const REVIEW = 'r';
+const REVIEWER = 'n';
+
 /**
  * How many trust-point boxes the screen offers, always.
  *
@@ -104,6 +111,25 @@ const TRUST = 't';
  * throws away.
  */
 const TRUST_SLOTS = 8;
+
+/* FOUR, BECAUSE generateSampleReviews WRITES FOUR. REVIEW_COUNT there is the
+ * authority and this is the screen's copy of it — a fifth box would draw a
+ * card the generator never fills, and a third would hide one it did.
+ * test-editable-text.js reads the number back out of that file. */
+const REVIEW_SLOTS = 4;
+
+/* WHAT A RE-ADDED REVIEW IS WORTH, and it is not zero.
+ *
+ * Stars are not editable, so a row typed into a slot that was empty has no
+ * stored rating to carry across. Number(undefined) || 0 gave it ZERO, and
+ * buildStars(0) draws four empty outlines under a glowing review — which
+ * reads as a one-star card rather than as a missing control.
+ *
+ * generateSampleReviews writes `stars: 5` for every review it produces, in
+ * both the model path and the fallback, so five is what every other card on
+ * that page already carries. Matching it is the only answer that does not
+ * make the re-added one look deliberately worse. */
+const REVIEW_DEFAULT_STARS = 5;
 
 /** `p::about::section1::0`, `h::about::section1`, `t::about::section1::3` */
 function nameFor(kind, pageSlug, sectionKey, index) {
@@ -129,6 +155,14 @@ function trustName(pageSlug, sectionKey, index) {
   return nameFor(TRUST, pageSlug, sectionKey, index);
 }
 
+function reviewName(pageSlug, sectionKey, index) {
+  return nameFor(REVIEW, pageSlug, sectionKey, index);
+}
+
+function reviewerName(pageSlug, sectionKey, index) {
+  return nameFor(REVIEWER, pageSlug, sectionKey, index);
+}
+
 /**
  * The stored trust points, padded out to TRUST_SLOTS.
  *
@@ -143,6 +177,35 @@ function trustSlots(section) {
   const out = [];
 
   for (let i = 0; i < TRUST_SLOTS; i += 1) out.push(stored[i] || '');
+
+  return out;
+}
+
+/**
+ * The stored reviews, padded out to REVIEW_SLOTS.
+ *
+ * PADDED THE WAY trustSlots() PADS, and for the same reason: the model holds
+ * only the reviews that exist, and the screen needs a fixed number of boxes
+ * so an owner can add one back after emptying it.
+ *
+ * STARS ARE CARRIED THROUGH UNTOUCHED. They are not editable here — there is
+ * no sane control for a rating in a text box — but applyReviews() has to
+ * write the whole row back, so it needs to know what the stars were.
+ */
+function reviewSlots(section) {
+  if (!Array.isArray(section && section.reviews)) return null;
+
+  const stored = section.reviews.map(r => ({
+    text: String((r && r.text) || ''),
+    name: String((r && r.name) || ''),
+    stars: Number((r && r.stars) || 0),
+  }));
+
+  const out = [];
+
+  for (let i = 0; i < REVIEW_SLOTS; i += 1) {
+    out.push(stored[i] || { text: '', name: '', stars: 0 });
+  }
 
   return out;
 }
@@ -183,8 +246,9 @@ function collect(model) {
       const heading = String(section.heading || '');
       const subheading = String(section.subheading || '');
       const trust = trustSlots(section);
+      const reviews = reviewSlots(section);
 
-      if (!paragraphs.length && !heading && !trust) continue;
+      if (!paragraphs.length && !heading && !trust && !reviews) continue;
 
       out.push({
         pageSlug: String(page.slug),
@@ -252,6 +316,15 @@ function collect(model) {
          * about the renderers already live. 0 when the section has no
          * paragraphs at all, so the list leads. */
         trustAfterParagraph: trust ? Math.min(1, paragraphs.length) : null,
+
+        /* null, NOT [], when the section is not a reviews block — the screen
+         * tests this to decide whether to draw the cards at all.
+         *
+         * NOT DECODED, for the reason the ticked list is not: both renderers
+         * escape a review on the way out, so what is stored is what was
+         * typed. Running forEditing over it would turn a literal "&amp;" in
+         * somebody's pasted review into "&" on the first save. */
+        reviews,
       });
     }
   }
@@ -272,6 +345,13 @@ function fieldNames(model) {
     if (entry.trustPoints) {
       for (let i = 0; i < TRUST_SLOTS; i += 1) {
         names.add(trustName(entry.pageSlug, entry.sectionKey, i));
+      }
+    }
+
+    if (entry.reviews) {
+      for (let i = 0; i < REVIEW_SLOTS; i += 1) {
+        names.add(reviewName(entry.pageSlug, entry.sectionKey, i));
+        names.add(reviewerName(entry.pageSlug, entry.sectionKey, i));
       }
     }
   }
@@ -317,7 +397,7 @@ function apply(model, posted) {
   for (const [name, raw] of Object.entries(posted || {})) {
     const [kind, pageSlug, sectionKey, indexText] = String(name).split(SEP);
 
-    if (![PREFIX, HEADING, SUBHEADING, TRUST].includes(kind)) continue;
+    if (![PREFIX, HEADING, SUBHEADING, TRUST, REVIEW, REVIEWER].includes(kind)) continue;
 
     /* NAMED, NOT POSITIONAL, AND CHECKED AGAINST THIS MODEL. A field for a
      * page or a section that is not here came from a form built against a
@@ -330,6 +410,12 @@ function apply(model, posted) {
      * renumbers the rest. Its names are checked here so that a stale one is
      * still reported rather than quietly dropped. */
     if (TRUST === kind) continue;
+
+    /* The reviews are written as a whole too, below, and for a sharper
+     * version of the same reason: a review is a ROW — text, name and stars
+     * together — so writing one field at a time would have to decide what a
+     * half-posted row means. applyReviews() reads the pair. */
+    if (REVIEW === kind || REVIEWER === kind) continue;
 
     const section = locate(next, pageSlug, sectionKey);
 
@@ -375,6 +461,7 @@ function apply(model, posted) {
   }
 
   applyTrust(next, posted, changed);
+  applyReviews(next, posted, changed, blanked);
 
   return { model: next, changed, rejected, blanked };
 }
@@ -436,8 +523,107 @@ function applyTrust(model, posted, changed) {
   }
 }
 
+/**
+ * The reviews, written as whole rows.
+ *
+ * A REVIEW IS A ROW, NOT A FIELD. Text, name and stars travel together, and
+ * the two rules below are what makes a pair of boxes behave like one card:
+ *
+ *   EMPTYING THE TEXT REMOVES THE REVIEW, name and stars with it. That is
+ *   not a refusal dressed as a side effect — it is what both renderers
+ *   already do. contentModel.reviewsSection() filters rows with no text and
+ *   buildReviewsSection() filters them again before drawing cards, so a row
+ *   with an empty body has never been a card. Emptying the box is how an
+ *   owner deletes a sample review they do not want to replace.
+ *
+ *   EMPTYING THE NAME ALONE IS REFUSED, because the card would still be
+ *   drawn and <p class="review-author"></p> is an empty line under a
+ *   quotation. Reported in `blanked` so the screen says which box was
+ *   emptied, exactly as it does for a heading. Clearing the text is how you
+ *   remove a review; clearing its name is not.
+ *
+ * A SLOT THAT WAS NOT POSTED KEEPS WHAT IS STORED — the same guard applyTrust
+ * carries, and for the same reason: a truncated or filtered POST must not be
+ * read as four deletions.
+ *
+ * STARS ARE NEVER WRITTEN FROM THE FORM. There is no control for them, so
+ * the stored value is carried across unchanged. A row that loses its text
+ * takes its stars with it because the row is gone, not because they were
+ * edited.
+ */
+function applyReviews(model, posted, changed, blanked) {
+  for (const entry of collect(model)) {
+    if (!entry.reviews) continue;
+
+    const slots = [];
+
+    for (let i = 0; i < REVIEW_SLOTS; i += 1) {
+      slots.push({
+        text: reviewName(entry.pageSlug, entry.sectionKey, i),
+        name: reviewerName(entry.pageSlug, entry.sectionKey, i),
+      });
+    }
+
+    const has = n => Object.prototype.hasOwnProperty.call(posted || {}, n);
+
+    if (!slots.some(s => has(s.text) || has(s.name))) continue;
+
+    const nextRows = [];
+
+    slots.forEach((slot, i) => {
+      const stored = entry.reviews[i] || { text: '', name: '', stars: 0 };
+
+      const text = has(slot.text) ? safeReview(posted[slot.text]) : String(stored.text || '');
+
+      /* The row is gone, so there is nothing to refuse and nothing to report
+       * — and the name box of a removed card must not be reported as blanked
+       * on the way past. */
+      if (!text) return;
+
+      let name = has(slot.name) ? safeReview(posted[slot.name]) : String(stored.name || '');
+
+      if (!name && String(stored.name || '')) {
+        blanked.push(slot.name);
+        name = String(stored.name);
+      }
+
+      /* A SLOT THAT HELD NOTHING IS A NEW REVIEW, and only that case takes
+       * the default. A stored row keeps its own rating untouched, including
+       * one that is somehow zero — repairing stored data from here would be
+       * an edit nobody asked for. */
+      const isNew = !String(stored.text || '');
+
+      nextRows.push({
+        text,
+        name,
+        stars: isNew ? REVIEW_DEFAULT_STARS : (Number(stored.stars) || 0),
+      });
+    });
+
+    const section = locate(model, entry.pageSlug, entry.sectionKey);
+    const before = (section.reviews || []);
+
+    const same = before.length === nextRows.length
+      && before.every((r, i) => String(r.text || '') === nextRows[i].text
+        && String(r.name || '') === nextRows[i].name);
+
+    if (same) continue;
+
+    section.reviews = nextRows;
+
+    changed.push({
+      name: [REVIEW, entry.pageSlug, entry.sectionKey].join(SEP),
+      pageSlug: entry.pageSlug,
+      sectionKey: entry.sectionKey,
+      field: 'reviews',
+      count: nextRows.length,
+    });
+  }
+}
+
 module.exports = {
   collect, apply, fieldNames,
-  fieldName, headingName, subheadingName, trustName, nameFor,
-  SEP, PREFIX, HEADING, SUBHEADING, TRUST, TRUST_SLOTS,
+  fieldName, headingName, subheadingName, trustName, reviewName, reviewerName, nameFor,
+  SEP, PREFIX, HEADING, SUBHEADING, TRUST, REVIEW, REVIEWER,
+  TRUST_SLOTS, REVIEW_SLOTS, REVIEW_DEFAULT_STARS,
 };

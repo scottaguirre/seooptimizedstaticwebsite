@@ -2753,6 +2753,47 @@ which is the one that would reach the published prose.
 
 `test-admin-tabs.php` 93 → **97**.
 
+### FOR TOMORROW — the SERVICES dropdown runs off the screen
+
+**ASKED FOR TWICE AND WRITTEN DOWN LATE.** Edwin raised it on 7 November
+(*"reminde me tomorrow that we need to work on the nav dropdown"*, then
+*"What i meant is to add it to the list of things to do tomorrow"*) and again
+on 13 November. Until now it lived only in session summaries — the exact
+failure the Design 6 note below describes.
+
+**What it is.** The SERVICES menu in the generated sites' header opens as a
+single `<ul class="dropdown-menu">` with one `<li>` per service page. With
+enough services the list is taller than the viewport and the bottom entries
+are unreachable — they are below the fold with nothing to scroll.
+
+**How many it can be.** `MAX_SERVICES = 20` in `utils/suggestServices.js`, so
+twenty is the realistic worst case, not a hypothetical one. LOCATIONS is built
+the same way a few lines further down and has the same exposure.
+
+**Where it lives.** `utils/buildNavMenu.js`, the `pagesArr.length > 1` branch
+around line 70. That file builds the nav for ALL EIGHT designs and
+`sectionRendererPhp.js` mirrors it for the WordPress export — so a markup
+change has to work everywhere or not happen there at all.
+
+**NOTHING CAPS IT TODAY, AND THAT WAS CHECKED RATHER THAN ASSUMED.** All eight
+theme stylesheets carry 9–13 rules mentioning `.dropdown-menu`; none of them
+sets `max-height`. (style7 and style8 do contain `max-height`, but on the logo
+and the hero media, not the menu.)
+
+**The three options, still Edwin's call — do not pick one for him:**
+
+- **`max-height` + `overflow-y: auto`.** One rule per theme, or one shared
+  rule. Keeps every service reachable. A scrollbar inside a nav menu is the
+  cost.
+- **Two columns above some width.** Uses the horizontal room a wide header
+  already has. More CSS, and it needs a sensible one-column fallback.
+- **Cap the list and add a "View all services" link.** The only option that
+  changes `buildNavMenu.js` and therefore the PHP export too.
+
+**The first is the smallest change and the only one that touches no
+JavaScript.** It is also the only one that cannot drop a service from the
+menu, which matters because those pages are the point of the build.
+
 ### FOR TOMORROW — Design 6's trust tick, and it is a taste call not a bug
 
 **WRITTEN DOWN 5 OCTOBER, having lived only in conversation until now.** It

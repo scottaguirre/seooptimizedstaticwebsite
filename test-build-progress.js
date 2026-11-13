@@ -420,6 +420,52 @@ test('the progress page knows every kind the Job model accepts', function () {
   }
 });
 
+test('a publish that failed is told to the person, not only to the log', function () {
+  /* 11 NOVEMBER, TWICE. Two Local Website Options builds published nothing
+   * — one hit "Reference already exists", one "Git Repository is empty." —
+   * and both jobs reported `completed` with 800 credits charged. The page
+   * said "Your website is ready" over a repository holding one file.
+   *
+   * runLocalOptions is right not to fail the build: the pages exist and the
+   * writing is paid for. But the job has to SAY so, and the value that knew
+   * was being dropped between the builder and the runner. */
+  assert.match(routeSrc, /published:\s*\(job\.result && job\.result\.published\)/,
+    'the API does not expose whether the site went live');
+
+  /* SEARCHED FORWARD FROM THE COMPLETED BRANCH, because "job.status ===
+   * 'failed'" also appears earlier, in the API handler's error field — and
+   * slicing to the first match gave a backwards range that matched nothing
+   * and passed for the wrong reason. */
+  const from = routeSrc.indexOf("job.status === 'completed'");
+  const done = routeSrc.slice(from, routeSrc.indexOf("job.status === 'failed'", from));
+
+  assert.ok(done.length > 100, 'could not find the completed branch in routes/jobRoute.js');
+
+  /* THE CONDITION, NOT JUST THE MENTION. Asserting that "job.published"
+   * appears somewhere in the branch passed even with the guard replaced by
+   * `if (false)` — the message body still names it. What matters is that
+   * something BRANCHES on it. */
+  const guard = done.match(/if \(([^)]*job\.published[^)]*)\)/);
+
+  assert.ok(guard, 'nothing in the completed state branches on the publish outcome');
+  assert.match(guard[1], /\.ok\b/,
+    'the guard names job.published but does not test whether it succeeded');
+  assert.match(done, /bg-warning/,
+    'a build that published nothing still shows a green bar');
+});
+
+test('and the builder hands that outcome to the runner', function () {
+  /* The runner persists `result.result` and nothing else, so a builder that
+   * returns `published` at the top level is returning it to no one. This is
+   * the join the bug fell through. */
+  const gen = code('./utils/jobGenerator.js');
+
+  assert.match(gen, /result\.published !== undefined/,
+    'jobGenerator does not carry the publish outcome');
+  assert.match(gen, /published:/,
+    'it does not put it where the runner will persist it');
+});
+
 test('and every kind has a generator registered for it', function () {
   /* WORSE THAN FAILING: NEVER RUNNING. claimNextJob only claims kinds this
    * process has a generator for — a guard that exists so a half-deployed

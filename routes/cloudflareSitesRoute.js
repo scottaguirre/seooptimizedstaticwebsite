@@ -667,7 +667,26 @@ router.post('/cloudflare-sites', requireAuth, async (req, res) => {
       }));
     }
 
-    const limit = Number(process.env.CF_MAX_SITES_PER_USER) || 50;
+    /* A RUNAWAY GUARD, NOT A PRODUCT LIMIT, and the difference matters
+     * because it was read as one.
+     *
+     * The oldest of the three copies, in routes/blogSitesRoute.js, says what
+     * it is for: "a cap, because nothing else limits this and a loop against
+     * the form would otherwise fill the collection." The two later copies
+     * took the number and left the sentence behind, so a bare `|| 50` sat
+     * here looking like a decision about how many sites a customer may have.
+     * It is not. Nothing about 50 was ever chosen.
+     *
+     *     A NUMBER WITH NO REASON BESIDE IT GETS READ AS A REASON.
+     *
+     * 300 rather than 50 because the guard has to be past what a person
+     * reaches by hand and nowhere near what a loop reaches in seconds — and
+     * at 50 it was the FIRST ceiling hit, in front of the real one.
+     *
+     * THE REAL CEILING IS BELOW THIS AND IS CLOUDFLARE'S: 100 Pages projects
+     * per account, counted live a few lines down. That one is external,
+     * documented and worth refusing on. This one only has to stop a bug. */
+    const limit = Number(process.env.CF_MAX_SITES_PER_USER) || 300;
     const existing = await CloudflareSite.countDocuments({
       user: req.user._id,
       status: { $ne: 'removed' },
@@ -1044,6 +1063,39 @@ router.get('/cloudflare-sites/:id/edit', requireAuth, async (req, res) => {
 
             return [...boxes.slice(0, at), list, ...boxes.slice(at)].join('');
           })()}
+
+          ${/* THE REVIEW CARDS.
+
+                AFTER the paragraphs rather than spliced into them, because
+                on the page they ARE after: the reviews section is its own
+                block under the case study, not a list threaded between two
+                sentences the way the ticked list is.
+
+                FOUR CARDS WHETHER OR NOT FOUR ARE FILLED, the same bargain
+                the ticked list makes — emptying the body removes that
+                review and typing into an empty card adds one back. No add
+                button and no delete button, because the boxes are both.
+
+                NO STARS. There is no sensible control for a rating in a row
+                of text boxes, so the stored value rides through untouched;
+                see REVIEW_DEFAULT_STARS for what a re-added card gets. */''}
+          ${!block.reviews ? '' : `
+            <div class="small text-white-50 mt-3 mb-2">
+              Reviews — empty the review to remove that card, type in an empty one to add
+            </div>
+            ${block.reviews.map((row, i) => `
+              <div class="border border-secondary rounded p-2 mb-2">
+                <textarea class="form-control form-control-sm mb-1 cf-edit"
+                          name="${esc(editableText.reviewName(block.pageSlug, block.sectionKey, i))}"
+                          rows="3" spellcheck="true"
+                          aria-label="Review ${i + 1}">${esc(row.text)}</textarea>
+                <input class="form-control form-control-sm" type="text"
+                       name="${esc(editableText.reviewerName(block.pageSlug, block.sectionKey, i))}"
+                       value="${esc(row.name)}" spellcheck="true"
+                       placeholder="Who wrote it"
+                       aria-label="Reviewer name ${i + 1}">
+              </div>`).join('')}
+            <div class="mb-3"></div>` }
         </div>`).join('')}`).join('');
 
     send(res, page({

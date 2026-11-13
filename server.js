@@ -17,6 +17,7 @@ const adminRoute = require('./routes/adminRoute');
 const blogDomainsRoute = require('./routes/blogDomainsRoute');
 const mySitesRoute = require('./routes/mySitesRoute');
 const creditsRoute = require('./routes/creditsRoute');
+const logoPreviewRoute = require('./routes/logoPreviewRoute');
 const suggestServicesRoute = require('./routes/suggestServicesRoute');
 const suggestLocationsRoute = require('./routes/suggestLocationsRoute');
 const keywordVolumesRoute = require('./routes/keywordVolumesRoute');
@@ -425,6 +426,7 @@ app.use('/', authRoute);
 
 // ===== PROTECTED ROUTES (requireAuth) =====
 app.use('/', requireAuth, creditsRoute);      // /api/check-credits
+app.use('/', requireAuth, logoPreviewRoute);  // /logo-preview — the wordmark, drawn before it is paid for
 app.use('/', requireAuth, suggestServicesRoute); // /api/suggest-services
 app.use('/', requireAuth, suggestLocationsRoute); // /api/suggest-locations
 app.use('/', requireAuth, keywordVolumesRoute);   // /api/keyword-volumes

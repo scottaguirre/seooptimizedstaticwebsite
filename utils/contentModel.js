@@ -171,6 +171,16 @@ function createModel(globalValues = {}) {
       logo: globalValues.logo || '',
       favicon: globalValues.favicon || '',
       logoType: globalValues.logoType || 'rect',
+      // 'upload' or 'wordmark' — how the logo above was made. A rebuild reads
+      // it to decide whether a missing logo file can be DRAWN AGAIN from the
+      // business name or is simply gone. Defaults to 'upload' so every model
+      // written before wordmarks existed keeps meaning what it already meant.
+      //
+      // THIS OBJECT IS A WHITELIST. A field added to globalValues and not to
+      // this list is written nowhere, survives every test that builds a site
+      // in one pass, and goes missing only on the rebuild — which is how the
+      // eight trust points were silently dropped from every edited site.
+      logoSource: globalValues.logoSource === 'wordmark' ? 'wordmark' : 'upload',
       logoWidth: globalValues.logoWidth || null,
       logoHeight: globalValues.logoHeight || null,
 

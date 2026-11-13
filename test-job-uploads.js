@@ -117,10 +117,29 @@ section('A build with no files says so');
 test('the two failures no longer share one message', () => {
   /* "Please try uploading it again" was shown for both, and it is the wrong
    * advice for the race: the file uploaded perfectly. */
+  /* THE GUARD ITSELF, NOT A WINDOW OF CHARACTERS AROUND IT.
+   *
+   * This used to anchor on the first `uploadedImages.global.logo` in the file
+   * and read the 900 characters after it. That is the reuse-seeding block,
+   * not the guard, and the guard only happened to fall inside the window.
+   *
+   * Adding the wordmark branch between the two pushed it out, and this failed
+   * with "nothing distinguishes no files at all from the logo failed to
+   * process" — about two messages that were both still there, untouched,
+   * twenty lines further down. A test that reports a defect that does not
+   * exist costs more than one that misses a defect that does.
+   *
+   * So it reads the block it is actually about: from the guard's own `if` to
+   * the line that closes it. Code may now be inserted above the guard, or
+   * removed from above it, without this having an opinion. */
   const gen = fs.readFileSync(path.join(__dirname, 'utils', 'runGeneration.js'), 'utf8');
-  const i = gen.indexOf('uploadedImages.global.logo');
-  assert.ok(i > -1, 'the logo guard is gone');
-  const block = gen.slice(i - 200, i + 900);
+  const start = gen.indexOf('if (!uploadedImages.global.logo) {');
+  assert.ok(start > -1, 'the logo guard is gone');
+
+  const end = gen.indexOf('\n    }', start);
+  assert.ok(end > start, 'the logo guard is no longer a closed block');
+
+  const block = gen.slice(start, end);
 
   assert.match(block, /!files\.length/,
     'nothing distinguishes "no files at all" from "the logo failed to process"');

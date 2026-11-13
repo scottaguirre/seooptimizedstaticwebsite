@@ -63,6 +63,12 @@ router.get('/api/jobs/:id', requireAuth, async (req, res) => {
       progress: job.progress || { done: 0, total: 0 },
       skipped: job.skippedPages || [],
       creditsCharged: job.creditsCharged || 0,
+
+      /* WHETHER THE SITE ACTUALLY WENT LIVE. Absent on every kind but a
+       * Local Website Options build, and absent on jobs written before this
+       * shipped — the page treats missing as "nothing to say", which is the
+       * honest reading of a job that never recorded it. */
+      published: (job.result && job.result.published) || null,
       // The message only — never the stack, which discloses file paths and
       // dependency versions.
       error: job.status === 'failed' ? (job.error?.message || 'Generation failed') : null,
@@ -269,6 +275,28 @@ ${appSidebar('/jobs')}
             stage.textContent = '';
             detail.textContent = '';
             doneBox.classList.remove('d-none');
+
+            /* BUILT, PAID FOR, AND NOT ON THE INTERNET.
+             *
+             * runLocalOptions will not fail a build over a publish, and
+             * that is right: the pages exist and the writing is paid for.
+             * But the job then said "Your website is ready" over a
+             * repository holding one file, which is the version of this
+             * the customer cannot act on.
+             *
+             * Not red, because nothing was lost — amber, because something
+             * is owed. */
+            if (job.published && false === job.published.ok) {
+              bar.classList.remove('bg-success');
+              bar.classList.add('bg-warning');
+              title.textContent = 'Built, but not published';
+              failBox.textContent =
+                'The pages were written and your credits were used, but the '
+                + 'site could not be pushed to GitHub: '
+                + (job.published.error || 'no reason given')
+                + ' — nothing is live yet.';
+              failBox.classList.remove('d-none');
+            }
 
             if (job.skipped && job.skipped.length) {
               skipBox.textContent =

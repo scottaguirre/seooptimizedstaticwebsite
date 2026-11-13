@@ -22,7 +22,7 @@
 const assert = require('assert');
 
 const {
-  safeParagraph, safeParagraphs, safeHeading, safeTrustPoint, forEditing,
+  safeParagraph, safeParagraphs, safeHeading, safeTrustPoint, safeReview, forEditing,
   safeHref, escapeAll, unescapeEntities,
 } = require('./utils/cloudflareSites/safeParagraph');
 
@@ -486,6 +486,50 @@ test('AND escapeAll UNDOES IT EXACTLY, BOTH WAYS ROUND', () => {
   for (const typed of ["I'm", 'a & b', '<script>', 'say "hi"', 'plain words', '']) {
     assert.strictEqual(forEditing(escapeAll(typed)), typed, typed);
   }
+});
+
+/* ===================================================================== */
+
+
+/* ===================================================================== */
+section('safeReview — the same end as a trust point, for its own reasons');
+
+test('it escapes nothing, because both of its renderers do', () => {
+  /* buildReviewsSection does escapeHtml(r.text); the exported PHP theme does
+   * esc_html( $row['text'] ). Escaping here as well publishes "&amp;" to a
+   * customer who typed "&". */
+  assert.strictEqual(
+    safeReview('Fitted a heater & cleaned up <after>'),
+    'Fitted a heater & cleaned up <after>');
+
+  assert.strictEqual(safeReview("D'Angelo \"Danny\" & Sons"), "D'Angelo \"Danny\" & Sons");
+});
+
+test('AND IT STRIPS NOTHING EITHER', () => {
+  /* Same bargain safeTrustPoint makes: a <script> typed here is stored as
+   * those characters and shown as those characters, visibly and inertly. */
+  assert.strictEqual(safeReview('<script>alert(1)</script>'), '<script>alert(1)</script>');
+});
+
+test('whitespace collapses, newlines included', () => {
+  /* The card renders one <p>, so a review pasted out of Google with a blank
+   * line in it has nowhere to put the break. */
+  assert.strictEqual(safeReview('  Two\n\nlines\tpasted  '), 'Two lines pasted');
+});
+
+test('nothing in gives an empty string, which is how a review is removed', () => {
+  [null, undefined, '', '   ', '\n\n'].forEach(v => {
+    assert.strictEqual(safeReview(v), '');
+  });
+});
+
+test('AND IT IS NOT safeParagraph, WHICH WOULD DOUBLE-ESCAPE IT', () => {
+  /* The one assertion that fails if somebody "tidies up" by pointing the
+   * review fields at the paragraph sanitiser. */
+  const text = 'Heater & pump';
+
+  assert.notStrictEqual(safeReview(text), safeParagraph(text));
+  assert.strictEqual(safeReview(text), safeTrustPoint(text));
 });
 
 /* ===================================================================== */

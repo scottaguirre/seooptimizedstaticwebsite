@@ -23,10 +23,13 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const {
   collect, apply, fieldName, fieldNames,
   headingName, subheadingName, trustName, TRUST_SLOTS,
+  reviewName, reviewerName, REVIEW_SLOTS, REVIEW_DEFAULT_STARS,
 } = require('./utils/cloudflareSites/editableText');
 
 let passed = 0, failed = 0;
@@ -387,10 +390,18 @@ test('AND fieldNames LISTS EXACTLY WHAT THE FORM WOULD POST', () => {
     'h::about::reviews',
     'h::about::section1',
     'h::leak-repair-leander-tx::section1',
+    'n::about::reviews::0',
+    'n::about::reviews::1',
+    'n::about::reviews::2',
+    'n::about::reviews::3',
     'p::about::section1::0',
     'p::about::section1::1',
     'p::about::section2::0',
     'p::leak-repair-leander-tx::section1::0',
+    'r::about::reviews::0',
+    'r::about::reviews::1',
+    'r::about::reviews::2',
+    'r::about::reviews::3',
     's::about::section1',
     't::about::section1::0',
     't::about::section1::1',
@@ -702,6 +713,192 @@ test('AND A SLOT PAST THE EIGHTH DOES NOT EXIST', () => {
   const out = apply(model(), { [name]: 'A ninth claim' });
 
   assert.deepStrictEqual(out.rejected, [name]);
+});
+
+
+/* ===================================================================== */
+section('THE REVIEWS, WHICH ARE ROWS AND NOT FIELDS');
+
+const rSlug = 'about';
+const rKey = 'reviews';
+const rText = i => reviewName(rSlug, rKey, i);
+const rName = i => reviewerName(rSlug, rKey, i);
+
+/** The reviews section of a model, after an apply. */
+function reviewsOf(m) {
+  return m.pages.find(p => p.slug === rSlug)
+    .sections.find(x => x.key === rKey).reviews;
+}
+
+test('the screen draws REVIEW_SLOTS cards however few are stored', () => {
+  /* The fixture stores one. Three empty cards are how the other three are
+   * added back after being emptied — the same bargain the ticked list
+   * makes. */
+  const block = collect(model()).find(b => b.sectionKey === rKey);
+
+  assert.strictEqual(block.reviews.length, REVIEW_SLOTS);
+  assert.deepStrictEqual(block.reviews[0], { text: 'x', name: 'y', stars: 5 });
+  assert.deepStrictEqual(block.reviews[3], { text: '', name: '', stars: 0 });
+});
+
+test('AND THE SLOT COUNT MATCHES WHAT THE GENERATOR WRITES', () => {
+  /* A fifth box draws a card generateSampleReviews never fills; a third
+   * hides one it did. The number is read back out of that file rather than
+   * agreed by hand. */
+  const gen = fs.readFileSync(
+    path.join(__dirname, 'utils', 'generateSampleReviews.js'), 'utf8');
+
+  const found = gen.match(/const REVIEW_COUNT = (\d+);/);
+  assert.ok(found, 'REVIEW_COUNT has been renamed or removed');
+  assert.strictEqual(Number(found[1]), REVIEW_SLOTS);
+});
+
+test('a section with no reviews array draws no cards at all', () => {
+  const block = collect(model()).find(b => b.sectionKey === 'section1');
+  assert.strictEqual(block.reviews, null, 'null, not [] — absence, not emptiness');
+});
+
+test('the text and the name are both editable', () => {
+  const out = apply(model(), { [rText(0)]: 'Fast and tidy.', [rName(0)]: 'Dana Rivera' });
+
+  assert.deepStrictEqual(reviewsOf(out.model)[0],
+    { text: 'Fast and tidy.', name: 'Dana Rivera', stars: 5 });
+});
+
+test('AND NEITHER IS ESCAPED ON THE WAY IN', () => {
+  /* Both renderers escape a review on the way out — escapeHtml(r.text) in
+   * buildReviewsSection, esc_html( $row['text'] ) in the exported theme — so
+   * escaping here too would publish "&amp;" to a customer. Same rule as the
+   * ticked list, recorded again because it is a fact about THIS field. */
+  const out = apply(model(), {
+    [rText(0)]: 'Fitted a heater & cleaned up <after>',
+    [rName(0)]: "D'Angelo & Sons",
+  });
+
+  assert.strictEqual(reviewsOf(out.model)[0].text, 'Fitted a heater & cleaned up <after>');
+  assert.strictEqual(reviewsOf(out.model)[0].name, "D'Angelo & Sons");
+});
+
+test('AND NOTHING IS DECODED ON THE WAY OUT EITHER', () => {
+  /* The mirror of the above, and the trap forEditing() would walk into: a
+   * literal ampersand entity somebody pasted is their text, not our
+   * escaping, and decoding it would rewrite what they wrote. */
+  const m = model();
+  m.pages.find(p => p.slug === rSlug).sections.find(x => x.key === rKey)
+    .reviews = [{ text: 'Tools &amp; parts', name: 'A &amp; B', stars: 5 }];
+
+  const block = collect(m).find(b => b.sectionKey === rKey);
+
+  assert.strictEqual(block.reviews[0].text, 'Tools &amp; parts');
+  assert.strictEqual(block.reviews[0].name, 'A &amp; B');
+});
+
+test('whitespace is collapsed, because the card is one paragraph', () => {
+  const out = apply(model(), { [rText(0)]: '  Two\n\nlines   pasted  ', [rName(0)]: 'y' });
+  assert.strictEqual(reviewsOf(out.model)[0].text, 'Two lines pasted');
+});
+
+test('EMPTYING THE BODY REMOVES THE REVIEW', () => {
+  /* Not a refusal — it is what both renderers already do with a row that
+   * has no text, so the box is the delete button. */
+  const out = apply(model(), { [rText(0)]: '   ', [rName(0)]: 'y' });
+
+  assert.deepStrictEqual(reviewsOf(out.model), []);
+  assert.deepStrictEqual(out.blanked, [],
+    'the name of a removed card was reported as blanked');
+});
+
+test('AND EMPTYING THE NAME ALONE IS REFUSED AND REPORTED', () => {
+  /* The card is still drawn, and an empty <p class="review-author"> is a
+   * blank line under a quotation. Clearing the text is how you remove a
+   * review; clearing its name is not. */
+  const out = apply(model(), { [rText(0)]: 'x', [rName(0)]: '' });
+
+  assert.strictEqual(reviewsOf(out.model)[0].name, 'y', 'the stored name was lost');
+  assert.deepStrictEqual(out.blanked, [rName(0)]);
+});
+
+test('a card typed into an empty slot is added, with stars', () => {
+  const out = apply(model(), { [rText(1)]: 'Brand new', [rName(1)]: 'Sam P.' });
+
+  assert.strictEqual(reviewsOf(out.model).length, 2);
+  assert.deepStrictEqual(reviewsOf(out.model)[1],
+    { text: 'Brand new', name: 'Sam P.', stars: REVIEW_DEFAULT_STARS });
+  assert.ok(REVIEW_DEFAULT_STARS > 0, 'a new card would render an empty star row');
+});
+
+test('AND A STORED RATING IS NEVER OVERWRITTEN BY THE DEFAULT', () => {
+  const m = model();
+  m.pages.find(p => p.slug === rSlug).sections.find(x => x.key === rKey)
+    .reviews = [{ text: 'x', name: 'y', stars: 3 }];
+
+  const out = apply(m, { [rText(0)]: 'changed', [rName(0)]: 'y' });
+  assert.strictEqual(reviewsOf(out.model)[0].stars, 3);
+});
+
+test('a slot that was not posted keeps what is stored', () => {
+  /* The guard applyTrust carries, for the same reason: a truncated or
+   * filtered POST must not read as four deletions. */
+  const out = apply(model(), { [rName(0)]: 'Only the name came back' });
+
+  assert.strictEqual(reviewsOf(out.model).length, 1);
+  assert.strictEqual(reviewsOf(out.model)[0].text, 'x', 'an unposted body was dropped');
+});
+
+test('AND A SECTION WHOSE CARDS WERE ALL LEFT ALONE IS NOT TOUCHED', () => {
+  const out = apply(model(), { [headingName('about', 'section1')]: 'Still here' });
+
+  assert.deepStrictEqual(reviewsOf(out.model), [{ text: 'x', name: 'y', stars: 5 }]);
+  assert.ok(!out.changed.some(c => c.field === 'reviews'),
+    'an untouched reviews section was reported as changed');
+});
+
+test('AND A SECTION NOBODY POSTED IS NOT REWRITTEN FROM ITS SLOTS', () => {
+  /* THE GUARD THAT LOOKS REDUNDANT AND IS NOT.
+   *
+   * With four stored reviews, rebuilding the section from the slots on every
+   * save produces the identical array, `same` catches it, and nothing is
+   * reported — so the guard appears to do nothing and a mutant that removes
+   * it survives.
+   *
+   * It stops doing nothing the moment the stored array is not exactly what
+   * the slots would hold. Five rows is the plain case: the rebuild reads
+   * REVIEW_SLOTS of them and the fifth is dropped by a save that never
+   * mentioned reviews at all. A row with an empty body goes the same way.
+   *
+   * This is the guard applyTrust carries, for the reason written there: a
+   * truncated or filtered POST must not be read as deletions. */
+  const m = model();
+  const section = m.pages.find(p => p.slug === rSlug).sections.find(x => x.key === rKey);
+
+  section.reviews = [
+    { text: 'One', name: 'A', stars: 5 },
+    { text: 'Two', name: 'B', stars: 5 },
+    { text: 'Three', name: 'C', stars: 5 },
+    { text: 'Four', name: 'D', stars: 5 },
+    { text: 'Five', name: 'E', stars: 5 },
+  ];
+
+  const out = apply(m, { [headingName('about', 'section1')]: 'Changed elsewhere' });
+
+  assert.strictEqual(reviewsOf(out.model).length, 5,
+    'a save that never mentioned reviews dropped one');
+  assert.strictEqual(reviewsOf(out.model)[4].text, 'Five');
+});
+
+test('saving the same review twice changes nothing', () => {
+  const once = apply(model(), { [rText(0)]: 'x', [rName(0)]: 'y' });
+  assert.ok(!once.changed.some(c => c.field === 'reviews'));
+
+  const twice = apply(once.model, { [rText(0)]: 'x', [rName(0)]: 'y' });
+  assert.deepStrictEqual(reviewsOf(twice.model), reviewsOf(once.model));
+});
+
+test('a review field for a section that has none is refused', () => {
+  const out = apply(model(), { [reviewName('about', 'section1', 0)]: 'nope' });
+
+  assert.strictEqual(out.rejected.length, 1);
+  assert.strictEqual(out.changed.length, 0);
 });
 
 /* ===================================================================== */

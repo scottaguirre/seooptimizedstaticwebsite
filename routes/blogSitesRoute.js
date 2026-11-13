@@ -325,14 +325,23 @@ router.get('/blog-sites', requireAuth, async (req, res) => {
 
 router.post('/blog-sites', requireAuth, async (req, res) => {
   try {
-    // A cap, because nothing else limits this and a loop against the form
-    // would otherwise fill the collection.
+    /* A cap, because nothing else limits this and a loop against the form
+     * would otherwise fill the collection.
+     *
+     * THE ORIGINAL OF THREE. routes/cloudflareSitesRoute.js and
+     * routes/staticBlogsRoute.js copied the number and not this sentence,
+     * and a bare `|| 50` with nothing beside it was read as a decision about
+     * how many sites a customer may have. It never was one.
+     *
+     * Raised from 50 to 300 on 12 November: a guard belongs past what a
+     * person reaches by hand and well short of what a loop reaches in
+     * seconds. At 50 it was the first ceiling hit, ahead of the real ones. */
     const existing = await BlogSite.countDocuments({
       user: req.user._id,
       status: { $ne: 'revoked' },
     });
 
-    const limit = Number(process.env.BLOG_MAX_SITES_PER_USER) || 50;
+    const limit = Number(process.env.BLOG_MAX_SITES_PER_USER) || 300;
     if (existing >= limit) {
       return send(res, page({
         status: 400,

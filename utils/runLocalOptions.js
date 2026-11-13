@@ -69,6 +69,7 @@ const { nearbyPlaces } = require('./nearbyPlaces');
 const { getUserDirs } = require('./buildAssets');
 const { createBuildRecord } = require('./buildRegistry');
 const { imageExtension } = require('./uploadExtension');
+const { wordmarkPng } = require('./wordmarkLogo');
 const { formatTime, ORDER, LONG } = require('./formatDaysAndHoursForDisplay');
 const { normalizeDomain } = require('./normalizeDomain');
 const { MODES, normalizeSiteMode, LOCAL_OPTIONS_SERVICE_PAGES, FIXED_PAGES } = require('./seoPresets');
@@ -342,9 +343,25 @@ function logoUpload(files) {
  * `assets/logo` is an <img> that silently does not load. That one is written
  * up at length in runGeneration.js.
  */
-function logoPathFor(files) {
+function logoPathFor(files, opts = {}) {
   const logo = logoUpload(files);
-  return logo ? `assets/logo${imageExtension(logo)}` : '';
+  if (logo) return `assets/logo${imageExtension(logo)}`;
+
+  /* NO FILE, BUT THE CUSTOMER ASKED US TO DRAW ONE.
+   *
+   * This mode has its own generator and so it needed its own branch: the
+   * wordmark that runGeneration.js draws is unreachable from here, and
+   * without this the option was offered in the wizard, posted, and then
+   * silently ignored — the site fell back to the initials glyph in
+   * render/chrome.js while the REVIEW STEP had shown a wordmark PNG.
+   *
+   * A preview that disagrees with the build is the one defect a preview
+   * exists to prevent, and it was doing it on the screen where the customer
+   * presses Generate.
+   *
+   * Always .png: the wordmark is drawn rather than uploaded, so there is no
+   * original extension to preserve and nothing to guess at. */
+  return opts.wordmark ? 'assets/logo.png' : '';
 }
 
 /**
@@ -359,14 +376,40 @@ function logoPathFor(files) {
  * document() emits no <link rel="icon"> at all, so a favicon would be a file
  * nothing references. One change, in one place, when that link is added.
  */
-async function placeLogo(files, assetsDir) {
+async function placeLogo(files, assetsDir, opts = {}) {
   const logo = logoUpload(files);
-  if (!logo) return '';
+  const rel = logoPathFor(files, opts);
 
-  const rel = logoPathFor(files);
+  if (!rel) return '';
 
   await fsp.mkdir(assetsDir, { recursive: true });
-  await moveOrCopyThenDelete(logo.path, path.join(assetsDir, path.basename(rel)));
+
+  if (logo) {
+    await moveOrCopyThenDelete(logo.path, path.join(assetsDir, path.basename(rel)));
+    return rel;
+  }
+
+  /* DRAWN HERE, not earlier, for exactly the reason the uploaded file is
+   * copied here: resetUserDirs() wipes this folder, and anything written
+   * before it goes with it.
+   *
+   * wordmarkPng() RATHER THAN writeWordmark(), which also writes a 42x42
+   * favicon. The comment above this function already says why that would be
+   * wrong in this mode: render/chrome.js's document() emits no
+   * <link rel="icon">, so a favicon here is a file nothing references. One
+   * change, in one place, when that link is added.
+   *
+   * The STRUCTURE decides the colour, not a styleKey — this mode has no
+   * styleKey worth reading. See STRUCTURE_INK in utils/wordmarkLogo.js:
+   * ledger and beacon put the logo on white, anvil on near-black, and
+   * getting that wrong is an invisible header. */
+  const png = await wordmarkPng({
+    businessName: opts.businessName,
+    logoType: opts.logoType,
+    structure: opts.structure,
+  });
+
+  await fsp.writeFile(path.join(assetsDir, path.basename(rel)), png);
 
   return rel;
 }
@@ -587,10 +630,34 @@ async function runLocalOptions(ctx) {
 
   await report({ stage: 'Preparing your website', current: '', total: TOTAL_PAGES, done: 0 });
 
+  /* EVERYTHING THE LOGO NEEDS, SETTLED ONCE.
+   *
+   * logoPathFor() and placeLogo() both derive the filename, and the comment
+   * on placeLogo() already warns that two call sites deriving one name is
+   * how the <img src> and the file on disk come to disagree. They now also
+   * both need to know WHETHER there is a logo to draw, which is a second
+   * thing to get out of step, so it is worked out here and handed to both.
+   *
+   * The structure comes from the same designs.js call the build options use
+   * below, rather than being read again: one answer, and the colour of the
+   * drawn logo cannot end up belonging to a different design from the page
+   * it sits on.
+   *
+   * Read the two ways every other global is read here, because the wizard
+   * posts a nested body and a replayed job payload posts a flat one. */
+  const rawLogoSource = global.logoSource ?? ctx.body?.['global[logoSource]'];
+
+  const logoOptions = {
+    wordmark: String(rawLogoSource || '').trim().toLowerCase() === 'wordmark',
+    businessName: String(global.businessName || '').trim(),
+    logoType: global.logoType,
+    structure: buildOptionsFor(global.design).structure,
+  };
+
   /* THE LOGO'S NAME NOW, THE LOGO'S BYTES LATER — see the ordering note
    * above resetUserDirs() below. The renderer needs the path to put in an
    * <img src>; it does not need the file to exist yet. */
-  const logo = logoPathFor(ctx.files);
+  const logo = logoPathFor(ctx.files, logoOptions);
 
   const business = {
     name: String(global.businessName || '').trim(),
@@ -722,7 +789,7 @@ async function runLocalOptions(ctx) {
    * has succeeded; what follows is writing bytes. */
   resetUserDirs({ distDir, assetsDir, cssDir, jsDir, entryDir, tempUploadDir });
 
-  await placeLogo(ctx.files, assetsDir);
+  await placeLogo(ctx.files, assetsDir, logoOptions);
 
   /* THE WORDS, BESIDE THE PAGES THEY BECAME.
    *

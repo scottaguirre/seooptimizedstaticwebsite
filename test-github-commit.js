@@ -19,7 +19,7 @@ const assert = require('assert');
 const crypto = require('crypto');
 
 const {
-  blobSha, headOf, existingShas, commitSite, FILE_MODE,
+  blobSha, headOf, existingShas, commitSite, whenRepoIsReady, FILE_MODE,
 } = require('./utils/github/commit');
 
 let passed = 0, failed = 0;
@@ -47,8 +47,26 @@ const TOKEN = 'ghs_installation';
  * every test here and fail on the first real deploy — the reuse check
  * compares our number against theirs.
  */
-function repo({ empty: startsEmpty = false, files = {}, truncated = false, emptyStatus = 409 } = {}) {
+function repo({
+  empty: startsEmpty = false, files = {}, truncated = false, emptyStatus = 409,
+
+  /* How many ref reads after the bootstrap still answer "empty" — the
+   * propagation lag that cost two paid builds. See the note at the PUT. */
+  refLag = 0,
+
+  /* And how many OBJECT-STORE WRITES go on answering it. The ref lag above
+   * is only half of what GitHub lags on: blobs, trees and commits live in
+   * the same store and come back with the same six words. refLag made
+   * headAfterBootstrap give up; this is what met the code on the other side
+   * of that, and it is what failed on 12 November.
+   *
+   * Refs are deliberately NOT included: a ref that reappears is the 422
+   * "already exists" case, which the ref write handles on its own. */
+  storeLag = 0,
+} = {}) {
   let empty = startsEmpty;
+  let hiddenReads = 0;
+  let hiddenWrites = 0;
   const calls = [];
   const blobs = new Map();
 
@@ -78,6 +96,14 @@ function repo({ empty: startsEmpty = false, files = {}, truncated = false, empty
     const { method, path, body } = req;
 
     if ('GET' === method && path.includes('/git/ref/heads/')) {
+      if (hiddenReads > 0) {
+        /* The branch exists; GitHub just cannot see it yet. */
+        hiddenReads -= 1;
+        const lagging = new Error('GitHub: Git Repository is empty.');
+        lagging.status = 409;
+        throw lagging;
+      }
+
       if (empty) {
         /* 409 BY DEFAULT, BECAUSE THAT IS WHAT GITHUB ACTUALLY SENDS.
          *
@@ -121,6 +147,18 @@ function repo({ empty: startsEmpty = false, files = {}, truncated = false, empty
       throw err;
     }
 
+    /* AND IT STAYS SHUT FOR A MOMENT AFTER THE FIRST COMMIT. The repository
+     * is no longer empty — the PUT below proved it — but GitHub goes on
+     * saying so, which is the exact answer the recovery push disproved when
+     * it found the bootstrap's index.html already in place. */
+    if (hiddenWrites > 0
+        && ('POST' === method && /\/git\/(blobs|trees|commits)$/.test(path))) {
+      hiddenWrites -= 1;
+      const err = new Error('GitHub: Git Repository is empty.');
+      err.status = 409;
+      throw err;
+    }
+
     /* The contents API, which is how an empty repository gets its first
      * commit — and the only call that works there. */
     if ('PUT' === method && path.includes('/contents/')) {
@@ -140,6 +178,15 @@ function repo({ empty: startsEmpty = false, files = {}, truncated = false, empty
       });
 
       empty = false;
+
+      /* THE REF IS NOT READABLE AT ONCE, and that lag is the whole bug of
+       * 11 November. GitHub answers the contents PUT before the new branch
+       * can be read back, so the next headOf() still gets 409 — and the
+       * caller concluded the repository was empty when it had just filled
+       * it. `refLag` is how many reads go on answering 409 after the
+       * bootstrap; 0 is the old fake, which never showed this. */
+      hiddenReads = refLag;
+      hiddenWrites = storeLag;
 
       return { commit: { sha: state.commitSha } };
     }
@@ -179,6 +226,17 @@ function repo({ empty: startsEmpty = false, files = {}, truncated = false, empty
     }
 
     if ('POST' === method && path.endsWith('/git/refs')) {
+      /* A BRANCH MADE BY THE BOOTSTRAP CANNOT BE CREATED TWICE. GitHub
+       * answers 422 "Reference already exists", which is exactly what
+       * Plumbing Solutions Austin got at 02:59 on 11 November after the
+       * ref read came back late. */
+      if ('commit-bootstrap' === state.commitSha || state.refs.some(r => 'POST' === r.method)) {
+        state.refs.push({ method, path, body, refused: true });
+        const clash = new Error('GitHub: Reference already exists');
+        clash.status = 422;
+        throw clash;
+      }
+
       state.refs.push({ method, path, body });
       return { object: { sha: body.sha } };
     }
@@ -196,7 +254,13 @@ const SITE = {
 };
 
 const push = (r, over = {}) => commitSite({
-  owner: OWNER, repo: REPO, token: TOKEN, files: SITE, api: r.api, ...over,
+  owner: OWNER, repo: REPO, token: TOKEN, files: SITE, api: r.api,
+
+  /* NO REAL WAITING IN A UNIT SUITE. The retry sleeps between attempts; a
+   * test that slept for real would add fifteen seconds to the run, and a
+   * suite that takes fifteen seconds to say nothing gets deleted. */
+  sleep: async () => {},
+  ...over,
 });
 
 /* ======================================================================= */
@@ -275,6 +339,71 @@ test('and then moves the branch it was just given', async () => {
   assert.strictEqual(ref.method, 'PATCH');
   assert.ok(ref.path.endsWith('/git/refs/heads/main'));
   assert.strictEqual(ref.body.sha, 'commit-new');
+});
+
+test('A BRANCH THAT IS NOT READABLE YET IS WAITED FOR, NOT CONCLUDED ABOUT', async () => {
+  /* THE BUG OF 11 NOVEMBER, AND IT COST TWO PAID BUILDS.
+   *
+   * bootstrapEmpty() makes the first commit through the contents API, and
+   * the code then read the branch back with ONE headOf(). GitHub does not
+   * always have the new ref readable by then; it answers 409, which headOf()
+   * is written to translate into "nothing here yet" — so everything
+   * downstream carried on believing the repository was still empty.
+   *
+   * Both jobs logged `jobs.completed` and charged 800 credits. The
+   * repository held one file. */
+  const r = repo({ empty: true, refLag: 2 });
+
+  const out = await push(r);
+
+  assert.strictEqual(out.commitSha, 'commit-new', 'the push gave up and left one file');
+  assert.deepStrictEqual(r.state.commits[0].parents, ['commit-bootstrap'],
+    'it committed as an orphan, so the bootstrap page is not in the history');
+
+  const ref = r.state.refs[r.state.refs.length - 1];
+  assert.strictEqual(ref.method, 'PATCH', 'it tried to create a branch that exists');
+});
+
+test('AND A BRANCH THAT APPEARS MID-PUSH IS MOVED, NOT REFUSED', async () => {
+  /* THE SECOND HALF OF THE SAME RACE, which is what Plumbing Solutions
+   * Austin hit at 02:59: the ref read came back late, so the code took the
+   * create path, and by the time POST /git/refs ran the bootstrap's branch
+   * had become readable. GitHub refused with 422 "Reference already exists"
+   * and the publish died with the site already built and paid for.
+   *
+   * MOVING IT IS CORRECT, NOT A GUESS. The branch points at the bootstrap
+   * commit, which holds the first page of this very site. There is no work
+   * on it to lose. */
+  const r = repo({ empty: true, refLag: 99 });
+
+  const out = await push(r);
+
+  assert.strictEqual(out.commitSha, 'commit-new', 'the publish failed on the ref');
+
+  const tried = r.state.refs.filter(x => 'POST' === x.method);
+  const moved = r.state.refs.filter(x => 'PATCH' === x.method);
+
+  assert.strictEqual(tried.length, 1, 'it did not attempt the create path');
+  assert.strictEqual(moved.length, 1, 'it did not recover by moving the branch');
+  assert.strictEqual(moved[0].body.sha, 'commit-new');
+});
+
+test('AND A REF ERROR THAT IS NOT A COLLISION IS STILL FATAL', async () => {
+  /* The recovery is matched on the message, because GitHub uses 422 for a
+   * dozen unrelated validation problems. Anything else must still stop the
+   * deploy rather than being quietly PATCHed over. */
+  const r = repo({ empty: true, refLag: 99 });
+
+  const api = async (req) => {
+    if ('POST' === req.method && req.path.endsWith('/git/refs')) {
+      const err = new Error('GitHub: Validation Failed: sha is not a commit');
+      err.status = 422;
+      throw err;
+    }
+    return r.api(req);
+  };
+
+  await assert.rejects(() => push(r, { api }), /not a commit/);
 });
 
 test('and the push descends from the bootstrap commit', async () => {
@@ -659,6 +788,178 @@ test('and it answers an empty map when there is no tree yet', async () => {
 
   assert.strictEqual(map.size, 0);
   assert.strictEqual(r.calls.length, 0, 'it asked about a tree that does not exist');
+});
+
+
+/* ---------------------------------------------------------------------- */
+section('A repository GitHub has not finished creating');
+
+/* 12 NOVEMBER, AND THE SECOND HALF OF THE 11 NOVEMBER RACE.
+ *
+ * headAfterBootstrap() waits for the BRANCH. When it gives up it falls
+ * through with a null head, and its own comment says why that is safe: the
+ * ref write recovers from the collision. True of the 422. Not true of the
+ * 409 the same comment names two lines earlier — that one met the blob
+ * upload, which is the one API that cannot touch a repository GitHub still
+ * calls empty, and the publish died there with the pages already paid for.
+ *
+ * The recovery push is what proved the repository was never empty: it found
+ * the bootstrap's index.html already in the tree and reported "20 uploaded,
+ * 1 already there".
+ */
+
+const noSleep = async () => {};
+
+test('a publish survives an object store that is still catching up', async () => {
+  /* refLag high enough that headAfterBootstrap gives up entirely, so this is
+   * the exact state the failing build was in: bootstrapped, head null, and
+   * the store still answering 409. */
+  const r = repo({ empty: true, refLag: 99, storeLag: 3 });
+
+  const out = await commitSite({
+    owner: OWNER, repo: REPO, token: TOKEN, api: r.api, sleep: noSleep,
+    files: { 'index.html': '<!doctype html>home', 'about.html': 'about' },
+  });
+
+  assert.ok(out.commitSha, 'nothing was committed');
+
+  const blobs = r.calls.filter(c => 'POST' === c.method && c.path.endsWith('/git/blobs'));
+  assert.ok(blobs.length > 1, 'the blob upload was never retried');
+});
+
+test('and the whole site reaches the tree, not just what got through', async () => {
+  /* NOTHING IS REUSED IN THIS STATE, and that is correct rather than a
+   * missed optimisation: reuse compares against the tree the head names, and
+   * here the head was never readable. So the bootstrap's index.html is sent
+   * again — which costs one small upload and nothing else, because GitHub
+   * stores a blob by its sha and the bytes are identical.
+   *
+   * On the recovery push the head WAS readable, which is why that one
+   * reported "20 uploaded, 1 already there". Same code, different moment.
+   *
+   * What has to hold either way is this: every page is in the commit. */
+  const r = repo({ empty: true, refLag: 99, storeLag: 2 });
+
+  const out = await commitSite({
+    owner: OWNER, repo: REPO, token: TOKEN, api: r.api, sleep: noSleep,
+    files: { 'index.html': '<!doctype html>home', 'about.html': 'about' },
+  });
+
+  assert.strictEqual(out.uploaded, 2);
+  assert.strictEqual(out.reused, 0);
+
+  const tree = r.calls.filter(c => 'POST' === c.method && c.path.endsWith('/git/trees')).pop();
+  assert.deepStrictEqual(
+    tree.body.tree.map(e => e.path).sort(),
+    ['about.html', 'index.html'],
+    'a page was left out of the commit');
+});
+
+test('the wait is NOT armed on a repository that already had commits', async () => {
+  /* Everywhere but a fresh bootstrap, 409 is a real conflict. Retrying it
+   * five times would turn a clear refusal into a slow one. */
+  let blobCalls = 0;
+
+  const api = async (req) => {
+    if ('GET' === req.method && req.path.includes('/git/ref/heads/')) {
+      return { object: { sha: 'commit-old' } };
+    }
+    if ('GET' === req.method && req.path.includes('/git/commits/')) {
+      return { sha: 'commit-old', tree: { sha: 'tree-old' } };
+    }
+    if ('GET' === req.method && req.path.includes('/git/trees/')) {
+      return { sha: 'tree-old', tree: [] };
+    }
+    if ('POST' === req.method && req.path.endsWith('/git/blobs')) {
+      blobCalls += 1;
+      const err = new Error('GitHub: Git Repository is empty.');
+      err.status = 409;
+      throw err;
+    }
+    throw new Error(`unexpected ${req.method} ${req.path}`);
+  };
+
+  await assert.rejects(
+    commitSite({
+      owner: OWNER, repo: REPO, token: TOKEN, api, sleep: noSleep,
+      files: { 'index.html': 'home' },
+    }),
+    /Repository is empty/
+  );
+
+  assert.strictEqual(blobCalls, 1, 'an established repository was retried');
+});
+
+test('whenRepoIsReady retries only the one answer it is about', async () => {
+  const fails = (status, message) => async () => {
+    const err = new Error(message);
+    err.status = status;
+    throw err;
+  };
+
+  let tries = 0;
+  const flaky = async () => {
+    tries += 1;
+    if (tries < 3) {
+      const err = new Error('GitHub: Git Repository is empty.');
+      err.status = 409;
+      throw err;
+    }
+    return 'done';
+  };
+
+  assert.strictEqual(await whenRepoIsReady(flaky, { sleep: noSleep }), 'done');
+  assert.strictEqual(tries, 3);
+
+  /* AND "AT ONCE" IS COUNTED, NOT ASSUMED.
+   *
+   * assert.rejects on the message alone cannot tell a refusal from a refusal
+   * five retries later — the error is the same object either way. Both of
+   * these mutants survived a version of this test that only checked the
+   * message: dropping the status check, and dropping the message check.
+   * The call count is the only thing that separates them. */
+  let other = 0;
+  await assert.rejects(
+    whenRepoIsReady(async () => { other += 1; await fails(409, 'GitHub: Branch is protected')(); },
+      { sleep: noSleep }),
+    /Branch is protected/);
+  assert.strictEqual(other, 1, 'a conflict that is not an empty repository was retried');
+
+  let wrongStatus = 0;
+  await assert.rejects(
+    whenRepoIsReady(async () => { wrongStatus += 1; await fails(404, 'GitHub: Git Repository is empty.')(); },
+      { sleep: noSleep }),
+    /Repository is empty/);
+  assert.strictEqual(wrongStatus, 1, 'a 404 was retried on the strength of its message');
+});
+
+test('and it gives up rather than waiting for ever', async () => {
+  let tries = 0;
+
+  await assert.rejects(
+    whenRepoIsReady(async () => {
+      tries += 1;
+      const err = new Error('GitHub: Git Repository is empty.');
+      err.status = 409;
+      throw err;
+    }, { tries: 4, sleep: noSleep }),
+    /Repository is empty/);
+
+  assert.strictEqual(tries, 4, 'it did not stop at the limit it was given');
+});
+
+test('the waits lengthen, and they are the injected ones', async () => {
+  const slept = [];
+
+  await assert.rejects(
+    whenRepoIsReady(async () => {
+      const err = new Error('GitHub: Git Repository is empty.');
+      err.status = 409;
+      throw err;
+    }, { tries: 4, waitMs: 1000, sleep: async ms => { slept.push(ms); } }),
+    /Repository is empty/);
+
+  assert.deepStrictEqual(slept, [1000, 2000, 3000]);
 });
 
 /* ---------------------------------------------------------------------- */

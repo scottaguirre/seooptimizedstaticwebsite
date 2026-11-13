@@ -21,16 +21,17 @@
  * Derived by reading the theme stylesheets:
  *   style2 hides .hero-container-for-style-and-style3-992px  -> uses standard
  *   style6 wants the two-column layout with the CTA inside   -> uses split
- *   style7 is the only theme with CSS for .hero-spotlight    -> uses spotlight
+ *   style7 and style8 are the themes with .hero-spotlight CSS -> use spotlight
  *   all others hide .hero-container                          -> use overlay
  *
  * A styleKey that is NOT listed keeps the standard and overlay blocks — see
  * the fallback in stripUnusedHero().
  *
  * EVERY KEY IN THE WIZARD'S STYLES LIST HAS TO APPEAR HERE. Adding a design
- * is editing two files that know nothing about each other —
+ * is editing three files that know nothing about each other —
  * public/js/generateDinamycForm.js offers the tile, this map decides what it
- * renders — and the failure when they disagree is not an error. It is the
+ * renders, THEME_INK in utils/wordmarkLogo.js decides what colour a generated
+ * logo is drawn in — and the failure when they disagree is not an error. It is the
  * unmapped fallback below: a page that ships two heroes, two <h1>s, and looks
  * like the stylesheet failed to load. test-hero-layouts.js is the thing that
  * refuses that now.
@@ -43,6 +44,16 @@ const HERO_LAYOUT = {
   style5: 'overlay',
   style6: 'split',
   style7: 'spotlight',
+
+  /* style8 STARTED AS A COPY OF style7, so it inherits the same hero and
+   * wants the same layout. What differs is the header: style7's is
+   * transparent and floats over the photograph, style8's is a white bar in
+   * normal flow with the photograph beginning beneath it.
+   *
+   * IT IS NOW OFFERED, so all three lists above have to agree about it —
+   * the tile in generateDinamycForm.js, this layout, and the dark ink in
+   * THEME_INK. Each pairing has a test. */
+  style8: 'spotlight',
 };
 
 const MARKERS = {

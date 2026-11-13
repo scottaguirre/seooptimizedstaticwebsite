@@ -198,6 +198,109 @@ async function bootstrapEmpty({ owner, repo, branch, token, api, files }) {
   });
 }
 
+/** Injected in the suite so a retry costs no wall-clock time. */
+const defaultSleep = ms => new Promise(done => setTimeout(done, ms));
+
+/**
+ * The head of a branch that was JUST created, waited for.
+ *
+ * THE ONE-CALL VERSION WAS A RACE, AND IT COST TWO PAID BUILDS ON
+ * 11 NOVEMBER. bootstrapEmpty() creates the first commit through the
+ * Contents API, and the code then read the branch back with a single
+ * headOf(). GitHub does not always have the new ref readable by then, so
+ * headOf() answered 409 — which it is written to translate into "nothing
+ * here yet" — and everything downstream carried on believing the repository
+ * was still empty.
+ *
+ * THAT BELIEF IS WRONG IN TWO DIFFERENT PLACES, and both were seen:
+ *
+ *     02:59  Plumbing Solutions Austin   POST /git/refs
+ *            → 422 Reference already exists
+ *            The branch the bootstrap had just made.
+ *
+ *     04:54  CT Plumbing Austin          POST /git/blobs
+ *            → 409 Git Repository is empty.
+ *            The object store was not open yet either.
+ *
+ * Both jobs logged `jobs.completed` and charged 800 credits, because
+ * runLocalOptions will not fail a build over a publish — the pages exist and
+ * are paid for by then. So the customer is charged, the job says it worked,
+ * and the repository holds one file.
+ *
+ *     A 409 MEANS "NOT YET". IT DOES NOT SAY WHETHER THAT IS BECAUSE THE
+ *     REPOSITORY IS EMPTY OR BECAUSE IT IS STILL BEING MADE. The caller
+ *     knows which: it has just written a commit. So it waits rather than
+ *     concluding.
+ *
+ * Six tries over about fifteen seconds. A publish that is going to work at
+ * all works on the first or second; the rest is headroom for a slow morning
+ * at GitHub, and costs nothing when it is not needed.
+ */
+async function headAfterBootstrap({
+  owner, repo, branch, token, api, tries = 6, waitMs = 700, sleep = defaultSleep,
+}) {
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const head = await headOf({ owner, repo, branch, token, api });
+    if (head) return head;
+
+    /* LINEAR, NOT EXPONENTIAL, and not because exponential is wrong — this
+     * is a propagation delay of a second or two, not a service under load,
+     * and doubling would spend most of the budget on the last two waits. */
+    await sleep(waitMs * (attempt + 1));
+  }
+
+  /* STILL NOTHING. Falling through rather than throwing: the code below
+   * handles a null head, and the ref write there now recovers from the
+   * collision this would cause. Throwing here would turn a recoverable
+   * publish into a failed one. */
+  return null;
+}
+
+/**
+ * Run an object-store call, waiting out a repository GitHub still calls empty.
+ *
+ * THE OTHER HALF OF THE RACE headAfterBootstrap() DOCUMENTS, and the half it
+ * does not cover. Its own comment names both outcomes of giving up:
+ *
+ *     POST /git/refs   → 422 Reference already exists
+ *     POST /git/blobs  → 409 Git Repository is empty.
+ *
+ * Falling through with a null head recovers the FIRST — the ref write below
+ * catches "already exists" and moves the branch instead. Nothing recovered
+ * the second. It walked straight into the blob upload, which is the one API
+ * that cannot touch a repository GitHub still considers empty, and the
+ * publish died there.
+ *
+ *     12 NOVEMBER. A repository deleted and immediately recreated under the
+ *     same name is the slowest case there is for that propagation. The
+ *     bootstrap's index.html was in place — the recovery push found it and
+ *     reported "20 uploaded, 1 already there" — so the repository was never
+ *     really empty. GitHub had simply not finished saying so.
+ *
+ * SO IT WAITS RATHER THAN CONCLUDING, which is the same sentence
+ * headAfterBootstrap() is written around. We have just put a file in this
+ * repository; "empty" is a stale answer, not a fact about it.
+ *
+ * MATCHED ON THE MESSAGE AS WELL AS THE STATUS. GitHub returns 409 for
+ * unrelated conflicts too, and retrying one of those five times would turn a
+ * clear refusal into a slow clear refusal.
+ */
+async function whenRepoIsReady(run, { tries = 5, waitMs = 1200, sleep = defaultSleep } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await run();
+
+    } catch (err) {
+      const notYet = 409 === (err && err.status)
+        && /repository is empty/i.test((err && err.message) || '');
+
+      if (!notYet || attempt >= tries) throw err;
+
+      await sleep(waitMs * attempt);
+    }
+  }
+}
+
 /**
  * Commit a whole site to a branch, in one push.
  *
@@ -222,6 +325,11 @@ async function commitSite({
   branch = 'main',
   message = 'Publish site',
   api = githubApi,
+
+  /* INJECTED ONLY SO THE SUITE DOES NOT WAIT. The retry after a bootstrap
+   * sleeps between attempts; a test that actually slept would add fifteen
+   * seconds to the run and would be deleted by whoever noticed. */
+  sleep,
 } = {}) {
   if (!owner || !repo) {
     throw new Error('commitSite needs an owner and a repo.');
@@ -251,11 +359,22 @@ async function commitSite({
    * bootstrapEmpty() above for what GitHub answers and why this is not
    * optional. After it, the repository is ordinary and everything below
    * works as it does on any later publish. */
+  let bootstrapped = false;
+
   if (!head) {
     await bootstrapEmpty({ owner, repo, branch, token, api, files });
+    bootstrapped = true;
 
-    head = await headOf({ owner, repo, branch, token, api });
+    head = await headAfterBootstrap({ owner, repo, branch, token, api, sleep });
   }
+
+  /* ONLY ARMED ON A REPOSITORY WE JUST BOOTSTRAPPED.
+   *
+   * Everywhere else a 409 is a real conflict and should fail at once. It is
+   * only here — on the one push that follows a first commit by milliseconds
+   * — that "empty" can be a stale answer rather than the truth, because this
+   * function is what made it untrue. */
+  const settle = run => (bootstrapped ? whenRepoIsReady(run, { sleep }) : run());
 
   const already = await existingShas({
     owner, repo, treeSha: head && head.treeSha, token, api,
@@ -301,7 +420,7 @@ async function commitSite({
 
     const isBuffer = Buffer.isBuffer(content);
 
-    const blob = await api({
+    const blob = await settle(() => api({
       method: 'POST',
       path: `/repos/${owner}/${repo}/git/blobs`,
       token,
@@ -314,7 +433,7 @@ async function commitSite({
         content: isBuffer ? content.toString('base64') : String(content),
         encoding: isBuffer ? 'base64' : 'utf-8',
       },
-    });
+    }));
 
     if (!blob || !blob.sha) {
       throw new Error(`GitHub did not return a blob sha for ${path}.`);
@@ -336,12 +455,12 @@ async function commitSite({
 
   /* NO base_tree. See the note at the top: this tree IS the site, so a page
    * that is no longer rendered is no longer in the repository. */
-  const made = await api({
+  const made = await settle(() => api({
     method: 'POST',
     path: `/repos/${owner}/${repo}/git/trees`,
     token,
     body: { tree },
-  });
+  }));
 
   if (!made || !made.sha) {
     throw new Error('GitHub did not return a tree sha.');
@@ -365,7 +484,7 @@ async function commitSite({
     };
   }
 
-  const commit = await api({
+  const commit = await settle(() => api({
     method: 'POST',
     path: `/repos/${owner}/${repo}/git/commits`,
     token,
@@ -376,7 +495,7 @@ async function commitSite({
        * descend from, and sending `parents: [undefined]` is a 422. */
       parents: head ? [head.commitSha] : [],
     },
-  });
+  }));
 
   if (!commit || !commit.sha) {
     throw new Error('GitHub did not return a commit sha.');
@@ -397,12 +516,37 @@ async function commitSite({
       body: { sha: commit.sha },
     });
   } else {
-    await api({
-      method: 'POST',
-      path: `/repos/${owner}/${repo}/git/refs`,
-      token,
-      body: { ref: `refs/heads/${branch}`, sha: commit.sha },
-    });
+    try {
+      await api({
+        method: 'POST',
+        path: `/repos/${owner}/${repo}/git/refs`,
+        token,
+        body: { ref: `refs/heads/${branch}`, sha: commit.sha },
+      });
+
+    } catch (err) {
+      /* THE BRANCH APPEARED WHILE WE WERE WORKING, which is the same race
+       * headAfterBootstrap() exists to close and this is the second line of
+       * defence for. `head` was null, so this took the create path; by the
+       * time it ran, the bootstrap's ref had become readable and GitHub
+       * refused with 422 "Reference already exists".
+       *
+       * MOVING IT IS THE RIGHT ANSWER, NOT FAILING. Our commit descends from
+       * nothing, and the branch points at the bootstrap commit that holds
+       * one file — the first page of the very site being published. There is
+       * no work on that branch to lose.
+       *
+       * Matched on the message because GitHub's status for this is 422,
+       * which it also uses for a dozen unrelated validation problems. */
+      if (!/already exists/i.test(err && err.message || '')) throw err;
+
+      await api({
+        method: 'PATCH',
+        path: `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+        token,
+        body: { sha: commit.sha, force: true },
+      });
+    }
   }
 
   return {
@@ -416,6 +560,8 @@ async function commitSite({
 }
 
 module.exports = {
+  headAfterBootstrap,
+  whenRepoIsReady,
   blobSha,
   headOf,
   existingShas,

@@ -120,6 +120,42 @@ async function generateForJob(job, { onProgress }) {
       alreadyCompleted: job.completedPages || [],
     });
 
+    /* THE PUBLISH OUTCOME TRAVELS WITH THE JOB, OR NOBODY EVER SEES IT.
+     *
+     * runLocalOptions hands back `published` — null for an account with no
+     * GitHub installation, `{ok:false, error}` when the push failed, the
+     * push result when it worked. Three states, deliberately distinct.
+     *
+     * The runner only persists `result.result`, so `published` was being
+     * dropped on the floor. On 11 November two builds published nothing and
+     * both jobs said `completed` with 800 credits charged, because the one
+     * value that knew otherwise never left this function.
+     *
+     *     A BUILD THAT WAS PAID FOR AND DID NOT GO LIVE IS NOT A COMPLETED
+     *     BUILD WITH NOTHING TO SAY. It is the one case the customer most
+     *     needs told about, and it was the quietest thing the job did.
+     *
+     * NOT THE WHOLE OBJECT. A successful publish carries file counts and
+     * shas; the progress page needs to know whether it worked and, if not,
+     * why. Everything else is noise in a Mongo document. */
+    if (result && result.published !== undefined) {
+      const p = result.published;
+
+      return Object.assign({}, result, {
+        result: {
+          published: p ? {
+            /* `ok` is absent on success — publishSite returns commit data,
+             * and only the catch in runLocalOptions sets `ok: false`. So
+             * the test is for the failure, not for the success. */
+            ok: false !== p.ok,
+            error: p.error || '',
+            owner: p.owner || '',
+            repo: p.repo || '',
+          } : null,
+        },
+      });
+    }
+
     return result;
 
   } finally {

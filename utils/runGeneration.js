@@ -66,6 +66,8 @@ const { buildRankFastInterlinksMap, interlinkSlugs } = require('./buildRankFastL
 const { canonicalTag } = require('./canonicalUrl');
 const { siteBaseUrl } = require('./buildSitemap');
 const { imageExtension } = require('./uploadExtension');
+const { logoSize } = require('./logoSizes');
+const { writeWordmark } = require('./wordmarkLogo');
 const CM = require('./contentModel');
 
 /* THE OTHER DIRECTION: a stored content.json read back as the shapes the
@@ -335,6 +337,25 @@ async function runGeneration(ctx) {
     const files = ctx.files || [];
 
 
+    // Logo and favicon naming, by mode:
+    //
+    //   Rank GBPs   emergency-plumber-leander-leander-tx-logo.png
+    //   Rank Fast   emergency-plumber-leander-logo.png
+    //
+    // The business name alone. These two files sit at the site root's assets/
+    // folder and there is exactly one of each, so the location adds length
+    // without adding uniqueness.
+    //
+    // HOISTED OUT OF THE UPLOAD LOOP, where it used to be recomputed per
+    // file. The wordmark branch below writes the same two filenames without
+    // ever entering that loop — there is no upload to iterate — so the names
+    // have to be settled before it runs. Identical output either way: every
+    // argument comes from `global`, which the loop never touches.
+    const seoPrefix = preset.images.globalPrefix({
+      businessName: global.businessName,
+      location: global.location || '',
+    });
+
     for (const file of files) {
       const globalMatch = file.fieldname.match(/global\[(.*?)\]/);
 
@@ -347,20 +368,6 @@ async function runGeneration(ctx) {
       // shipped <img src="assets/acme-logo"> and the logo silently did not
       // load. imageExtension falls back to the MIME type.
       const ext = imageExtension(file);
-
-      // Logo and favicon naming, by mode:
-      //
-      //   Rank GBPs   emergency-plumber-leander-leander-tx-logo.png
-      //   Rank Fast   emergency-plumber-leander-logo.png
-      //
-      // The business name alone. These two files sit at the site root's
-      // assets/ folder and there is exactly one of each, so the location adds
-      // length without adding uniqueness.
-      const seoPrefix = preset.images.globalPrefix({
-        businessName: global.businessName,
-        location: global.location || '',
-      });
-
 
       if (globalMatch) {
         const field = globalMatch[1];
@@ -443,6 +450,49 @@ async function runGeneration(ctx) {
       if (stored.favicon) uploadedImages.global.favicon = String(stored.favicon);
     }
 
+
+    /* THE CUSTOMER HAS NO LOGO FILE AND ASKED US TO DRAW ONE.
+     *
+     * Read the same two ways every other global is read, because the wizard
+     * posts a nested body and a replayed job payload posts a flat one — see
+     * trustClaims below for the precedent.
+     *
+     * Checked AFTER the reuse seeding and BEFORE the guard, which is the only
+     * window where both facts are known: that nothing was uploaded, and that
+     * nothing was restored from the store either. Running it earlier would
+     * redraw the logo of a published site on every save, under a new name,
+     * leaving the restored assets referenced by nothing — the same failure
+     * the comment above describes for a re-uploaded file.
+     *
+     * A REBUILD OF A WORDMARK SITE REGENERATES RATHER THAN FAILING. The
+     * stored model records how the logo was made, so a site whose assets went
+     * missing can be drawn again from its name: there is no file to lose. An
+     * uploaded logo has no such recovery, which is why the guard below still
+     * refuses that case.
+     */
+    const rawLogoSource = global.logoSource ?? ctx.body['global[logoSource]'];
+    const storedLogoSource = reuse && reuse.global ? reuse.global.logoSource : '';
+    const logoSource =
+      String(rawLogoSource || storedLogoSource || 'upload').trim().toLowerCase() === 'wordmark'
+        ? 'wordmark'
+        : 'upload';
+
+    if (!uploadedImages.global.logo && logoSource === 'wordmark') {
+      await report({ stage: 'Drawing the logo', current: '' });
+
+      const drawn = await writeWordmark({
+        businessName: global.businessName,
+        logoType: global.logoType,
+        styleKey: global.styleKey,
+        assetsDir,
+        logoFilename: assetFile(seoPrefix, 'logo', '.png'),
+        faviconFilename: assetFile(seoPrefix, 'favicon-42x42', '.png'),
+      });
+
+      uploadedImages.global.logo = drawn.logo;
+      uploadedImages.global.favicon = drawn.favicon;
+    }
+
     if (!uploadedImages.global.logo) {
       /* A THIRD FAILURE, AND IT NEEDS ITS OWN SENTENCE TOO. Neither message
        * below fits a re-render: there was no upload to outrun and no file to
@@ -502,6 +552,10 @@ async function runGeneration(ctx) {
       domain: global.domain?.trim(),
       useNearMe: String(rawUseNearMe),
       logo: uploadedImages.global.logo || '',
+      // 'upload' or 'wordmark'. Recorded so a rebuild can tell a logo that
+      // was DRAWN from one that was UPLOADED: the first can always be drawn
+      // again from the name, the second is gone if its file is.
+      logoSource,
       businessType: global.businessType?.trim(),
       email: normalizeText(global.email?.trim()),
       twitterUrl: (global.twitterUrl || '').trim(),
@@ -522,18 +576,17 @@ async function runGeneration(ctx) {
     // read the posted value (fallback = rectangular)
     globalValues.logoType = String(global.logoType || 'rect').toLowerCase();
 
-    // Rendered logo dimensions, by shape.
-    // These are the width/height attributes written into every template, so
-    // they reserve the right space and prevent layout shift.
-    const LOGO_SIZES = {
-      square: { width: 120, height: 120 },  // 1:1
-      rect:   { width: 150, height: 100 },  // 3:2
-      wide:   { width: 250, height: 100 },  // 5:2 — long horizontal logos
-    };
-
-    const logoSize = LOGO_SIZES[globalValues.logoType] || LOGO_SIZES.rect;
-    globalValues.logoWidth  = logoSize.width;
-    globalValues.logoHeight = logoSize.height;
+    // Rendered logo dimensions, by shape. These are the width/height
+    // attributes written into every template, so they reserve the right space
+    // and prevent layout shift.
+    //
+    // The table moved to utils/logoSizes.js when the wordmark generator and
+    // the preview route started needing the same numbers. A wordmark is DRAWN
+    // at this size, so a second copy would let the preview disagree with the
+    // site it is previewing.
+    const box = logoSize(globalValues.logoType);
+    globalValues.logoWidth  = box.width;
+    globalValues.logoHeight = box.height;
 
 
     // The domain has to survive siteBaseUrl(), not merely be non-empty.
