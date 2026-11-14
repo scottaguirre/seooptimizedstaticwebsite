@@ -382,7 +382,24 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
       return `
       <tr>
         <td class="rownum">${i + 1}</td>
-        <td><code>${esc(d.domain)}</code></td>
+
+        ${/* THE REGISTRAR SITS UNDER THE DOMAIN, NOT IN AN EIGHTH COLUMN.
+              This table already overflows — col-tight exists because an
+              account cell shoved the GitHub column off the right of the
+              screen on 31 October, and the wrapper below scrolls for the
+              same reason. Another column would spend that hard-won width
+              on one word.
+
+              Under the domain is also where it belongs: it is a fact about
+              the domain, and it is what the customer's picker prints
+              beside it. */''}
+        <td>
+          <code>${esc(d.domain)}</code>
+          ${d.registrar
+            ? `<div class="small text-white-50">${esc(d.registrar)}</div>`
+            : ''}
+        </td>
+
         <td class="text-white-50 col-tight">${esc(d.label || '')}</td>
         <td>${badge}</td>
         ${/* col-tight — 31 October. An account here is commonly one
@@ -465,6 +482,48 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
             ${res.locals.csrfField || ''}
             <button class="btn btn-sm btn-outline-secondary" type="submit">Re-check DNS</button>
           </form>` : ''}</td>
+      </tr>
+
+      ${/* A SECOND ROW FOR THE EDITOR, which is the pattern the accounts
+            table above already uses for Rename and Replace API token. A
+            <details> costs one line until it is opened, so eleven of them
+            do not turn this screen into a wall of inputs. */''}
+      <tr>
+        <td class="pt-0"></td>
+        <td colspan="6" class="pt-0">
+          <details>
+            <summary class="small text-white-50 d-inline-block"
+                     style="cursor:pointer; list-style:none">
+              Registrar &rsaquo;
+            </summary>
+            <form method="post" action="/admin/blog-domains/${esc(d._id)}/registrar"
+                  class="row g-2 mt-1 align-items-end">
+              ${res.locals.csrfField || ''}
+              <div class="col-md-5">
+                <label class="form-label small mb-1" for="registrar-${esc(d._id)}">
+                  Registrar for ${esc(d.domain)}
+                </label>
+                ${/* A LIST THAT SUGGESTS WITHOUT REFUSING. A <select> would
+                      stop "Namecheap", "namecheap" and "Name Cheap" sitting
+                      side by side — and would also stop you entering a
+                      registrar I did not think of. On a screen only you use,
+                      that trade is the wrong way round, so the datalist
+                      offers the common ones and accepts anything. */''}
+                <input class="form-control form-control-sm" id="registrar-${esc(d._id)}"
+                       name="registrar" maxlength="60" list="registrar-options"
+                       autocomplete="off" spellcheck="false"
+                       value="${esc(d.registrar || '')}">
+              </div>
+              <div class="col-auto">
+                <button class="btn btn-sm btn-outline-light" type="submit">Save</button>
+              </div>
+              <div class="form-text text-white-50">
+                Shown beside the domain when a customer picks one. Leave it
+                empty to show the domain alone. Nothing is keyed on it.
+              </div>
+            </form>
+          </details>
+        </td>
       </tr>`;
     }).join('');
 
@@ -567,6 +626,22 @@ router.get('/admin/blog-domains', requireAdmin, async (req, res) => {
             does not.
           </div>
         </form>
+
+        ${/* ONE DATALIST FOR THE WHOLE TABLE. Eleven rows each carrying
+              their own copy of the same six <option>s is the same markup
+              eleven times; a datalist is referenced by id, so one serves
+              every input that names it.
+
+              IT IS A SUGGESTION LIST, NOT A VALIDATION LIST — the browser
+              offers these and accepts anything else typed over them. */''}
+        <datalist id="registrar-options">
+          <option value="Namecheap"></option>
+          <option value="Cloudflare"></option>
+          <option value="GoDaddy"></option>
+          <option value="Porkbun"></option>
+          <option value="Dynadot"></option>
+          <option value="Google Domains"></option>
+        </datalist>
 
         <h2 class="h4 mt-5 mb-3">Domains</h2>
 
@@ -1897,6 +1972,72 @@ function dnsTable(dns = {}) {
           </tbody>
         </table>`;
 }
+
+/* -------------------------------------------------------------------------
+ * The registrar on a domain
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Who the domain is registered with, and nothing else.
+ *
+ * WHY IT EXISTS — Edwin, 14 November: *"when the customer selects a domain
+ * that it can show the registrar as well maybe 1o1.com - Namecheap"*. The
+ * pickers print `domain — registrar`; this is where that word is set.
+ *
+ * NO CLASH CHECK, UNLIKE THE ACCOUNT RENAME ABOVE. That one refuses a
+ * duplicate name because the accounts dropdown shows the label ALONE, so two
+ * rows sharing one is a choice made by guesswork. A registrar is the
+ * opposite: eleven domains at Namecheap should all say Namecheap, and the
+ * picker shows the domain beside it, which is what tells them apart.
+ *
+ * EMPTY IS A VALID ANSWER, so there is no `required` here and none on the
+ * input. Clearing the box is how a row goes back to showing its domain
+ * alone — a rename route that cannot unset its field leaves you editing the
+ * database by hand to undo a typo.
+ */
+router.post('/admin/blog-domains/:id/registrar', requireAdmin, async (req, res) => {
+  try {
+    const found = await Domain.findById(req.params.id);
+
+    if (!found) {
+      return problem(res, 'That domain is not here',
+        'It may have been removed already. Reload the screen.');
+    }
+
+    /* TRIMMED AND CAPPED HERE AS WELL AS IN THE SCHEMA. maxlength on the
+     * input is a hint a client can ignore, and the schema's maxlength
+     * throws rather than truncates — so the value is made acceptable
+     * before it is handed over, and a long paste becomes a short registrar
+     * instead of a 500. */
+    const registrar = String(req.body.registrar || '').trim().slice(0, 60);
+
+    if (registrar === found.registrar) {
+      return res.redirect('/admin/blog-domains');
+    }
+
+    await Domain.updateOne({ _id: found._id }, { $set: { registrar } });
+
+    /* BOTH VALUES, because the old one is what anybody searching the log
+     * for this row will have — the same reason the account rename logs
+     * from/to rather than just the new name. */
+    log.info('blogDomains.registrarSet', {
+      requestId: req.id,
+      domain: found.domain,
+      from: found.registrar || '',
+      to: registrar,
+    });
+
+    res.redirect('/admin/blog-domains');
+
+  } catch (err) {
+    log.error('blogDomains.setRegistrar.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1>We could not save that registrar</h1>',
+    }));
+  }
+});
 
 router.post('/admin/blog-domains/:id/setup-github', requireAdmin, async (req, res) => {
   let domain;

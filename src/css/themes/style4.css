@@ -757,9 +757,62 @@ footer a {
         margin-right: 10px;
     }
 
+    /* ---- THAT 10px IS FOR THE BAR, NOT FOR THE LIST ----
+
+       The rule immediately above gives every link 10px of margin each side,
+       which is the air between ABOUT US and SERVICES along the horizontal
+       bar. buildNavMenu.js writes dropdown entries as `dropdown-item
+       nav-link` inside an <li>, so they take it too — inside a panel that
+       shrink-wraps to the <li>, where there is no room for it.
+
+       Measured on the real nav with twenty services: the anchor ran to
+       x=1121 against a panel edge at x=1112, overflowing by 9px, so the
+       longest names were clipped.
+
+       AT EVERY WIDTH FROM 992 UP, WHICH IS WHY IT IS HERE AND NOT IN THE
+       1250 BLOCK. `.dropdown .dropdown-menu li a` down there pins the
+       anchor to 200px and was the obvious suspect, but the overflow
+       measures 9px at 1024, 1100, 1249, 1250 and 1435 alike — the anchor
+       is 158px below 1250 and 200px above it, and the margin overflows
+       either way. Putting the fix in the 1250 block would have left
+       1024-1249 still clipped.
+
+       SMALLER THAN style7 AND style8's 21px, SAME CAUSE. Their bar margin
+       is 22px a side rather than 10, which is the whole difference. */
+    #headerColor .dropdown-menu .nav-link,
+    .navbar-nav .dropdown-menu li a {
+        margin-left: 0;
+        margin-right: 0;
+    }
+
     /* Keep tight alignment under the trigger */
     .navbar .dropdown-menu {
       margin-top: 0;
+
+      /* ---- THE LIST IS CAPPED, AND SCROLLS — 14 November ----
+
+         MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items
+         draw a 1024px menu here. Measured on the real nav:
+
+             1435x800   1024px tall, 279px below the fold
+             1280x700   1024px tall, 379px below the fold
+
+         overflow-y was `visible` with no max-height, so those items were
+         not merely off-screen — there was nothing to scroll. The menu
+         opens on HOVER up here, so reaching them by scrolling the page
+         means moving the pointer off the trigger, which closes it.
+
+         80px, AND THE NUMBER IS THIS DESIGN'S OWN. style5 uses 72,
+         style6 70, style7 and style8 90. This header is 70px with its
+         menu starting at y=55; 80 is what leaves it ending a clear 25px
+         above the bottom. Copying any of the others would be wrong here.
+
+         ONLY AT 992px AND UP. Below it the menu is `position: static`
+         inside the collapsed panel — in flow, the page grows, and the
+         page's own scrollbar reaches every item. */
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     /* Optional: show active state on the trigger while hovering */
     .navbar .dropdown:hover > .nav-link {

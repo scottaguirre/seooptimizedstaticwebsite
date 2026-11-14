@@ -263,6 +263,112 @@
 
 
 <!-- Button Section-->
+<!--HERO:twocol-->
+<!-- Hero Section for style9: two columns side by side — the photograph on a
+     yellow field at the left, the headline and the two calls to action on a
+     deeper blue at the right, the whole block inset so the page colour shows
+     down both sides.
+
+     NO EYEBROW LINE. The reference this came from has "Welcome to <business>"
+     above the headline. Edwin's call on 14 November was to drop it, and that
+     is worth recording as a saving rather than an omission: without it this
+     hero uses only fields every mode already produces — headline, location
+     line, hero image, phone and the contact link. Nothing new had to be
+     generated for it.
+
+     THE BUTTONS LIVE INSIDE THIS HERO, so stripUnusedHero removes the
+     standalone CTA block below for the twocol layout — see CTA_INSIDE_HERO.
+     Without that the page would show the phone twice.
+
+     THE PHOTOGRAPH IS RECTANGULAR AND THE REFERENCE'S WAS A CUT-OUT. A
+     cut-out lets the yellow show all round it; a rectangle would cover the
+     field completely. The stylesheet oversizes the image and anchors it into
+     the bottom-right corner instead, leaving the yellow as an L along the
+     left and top — same effect from the photographs this product actually
+     has.
+
+     {{CONTACT_PAGE}} is resolved by fillLegalLinks, which is also what makes
+     it point back at the page itself on a one-page design sample instead of
+     404ing. -->
+<div class="hero-twocol">
+  <div class="hero-twocol__block">
+
+    <div class="hero-twocol__media">
+      <picture>
+        <source media="(min-width:1250px)" srcset="{{HERO_IMG_LARGE}}"   width="1400" height="700">
+        <source media="(min-width:720px)"  srcset="{{HERO_IMG_DESKTOP}}" width="1250" height="700">
+        <source media="(min-width:601px)"  srcset="{{HERO_IMG_TABLET}}"  width="750"  height="400">
+        <img class="hero-img img-fluid" src="{{HERO_IMG_MOBILE}}" width="600" height="350"
+             alt="{{HERO_IMG_ALT}}" title="{{HERO_IMG_TITLE}}" fetchpriority="high">
+      </picture>
+    </div>
+
+    <div class="hero-twocol__copy">
+      <h1 class="hero-twocol__title">{{BUSINESS_NAME}}</h1>
+      <div class="hero-twocol__divider"></div>
+      <h2 class="lead hero-twocol__sub">{{LOCATION_AREA}}</h2>
+
+      <div class="hero-twocol__actions">
+        <a class="hero-twocol__btn hero-twocol__btn--solid" href="{{CONTACT_PAGE}}">
+          <span>Book Appointment</span>
+        </a>
+
+        <a class="hero-twocol__btn hero-twocol__btn--ghost" href="{{PHONE_RAW}}">
+          <span>{{PHONE_DISPLAY}}</span>
+        </a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- THE NAME, ADDRESS AND PHONE BAR, flush beneath the block.
+
+       THE THREE LABELS ARE TEXT, NOT CSS. style8's spotlight bar records
+       what the other way cost: ::before content cannot be selected or
+       copied, is invisible to translation, never reaches the WordPress
+       renderer, and was chosen by nth-child — so reordering these three
+       divs relabelled them in silence, with the phone number sitting under
+       "Address:" and nothing erroring.
+
+       {{ADDRESS_FULL}}, NOT {{ADDRESS}}. The plain placeholder is the
+       Address box as typed, which in three of the four wizard modes is
+       whatever one free-text field received — often just a street.
+       utils/fullAddress.js adds the city and state when they are missing
+       and leaves the address alone when they are not. -->
+  <div class="hero-twocol__nap">
+    <div class="hero-twocol__nap-item">
+      <svg class="hero-twocol__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 20V9.2L12 4l8 5.2V20h-5.5v-5.5h-5V20Z"/>
+      </svg>
+      <span class="hero-twocol__nap-text">
+        <span class="hero-twocol__nap-label">Business Name:</span>
+        <span class="hero-twocol__nap-value">{{BUSINESS_NAME}}</span>
+      </span>
+    </div>
+
+    <div class="hero-twocol__nap-item">
+      <svg class="hero-twocol__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"/>
+        <circle cx="12" cy="10" r="2.6"/>
+      </svg>
+      <span class="hero-twocol__nap-text">
+        <span class="hero-twocol__nap-label">Address:</span>
+        <span class="hero-twocol__nap-value">{{ADDRESS_FULL}}</span>
+      </span>
+    </div>
+
+    <div class="hero-twocol__nap-item">
+      <svg class="hero-twocol__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 6 6L16.5 12l4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/>
+      </svg>
+      <span class="hero-twocol__nap-text">
+        <span class="hero-twocol__nap-label">Phone:</span>
+        <a class="hero-twocol__nap-value" href="{{PHONE_RAW}}">{{PHONE_DISPLAY}}</a>
+      </span>
+    </div>
+  </div>
+</div>
+<!--/HERO:twocol-->
 <!--HERO:cta-->
 <div class="text-center btn-container first-button-container">
   <div class="cta-btn"><a href="{{PHONE_RAW}}"><p>{{PHONE_DISPLAY}}</p></a></div>

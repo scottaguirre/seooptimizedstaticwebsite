@@ -20,6 +20,8 @@
 //   node test-blog-domains.js
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 
 process.env.CF_TOKEN_KEY = crypto.randomBytes(32).toString('hex');
@@ -119,6 +121,9 @@ function install(over = {}) {
     domainCount: 0,
     countCalls: [],
     deleted: null,
+
+    /* Separate from db.updates — see the Domain.updateOne stub below. */
+    domainUpdates: [],
   }, over);
 
   cloudflare.credsForAccountId = async (id) => {
@@ -209,6 +214,24 @@ function install(over = {}) {
   Domain.find = () => ({ sort: () => ({ lean: async () => db.domains }) });
   Domain.findOne = async (where) =>
     db.domains.find(d => !where.domain || d.domain === where.domain) || null;
+
+  /* THE REGISTRAR ROUTE READS AND WRITES A DOMAIN BY ID — added 14 November
+   * with that route. Unstubbed, findById reaches for a Mongo connection this
+   * suite does not have and the handler answers 500, which is the same
+   * failure the CloudflareSite.countDocuments note above describes: a model
+   * call added to a route and not to the harness looks, from the handler's
+   * side, exactly like a call that always returns nothing.
+   *
+   * DOMAIN WRITES GO IN THEIR OWN ARRAY. db.updates is the account table's,
+   * and the rename tests assert on its LENGTH — sharing it would make a
+   * domain write look like an account write to every one of them. */
+  Domain.findById = async (id) =>
+    db.domains.find(d => String(d._id) === String(id)) || null;
+
+  Domain.updateOne = async (where, update) => {
+    db.domainUpdates.push({ where, update });
+    return { acknowledged: true };
+  };
   Domain.create = async (doc) => { db.createdDomain = doc; return { _id: 'new-domain', ...doc }; };
 }
 
@@ -1415,13 +1438,38 @@ await test('THE HEADER AND THE ROW AGREE ON HOW MANY COLUMNS THERE ARE', async (
   const body = table.slice(table.indexOf('<tbody'));
   const rows = body.split('<tr>').slice(1);
 
-  assert.strictEqual(rows.length, 2, 'the two domains did not both draw a row');
+  /* TWO KINDS OF ROW SINCE 14 NOVEMBER, and the count has to know which is
+   * which. Each domain now draws a data row AND a continuation row holding
+   * the Registrar editor — the same shape the accounts table above uses for
+   * Rename and Replace API token.
+   *
+   * The original premise here was "every row in the body is a domain", and
+   * the editor row broke it. Loosening the assertion to "at least two rows"
+   * would have made it pass and stopped it checking anything; a
+   * continuation row is told apart by its colspan instead, and BOTH kinds
+   * are still made to add up to the headings. */
+  const spans = (row) => {
+    const tds = row.match(/<td\b[^>]*>/g) || [];
+    return tds.reduce((sum, td) => {
+      const m = /\bcolspan="(\d+)"/.exec(td);
+      return sum + (m ? Number(m[1]) : 1);
+    }, 0);
+  };
 
+  const data = rows.filter(r => !/\bcolspan=/.test(r));
+  const editors = rows.filter(r => /\bcolspan=/.test(r));
+
+  assert.strictEqual(data.length, 2, 'the two domains did not both draw a row');
+
+  assert.strictEqual(editors.length, 2,
+    'each domain should carry one continuation row for its Registrar editor');
+
+  /* THE WHOLE POINT, UNCHANGED: a row that adds up to more cells than there
+   * are headings draws a column with no name over it, which is how the
+   * GitHub column came to be the nameless one squeezed off the end. */
   for (const row of rows) {
-    const cells = (row.match(/<td\b/g) || []).length;
-
-    assert.strictEqual(cells, heads,
-      `a row draws ${cells} cells under ${heads} headings`);
+    assert.strictEqual(spans(row), heads,
+      `a row spans ${spans(row)} cells under ${heads} headings`);
   }
 });
 
@@ -2074,6 +2122,230 @@ await test('AND A WEBSITES DOMAIN IS BADGED APART FROM BOTH OTHER KINDS', async 
    * BLOGS. A bare `d.target === 'cloudflare'` would badge them "unknown". */
   assert.ok(/>blogs</.test(row('firstweek.com')),
     'a domain added before the field existed is no longer shown as a blog domain');
+});
+
+/* ===================================================================== */
+section('THE REGISTRAR ON A DOMAIN');
+
+/* WHY THIS EXISTS — Edwin, 14 November: *"when the customer selects a domain
+ * that it can show the registrar as well maybe 1o1.com - Namecheap"*.
+ *
+ * IT IS NOT `label`, AND THAT IS THE WHOLE POINT OF THE FIELD. The GitHub
+ * rows are already using label for a GitHub account note —
+ * `1r2.net -GitHub-claytonringpeter@gmail.com`. One box cannot hold both
+ * without either losing the note or printing a client's email in a
+ * customer's dropdown. */
+
+const REG_DOMAIN = {
+  _id: 'dom-reg',
+  domain: 'acmehvac.com',
+  account: 'acct-3',
+  label: 'Acme HVAC',
+  registrar: 'GoDaddy',
+  enabled: true,
+};
+
+await test('THE REGISTRAR CHANGES AND NOTHING ELSE DOES', async () => {
+  install({ accounts: [ACCOUNT], domains: [REG_DOMAIN] });
+
+  await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'dom-reg' }, body: { registrar: 'Namecheap' } }));
+
+  assert.strictEqual(db.domainUpdates.length, 1, 'nothing was written');
+
+  const { update } = db.domainUpdates[0];
+
+  assert.deepStrictEqual(Object.keys(update.$set), ['registrar'],
+    `it wrote more than the registrar: ${Object.keys(update.$set).join(', ')}`);
+
+  assert.strictEqual(update.$set.registrar, 'Namecheap');
+});
+
+await test('AND THE LABEL IS LEFT ALONE, WHICH IS WHY THE FIELD EXISTS', async () => {
+  /* The GitHub rows keep a GitHub account note in `label`. A registrar edit
+   * that touched it would print an email address into the picker, or wipe
+   * the only record of which GitHub account owns that domain. */
+  install({ accounts: [ACCOUNT], domains: [REG_DOMAIN] });
+
+  await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'dom-reg' }, body: { registrar: 'Namecheap' } }));
+
+  assert.ok(!('label' in db.domainUpdates[0].update.$set),
+    'a registrar edit overwrote the label');
+});
+
+await test('AND IT IS WRITTEN BY _id', async () => {
+  install({ accounts: [ACCOUNT], domains: [REG_DOMAIN] });
+
+  await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'dom-reg' }, body: { registrar: 'Namecheap' } }));
+
+  assert.deepStrictEqual(db.domainUpdates[0].where, { _id: 'dom-reg' });
+});
+
+await test('AN EMPTY REGISTRAR IS ACCEPTED, BECAUSE CLEARING IT IS THE UNDO', async () => {
+  /* The opposite of the account rename, which refuses a blank name. A
+   * registrar is optional — a row with none shows its domain alone — so a
+   * route that could not unset it would leave a typo fixable only in the
+   * database. */
+  install({ accounts: [ACCOUNT], domains: [REG_DOMAIN] });
+
+  const out = await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'dom-reg' }, body: { registrar: '  ' } }));
+
+  assert.strictEqual(out.redirected, '/admin/blog-domains');
+  assert.strictEqual(db.domainUpdates.length, 1, 'clearing it wrote nothing');
+  assert.strictEqual(db.domainUpdates[0].update.$set.registrar, '');
+});
+
+await test('AND THE SAME VALUE WRITES NOTHING', async () => {
+  install({ accounts: [ACCOUNT], domains: [REG_DOMAIN] });
+
+  await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'dom-reg' }, body: { registrar: REG_DOMAIN.registrar } }));
+
+  assert.strictEqual(db.domainUpdates.length, 0, 'an unchanged value was written anyway');
+});
+
+await test('TWO DOMAINS MAY SHARE A REGISTRAR, UNLIKE TWO ACCOUNTS A NAME', async () => {
+  /* The account rename refuses a duplicate because the accounts dropdown
+   * shows the label ALONE. The domain picker shows "domain — registrar", so
+   * eleven rows at Namecheap all saying Namecheap is correct, not a clash. */
+  install({
+    accounts: [ACCOUNT],
+    domains: [
+      REG_DOMAIN,
+      { _id: 'dom-2', domain: 'other.com', account: 'acct-3',
+        registrar: 'Namecheap', enabled: true },
+    ],
+  });
+
+  const out = await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'dom-reg' }, body: { registrar: 'Namecheap' } }));
+
+  assert.strictEqual(out.redirected, '/admin/blog-domains');
+  assert.strictEqual(db.domainUpdates.length, 1, 'a shared registrar was refused');
+});
+
+await test('A LONG PASTE IS TRUNCATED RATHER THAN THROWN', async () => {
+  /* maxlength on the input is a hint a client can ignore, and the schema's
+   * maxlength throws rather than truncates — so a 500 is the alternative. */
+  install({ accounts: [ACCOUNT], domains: [REG_DOMAIN] });
+
+  await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'dom-reg' }, body: { registrar: 'N'.repeat(500) } }));
+
+  assert.strictEqual(db.domainUpdates[0].update.$set.registrar.length, 60);
+});
+
+await test('A DOMAIN THAT IS NOT THERE IS REFUSED', async () => {
+  install({ accounts: [ACCOUNT], domains: [] });
+
+  const out = await call(handler('post', '/admin/blog-domains/:id/registrar'),
+    req({ params: { id: 'nope' }, body: { registrar: 'Namecheap' } }));
+
+  assert.strictEqual(out.status, 400);
+  assert.strictEqual(db.domainUpdates.length, 0);
+});
+
+await test('THE TABLE SHOWS IT, AND EVERY ROW CAN EDIT IT', async () => {
+  install({
+    accounts: [ACCOUNT],
+    domains: [
+      REG_DOMAIN,
+      { _id: 'dom-gh', domain: 'gh.com', target: 'github',
+        githubInstallationId: '176399104', enabled: true },
+      { _id: 'dom-cf', domain: 'cf.com', target: 'cfsite',
+        account: 'acct-3', enabled: true },
+    ],
+  });
+
+  const out = await call(handler('get', '/admin/blog-domains'));
+
+  assert.ok(out.html.includes('GoDaddy'), 'a stored registrar is not on the screen');
+
+  /* EVERY KIND OF ROW, which is what Edwin asked for — he named GitHub and
+   * CF websites, and a blog row behaving differently from both would be the
+   * same inconsistency one step along. */
+  for (const id of ['dom-reg', 'dom-gh', 'dom-cf']) {
+    /* THE CLOSING QUOTE IS LOAD-BEARING. Without it this matched
+     * `.../registrarX` too, and a mutant that renamed the route passed —
+     * `includes` on a path prefix says yes to every longer path. */
+    assert.ok(out.html.includes(`action="/admin/blog-domains/${id}/registrar"`),
+      `${id} has no registrar editor`);
+  }
+
+  /* ONE DATALIST, REFERENCED BY ALL THREE. Three copies of six <option>s
+   * is the markup that a shared list exists to avoid. */
+  assert.strictEqual((out.html.match(/<datalist id="registrar-options"/g) || []).length, 1,
+    'the registrar suggestions are not a single shared list');
+
+  assert.strictEqual((out.html.match(/list="registrar-options"/g) || []).length, 3,
+    'not every row points at the shared list');
+});
+
+/* ===================================================================== */
+section('AND THE PICKERS THE CUSTOMER ACTUALLY SEES');
+
+/* THESE LIVE HERE, NOT IN THE TWO ROUTE SUITES, because the registrar is one
+ * feature and this is its suite. The admin screen storing a value nobody
+ * ever renders is the failure these guard against, and it is invisible from
+ * either end on its own.
+ *
+ * READ AS SOURCE, which is weaker than rendering and is the trade taken
+ * knowingly: wiring this into two more harnesses buys a stronger assertion
+ * about markup that is three lines long. What matters is that the field
+ * reaches the <option> at all. */
+
+const routeSrc = (name) =>
+  fs.readFileSync(path.join(__dirname, 'routes', name), 'utf8');
+
+/* COMMENTS STRIPPED FIRST, AND THAT IS NOT TIDINESS.
+ *
+ * This read the raw source, and both of these routes carry a comment ABOVE
+ * the option explaining why the registrar is there. Searching for the word
+ * "registrar" then found the explanation and passed whether or not the code
+ * below it did anything — verified by mutation: deleting the registrar from
+ * the blogs picker failed nothing at all.
+ *
+ *     A TEST THAT READS THE COMMENT IS TESTING THE COMMENT.
+ */
+const stripComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+
+const optionBlock = (name) => {
+  const src = stripComments(routeSrc(name));
+  const at = src.indexOf('<option value="${esc(d.domain)}"');
+  assert.ok(at > -1, 'the domain <option> is not built the way this test expects');
+  return src.slice(Math.max(0, at - 700), at + 300);
+};
+
+await test('THE CF WEBSITES PICKER PRINTS THE REGISTRAR', async () => {
+  const block = optionBlock('cloudflareSitesRoute.js');
+
+  assert.ok(/registrar/.test(block),
+    'the /cloudflare-sites domain dropdown does not mention the registrar');
+});
+
+await test('AND SO DOES THE BLOGS PICKER, WHICH SHOWED A BARE DOMAIN', async () => {
+  /* This one printed the domain and nothing else while /cloudflare-sites
+   * printed "domain — label". Two pickers answering the same question
+   * differently is the drift, not the fix. */
+  const block = optionBlock('staticBlogsRoute.js');
+
+  assert.ok(/registrar/.test(block),
+    'the /static-blogs domain dropdown does not mention the registrar');
+});
+
+await test('AND THE CF ONE STILL PRINTS THE LABEL BESIDE IT', async () => {
+  /* The label was already there and is a DIFFERENT fact — a client's
+   * trading name. A row carrying both should print both; a registrar that
+   * quietly replaced the label would lose information the screen had. */
+  const block = optionBlock('cloudflareSitesRoute.js');
+
+  assert.ok(/\bd\.label\b/.test(block),
+    'the registrar displaced the label rather than joining it');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

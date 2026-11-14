@@ -106,6 +106,10 @@ const THEME_INK = {
   // decision. The tile is the brand, #053389, because a favicon is a shape in
   // browser chrome and should be the colour people recognise.
   style8: { ink: '#0a1f52', tile: '#053389', halo: false, backdrop: '#ffffff' },
+  // style9's header is a solid #013CAE bar, so the wordmark is WHITE on it —
+  // the opposite of style8, whose header is white. The tile is the same blue,
+  // which is the colour a customer would recognise in browser chrome.
+  style9: { ink: '#ffffff', tile: '#013cae', halo: false, backdrop: '#013cae' },
 };
 
 /**

@@ -462,6 +462,18 @@ function skeleton(html) {
   return out;
 }
 
+/**
+ * One layout branch of _render_hero(), from `open` to whichever comes first:
+ * the next `$layout === '...'` branch, or the end of the function.
+ */
+function sliceBranch(php, open) {
+  const nextBranch = php.indexOf("<?php if ( $layout === '", open);
+  const endOfFn = php.indexOf('\n}', open);
+
+  const end = (nextBranch !== -1 && nextBranch < endOfFn) ? nextBranch : endOfFn;
+  return php.slice(open, end);
+}
+
 test('the PHP spotlight hero carries the same classes, at the same depths', () => {
   const template = fs.readFileSync(path.join(__dirname, 'src/template.html'), 'utf8');
   const staticBlock = template.slice(
@@ -472,12 +484,21 @@ test('the PHP spotlight hero carries the same classes, at the same depths', () =
   const php = phpFor('style7');
   const open = php.indexOf('<div class="container-fluid hero-spotlight">');
 
-  // To the end of _render_hero(), NOT to the first `<?php endif; ?>`: the
-  // phone button and each NAP row are wrapped in their own `if`, so the
-  // first endif lands a third of the way in. Slicing there compared twelve
-  // elements against twenty-eight and reported a mismatch that was entirely
-  // the test's own fault.
-  const phpBlock = php.slice(open, php.indexOf('\n}', open));
+  // NOT to the first `<?php endif; ?>`: the phone button and each NAP row
+  // are wrapped in their own `if`, so the first endif lands a third of the
+  // way in. Slicing there compared twelve elements against twenty-eight and
+  // reported a mismatch that was entirely the test's own fault.
+  //
+  // AND NOT TO THE END OF _render_hero() EITHER, which is what it did next.
+  // That was correct only while spotlight was the LAST branch in the
+  // function. `twocol` was added after it on 14 November and the slice
+  // swallowed that branch too, so this compared spotlight's markup against
+  // spotlight plus twocol. The premise was "spotlight is last", and it
+  // stopped being true the moment there was a newer layout — the same
+  // mistake UNSTYLED_WITHOUT_THEME has a note about.
+  //
+  // Bounded at the NEXT layout branch, so it holds however many follow.
+  const phpBlock = sliceBranch(php, open);
 
   // The PHP draws its <picture> from a shared helper, so the template's
   // four <source> lines have no counterpart INSIDE this block. Everything
@@ -578,6 +599,277 @@ test('the badges are emitted inside the buttons block, on both sides', () => {
 });
 
 /* ===================================================================== */
+
+test('the PHP twocol hero carries the same classes, at the same depths', () => {
+  /* SAME CHECK, FOR THE LAYOUT ADDED ON 14 NOVEMBER. One stylesheet
+   * (style9.css) is copied into the exported theme and serves both sides,
+   * so a class that exists on one and not the other is an unstyled hero on
+   * WordPress and nothing anywhere saying so. */
+  const template = fs.readFileSync(path.join(__dirname, 'src/template.html'), 'utf8');
+  const staticBlock = template.slice(
+    template.indexOf('<div class="hero-twocol">'),
+    template.indexOf('<!--/HERO:twocol-->')
+  );
+
+  const php = phpFor('style9');
+  const open = php.indexOf('<div class="hero-twocol">');
+  assert.notStrictEqual(open, -1, 'the WordPress renderer draws no twocol hero');
+
+  const phpBlock = sliceBranch(php, open);
+
+  /* The PHP draws its <picture> from a shared helper, and emits the badges
+   * the static template leaves to the generator — neither is something the
+   * stylesheet targets by a class this test is about. */
+  const styled = s => skeleton(s)
+    .filter(n => !/\.hero-img|hero-img\./.test(n))
+    .filter(n => !/picture|source/.test(n));
+
+  assert.deepStrictEqual(styled(phpBlock), styled(staticBlock),
+    'the WordPress twocol hero and the static one no longer have the same shape');
+});
+
+/* ===================================================================== */
+section('Design 9 stacks before it sits side by side');
+
+const THEME9 = path.join(__dirname, 'src', 'css', 'themes', 'style9.css');
+const css9 = fs.readFileSync(THEME9, 'utf8');
+
+/** The stylesheet with every comment removed. */
+const bare9 = () => css9.replace(/\/\*[\s\S]*?\*\//g, '');
+
+/** The body of one rule, found by its exact selector, outside any @media. */
+function ruleOutsideMedia(src, selector) {
+  const clean = src.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '');
+  const re = new RegExp(
+    selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^{}]*)\\}');
+  const m = re.exec(clean);
+
+  return m ? m[1] : null;
+}
+
+test('THE BLOCK DECLARES flex-direction: column, IT DOES NOT INHERIT ONE', () => {
+  /* THIS SHIPPED. The base rule said `display: flex` and stopped there, so
+   * it took flex's own default of `row` — while the comment above it, and
+   * the 992px block setting `flex-direction: row` as "the enhancement",
+   * both said the phone got a stack. At 390px the photograph column was
+   * 140px wide and the phone number broke mid-number.
+   *
+   *     A DEFAULT VALUE IS NOT A DECISION, AND THE PROSE SAYING OTHERWISE
+   *     IS NOT TESTED BY ANYTHING.
+   *
+   * Comments are stripped first: this file's subject is full of the words
+   * "column" and "stacked". */
+  const body = ruleOutsideMedia(bare9(), '.hero-twocol__block');
+
+  assert.ok(body, '.hero-twocol__block has no rule outside a media query');
+  assert.ok(/flex-direction\s*:\s*column/.test(body),
+    'the base .hero-twocol__block does not set flex-direction: column, so a '
+    + 'phone gets the side-by-side desktop layout in 358px');
+});
+
+test('and the media field has a definite height while it is stacked', () => {
+  /* picture and img are height: 100%, which resolves to auto unless the
+   * parent's height is definite. Without this the photograph fell back to
+   * its natural ratio and left a band of empty yellow beneath it. */
+  const body = ruleOutsideMedia(bare9(), '.hero-twocol__media');
+
+  assert.ok(body, '.hero-twocol__media has no rule outside a media query');
+  assert.ok(/aspect-ratio\s*:\s*[^;]*\d/.test(body),
+    'the stacked .hero-twocol__media sets no aspect-ratio, so its height is '
+    + 'indefinite and the photograph cannot fill it');
+});
+
+test('THE BADGES REACH BOTH RENDERERS, NOT JUST WORDPRESS', () => {
+  /* sectionRendererPhp.js called ${p}_hero_badges() inside the twocol
+   * actions from the day that branch was written; the four src templates
+   * had no {{HERO_BADGES}} at all. Same stylesheet, same classes, and the
+   * exported theme showed the award and licensed images while the static
+   * build showed nothing.
+   *
+   * ONLY aboutUsTemplate CARRIES IT, because buildAboutUsPage.js is the
+   * only builder that fills it — a placeholder no builder replaces prints
+   * its own braces on the page. */
+  const about = HTML['aboutUsTemplate.html'];
+  const raw = about.slice(
+    about.indexOf('<!--HERO:twocol-->'), about.indexOf('<!--/HERO:twocol-->'));
+
+  /* COMMENTS OUT FIRST, AND THIS CAUGHT ITSELF. The first version of this
+   * test searched the block as written — and the explanation standing above
+   * the placeholder NAMES it, so deleting the real {{HERO_BADGES}} left the
+   * words behind and the test went on passing. The mutant proved it.
+   *
+   *     A CHECK THAT READS THE COMMENT IS TESTING THE COMMENT.
+   *
+   * The same marker comments the block is sliced by are stripped here too,
+   * which is harmless: they carry no placeholder. */
+  const block = raw.replace(/<!--[\s\S]*?-->/g, '');
+
+  assert.notStrictEqual(raw.length, 0, 'aboutUsTemplate has no twocol block');
+  assert.ok(block.includes('{{HERO_BADGES}}'),
+    'the twocol hero on the About page has no {{HERO_BADGES}} — WordPress '
+    + 'draws badges there and the static build does not');
+
+  const php = phpFor('style9');
+  const phpBlock = sliceBranch(php, php.indexOf('<div class="hero-twocol">'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
+  assert.ok(/_hero_badges\s*\(/.test(phpBlock),
+    'the WordPress twocol hero no longer draws badges, so the static one is '
+    + 'now the odd side out');
+});
+
+test('and the divider sits between the H1 and the H2 everywhere', () => {
+  for (const file of TEMPLATES) {
+    const src = HTML[file];
+    const block = src.slice(
+      src.indexOf('<!--HERO:twocol-->'), src.indexOf('<!--/HERO:twocol-->'));
+
+    const h1 = block.indexOf('hero-twocol__title');
+    const rule = block.indexOf('hero-twocol__divider');
+    const h2 = block.indexOf('hero-twocol__sub');
+
+    assert.notStrictEqual(rule, -1, `${file}: the twocol hero has no divider`);
+    assert.ok(h1 < rule && rule < h2,
+      `${file}: the divider is not between the headline and the location line`);
+  }
+
+  const php = phpFor('style9');
+  const phpBlock = sliceBranch(php, php.indexOf('<div class="hero-twocol">'));
+
+  assert.ok(phpBlock.includes('hero-twocol__divider'),
+    'the WordPress twocol hero has no divider, so the two renderers differ');
+});
+
+test('THE ROUNDED TOP IS CLIPPED, OR IT IS NOT ROUNDED AT ALL', () => {
+  /* The yellow field and the navy column are backgrounds on the two
+   * CHILDREN of the block. A border-radius on the parent rounds the
+   * parent's own background — which is transparent here — and leaves both
+   * children square, so the corners look exactly as they did before.
+   *
+   *     A RADIUS WITHOUT overflow: hidden IS NOT A WEAKER CURVE. IT IS NO
+   *     CURVE, AND NOTHING ANYWHERE REPORTS IT.
+   *
+   * So the two are checked together: whichever one is present, the other
+   * has to be. */
+  const body = ruleOutsideMedia(bare9(), '.hero-twocol__block');
+
+  assert.ok(body, '.hero-twocol__block has no rule outside a media query');
+
+  const rounded = /border-radius\s*:/.test(body);
+  const clipped = /overflow\s*:\s*hidden/.test(body);
+
+  assert.strictEqual(rounded, clipped,
+    rounded
+      ? 'the block sets a border-radius but does not clip its children, so '
+        + 'the yellow and navy corners stay square and the curve is invisible'
+      : 'the block clips its children but sets no border-radius — the clip '
+        + 'is doing nothing, so one of the two was deleted by mistake');
+});
+
+test('and the blue slab is a fraction of the hero, not all of it', () => {
+  /* 60%, Edwin's number. Checked as "a percentage under 100" rather than
+   * as the literal 60, because the point is that the arc crosses BEHIND
+   * the block and shows down the margins; at 100% it sits below the whole
+   * hero and the shape he asked for disappears. */
+  const clean = bare9();
+  const m = /\.hero-twocol::before\s*\{([^{}]*)\}/.exec(clean);
+
+  assert.ok(m, '.hero-twocol::before is gone — the blue slab is not drawn');
+
+  const h = /height\s*:\s*([\d.]+)%/.exec(m[1]);
+  assert.ok(h, 'the slab height is not a percentage of the hero');
+  assert.ok(Number(h[1]) < 100,
+    `the slab is ${h[1]}% tall — at 100% the curve falls below the whole `
+    + 'hero instead of crossing behind the block');
+});
+
+test("and the About image's shadow is blue enough to be seen as blue", () => {
+  /* THE HUE IS NOT THE FRAGILE PART — THE ALPHA IS. This shadow was
+   * rgba(--navy-rgb, .13), and at thirteen per cent any colour at all
+   * renders as a neutral grey smudge; it looked like a browser default
+   * rather than part of this design. Swapping the colour token fixes
+   * nothing on its own, so what is pinned here is the opacity floor.
+   *
+   * The token is checked too, but loosely: any of the theme's blues is
+   * right, a hard-coded hex is not, because it would stop following the
+   * palette the next time one is retuned. */
+  const m = /\.col-md-5 img\s*\{([^{}]*)\}/.exec(bare9());
+
+  assert.ok(m, '.col-md-5 img has no rule — the About image is unstyled');
+
+  const sh = /box-shadow\s*:\s*([^;]+)/.exec(m[1]);
+  assert.ok(sh, '.col-md-5 img has no box-shadow');
+
+  assert.ok(/var\(--(brand|navy)-rgb\)/.test(sh[1]),
+    `the shadow is "${sh[1].trim()}" — it should take a palette token so it `
+    + 'follows the theme rather than a colour typed in by hand');
+
+  const alpha = /,\s*\.?([\d.]+)\s*\)\s*$/.exec(sh[1].trim());
+  assert.ok(alpha, `could not read an alpha out of "${sh[1].trim()}"`);
+
+  const a = Number('0.' + String(alpha[1]).replace(/^0?\./, ''));
+  assert.ok(a >= 0.25,
+    `the shadow is at alpha ${a} — below about 0.25 the hue washes out and `
+    + 'it reads as the grey default it was before');
+});
+
+test('THE NAME/ADDRESS/PHONE BAR IS IN ALL FOUR TEMPLATES AND IN THE PHP', () => {
+  for (const file of TEMPLATES) {
+    const src = HTML[file];
+    const block = src
+      .slice(src.indexOf('<!--HERO:twocol-->'), src.indexOf('<!--/HERO:twocol-->'))
+      .replace(/<!--[\s\S]*?-->/g, '');
+
+    assert.ok(block.includes('hero-twocol__nap'),
+      `${file}: the twocol hero has no name/address/phone bar`);
+
+    /* THE LABELS ARE TEXT. Checked here because the way they were NOT text
+     * in style7 — ::before content picked by nth-child — looked identical
+     * in a browser and relabelled itself when the rows were reordered. */
+    for (const label of ['Business Name:', 'Address:', 'Phone:']) {
+      assert.ok(block.includes(label),
+        `${file}: "${label}" is not in the markup, so something is drawing `
+        + 'it from CSS again');
+    }
+
+    for (const ph of ['{{BUSINESS_NAME}}', '{{ADDRESS_FULL}}', '{{PHONE_RAW}}']) {
+      assert.ok(block.includes(ph), `${file}: the bar is missing ${ph}`);
+    }
+  }
+
+  const php = phpFor('style9');
+  const phpBlock = sliceBranch(php, php.indexOf('<div class="hero-twocol">'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
+  assert.ok(phpBlock.includes('hero-twocol__nap'),
+    'the WordPress twocol hero has no bar, so the two renderers differ');
+});
+
+test('and the PHP bar reads the full address through the helper', () => {
+  /* THIS WAS WRONG WHEN FIRST WRITTEN. The branch called
+   * _get_setting('address_full') — a setting that does not exist anywhere
+   * in themeSettingsPhp.js, so the address line would have rendered empty
+   * on every exported theme and the bar would have looked like a layout
+   * bug rather than a missing value.
+   *
+   *     AN INVENTED KEY DOES NOT THROW. IT RETURNS NOTHING, FOREVER.
+   *
+   * _full_address() is the PHP half of utils/fullAddress.js, and the
+   * parity cases above already hold the two to the same answers. */
+  const php = phpFor('style9');
+  const phpBlock = sliceBranch(php, php.indexOf('<div class="hero-twocol">'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
+  assert.ok(/_full_address\s*\(\s*\)/.test(phpBlock),
+    'the twocol bar does not call _full_address()');
+
+  assert.ok(!/_get_setting\(\s*'address_full'\s*\)/.test(phpBlock),
+    "the twocol bar reads a setting called 'address_full', which does not "
+    + 'exist — it will render an empty address on every exported theme');
+});
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

@@ -10,7 +10,8 @@
     { key: 'style5', label: 'Design 5', preview: '/previews/style5.png' },
     { key: 'style6', label: 'Design 6', preview: '/previews/style6.png' },
     { key: 'style7', label: 'Design 7', preview: '/previews/style7.png' },
-    { key: 'style8', label: 'Design 8', preview: '/previews/style8.png' }
+    { key: 'style8', label: 'Design 8', preview: '/previews/style8.png' },
+    { key: 'style9', label: 'Design 9', preview: '/previews/style9.png' }
     // ADDING ONE IS THREE FILES, NOT ONE. A key here offers the tile; the key
     // also has to exist in HERO_LAYOUT in utils/stripUnusedHero.js, which
     // decides what that tile actually renders, and in THEME_INK in
@@ -2228,22 +2229,31 @@
               return;
             }
 
-            /* THE DOMAIN, AND ONLY THE DOMAIN — Edwin, 29 October: "why are
-             * we showing the domain name + the label. I should be only the
-             * domain name."
+            /* THE DOMAIN, AND THE REGISTRAR — AND STILL NOT THE LABEL.
              *
-             * The label exists for the admin table, where a column of bare
-             * domains is hard to scan against a list of clients. In the
-             * customer's dropdown it is noise at best, and when somebody
-             * types the domain into both boxes it reads "7-y.xyz — 7-y.xyz".
+             * Edwin, 29 October: "why are we showing the domain name + the
+             * label. I should be only the domain name." The label exists
+             * for the admin table, where a column of bare domains is hard
+             * to scan against a list of clients; here it was noise, and
+             * when somebody typed the domain into both boxes it read
+             * "7-y.xyz — 7-y.xyz". It is still not shown, and `row.label`
+             * is still deliberately unused below.
              *
-             * THE DOMAIN IS ALSO THE THING THEY ARE CHOOSING. It is what
+             * Edwin, 14 November: "it should reflect the registrar". That
+             * is a different fact — not what this domain is CALLED, but
+             * where it is REGISTERED — and it cannot repeat the domain,
+             * which is what made the label redundant. A row with no
+             * registrar set still shows the domain alone.
+             *
+             * THE DOMAIN IS STILL THE THING THEY ARE CHOOSING. It is what
              * appears in the address of every page they are about to pay
-             * for, so it is the one string that has to be right in front of
-             * them. */
+             * for, so it stays first and the registrar trails it. */
+            const describe = (row) =>
+              row.registrar ? row.domain + ' — ' + row.registrar : row.domain;
+
             picker.innerHTML = '<option value="">Choose a domain…</option>'
               + rows.map(row =>
-                '<option value="' + row.id + '">' + row.domain + '</option>').join('');
+                '<option value="' + row.id + '">' + describe(row) + '</option>').join('');
 
             if (chosen) picker.value = chosen;
           })

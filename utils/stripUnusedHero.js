@@ -22,6 +22,7 @@
  *   style2 hides .hero-container-for-style-and-style3-992px  -> uses standard
  *   style6 wants the two-column layout with the CTA inside   -> uses split
  *   style7 and style8 are the themes with .hero-spotlight CSS -> use spotlight
+ *   style9 is the only theme with CSS for .hero-twocol        -> uses twocol
  *   all others hide .hero-container                          -> use overlay
  *
  * A styleKey that is NOT listed keeps the standard and overlay blocks — see
@@ -54,6 +55,13 @@ const HERO_LAYOUT = {
    * the tile in generateDinamycForm.js, this layout, and the dark ink in
    * THEME_INK. Each pairing has a test. */
   style8: 'spotlight',
+
+  /* style9 is the first design with a hero layout of its own since
+   * spotlight: two coloured columns, the photograph on a yellow field at
+   * the left and the words on blue at the right. Nothing existing could be
+   * reused — standard and split both put the image and the text in plain
+   * columns with no field behind either. */
+  style9: 'twocol',
 };
 
 const MARKERS = {
@@ -61,12 +69,13 @@ const MARKERS = {
   overlay:   { open: '<!--HERO:overlay-->',   close: '<!--/HERO:overlay-->' },
   split:     { open: '<!--HERO:split-->',     close: '<!--/HERO:split-->' },
   spotlight: { open: '<!--HERO:spotlight-->', close: '<!--/HERO:spotlight-->' },
+  twocol:    { open: '<!--HERO:twocol-->',    close: '<!--/HERO:twocol-->' },
 
   // Not a hero. The standalone phone CTA that sits below the hero blocks.
   cta:       { open: '<!--HERO:cta-->',       close: '<!--/HERO:cta-->' },
 };
 
-const HERO_BLOCKS = ['standard', 'overlay', 'split', 'spotlight'];
+const HERO_BLOCKS = ['standard', 'overlay', 'split', 'spotlight', 'twocol'];
 
 /**
  * Layouts that carry the phone CTA INSIDE the hero markup.
@@ -76,7 +85,7 @@ const HERO_BLOCKS = ['standard', 'overlay', 'split', 'spotlight'];
  * spotlight hero carries two buttons, one of which IS the phone. Every other
  * layout relies on the standalone one and must keep it.
  */
-const CTA_INSIDE_HERO = new Set(['split', 'spotlight']);
+const CTA_INSIDE_HERO = new Set(['split', 'spotlight', 'twocol']);
 
 /**
  * Layouts no pre-existing theme has CSS for.
@@ -94,7 +103,7 @@ const CTA_INSIDE_HERO = new Set(['split', 'spotlight']);
  * predates the markers styles one of them, so keeping both is a real fallback
  * rather than a broken page.
  */
-const UNSTYLED_WITHOUT_THEME = ['split', 'spotlight'];
+const UNSTYLED_WITHOUT_THEME = ['split', 'spotlight', 'twocol'];
 
 /** Remove everything between a marker pair, inclusive. */
 function removeBlock(html, marker) {

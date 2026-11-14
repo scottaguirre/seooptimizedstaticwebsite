@@ -591,6 +591,110 @@ function ${p}_render_hero( $post_id, $s ) {
       </div>
     </div>
     <?php endif; ?>
+
+    <?php if ( $layout === 'twocol' ) : ?>
+    <?php
+    // THE DESIGN 9 HERO. The PHP twin of the <!--HERO:twocol--> markup in
+    // the four src/*.html templates. One stylesheet serves both —
+    // src/css/themes/style9.css is copied into the exported theme — so a
+    // class renamed on one side and not the other gives an unstyled hero
+    // rather than an error.
+    //
+    // WRITTEN WITH THE LAYOUT, NOT AFTER IT. The spotlight branch above
+    // records what the other order cost: Design 7 exported to WordPress
+    // with no hero at all for as long as that branch was missing, and
+    // nothing threw. This one existed before style9 was offered.
+    //
+    // IT CARRIES A NAP BAR TOO, as of 14 November. This branch used to say
+    // "no NAP bar here", which was true of the design and is why the note
+    // existed; Edwin asked for the bar and the four src templates gained
+    // one, so the note would now be a lie that reads like a reason.
+    //
+    // The bar is flush beneath the block and takes the block's margins —
+    // see 3.7 in style9.css, which both renderers share.
+    $contact_url = ${p}_contact_url();
+    $phone_raw   = ${p}_get_setting( 'phone' );
+    $phone_href  = 'tel:' . preg_replace( '/[^0-9+]/', '', $phone_raw );
+    ?>
+    <div class="hero-twocol">
+      <div class="hero-twocol__block">
+
+        <div class="hero-twocol__media">
+          <?php ${p}_hero_picture( $post_id, $key ); ?>
+        </div>
+
+        <div class="hero-twocol__copy">
+          <h1 class="hero-twocol__title"><?php echo esc_html( $h1 ); ?></h1>
+          <div class="hero-twocol__divider"></div>
+          <h2 class="lead hero-twocol__sub"><?php echo esc_html( $tagline ); ?></h2>
+
+          <div class="hero-twocol__actions">
+            <a class="hero-twocol__btn hero-twocol__btn--solid" href="<?php echo esc_url( $contact_url ); ?>">
+              <span><?php esc_html_e( 'Book Appointment', '${themeSlug}' ); ?></span>
+            </a>
+
+            <?php if ( ! empty( $phone_raw ) ) : ?>
+            <a class="hero-twocol__btn hero-twocol__btn--ghost" href="<?php echo esc_attr( $phone_href ); ?>">
+              <span><?php echo esc_html( $phone_raw ); ?></span>
+            </a>
+            <?php endif; ?>
+
+            <?php ${p}_hero_badges( $post_id, $key ); ?>
+          </div>
+        </div>
+
+      </div>
+
+      <?php
+      // THE THREE LABELS ARE TEXT, translated through the theme's own text
+      // domain rather than drawn by CSS — see the same note in the static
+      // templates for what ::before content cost.
+      // ${p}_full_address(), NOT the raw 'address' setting and NOT an
+      // invented 'address_full' one — there is no such setting, and the
+      // first draft of this bar read it and would have printed nothing.
+      // The helper is the PHP half of utils/fullAddress.js, which is what
+      // fills {{ADDRESS_FULL}} on the static side; test-hero-layouts.js
+      // runs the same cases through both.
+      $nap_address = ${p}_full_address();
+      ?>
+      <div class="hero-twocol__nap">
+        <div class="hero-twocol__nap-item">
+          <svg class="hero-twocol__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 20V9.2L12 4l8 5.2V20h-5.5v-5.5h-5V20Z"/>
+          </svg>
+          <span class="hero-twocol__nap-text">
+            <span class="hero-twocol__nap-label"><?php esc_html_e( 'Business Name:', '${themeSlug}' ); ?></span>
+            <span class="hero-twocol__nap-value"><?php echo esc_html( get_bloginfo( 'name' ) ); ?></span>
+          </span>
+        </div>
+
+        <?php if ( ! empty( $nap_address ) ) : ?>
+        <div class="hero-twocol__nap-item">
+          <svg class="hero-twocol__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"/>
+            <circle cx="12" cy="10" r="2.6"/>
+          </svg>
+          <span class="hero-twocol__nap-text">
+            <span class="hero-twocol__nap-label"><?php esc_html_e( 'Address:', '${themeSlug}' ); ?></span>
+            <span class="hero-twocol__nap-value"><?php echo esc_html( $nap_address ); ?></span>
+          </span>
+        </div>
+        <?php endif; ?>
+
+        <?php if ( ! empty( $phone_raw ) ) : ?>
+        <div class="hero-twocol__nap-item">
+          <svg class="hero-twocol__nap-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 6 6L16.5 12l4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/>
+          </svg>
+          <span class="hero-twocol__nap-text">
+            <span class="hero-twocol__nap-label"><?php esc_html_e( 'Phone:', '${themeSlug}' ); ?></span>
+            <a class="hero-twocol__nap-value" href="<?php echo esc_attr( $phone_href ); ?>"><?php echo esc_html( $phone_raw ); ?></a>
+          </span>
+        </div>
+        <?php endif; ?>
+      </div>
+    </div>
+    <?php endif; ?>
     <?php
 }
 
@@ -683,9 +787,14 @@ function ${p}_full_address() {
  * SPOTLIGHT BELONGS HERE TOO. Its ghost button is the phone, exactly as
  * split's is. This named only 'split' until the branch above existed for
  * anyone to notice.
+ *
+ * AND twocol, FOR THE SAME REASON — its ghost button is the phone. Added
+ * with the layout rather than after it, because test-hero-layouts.js now
+ * compares this list against CTA_INSIDE_HERO and would have caught it
+ * either way.
  */
 function ${p}_hero_has_cta() {
-    return in_array( '${heroLayout}', array( 'split', 'spotlight' ), true );
+    return in_array( '${heroLayout}', array( 'split', 'spotlight', 'twocol' ), true );
 }
 
 /**

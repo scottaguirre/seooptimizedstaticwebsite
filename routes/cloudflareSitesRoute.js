@@ -413,9 +413,20 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
      * on screen. */
     const build = currentSite.getCurrentSite(req.user._id);
 
+    /* THE REGISTRAR, THEN THE LABEL, AND BOTH ARE OPTIONAL.
+     *
+     * Edwin, 14 November: the picker should read "1-1o.com — Namecheap".
+     * The label was already here and is a different fact — a client's
+     * trading name — so a row carrying both prints both rather than one
+     * winning. Carried in a list so two empties do not leave a stray dash
+     * or a double one. */
+    const describe = (d) => {
+      const parts = [d.registrar, d.label].filter(v => String(v || '').trim());
+      return parts.length ? ` — ${parts.map(esc).join(' · ')}` : '';
+    };
+
     const domainOptions = pool.map(d => `
-      <option value="${esc(d.domain)}">${esc(d.domain)}${
-        d.label ? ` — ${esc(d.label)}` : ''}</option>`).join('');
+      <option value="${esc(d.domain)}">${esc(d.domain)}${describe(d)}</option>`).join('');
 
     const rows = sites.map((s, i) => {
       /* THE HOSTNAME IS THE ADDRESS; THE pages.dev ONE IS THE FALLBACK.

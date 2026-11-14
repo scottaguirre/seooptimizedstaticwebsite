@@ -395,9 +395,39 @@
         display: block;
     }
 
+    /* ---- THE LIST IS CAPPED, AND SCROLLS ----
+
+       MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items draw
+       a 926px menu. Measured on the real nav:
+
+           1435x800   926px tall, 192px below the fold
+           1280x700   926px tall, 292px below the fold
+
+       overflow-y was `visible` with no max-height, so those items were not
+       merely off-screen — there was nothing to scroll. The menu opens on
+       HOVER up here, so reaching them by scrolling the page means moving
+       the pointer off the trigger, which closes it.
+
+       ONLY AT 992px AND UP, WHICH IS WHY THIS LIVES IN THIS BLOCK. Below
+       it the menu is `position: static` inside the collapsed panel — in
+       flow, the page grows, and the page's own scrollbar reaches every
+       item. A cap there would put a small scrolling box inside a scrolling
+       page.
+
+       THE NUMBER IS THE VIEWPORT, NOT A GUESS. The menu's top edge sits at
+       65px; 90px leaves it ending a clear 25px above the bottom at any
+       window height.
+
+       SAME FIX AS style8, AND style8 IS NOT THE REASON IT WAS FOUND. This
+       was always broken here; style8 is a copy of this file, inherited it,
+       and only got looked at because Edwin reported the overflow there
+       first. Every other design still has it — see the note in CLAUDE.md. */
     .navbar .dropdown-menu,
     .sub-menu {
         margin-top: 0;
+        max-height: calc(100vh - 90px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
 
     /* Hovering the dropdown trigger shows the same bar the links use, rather
@@ -457,6 +487,23 @@
     .dropdown .dropdown-menu li,
     .sub-menu .menu-item {
         width: 250px;
+    }
+
+    /* ---- THE 22px IS FOR THE BAR, NOT FOR THE LIST ----
+
+       `.nav-link` above gives every link 22px of margin each side, which is
+       the air between ABOUT US and SERVICES along the horizontal bar.
+
+       buildNavMenu.js writes dropdown entries as
+       `class="dropdown-item nav-link"`, so they were taking that margin too
+       — 44px of it inside a 250px item. Measured: every anchor ended at
+       x=1025 against a panel edge at x=1004, overflowing by 21px. Short
+       items looked fine because their text stopped short of the edge;
+       STORM DAMAGE REPAIR and SHINGLE REPLACEMENT were clipped mid-word. */
+    #headerColor .dropdown-menu .nav-link,
+    .sub-menu .menu-item a {
+        margin-left: 0;
+        margin-right: 0;
     }
 
     .nav-item.dropdown .dropdown-menu,

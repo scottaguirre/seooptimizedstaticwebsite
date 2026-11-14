@@ -667,10 +667,43 @@ resize: vertical;
   }
   
 
+  /* ---- THE LIST IS CAPPED, AND SCROLLS — 14 November ----
+
+     MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items draw a
+     1104px menu here. Measured on the real nav:
+
+         1435x800   1104px tall, 357px below the fold
+         1280x700   1104px tall, 457px below the fold
+
+     overflow-y was `visible` with no max-height, so those items were not
+     merely off-screen — there was nothing to scroll. This menu opens on
+     HOVER and only on hover, so reaching them by scrolling the page means
+     moving the pointer off the trigger, which closes it.
+
+     THIS DESIGN WAS NEARLY MISSED, AND THE REASON IS WORTH RECORDING. The
+     sweep that found the other seven opened each menu by adding Bootstrap's
+     `.show` class. style2 does not use it — `.dropdown .dropdown-menu` is
+     `display: none` and only `.dropdown:hover` reveals it — so the probe
+     measured a 0px menu and the design was written down as "its menu does
+     not open this way at all", which was true and read as "not affected".
+     It is affected. A real hover shows 357px below the fold.
+
+     78px, THIS DESIGN'S OWN NUMBER. style3 and style4 use 80, style5 72,
+     style6 70, style7 and style8 90. This menu starts at y=53 and 78 is
+     what leaves it ending a clear 25px above the bottom.
+
+     ON THIS RULE RATHER THAN THE BASE ONE, because this is where the menu
+     becomes `position: absolute` and starts floating over the page. Below
+     992px the base rule leaves it `position: relative` on hover — in flow,
+     pushing the page down, where the page's own scrollbar reaches every
+     item and a cap would be worse than the problem. */
   .dropdown:hover .dropdown-menu, .menu-item-has-children:hover .sub-menu {
     position: absolute;
     left: -80px;
     margin-top: 10px;
+    max-height: calc(100vh - 78px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   
   .sub-menu .menu-item {

@@ -687,9 +687,26 @@ ${appSidebar('/dashboard')}
 router.get('/api/site-domains', requireAuth, async (req, res) => {
   try {
     const Domain = require('../models/Domain');
+    const { githubDomains } = require('../utils/domainPool');
 
-    const rows = await Domain.find({ target: 'github', enabled: true })
-      .select('domain label')
+    /* githubDomains(), NOT A HAND-WRITTEN FILTER.
+     *
+     * This read `{ target: 'github', enabled: true }` inline — the same
+     * two conditions, spelled out again. utils/domainPool.js exists to own
+     * exactly that, and its header names THIS call site:
+     *
+     *     Domain.find(githubDomains())  Local Website Options
+     *
+     * So the contract was written down and the code drifted from it. The
+     * cost was not hypothetical: searching for githubDomains() to find
+     * every GitHub picker returned nothing but the test, and I concluded
+     * on 14 November that no such picker existed. It does. It is this one.
+     *
+     * The failure that file warns about is worse than a bad search —
+     * /static-blogs once asked `{ enabled: true }` and nothing more, and
+     * silently offered GitHub domains to the blog wizard. */
+    const rows = await Domain.find(githubDomains())
+      .select('domain label registrar')
       .sort({ domain: 1 })
       .lean();
 
@@ -698,6 +715,17 @@ router.get('/api/site-domains', requireAuth, async (req, res) => {
         id: String(row._id),
         domain: row.domain,
         label: row.label || '',
+
+        /* ADDED 14 NOVEMBER, and it is NOT the label coming back.
+         *
+         * Edwin asked on 29 October for the label to be dropped from this
+         * dropdown — "why are we showing the domain name + the label. I
+         * should be only the domain name" — and it was, in the browser.
+         * The registrar answers a different question: not what this domain
+         * is called, but where it is registered. `label` is still sent and
+         * still ignored by the picker; removing it is a separate decision
+         * from this one. */
+        registrar: row.registrar || '',
       })),
     });
 

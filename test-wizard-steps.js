@@ -790,6 +790,99 @@ test('IT STARTS WITH A PLACEHOLDER THAT HAS NO VALUE', () => {
 });
 
 /* -------------------------------------------------------------------------
+ * The registrar in that picker
+ * ---------------------------------------------------------------------- */
+
+/* WHY THESE EXIST — Edwin, 14 November, looking at the Local Website Options
+ * domain dropdown: *"it should reflect the registrar but is not"*.
+ *
+ * The admin screen had been storing a registrar since that morning and this
+ * picker was still printing bare domains, because it is fed by its own API
+ * and nobody had carried the field through. Three places have to agree: the
+ * query must SELECT it, the JSON must SEND it, and the browser must PRINT
+ * it. Any one of the three missing looks identical from the screen. */
+
+const WIZARD_SRC = fs.readFileSync(
+  path.join(__dirname, 'public', 'js', 'generateDinamycForm.js'), 'utf8');
+
+const AUTH_SRC = fs.readFileSync(
+  path.join(__dirname, 'routes', 'authRoute.js'), 'utf8');
+
+/* COMMENTS STRIPPED BEFORE SEARCHING. Both files explain the registrar at
+ * length right beside the code that handles it, and a check that matches the
+ * explanation passes whether or not the code below it does anything. */
+const noComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+
+/** The body of the /api/site-domains handler, comments removed. */
+function siteDomainsHandler() {
+  const src = noComments(AUTH_SRC);
+  const at = src.indexOf("router.get('/api/site-domains'");
+  assert.notStrictEqual(at, -1, '/api/site-domains has been renamed or removed');
+  return src.slice(at, at + 1200);
+}
+
+test('THE API SELECTS THE REGISTRAR, OR IT IS NEVER READ', () => {
+  /* .select() is a whitelist. A field left out of it is absent from the
+   * lean row, and `row.registrar || ''` then sends an empty string for
+   * every domain — which looks exactly like "no registrar set yet". */
+  const body = siteDomainsHandler();
+
+  assert.match(body, /\.select\([^)]*registrar/,
+    'the query does not select registrar, so every row comes back without it');
+});
+
+test('AND SENDS IT', () => {
+  const body = siteDomainsHandler();
+
+  assert.match(body, /registrar:\s*row\.registrar/,
+    'the registrar is read from the database and dropped before the response');
+});
+
+test('AND THE PICKER PRINTS IT', () => {
+  const src = noComments(WIZARD_SRC);
+  const at = src.indexOf("'<option value=\"\">Choose a domain");
+  assert.notStrictEqual(at, -1, 'the domain picker has been rewritten');
+
+  const block = src.slice(Math.max(0, at - 400), at + 400);
+
+  assert.match(block, /\brow\.registrar\b/,
+    'the dropdown builds its options without the registrar');
+});
+
+test('BUT STILL NOT THE LABEL, WHICH WAS REMOVED ON PURPOSE', () => {
+  /* Edwin, 29 October: "why are we showing the domain name + the label. I
+   * should be only the domain name." The registrar is a different fact and
+   * does not reopen that decision — but it would be easy to reach for
+   * row.label while adding row.registrar beside it, and nothing on screen
+   * would say which of the two came back. */
+  const src = noComments(WIZARD_SRC);
+  const at = src.indexOf("'<option value=\"\">Choose a domain");
+  const block = src.slice(Math.max(0, at - 400), at + 400);
+
+  assert.ok(!/\brow\.label\b/.test(block),
+    'the label is back in the customer dropdown');
+});
+
+test('AND THE API USES githubDomains(), NOT ITS OWN COPY OF THE FILTER', () => {
+  /* utils/domainPool.js owns which rows belong to which product, and its
+   * header names this very call site. This route had the two conditions
+   * written out inline instead — the same drift that once had /static-blogs
+   * offering GitHub domains to the blog wizard.
+   *
+   * It also made the picker unfindable: grepping for githubDomains() to
+   * locate every GitHub dropdown returned nothing but a test. */
+  const body = siteDomainsHandler();
+
+  assert.match(body, /Domain\.find\(\s*githubDomains\(\)\s*\)/,
+    'the GitHub filter is hand-written here instead of coming from domainPool');
+
+  assert.ok(!/target:\s*'github'/.test(body),
+    'the inline target filter is still here beside the shared one');
+});
+
+/* -------------------------------------------------------------------------
  * The price range table checkbox
  * ---------------------------------------------------------------------- */
 

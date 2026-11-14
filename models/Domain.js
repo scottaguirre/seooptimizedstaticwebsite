@@ -167,6 +167,28 @@ const domainSchema = new mongoose.Schema({
   label: { type: String, default: '', trim: true },
 
   /**
+   * Who the domain is registered with — "Namecheap", "Cloudflare", "GoDaddy".
+   *
+   * A FIELD OF ITS OWN RATHER THAN PART OF `label`, and the reason is in the
+   * data. Edwin asked on 14 November for the picker to read
+   * "1-1o.com — Namecheap". `label` is where that would naturally go, except
+   * the GitHub rows are already using it for something else:
+   *
+   *     1r2.net -GitHub-claytonringpeter@gmail.com
+   *
+   * That is a GitHub account note. Putting a registrar in the same box means
+   * either losing those notes or printing a client's email address in a
+   * customer's dropdown. One box cannot hold two facts.
+   *
+   * NOTHING KEYS ON IT. Like `label`, it is shown and never matched on, so
+   * correcting it is always safe. It is deliberately NOT used to decide
+   * anything about DNS: where a domain is REGISTERED and where its
+   * nameservers POINT are different questions, and a row saying "Cloudflare"
+   * here would still need its zone looked up exactly as it is now.
+   */
+  registrar: { type: String, default: '', trim: true, maxlength: 60 },
+
+  /**
    * Whether it is offered to customers.
    *
    * A CLIENT LEAVING IS THE CASE THIS IS FOR, and it is deliberately NOT a

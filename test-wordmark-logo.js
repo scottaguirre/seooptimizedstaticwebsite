@@ -227,6 +227,33 @@ test('style8 ink is still the colour its nav links are drawn in', () => {
     'the favicon tile is meant to be the brand colour');
 });
 
+test('style9 tile is still the brand colour its header is painted in', () => {
+  /* THE SAME DRIFT CHECK AS style8's, POINTED AT WHAT style9 ACTUALLY
+   * DEPENDS ON.
+   *
+   * style8's wordmark sits on a WHITE header, so its ink has to equal
+   * --navy, the colour of the nav links beside it. style9's header is a
+   * solid --brand bar and its wordmark is plain white, so there is no ink
+   * to tie down — but the favicon TILE is that blue, and a repalette of
+   * style9.css would leave it stale in exactly the way style8's ink went
+   * stale when the purple became blue.
+   *
+   * Read back out of the stylesheet rather than trusted to a comment. */
+  const css = fs.readFileSync(
+    path.join(__dirname, 'src', 'css', 'themes', 'style9.css'), 'utf8');
+
+  const brand = /--brand:\s*(#[0-9a-fA-F]{6})\s*;/.exec(css);
+  assert.ok(brand, '--brand is gone from style9.css — THEME_INK.style9 must be revisited');
+
+  assert.strictEqual(THEME_INK.style9.tile, brand[1].toLowerCase(),
+    `the favicon tile is ${THEME_INK.style9.tile} but style9's --brand is `
+    + `${brand[1]} — one was repaletted and the other was not`);
+
+  assert.strictEqual(THEME_INK.style9.backdrop, brand[1].toLowerCase(),
+    'the backdrop is what the PREVIEW paints behind the letters; it has to be '
+    + "the header's own colour or the preview lies about how the logo will look");
+});
+
 test('all three put the logo on white, so all three ink is dark', () => {
   /* IT IS THE SURFACE UNDER THE LETTERS, NOT THE SECTION AROUND IT.
    *

@@ -2753,6 +2753,184 @@ which is the one that would reach the published prose.
 
 `test-admin-tabs.php` 93 → **97**.
 
+### FOR TOMORROW — the home page prompts for Rank Fast
+
+**ASKED FOR 14 November**, at the end of the day the nav dropdown was fixed
+across all eight designs. Edwin: *"For tomorrow I want to update the prompts
+for the home page content for Rank Fast mode."*
+
+**NOT STARTED, AND NOT SCOPED.** Nothing was investigated — which prompt
+file, which sections of the home page, or what is wrong with the current
+output. Start by asking him what he does not like about what it writes now,
+because "update the prompts" could mean the headline, the four body
+sections, the service card lines, or all of it.
+
+**ONE THING TO CHECK FIRST.** There is an older entry in this file — PROMPT
+AND QUALITY-RULE WORK, 4 October — that says plainly: *"do not build the
+rules-prompt yet. I will have a whole day to go over prompts again. Add it
+to the list."* Find out whether this is that day, or a smaller change. The
+evidence gathered then is still in that section and should not be
+re-gathered.
+
+### ~~FOR TOMORROW~~ CLOSED 14 November 2026 — the SERVICES dropdown runs off the screen
+
+**DONE, AND IT WAS THREE BUGS, NOT ONE.** Fixed in `src/css/themes/style8.css`
+only; `buildNavMenu.js` and Designs 1–7 were not touched. Guarded by the new
+`test-nav-dropdown.js` (8 tests, in NODE_SUITES), six mutants killed.
+
+1. **The items were invisible, and had been live for a day.** style8's header
+   went white on 13 November, so `.nav-link` went dark — and buildNavMenu
+   writes dropdown entries as `class="dropdown-item nav-link"`, so they took
+   the dark colour while their panel stayed `var(--navy)`. Measured
+   background `rgb(10, 31, 82)`, measured text `rgb(10, 31, 82)`. The panel
+   is white now, which also fixes the phone, where the collapsed menu had
+   become white the same day.
+
+2. **Every item overflowed its panel by 21px.** `.nav-link` takes
+   `margin: 0 22px` at 992px and up — the air between ABOUT US and SERVICES
+   along the bar — and dropdown entries took 44px of it inside a 250px item.
+   Zeroed inside the menu.
+
+3. **The list ran off the bottom**, which is what this note was about:
+   `max-height: calc(100vh - 90px); overflow-y: auto` **inside the 992px
+   block only**. Below it the menu is `position: static` in the collapsed
+   panel, so the page scrolls and a cap there would be worse than the
+   problem. Verified by measuring all three widths.
+
+**THE OPTION NOT TAKEN.** Two columns and "cap the list + View all" are still
+the alternatives if MAX_SERVICES ever rises much past 20. The cap is
+viewport-relative so it keeps working; it just gets a longer scroll.
+
+**style7 HAD THE SAME TWO, AND HAD THEM FIRST.** Edwin spotted it the same
+day. style8 is a copy of style7, so bugs 2 and 3 were inherited rather than
+introduced — only bug 1 was new. Both fixed in `style7.css` as well, and the
+suite now runs those two checks against both designs. The colour check does
+NOT run on style7: its header is transparent over a photograph, its links are
+white and its panel is navy, which is correct and must not be "made
+consistent".
+
+**style6 TOO — Edwin asked for it on 14 November**, which is the "unless
+asked otherwise" the DO NOT TOUCH note allows for. It needed ONE of the two,
+not both: `max-height: calc(100vh - 70px); overflow-y: auto`, inside its
+single 992px block. Its items measured **0px** of overflow, because
+`.navbar-nav li a` gives them 10px a side rather than 22px — so the margin
+rule style7 and style8 needed was NOT added there.
+
+**70px, not 90px.** style6's header is 70px with its menu starting at y=44;
+style7 and style8 are 90px starting at 65. Copying their number would have
+left this one 21px lower than intended. The subtrahend is measured per
+design, and the suite checks the shape of the value (`vh`) rather than a
+shared constant.
+
+**Nothing else in style6.css was touched** — no colours, no spacing, no
+layout. The only visible change is that a menu of more than ~12 services now
+stops at the bottom of the window and scrolls instead of running past it.
+
+**style5 TOO — asked for on 14 November.** Cap only, `calc(100vh - 72px)`;
+its items measured 0px of overflow and its blue-on-white entries (#0a65fc on
+#fff) measure 4.91:1, so neither of the other two fixes applied. Nothing else
+in `style5.css` changed — verified by removing the inserted block and
+reproducing the original byte-for-byte.
+
+**THE SUBTRAHEND IS DIFFERENT IN ALL THREE SO FAR:** 72 for style5, 70 for
+style6, 90 for style7 and style8. Each is `menuTop + 25` measured on that
+design's own header. Do not copy one into the next.
+
+**style4 TOO — asked for on 14 November.** It needed BOTH fixes, unlike
+style5 and style6: cap at `calc(100vh - 80px)`, and the margin zeroing,
+because its items overflowed by 9px.
+
+**THE OBVIOUS SUSPECT WAS THE WRONG ONE, AND I PUT THE FIX IN THE WRONG
+BLOCK FIRST.** `.dropdown .dropdown-menu li a` in the **1250px** block pins
+the anchor to `width: 200px`, which looks like the cause of a 200px anchor
+overflowing a 200px item — so the fix went there. Measuring across the
+breakpoints showed the overflow is **9px at 1024, 1100, 1249, 1250 and 1435
+alike**: the anchor is 158px below 1250 and 200px above it, and the 10px
+margin overflows either way. The fix belongs in the **992** block; in the
+1250 block it would have left 1024-1249 still clipped. The suite caught the
+misplacement, and there is now a mutant for exactly it.
+
+**style3 TOO — asked for on 14 November, and it was the worst of the eight.**
+1338px of menu with 593px below the fold at 1435x800; nearly half the list
+was unreachable. Cap only, `calc(100vh - 80px)` — its items measured 0px of
+overflow and their margin is already 0, so neither of the other two fixes
+applied. Additions only, 33 lines, nothing removed.
+
+**80px here AND in style4, which is a coincidence rather than a shared
+constant.** Both menus happen to start at y=55. style5 is 72, style6 70,
+style7 and style8 90. The rule is `menuTop + 25`, measured per design.
+
+**style2 TOO — asked for on 14 November, AND IT WAS NEARLY MISSED.**
+
+The sweep that found the other designs opened each menu by adding
+Bootstrap's `.show` class. style2 ignores it: `.dropdown .dropdown-menu` is
+`display: none` and only `.dropdown:hover` reveals it. The probe therefore
+measured a 0px menu, and the table here recorded *"its menu does not open
+this way at all"* — which was true, and read as **not affected**.
+
+    A MEASUREMENT THAT CANNOT SEE A THING IS NOT EVIDENCE THE THING IS FINE.
+
+A real hover shows **1104px tall, 357px below the fold** at 1435x800 and
+457px at 1280x700. Cap only, `calc(100vh - 78px)`, placed on the
+`.dropdown:hover` rule rather than the base one — that is where the menu
+becomes `position: absolute` and starts floating. Below 992px the base rule
+leaves it `position: relative` on hover, in flow, where the page scrolls.
+Additions only, 33 lines.
+
+### ALL EIGHT DESIGNS ARE DONE — 14 November
+
+`style.css` was the last, and needed both fixes: cap at
+`calc(100vh - 80px)`, and the margin zeroing, because its items overflowed
+by 14px. Additions only, 50 lines.
+
+**THE WHOLE SET, FOR WHOEVER TOUCHES THIS NEXT.**
+
+The cap's subtrahend is `menuTop + 25`, measured on each design's own
+header. It is NOT a shared constant and must not be tidied into one:
+
+| design | cap | menu was | below the fold | also needed the margin fix |
+|---|---|---|---|---|
+| style  | 100vh - 80 |  861px | 116px | yes, 14px over |
+| style2 | 100vh - 78 | 1104px | 357px | no |
+| style3 | 100vh - 80 | 1338px | **593px** | no |
+| style4 | 100vh - 80 | 1024px | 279px | yes, 9px over |
+| style5 | 100vh - 72 | 1144px | 391px | no |
+| style6 | 100vh - 70 | 1144px | 388px | no |
+| style7 | 100vh - 90 |  926px | 192px | yes, 21px over |
+| style8 | 100vh - 90 |  926px | 192px | yes, 21px over |
+
+**THE MARGIN BUG IS ONE BUG WITH THREE NUMBERS.** `.nav-link` gets a side
+margin for the horizontal bar; buildNavMenu writes dropdown entries as
+`dropdown-item nav-link`, so a vertical list with no room for it takes it
+anyway. The overflow is always one pixel less than the margin, because the
+panel shrink-wraps the item and only the right-hand margin escapes:
+
+    style   15px a side  ->  14px over
+    style4  10px a side  ->   9px over
+    style7  22px a side  ->  21px over
+    style8  22px a side  ->  21px over
+
+**WHAT WAS CHECKED AND LEFT ALONE.** Only style8 had the invisible-items
+bug. style2-style6's colours, style7's navy panel and style5's blue entries
+(4.91:1) were all measured and are fine. No colours were changed in any
+design but style8.
+
+`test-nav-dropdown.js` covers all eight: 32 tests, and every fix has a
+mutant proving the test bites.
+
+Same cause, same fix, and each needs its OWN subtrahend measured — do not
+copy 70px or 90px. **NOT DONE, AND DELIBERATELY SO:** `style2.css`–
+`style5.css` are on the DO NOT TOUCH list above and `style.css` is to be
+treated the same way, so this is Edwin's call, design by design.
+
+**WHAT WAS CHECKED AND IS FINE:** none of the six has the invisible-text
+bug. A first pass read `getComputedStyle(menu).backgroundColor` and reported
+style6 as white-on-white; walking up to the actually-painted surface showed
+`rgb(18, 35, 48)` behind white text. The alarm was the measurement, not the
+stylesheet.
+
+The original note follows.
+
 ### FOR TOMORROW — the SERVICES dropdown runs off the screen
 
 **ASKED FOR TWICE AND WRITTEN DOWN LATE.** Edwin raised it on 7 November

@@ -59,6 +59,50 @@ function copyVendorAssets({ cssDir, jsDir }) {
   } else if (!fs.existsSync(vendorJs)) {
     console.warn(`⚠️ Missing vendor JS: ${vendorJs}`);
   }
+
+  copyDisplayFont(cssDir);
+}
+
+/**
+ * The display face Design 9's headline is set in.
+ *
+ * BESIDE THE STYLESHEET, NOT IN assets/. style9.css asks for it as
+ * `url('anton.woff2')`, which a browser resolves against the STYLESHEET's
+ * own location — so the file has to sit in css/ next to it. Put in assets/
+ * it would 404 and the headline would silently fall back to Impact.
+ *
+ * COPIED FOR EVERY BUILD, NOT ONLY DESIGN 9's. This function does not know
+ * the styleKey, and threading it here to save 18KB on the other eight
+ * designs would add a parameter to the one place that currently needs no
+ * opinion about which theme is being built. An unreferenced 18KB file in a
+ * build folder costs nothing; a font that is missing because the condition
+ * was wrong costs a headline.
+ *
+ * FROM node_modules, WHICH IS WHY @fontsource/anton IS A DEPENDENCY rather
+ * than a file checked into src/. The package pins the version, and the
+ * deploy's dependency gate then refuses to ship a server that has not run
+ * npm install — which is the check that catches this going missing.
+ */
+function copyDisplayFont(cssDir) {
+  const FILE = 'anton.woff2';
+  const dest = path.join(cssDir, FILE);
+
+  if (fs.existsSync(dest)) return;
+
+  let src;
+  try {
+    src = require.resolve('@fontsource/anton/files/anton-latin-400-normal.woff2');
+  } catch (err) {
+    /* NOT FATAL. Design 9's headline falls back to Impact, which is
+     * condensed and present nearly everywhere; every other design never
+     * asks for this file at all. A missing font is not a reason to fail a
+     * build the customer has already paid for. */
+    console.warn('⚠️ @fontsource/anton is not installed — Design 9 headlines '
+      + 'will fall back to Impact. Run npm install.');
+    return;
+  }
+
+  fs.copyFileSync(src, dest);
 }
 
 /**

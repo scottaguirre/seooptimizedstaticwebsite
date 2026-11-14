@@ -484,16 +484,49 @@
    column should not stretch across it. */
 /* ---- dropdowns ---- */
 
+/* ---- THE PANEL IS WHITE, AND IT HAD TO BECOME WHITE ----
+
+   WAS FLOATING: a --navy panel, which was right while the links above it
+   were white over a photograph. The header is a white bar now and the links
+   went dark with it — and a dropdown ITEM is a .nav-link too, so it took
+   the same dark colour while this panel stayed dark behind it.
+
+       MEASURED: background rgb(10, 31, 82), text rgb(10, 31, 82).
+       The same colour. Twenty services, none of them visible.
+
+   Nothing failed, nothing logged, and the menu opened exactly as before —
+   it was simply blank. Caught by rendering the real nav with MAX_SERVICES
+   items rather than the four the preview ships with.
+
+   WHITE RATHER THAN RE-WHITENING THE TEXT, because this panel hangs off a
+   white bar and on a phone it opens INSIDE the collapsed menu, which is
+   also white since the panel there was dropped for a hairline. A dark block
+   in either place is the same fault in two sizes. */
 .dropdown-menu,
 .sub-menu {
-    border: 0.5px solid #b2b2b269;
-    background: var(--navy);
+    border: 1px solid rgba(var(--navy-rgb), 0.15);
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 10px 28px rgba(var(--navy-rgb), 0.16);
+    padding: 4px 0;
 }
 
+/* THE DIVIDERS GO WITH IT. `solid gray 1px` was a line for a dark panel; on
+   white it is the loudest thing in the menu. */
 .dropdown-menu .nav-item,
 .sub-menu .menu-item {
-    border-bottom: solid gray 1px;
+    border-bottom: 1px solid rgba(var(--navy-rgb), 0.08);
     padding-left: 10px;
+}
+
+/* A HOVER STATE, WHICH THE DARK PANEL NEVER HAD. On navy the items relied
+   on the browser's default link behaviour and there was nothing to see; on
+   white a row that lights up is what tells you the list is interactive. */
+#headerColor .dropdown-menu .nav-link:hover,
+#headerColor .dropdown-menu .nav-link:focus-visible,
+#headerColor .sub-menu .menu-item a:hover {
+    background: rgba(var(--navy-rgb), 0.06);
+    color: var(--brand-dark);
 }
 
 .dropdown-menu li:only-child,
@@ -517,9 +550,38 @@
         display: block;
     }
 
+    /* ---- THE LIST IS CAPPED, AND SCROLLS ----
+
+       MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items draw
+       a 926px menu. Measured on the real nav:
+
+           1435x800   926px tall, 192px below the fold
+           1280x700   926px tall, 292px below the fold
+
+       overflow-y was `visible` and there was no max-height, so those items
+       were not merely off-screen — there was nothing to scroll. The menu
+       opens on HOVER up here, so reaching them by scrolling the page means
+       moving the pointer off the trigger, which closes it.
+
+       ONLY AT 992px AND UP, WHICH IS WHY THIS LIVES IN THIS BLOCK. Below
+       it the menu is `position: static` inside the collapsed panel — it is
+       in flow, the page grows, and the page's own scrollbar reaches every
+       item. A cap there would put a small scrolling box inside a scrolling
+       page, which is worse than the problem.
+
+       THE NUMBER IS THE VIEWPORT, NOT A GUESS. The menu's top edge sits at
+       65px; 90px leaves it ending a clear 25px above the bottom at any
+       window height, and it keeps working on a laptop where a fixed pixel
+       cap would not.
+
+       overscroll-behavior stops the page lurching when the list hits its
+       end under the pointer. */
     .navbar .dropdown-menu,
     .sub-menu {
         margin-top: 0;
+        max-height: calc(100vh - 90px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
 
     /* Hovering the dropdown trigger shows the same bar the links use, rather
@@ -579,6 +641,27 @@
     .dropdown .dropdown-menu li,
     .sub-menu .menu-item {
         width: 250px;
+    }
+
+    /* ---- THE 22px IS FOR THE BAR, NOT FOR THE LIST ----
+
+       `.nav-link` above gives every link 22px of margin each side, which is
+       the air between ABOUT US and SERVICES along the horizontal bar.
+
+       buildNavMenu.js writes dropdown entries as
+       `class="dropdown-item nav-link"`, so they were taking that margin too
+       — 44px of it inside a 250px item. Measured: every anchor ended at
+       x=1025 against a panel edge at x=1004, overflowing by 21px. Short
+       items looked fine because their text stopped short of the edge; the
+       long ones were clipped mid-word.
+
+       IT WAS ALWAYS WRONG AND NEVER VISIBLE. While the panel was navy and
+       the text was navy there was nothing on screen to look wrong. Making
+       the items readable is what exposed it, which is the usual order. */
+    #headerColor .dropdown-menu .nav-link,
+    .sub-menu .menu-item a {
+        margin-left: 0;
+        margin-right: 0;
     }
 
     .nav-item.dropdown .dropdown-menu,

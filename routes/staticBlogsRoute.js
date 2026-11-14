@@ -526,7 +526,13 @@ router.get('/static-blogs', requireAuth, async (req, res) => {
                      aria-describedby="addressHelp">
               <span class="input-group-text">.</span>
               <select class="form-select" name="domain" required aria-label="Domain">
-                ${pool.map(d => `<option value="${esc(d.domain)}">${esc(d.domain)}</option>`).join('')}
+                ${/* THE REGISTRAR IS NEW HERE — this picker showed the bare
+                      domain while /cloudflare-sites showed "domain — label".
+                      Edwin asked for the registrar beside the domain when a
+                      customer picks one; two pickers answering that
+                      differently is the drift, not the fix. */''}
+                ${pool.map(d => `<option value="${esc(d.domain)}">${esc(d.domain)}${
+                  d.registrar ? ` — ${esc(d.registrar)}` : ''}</option>`).join('')}
               </select>
             </div>
             <div class="form-text text-white-50" id="addressHelp">

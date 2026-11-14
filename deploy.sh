@@ -140,6 +140,7 @@ NODE_SUITES=( \
   test-trust-points.js \
   test-meta-save-parity.js \
   test-hero-layouts.js \
+  test-nav-dropdown.js \
   test-nap-bar.js \
   test-placeholder-guard.js \
   test-lead-scout.js \

@@ -577,6 +577,32 @@ footer a {
     /* Keep tight alignment under the trigger */
     .navbar .dropdown-menu, .sub-menu {
       margin-top: 0;
+
+      /* ---- THE LIST IS CAPPED, AND SCROLLS — 14 November ----
+
+         MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items
+         draw an 861px menu here. Measured on the real nav:
+
+             1435x800   861px tall, 116px below the fold
+             1280x700   861px tall, 216px below the fold
+
+         The mildest of the eight, and still unreachable items: overflow-y
+         was `visible` with no max-height, so there was nothing to scroll.
+         The menu opens on HOVER up here, so reaching them by scrolling the
+         page means moving the pointer off the trigger, which closes it.
+
+         80px, WHICH style3 AND style4 ALSO USE — the same arithmetic
+         landing on the same answer, not a shared constant. This menu
+         starts at y=55 and 80 leaves it ending a clear 25px above the
+         bottom. The full set across the eight designs is 70, 72, 78, 80,
+         80, 80 and 90, each measured from its own header.
+
+         ONLY AT 992px AND UP. Below it the menu is in flow inside the
+         collapsed panel, where the page's own scrollbar reaches every
+         item and a cap would be worse than the problem. */
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     /* Optional: show active state on the trigger while hovering */
     .navbar .dropdown:hover > .nav-link {
@@ -586,6 +612,30 @@ footer a {
     .nav-link, .menu-item a {
       margin-right: 15px;
       margin-left: 15px;
+    }
+
+    /* ---- THAT 15px IS FOR THE BAR, NOT FOR THE LIST ----
+
+       The rule immediately above gives every link 15px of margin each
+       side, which is the air between ABOUT US and SERVICES along the
+       horizontal bar. buildNavMenu.js writes dropdown entries as
+       `dropdown-item nav-link`, so they take it too — 30px of it inside a
+       250px item that already carries 10px of padding.
+
+       Measured on the real nav with twenty services: the anchor ran to
+       x=1099 against a panel edge at x=1085, overflowing by 14px, so the
+       longest service names were clipped.
+
+       THE THIRD DESIGN WITH THIS EXACT BUG AND THE THIRD DIFFERENT
+       NUMBER: style4's bar margin is 10px and overflowed by 9, this one
+       is 15px and overflows by 14, style7 and style8 are 22px and
+       overflow by 21. Same cause every time — the bar's spacing applied
+       to a vertical list that has no room for it. */
+    #headerColor .dropdown-menu .nav-link,
+    .navbar .dropdown-menu .nav-link,
+    .sub-menu .menu-item a {
+      margin-left: 0;
+      margin-right: 0;
     }
     
     .menu-item-has-children {

@@ -871,6 +871,38 @@ footer a {
     /* Keep tight alignment under the trigger */
     .navbar .dropdown-menu {
       margin-top: 0;
+
+      /* ---- THE LIST IS CAPPED, AND SCROLLS — 14 November ----
+
+         MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items
+         draw a 1144px menu here. Measured on the real nav:
+
+             1435x800   1144px tall, 391px below the fold
+             1280x700   1144px tall, 491px below the fold
+
+         overflow-y was `visible` with no max-height, so those items were
+         not merely off-screen — there was nothing to scroll. The menu
+         opens on HOVER up here, so reaching them by scrolling the page
+         means moving the pointer off the trigger, which closes it.
+
+         72px, AND THE NUMBER IS THIS DESIGN'S OWN. style6 uses 70 and
+         style7/style8 use 90. This header is 70px with its menu starting
+         at y=47; 72 is what leaves it ending a clear 25px above the
+         bottom. The three differ because the headers do, and copying one
+         into another is how a cap ends up slightly wrong everywhere.
+
+         ONLY AT 992px AND UP, which is why this sits in this block. Below
+         it the menu is in flow inside the collapsed panel — the header
+         grows to 1474px and the page's own scrollbar reaches every item.
+
+         NOTHING ELSE WAS CHANGED HERE. style7 and style8 also needed their
+         dropdown entries' 22px side margins zeroed; this design does not —
+         its items measured 0px of overflow. Its blue-on-white entries
+         (#0a65fc on #fff) measure 4.91:1, which passes, and were left
+         alone. */
+      max-height: calc(100vh - 72px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
    
 
