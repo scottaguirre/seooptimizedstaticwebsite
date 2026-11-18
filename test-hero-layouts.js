@@ -631,11 +631,36 @@ test('the PHP twocol hero carries the same classes, at the same depths', () => {
 /* ===================================================================== */
 section('Design 9 stacks before it sits side by side');
 
-const THEME9 = path.join(__dirname, 'src', 'css', 'themes', 'style9.css');
-const css9 = fs.readFileSync(THEME9, 'utf8');
+/**
+ * EVERY DESIGN BUILT ON THE TWO-COLUMN HERO, not just the one it was
+ * written for.
+ *
+ * style5.css was replaced with a copy of style9.css on 15 November. These
+ * checks were reading style9.css by name, so the moment the CSS was reused
+ * the second copy had no guard at all — and the invariants here are not
+ * style9 trivia, they are the three ways this stylesheet has already
+ * failed silently: an unclipped radius, a slab at full height, a shadow
+ * too faint to show its hue.
+ *
+ *     A CHECK NAMED AFTER ONE DESIGN STOPS CHECKING THE DAY SOMEBODY
+ *     COPIES THE FILE.
+ *
+ * Derived from HERO_LAYOUT rather than typed out, so a third copy is
+ * covered by the mapping that makes it a copy.
+ */
+const TWOCOL_THEMES = Object.keys(HERO_LAYOUT)
+  .filter(k => 'twocol' === HERO_LAYOUT[k]);
+
+const twocolCss = Object.fromEntries(TWOCOL_THEMES.map(k =>
+  [k, fs.readFileSync(path.join(__dirname, 'src', 'css', 'themes', `${k}.css`), 'utf8')]));
 
 /** The stylesheet with every comment removed. */
-const bare9 = () => css9.replace(/\/\*[\s\S]*?\*\//g, '');
+const bare = (key) => twocolCss[key].replace(/\/\*[\s\S]*?\*\//g, '');
+
+test('THE TWO-COLUMN DESIGNS ARE FOUND FROM THE MAP, NOT FROM A LIST HERE', () => {
+  assert.ok(TWOCOL_THEMES.length,
+    'no design maps to the twocol layout — every check below is now vacuous');
+});
 
 /** The body of one rule, found by its exact selector, outside any @media. */
 function ruleOutsideMedia(src, selector) {
@@ -659,24 +684,28 @@ test('THE BLOCK DECLARES flex-direction: column, IT DOES NOT INHERIT ONE', () =>
    *
    * Comments are stripped first: this file's subject is full of the words
    * "column" and "stacked". */
-  const body = ruleOutsideMedia(bare9(), '.hero-twocol__block');
+  for (const key of TWOCOL_THEMES) {
+  const body = ruleOutsideMedia(bare(key), '.hero-twocol__block');
 
-  assert.ok(body, '.hero-twocol__block has no rule outside a media query');
-  assert.ok(/flex-direction\s*:\s*column/.test(body),
-    'the base .hero-twocol__block does not set flex-direction: column, so a '
-    + 'phone gets the side-by-side desktop layout in 358px');
+    assert.ok(body, `${key}: .hero-twocol__block has no rule outside a media query`);
+    assert.ok(/flex-direction\s*:\s*column/.test(body),
+      `${key}: the base .hero-twocol__block does not set flex-direction: `
+      + 'column, so a phone gets the side-by-side desktop layout in 358px');
+  }
 });
 
 test('and the media field has a definite height while it is stacked', () => {
   /* picture and img are height: 100%, which resolves to auto unless the
    * parent's height is definite. Without this the photograph fell back to
    * its natural ratio and left a band of empty yellow beneath it. */
-  const body = ruleOutsideMedia(bare9(), '.hero-twocol__media');
+  for (const key of TWOCOL_THEMES) {
+  const body = ruleOutsideMedia(bare(key), '.hero-twocol__media');
 
-  assert.ok(body, '.hero-twocol__media has no rule outside a media query');
-  assert.ok(/aspect-ratio\s*:\s*[^;]*\d/.test(body),
-    'the stacked .hero-twocol__media sets no aspect-ratio, so its height is '
-    + 'indefinite and the photograph cannot fill it');
+    assert.ok(body, `${key}: .hero-twocol__media has no rule outside a media query`);
+    assert.ok(/aspect-ratio\s*:\s*[^;]*\d/.test(body),
+      `${key}: the stacked .hero-twocol__media sets no aspect-ratio, so its `
+      + 'height is indefinite and the photograph cannot fill it');
+  }
 });
 
 test('THE BADGES REACH BOTH RENDERERS, NOT JUST WORDPRESS', () => {
@@ -752,19 +781,21 @@ test('THE ROUNDED TOP IS CLIPPED, OR IT IS NOT ROUNDED AT ALL', () => {
    *
    * So the two are checked together: whichever one is present, the other
    * has to be. */
-  const body = ruleOutsideMedia(bare9(), '.hero-twocol__block');
+  for (const key of TWOCOL_THEMES) {
+  const body = ruleOutsideMedia(bare(key), '.hero-twocol__block');
 
-  assert.ok(body, '.hero-twocol__block has no rule outside a media query');
+    assert.ok(body, `${key}: .hero-twocol__block has no rule outside a media query`);
 
-  const rounded = /border-radius\s*:/.test(body);
-  const clipped = /overflow\s*:\s*hidden/.test(body);
+    const rounded = /border-radius\s*:/.test(body);
+    const clipped = /overflow\s*:\s*hidden/.test(body);
 
-  assert.strictEqual(rounded, clipped,
-    rounded
-      ? 'the block sets a border-radius but does not clip its children, so '
-        + 'the yellow and navy corners stay square and the curve is invisible'
-      : 'the block clips its children but sets no border-radius — the clip '
-        + 'is doing nothing, so one of the two was deleted by mistake');
+    assert.strictEqual(rounded, clipped,
+      rounded
+        ? `${key}: the block sets a border-radius but does not clip its `
+          + 'children, so the yellow and navy corners stay square'
+        : `${key}: the block clips its children but sets no border-radius — `
+          + 'the clip is doing nothing, so one of the two was deleted');
+  }
 });
 
 test('and the blue slab is a fraction of the hero, not all of it', () => {
@@ -772,16 +803,18 @@ test('and the blue slab is a fraction of the hero, not all of it', () => {
    * as the literal 60, because the point is that the arc crosses BEHIND
    * the block and shows down the margins; at 100% it sits below the whole
    * hero and the shape he asked for disappears. */
-  const clean = bare9();
-  const m = /\.hero-twocol::before\s*\{([^{}]*)\}/.exec(clean);
+  for (const key of TWOCOL_THEMES) {
+  const clean = bare(key);
+    const m = /\.hero-twocol::before\s*\{([^{}]*)\}/.exec(clean);
 
-  assert.ok(m, '.hero-twocol::before is gone — the blue slab is not drawn');
+    assert.ok(m, `${key}: .hero-twocol::before is gone — no blue slab is drawn`);
 
-  const h = /height\s*:\s*([\d.]+)%/.exec(m[1]);
-  assert.ok(h, 'the slab height is not a percentage of the hero');
-  assert.ok(Number(h[1]) < 100,
-    `the slab is ${h[1]}% tall — at 100% the curve falls below the whole `
-    + 'hero instead of crossing behind the block');
+    const h = /height\s*:\s*([\d.]+)%/.exec(m[1]);
+    assert.ok(h, `${key}: the slab height is not a percentage of the hero`);
+    assert.ok(Number(h[1]) < 100,
+      `${key}: the slab is ${h[1]}% tall — at 100% the curve falls below the `
+      + 'whole hero instead of crossing behind the block');
+  }
 });
 
 test("and the About image's shadow is blue enough to be seen as blue", () => {
@@ -794,24 +827,118 @@ test("and the About image's shadow is blue enough to be seen as blue", () => {
    * The token is checked too, but loosely: any of the theme's blues is
    * right, a hard-coded hex is not, because it would stop following the
    * palette the next time one is retuned. */
-  const m = /\.col-md-5 img\s*\{([^{}]*)\}/.exec(bare9());
+  for (const key of TWOCOL_THEMES) {
+  const m = /\.col-md-5 img\s*\{([^{}]*)\}/.exec(bare(key));
 
-  assert.ok(m, '.col-md-5 img has no rule — the About image is unstyled');
+    assert.ok(m, `${key}: .col-md-5 img has no rule — the About image is unstyled`);
 
-  const sh = /box-shadow\s*:\s*([^;]+)/.exec(m[1]);
-  assert.ok(sh, '.col-md-5 img has no box-shadow');
+    const sh = /box-shadow\s*:\s*([^;]+)/.exec(m[1]);
+    assert.ok(sh, `${key}: .col-md-5 img has no box-shadow`);
 
-  assert.ok(/var\(--(brand|navy)-rgb\)/.test(sh[1]),
-    `the shadow is "${sh[1].trim()}" — it should take a palette token so it `
-    + 'follows the theme rather than a colour typed in by hand');
+    /* EITHER FORM OF THE TOKEN. This check first demanded
+     * `rgba(var(--brand-rgb), a)` and nothing else, because that is what
+     * the rule happened to say the day it was written. On 15 November the
+     * shadow became a solid `var(--brand)` and the test failed a rule that
+     * satisfies every word of its own reasoning — a palette token, at full
+     * strength, with the hue plainly visible.
+     *
+     *     A TEST THAT PINS THE SPELLING INSTEAD OF THE PROPERTY FAILS THE
+     *     FIRST CORRECT CHANGE THAT IS SPELT DIFFERENTLY.
+     *
+     * So: the colour must come from a token either way, and a bare var()
+     * is opaque, which is alpha 1. */
+    const value = sh[1].trim();
 
-  const alpha = /,\s*\.?([\d.]+)\s*\)\s*$/.exec(sh[1].trim());
-  assert.ok(alpha, `could not read an alpha out of "${sh[1].trim()}"`);
+    assert.ok(/var\(--(brand|navy)(-rgb)?\)/.test(value),
+      `${key}: the shadow is "${value}" — it should take a palette token so `
+      + 'it follows the theme rather than a hand-typed colour');
 
-  const a = Number('0.' + String(alpha[1]).replace(/^0?\./, ''));
-  assert.ok(a >= 0.25,
-    `the shadow is at alpha ${a} — below about 0.25 the hue washes out and `
-    + 'it reads as the grey default it was before');
+    const rgba = /,\s*(\.?[\d.]+)\s*\)\s*$/.exec(value);
+    const a = rgba ? Number(rgba[1]) : 1;
+
+    assert.ok(a >= 0.25,
+      `${key}: the shadow is at alpha ${a} — below about 0.25 the hue washes `
+      + 'out and it reads as the grey default it was before');
+  }
+});
+
+/* WCAG relative luminance and contrast, so "can this be read" is a number
+ * rather than an opinion. Same arithmetic as test-wordmark-logo.js, which
+ * measures the generated logo against its backdrop. */
+function luminance(hex) {
+  const v = [1, 3, 5].map(i => parseInt(hex.replace('#', '').slice(i - 1, i + 1), 16) / 255)
+    .map(c => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+
+function contrast(a, b) {
+  const la = luminance(a), lb = luminance(b);
+
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** One custom property's value, read off the :root-ish palette block. */
+function token(css, name) {
+  const m = new RegExp(`--${name}\\s*:\\s*(#[0-9a-fA-F]{6})`).exec(css);
+
+  return m ? m[1] : null;
+}
+
+test('THE PALETTE STILL HOLDS, WHATEVER COLOUR IT HAS BEEN SET TO', () => {
+  /* THIS IS THE THIRD PALETTE ON THIS STYLESHEET IN TWO DAYS — red, then
+   * yellow, then mint on style5 — and each swap was a handful of hex
+   * values typed into a block of custom properties. Nothing downstream
+   * notices when one of them stops working: a CTA whose label has gone
+   * illegible renders perfectly, and so does a link nobody can read.
+   *
+   *     A PALETTE IS NOT A LIST OF COLOURS. IT IS A SET OF PAIRS, AND THE
+   *     PAIRS ARE WHAT HAS TO KEEP WORKING.
+   *
+   * So the relationships are pinned and the hues are not. Change --accent
+   * to anything you like; this fails only when a change breaks a surface.
+   *
+   * WHY --accent IS CHECKED AGAINST DARK ONLY. The whole reason
+   * --accent-ink exists is that --accent is too light for white — 1.46:1
+   * for the yellow, 1.60:1 for the mint. Asserting it passes on white
+   * would be asserting the split should not exist. */
+  for (const key of TWOCOL_THEMES) {
+    const css = twocolCss[key];
+
+    const accent    = token(css, 'accent');
+    const accentInk = token(css, 'accent-ink');
+    const cta       = token(css, 'cta');
+    const ctaDark   = token(css, 'cta-dark');
+    const brand     = token(css, 'brand');
+    const brandDark = token(css, 'brand-dark');
+
+    for (const [n, v] of Object.entries({ accent, accentInk, cta, ctaDark, brand, brandDark })) {
+      assert.ok(v, `${key}: --${n} is missing or is not a plain hex`);
+    }
+
+    const checks = [
+      ['the CTA label on its fill',        brandDark, cta,      4.5],
+      ['the CTA label on the hover fill',  brandDark, ctaDark,  4.5],
+      ['the CTA edge against the column',  cta,       brandDark, 3.0],
+      ['--accent on the --brand bar',      accent,    brand,    4.5],
+      ['--accent-ink on white',            accentInk, '#ffffff', 4.5],
+      ['--accent-ink on --faq-grey',       accentInk, '#f4f5f7', 4.5],
+    ];
+
+    for (const [what, a, b, need] of checks) {
+      const got = contrast(a, b);
+
+      assert.ok(got >= need,
+        `${key}: ${what} is ${got.toFixed(2)}:1 (${a} on ${b}), under the `
+        + `${need}:1 it needs — the palette was changed and this pair broke`);
+    }
+
+    /* AND THE HOVER HAS TO BE A VISIBLE CHANGE. A --cta-dark equal to
+     * --cta passes every ratio above and does nothing at all. */
+    assert.ok(contrast(cta, ctaDark) >= 1.1,
+      `${key}: --cta-dark ${ctaDark} is barely distinguishable from --cta `
+      + `${cta}, so the button has no visible hover state`);
+  }
 });
 
 test('THE NAME/ADDRESS/PHONE BAR IS IN ALL FOUR TEMPLATES AND IN THE PHP', () => {

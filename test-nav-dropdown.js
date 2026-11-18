@@ -106,7 +106,7 @@ const CAPPED = ['style', 'style2', 'style3', 'style4', 'style5', 'style6', 'styl
  * Always one less than the margin, because the panel shrink-wraps the item
  * and only the right-hand margin escapes it.
  */
-const MARGIN_SCOPED = ['style', 'style4', 'style7', 'style8', 'style9'];
+const MARGIN_SCOPED = ['style', 'style4', 'style5', 'style7', 'style8', 'style9'];
 
 /** The designs with a WHITE header, which is what makes the colour a trap. */
 const LIGHT_HEADER = ['style8'];
@@ -130,7 +130,12 @@ const LIGHT_HEADER = ['style8'];
  * What makes style9 right is a second, dropdown-scoped rule that overrides
  * it — so that is what this checks for, and checks is not the panel colour.
  */
-const DARK_BAR_LIGHT_PANEL = ['style9'];
+/* style5 IS HERE BECAUSE IT IS style9. Its stylesheet was replaced with a
+ * copy on 15 November, so it has the same blue bar over the same white
+ * panel — and therefore the same way of going invisible. A guard that
+ * names only the design it was written for stops guarding the moment the
+ * CSS is reused. */
+const DARK_BAR_LIGHT_PANEL = ['style5', 'style9'];
 
 const css = Object.fromEntries(
   [...new Set([...CAPPED, ...MARGIN_SCOPED, ...LIGHT_HEADER, ...DARK_BAR_LIGHT_PANEL])]

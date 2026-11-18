@@ -646,10 +646,11 @@ test('every structure with a stylesheet has markup and prompts to go with it', (
 
   /* THE LIST IS WRITTEN OUT RATHER THAN COUNTED, so that a stylesheet added
    * without its markup fails HERE, loudly, instead of shipping a structure
-   * that renders as unstyled text. Anvil arrived on 31 October and this line
-   * was the only thing in this suite that had to change for it — which is
-   * the seam working. */
-  assert.deepStrictEqual(structureKeys(), ['ledger', 'beacon', 'anvil']);
+   * that renders as unstyled text. Anvil arrived on 31 October and Quarry on
+   * 17 November, and this line was the only thing in this suite that had to
+   * change for either — which is the seam working. */
+  assert.deepStrictEqual(structureKeys(),
+    ['ledger', 'beacon', 'anvil', 'quarry', 'harbor', 'atlas', 'orchard']);
 });
 
 test('THE THREE HOME PARAGRAPHS ARE ABOUT DIFFERENT THINGS, NOT REWORDED', () => {
@@ -859,9 +860,24 @@ test('and nothing chosen is Ledger with an automatic photo set', () => {
 
 test('AN UNKNOWN DESIGN IS THE DEFAULT, NOT A FAILED BUILD', () => {
   /* A stale form, an old job payload or a typed URL must not fail a build
-   * that is otherwise fine. */
-  assert.strictEqual(designFor('7'), null);
-  assert.deepStrictEqual(buildOptionsFor('7'), buildOptionsFor(''));
+   * that is otherwise fine.
+   *
+   * ⚠ THIS USED '7' AS THE UNKNOWN ID, AND ON 18 November DESIGN 7 WAS
+   * BUILT. The test did not become wrong — it became a test that Design 7
+   * does not exist, which is the opposite of what it was for, and it
+   * reported the moment Orchard was registered.
+   *
+   *     AN ID CHOSEN BECAUSE NOTHING USES IT YET
+   *     IS AN ID SOMETHING WILL USE.
+   *
+   * The ids are digits, so a word can never be one. This cannot go stale
+   * however many layouts are added. */
+  assert.strictEqual(designFor('not-a-design'), null);
+  assert.deepStrictEqual(buildOptionsFor('not-a-design'), buildOptionsFor(''));
+
+  /* AND THE REAL IDS ARE STILL REAL, so this is not passing because
+   * designFor() started refusing everything. */
+  assert.ok(designFor('1'), 'Design 1 stopped resolving');
 });
 
 test('every design names a structure that exists', () => {

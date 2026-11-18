@@ -464,6 +464,14 @@ router.get('/dashboard', requireAuth, async (req, res) => {
             <a href="${site.previewUrl}/" target="_blank" rel="noopener"
                class="btn btn-outline-dark">Preview</a>
 
+            ${/* EDIT, BETWEEN PREVIEW AND THE TWO EXPORTS, because that is
+                 the order the errand happens in: look at it, change what is
+                 wrong, then take it away. Added 17 November — until then the
+                 only way to change a word was to generate the whole site
+                 again, which costs credits and writes different sentences.
+                 See routes/editSiteRoute.js. */''}
+            <a href="/edit-site" class="btn btn-outline-dark">Edit words</a>
+
             <button type="button" id="dlStatic" class="btn btn-primary">
               Download HTML Site
             </button>
@@ -732,6 +740,50 @@ router.get('/api/site-domains', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('api/site-domains error:', err);
     res.status(500).json({ error: 'Could not load the domains' });
+  }
+});
+
+/**
+ * GET /api/cloudflare-domains — where a Cloudflare website can be put.
+ *
+ * THE SIBLING OF THE ROUTE ABOVE, AND DELIBERATELY NOT THE SAME ONE.
+ * Edwin, 5 November, about the blogs: *"these domains will be separate than
+ * the ones for blogs. So the dropdown for these domains has to be separate
+ * from the dropdown of those for blogs."* The same holds across all three
+ * products — the pool keeps GitHub, Cloudflare-site and Cloudflare-blog
+ * rows in one collection and `target` is what tells them apart.
+ *
+ * siteDomains(), NOT A FILTER WRITTEN HERE. The note on the route above is
+ * the whole argument: /static-blogs once asked `{ enabled: true }` and
+ * nothing more, and silently offered GitHub domains to the blog wizard. A
+ * hand-written filter here would be the third time.
+ *
+ * ADDED 16 NOVEMBER, for the wizard's Cloudflare destination. The publish
+ * form on /cloudflare-sites builds the same list server-side; this is the
+ * same question asked by a page that is already drawn.
+ */
+router.get('/api/cloudflare-domains', requireAuth, async (req, res) => {
+  try {
+    const Domain = require('../models/Domain');
+    const { siteDomains } = require('../utils/domainPool');
+
+    const rows = await Domain.find(siteDomains())
+      .select('domain label registrar')
+      .sort({ domain: 1 })
+      .lean();
+
+    res.json({
+      domains: rows.map(row => ({
+        id: String(row._id),
+        domain: row.domain,
+        label: row.label || '',
+        registrar: row.registrar || '',
+      })),
+    });
+
+  } catch (err) {
+    log.error('api.cloudflareDomains.failed', err, { requestId: req.id });
+    res.status(500).json({ domains: [], error: 'Could not load the domains.' });
   }
 });
 

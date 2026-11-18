@@ -40,7 +40,16 @@
 // The product's name. It lives in its own module so a SIGNED-OUT page can
 // brand its tab without importing the logged-in header — see pageTitle.js.
 const {
-  APP_NAME, TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT, TOOL_CF_SITES,
+  APP_NAME, TOOL_BLOG_REPORT, TOOL_MY_SITES, TOOL_MY_CF_SITES,
+  /* THE FOUR BUILD-ROW TOOL_ NAMES LEFT THIS IMPORT ON 17 November, when
+   * the rows took the verb. They still title their own pages — a LIST of
+   * Cloudflare blogs is not "Build Cloudflare Blogs" — they just no longer
+   * label anything in this file. */
+  /* THE ROWS THAT MAKE SOMETHING SAY SO. Separate from the TOOL_ names
+   * because a navigation label and a page title answer different questions
+   * — see the note beside these in utils/pageTitle.js. */
+  NAV_BUILD_SITE, NAV_GH_SITES, NAV_CF_SITES, NAV_WP_BLOGS, NAV_CF_BLOGS,
+  NAV_CF_LOCAL,
 } = require('./pageTitle');
 
 /**
@@ -220,7 +229,14 @@ function appHeaderScripts() {
        onsubmit attributes that the CSP blocks outright — and a guard kept
        in three separate templates is a guard that goes missing from one of
        them. See public/js/confirmSubmit.js. -->
-  <script src="/js/confirmSubmit.js" defer></script>`;
+  <script src="/js/confirmSubmit.js" defer></script>
+  <!-- The sidebar row you clicked looks clicked until the next page arrives.
+       Every screen here is a full page load and nothing on it changed while
+       one was in flight, so a slow response looked like a click that missed.
+       Loaded beside the others rather than per route, for the reason given
+       just above: a behaviour kept in three templates goes missing from one.
+       See public/js/sidebarBusy.js. -->
+  <script src="/js/sidebarBusy.js" defer></script>`;
 }
 
 /**
@@ -363,11 +379,16 @@ function appHeader(csrfField = '') {
 
           <li><a class="dropdown-item" href="/dashboard">My Dashboard</a></li>
 
-          <!-- MY SITES — 30 October. The route has been mounted since the
-               editor was built and nothing linked to it, so the only way
-               in was to type the URL. A screen nobody can reach is a
-               screen nobody has. -->
-          <li><a class="dropdown-item" href="/my-sites">My Sites</a></li>
+          <!-- MY SITES LEFT THIS MENU ON 16 NOVEMBER and is a sidebar row
+               now — see TOOL_MY_SITES in utils/pageTitle.js.
+
+               It was put here on 30 October because the route had been
+               mounted since the editor was built with nothing linking to
+               it, and a dropdown under an avatar was better than nothing.
+               It is not better than the tools column, and Edwin's call was
+               that it should not be in both: every other tool lives in
+               exactly one place, and two entry points is two things to
+               keep in step for one screen. -->
 
           <li><a class="dropdown-item" href="/buy-credits">Buy Credits</a></li>
           <li><hr class="dropdown-divider"></li>
@@ -436,11 +457,73 @@ function appHeader(csrfField = '') {
 function appSidebar(current = '') {
   const here = String(current || '').split('?')[0].replace(/\/+$/, '') || '/';
 
+  /* GROUPED SINCE 16 NOVEMBER, and the grouping is the point rather than
+   * decoration. Edwin: *"the options to build websites or blogs are a
+   * little disorganized… a better and more intuitive user experience"*.
+   *
+   * WHAT WAS WRONG WAS NOT THE ORDER. The seven rows named themselves on
+   * three different axes at once —
+   *
+   *     by what it makes    Build a Website, Build WP blogs
+   *     by where it hosts   Build Cloudflare Blogs, Build Cloudflare Websites
+   *     by activity         Blog Report, Dashboard
+   *
+   * — so "Build a Website" and "Build Cloudflare Websites" read as the same
+   * thing and are not, and the difference is not the one the labels state.
+   *
+   *     A LIST THAT ANSWERS A DIFFERENT QUESTION ON EVERY LINE IS NOT A
+   *     LIST, IT IS SEVEN LISTS OF ONE.
+   *
+   * Now every row under a heading answers the same question, the verb is
+   * said once in the heading instead of five times down the column, and
+   * making is separated from looking at what was made.
+   *
+   * `group` IS A STRING, NOT AN INDEX, so reordering this array cannot
+   * silently reassign a row to another heading — the same reason
+   * isLocalOptions() in the wizard compares against a value rather than
+   * against SITE_MODES[1]. */
   const tools = [
     // `cta` marks the primary action, which wears the solid blue the header
     // used to. It is the END the other tools are means to.
-    { href: '/', icon: 'bi-magic', label: 'Build a Website', cta: true },
-    { href: '/keyword-research', icon: 'bi-search', label: 'Keyword Research' },
+    { group: 'Websites', href: '/', icon: 'bi-magic', label: NAV_BUILD_SITE, cta: true },
+
+    /* CLOUDFLARE AND GITHUB SIT UNDER THE SAME HEADING AS THE GENERATOR
+     * because all three make a website; what differs is where it lands.
+     * That is the axis the heading declares, so the rows are free to name
+     * only the host. */
+    { group: 'Websites', href: '/github-sites', icon: 'bi-github', label: NAV_GH_SITES },
+    /* THE BUILD ROW POINTS AT THE WIZARD, NOT AT THE LIST — 17 November.
+     *
+     * It pointed at `/cloudflare-sites` for a day, and `/cloudflare-sites`
+     * is the LIST. So this row opened a table of published websites while
+     * the row directly above it opened a wizard, under a heading that says
+     * "Build websites". Edwin pressed it expecting the wizard:
+     *
+     *     *"The cloudflare website button takes me to the same old screen
+     *     that was before"*
+     *
+     *     A HEADING IS A PROMISE EVERY ROW BENEATH IT HAS TO KEEP.
+     *
+     * The list did not disappear; it moved to MANAGE, where GitHub's list
+     * already was. Both products now read the same way down the sidebar. */
+    { group: 'Websites', href: '/cloudflare-sites/new', icon: 'bi-globe', label: NAV_CF_SITES },
+
+    /* CLOUDFLARE LOCAL AUTOMATION — 17 November, and it is the PAIR of the
+     * GitHub row above rather than a second version of the row above it.
+     *
+     *   Build GitHub Websites        eleven pages -> GitHub Pages
+     *   Cloudflare Local Automation  eleven pages -> Cloudflare
+     *   Build Cloudflare Websites    a template site -> Cloudflare
+     *
+     * THE TWO CLOUDFLARE ROWS BUILD DIFFERENT PRODUCTS, which is the whole
+     * reason this one is not called "Build Cloudflare Websites" as its
+     * shape would suggest. Edwin named it, and the name is what tells them
+     * apart on a screen where both are one word different.
+     *
+     * NO LIST ROW OF ITS OWN under Manage. These are Cloudflare sites and
+     * they land in My Cloudflare Websites with the rest — Edwin, the same
+     * afternoon: one list, one place to look. */
+    { group: 'Websites', href: '/local-automation', icon: 'bi-stars', label: NAV_CF_LOCAL },
 
     /* ADDED 23 October, on Edwin's instruction, and HERE rather than at the
      * end because the column reads as a sequence: build a site, find the
@@ -454,9 +537,7 @@ function appSidebar(current = '') {
      *
      * The milder form of the failure this list's own comment describes:
      * not unreachable, just somewhere nobody looks. */
-    { href: '/blog-report', icon: 'bi-clipboard-data', label: TOOL_BLOG_REPORT },
-
-    { href: '/blog-sites', icon: 'bi-journal-text', label: TOOL_WP_BLOGS },
+    { group: 'Blogs', href: '/blog-sites', icon: 'bi-journal-text', label: NAV_WP_BLOGS },
 
     /* ADDED THE DAY THE SCREEN SHIPPED, and only because Edwin asked where
      * the feature was. The route went live with nothing linking to it —
@@ -465,7 +546,7 @@ function appSidebar(current = '') {
      *
      * A tool that is not linked from somewhere a customer looks is a tool
      * nobody uses. */
-    { href: '/static-blogs', icon: 'bi-cloud', label: TOOL_CF_BLOGS },
+    { group: 'Blogs', href: '/static-blogs', icon: 'bi-cloud', label: NAV_CF_BLOGS },
 
     /* ADDED 7 November, IN THE SAME COMMIT AS THE ROUTE — which is the only
      * lesson the line above it has to teach. That one shipped a day late
@@ -476,12 +557,46 @@ function appSidebar(current = '') {
      * same Cloudflare accounts, same domain pool, same Pages deploy, and
      * the labels differ in one word. Dropped at the end of the list it
      * would read as a fourth unrelated tool. */
-    { href: '/cloudflare-sites', icon: 'bi-globe', label: TOOL_CF_SITES },
+    /* MANAGE — THE ROWS THAT LOOK AT WHAT EXISTS rather than make more.
+     *
+     * Mixed into one flat list, "Blog Report" sat between two Build rows
+     * and read as a third thing to build. Separating the verbs is most of
+     * what made the column hard to scan.
+     *
+     * /my-sites ARRIVES HERE TODAY and leaves the account dropdown in the
+     * header, where it had been since 30 October. See TOOL_MY_SITES. */
+    /* TOOLS BEFORE MANAGE, AND THAT ORDER SETTLES AN ARGUMENT WITH 23
+     * OCTOBER rather than ignoring it.
+     *
+     * Edwin asked then for Blog Report to sit IMMEDIATELY AFTER Keyword
+     * Research, and test-app-header.js asserts the adjacency by index
+     * because the position WAS the request: the flat column read as a
+     * sequence — build a site, find the words, build the blogs, read how
+     * they are doing.
+     *
+     * Grouping by kind is a different organising principle, and the two
+     * can disagree: Keyword Research is a tool and Blog Report is a thing
+     * you read, so by kind they belong in different groups.
+     *
+     *     WHEN A NEW RULE WOULD BREAK AN OLD REQUEST, CHECK WHETHER IT
+     *     ACTUALLY HAS TO. Here it does not.
+     *
+     * Putting Tools above Manage leaves Keyword Research as the last row
+     * before Blog Report, so the adjacency survives the regrouping and the
+     * old test still passes unchanged. Reordering these two groups is the
+     * only thing holding that, which is why it is written down. */
+    { group: 'Tools', href: '/keyword-research', icon: 'bi-search', label: 'Keyword Research' },
 
-    { href: '/dashboard', icon: 'bi-speedometer2', label: 'Dashboard' },
+    { group: 'Manage', href: '/blog-report', icon: 'bi-clipboard-data', label: TOOL_BLOG_REPORT },
+    /* THE TWO LISTS, SIDE BY SIDE AND BOTH NAMING THEIR HOST. "My Websites"
+     * meant GitHub and only GitHub; next to "My Cloudflare Websites" it
+     * would have read as the whole of which the other was a part. */
+    { group: 'Manage', href: '/my-sites', icon: 'bi-folder2-open', label: TOOL_MY_SITES },
+    { group: 'Manage', href: '/cloudflare-sites', icon: 'bi-globe', label: TOOL_MY_CF_SITES },
+    { group: 'Manage', href: '/dashboard', icon: 'bi-speedometer2', label: 'Dashboard' },
   ];
 
-  const items = tools.map(({ href, icon, label, cta }) => {
+  const link = ({ href, icon, label, cta }) => {
     const active = here === href.replace(/\/+$/, '') || (href === '/' && here === '/');
 
     const classes = ['app-sidebar-link'];
@@ -495,6 +610,39 @@ function appSidebar(current = '') {
         <i class="bi ${icon}" aria-hidden="true"></i>
         <span>${label}</span>
       </a>`;
+  };
+
+  /* THE HEADINGS COME FROM THE ROWS, IN THE ORDER THE ROWS APPEAR.
+   *
+   * Not from a separate list of group names. A second list is a second
+   * thing to keep in step, and the failure when it drifts is a heading
+   * with nothing under it or a row that silently vanishes — neither of
+   * which throws. Here a group exists exactly as long as something is in
+   * it, and reordering the array is the only way to reorder the sidebar.
+   *
+   * A ROW WITH NO `group` STILL RENDERS, ungrouped, at the top. Nothing
+   * relies on that today; it means a tool added in a hurry appears rather
+   * than disappearing into a heading that does not exist. */
+  const order = [];
+  const byGroup = new Map();
+
+  for (const tool of tools) {
+    const name = tool.group || '';
+
+    if (!byGroup.has(name)) {
+      byGroup.set(name, []);
+      order.push(name);
+    }
+
+    byGroup.get(name).push(tool);
+  }
+
+  const items = order.map((name) => {
+    const rows = byGroup.get(name).map(link).join('');
+
+    return name
+      ? `<div class="app-sidebar-group">${name}</div>${rows}`
+      : rows;
   }).join('');
 
   // Wrapped in a SHELL that the stylesheet positions. Every page includes the
@@ -505,7 +653,6 @@ function appSidebar(current = '') {
   return `
     <div class="app-sidebar-shell">
       <nav class="app-sidebar" aria-label="Tools">
-        <div class="app-sidebar-title">Tools</div>
         ${items}
       </nav>
     </div>`;
@@ -535,12 +682,35 @@ function appSidebarAssets() {
       padding: 1.75rem .75rem 1rem;
     }
 
+    /* KEPT, THOUGH THE SIDEBAR NO LONGER DRAWS ONE. The single "Tools"
+       title was replaced by per-group headings on 16 November; the rule
+       stays because other pages' stylesheets are appended beside this one
+       and a dangling class is cheaper than hunting for the last user. */
     .app-sidebar-title {
       color: rgba(255,255,255,.55);
       font-size: .75rem;
       letter-spacing: .08em;
       text-transform: uppercase;
       padding: 0 .75rem .5rem;
+    }
+
+    /* THE GROUP HEADINGS. Same type as the title they replaced, so the
+       column did not change voice — what changed is that there are now
+       three or four of them instead of one.
+
+       MARGIN-TOP ON ALL BUT THE FIRST, via the sibling selector rather than
+       :not(:first-child), because the first group may be preceded by an
+       ungrouped row. */
+    .app-sidebar-group {
+      color: rgba(255,255,255,.55);
+      font-size: .7rem;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+      padding: 0 .75rem .35rem;
+    }
+
+    .app-sidebar-link + .app-sidebar-group {
+      margin-top: 1.1rem;
     }
 
     .app-sidebar-link {
@@ -568,6 +738,88 @@ function appSidebarAssets() {
     }
 
     .app-sidebar-link i { font-size: 1.05rem; opacity: .85; }
+
+    /* GOING THERE. Set by public/js/sidebarBusy.js on the row that was
+       clicked, and cleared by nothing: the document is replaced when the
+       new page arrives, which takes this with it.
+
+       THE ICON IS REPLACED, NOT COVERED. A spinner added beside the icon
+       would shift the label; swapping what the existing box draws keeps
+       every row exactly where it was, which matters because the thing
+       being reported is that the page has NOT moved yet. */
+    .app-sidebar-link-busy { opacity: .72; cursor: progress; }
+
+    .app-sidebar-link-busy i::before { content: ""; }
+
+    .app-sidebar-link-busy i {
+      display: inline-block;
+      width: 1.05rem;
+      height: 1.05rem;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      vertical-align: -.15em;
+      animation: app-sidebar-spin .7s linear infinite;
+    }
+
+    @keyframes app-sidebar-spin { to { transform: rotate(360deg); } }
+
+    /* THE CURTAIN, while the next page is on its way. Added 17 November on
+       top of the busy row: the row answers "did my click register", this
+       answers "the app is working and is not ready for you yet", which on a
+       slow load is the part a single dimmed line in a column does not
+       carry.
+
+       NO DELAY AND NO TEXT — Edwin's call. A plain navigation has nothing
+       to report beyond "wait", which is what a spinner already means.
+
+       POINTER-EVENTS ARE NOT DISABLED. The overlay covers the page, so
+       clicks land on it rather than on what is underneath — which is the
+       point: the page beneath is about to be replaced, so a click there
+       would go nowhere.
+
+       AND EVERY WORD OF THIS COMMENT SHIPS. A <style> block goes to the
+       browser as written, so these notes are in the HTML of every page the
+       header renders — unlike a comment in a .js file, which is served once
+       and cached. test-static-blogs.js checks that a clean save reports no
+       missing links by scanning the page for one particular word; the first
+       draft of this note happened to use it, and failed a suite three
+       products away.
+
+           A COMMENT IN A SHIPPED STYLESHEET IS PAGE CONTENT, and every
+           assertion anybody makes about a whole page can read it. */
+    .app-nav-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(8, 45, 91, .72);
+      cursor: wait;
+    }
+
+    .app-nav-overlay__spinner {
+      width: 3.5rem;
+      height: 3.5rem;
+      border: .3rem solid rgba(255,255,255,.35);
+      border-right-color: #fff;
+      border-radius: 50%;
+      animation: app-sidebar-spin .7s linear infinite;
+    }
+
+    /* Below the wizard's own overlay at 9999, so a build that is generating
+       is never covered by a navigation curtain. */
+
+    @media (prefers-reduced-motion: reduce) {
+      .app-nav-overlay__spinner { animation: none; }
+    }
+
+    /* SOMEBODY WHO HAS ASKED FOR LESS MOTION STILL GETS THE ANSWER, just
+       not a spinning one: the ring stops and the row stays dimmed. */
+    @media (prefers-reduced-motion: reduce) {
+      .app-sidebar-link-busy i { animation: none; }
+    }
 
     /* THE PRIMARY ACTION, in the blue it wore in the header. Bootstrap's own
        --bs-primary, so it stays in step with the rest of the app rather than

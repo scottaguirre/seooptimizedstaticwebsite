@@ -254,7 +254,7 @@ test('style9 tile is still the brand colour its header is painted in', () => {
     + "the header's own colour or the preview lies about how the logo will look");
 });
 
-test('all three put the logo on white, so all three ink is dark', () => {
+test('each logo is drawn on the surface it lands on, and the ink suits it', () => {
   /* IT IS THE SURFACE UNDER THE LETTERS, NOT THE SECTION AROUND IT.
    *
    * Anvil's rail is near-black and this table first recorded that, giving
@@ -263,9 +263,27 @@ test('all three put the logo on white, so all three ink is dark', () => {
    *
    * Ledger and Beacon put the header on a white card; Anvil puts the logo on
    * a white plate over a dark rail. Different reasons, same answer. */
+  /* NOT ALL FOUR DRAW ON WHITE ANY MORE, AND THE RULE WAS NEVER "WHITE".
+   * Quarry has no plate and its bar is --qy-raise, #f6f5f1, so this table
+   * records that — asserting #ffffff for it would have been the same mistake
+   * Anvil's row made, one element out, and quieter: near-white letters on a
+   * white card are obviously wrong, while ink mixed for white sitting on
+   * #f6f5f1 is merely slightly off.
+   *
+   * SO THE TEST ASSERTS WHAT THE RULE ACTUALLY IS — a LIGHT surface, with
+   * ink dark enough for it — and keeps the three white ones named, so a
+   * fifth structure has to declare its own rather than inherit one. */
+  const WHITE_BACKED = ['ledger', 'beacon', 'anvil'];
+
   Object.entries(STRUCTURE_INK).forEach(([key, v]) => {
-    assert.strictEqual(v.backdrop, '#ffffff', `${key} is not drawing on white`);
-    assert.ok(luminance(v.ink) < 0.2, `${key} ink ${v.ink} is too light for white`);
+    if (WHITE_BACKED.includes(key)) {
+      assert.strictEqual(v.backdrop, '#ffffff', `${key} is not drawing on white`);
+    }
+
+    assert.ok(luminance(v.backdrop) > 0.8,
+      `${key} draws on ${v.backdrop}, which is not a light surface`);
+    assert.ok(luminance(v.ink) < 0.2,
+      `${key} ink ${v.ink} is too light for ${v.backdrop}`);
   });
 });
 
@@ -362,8 +380,18 @@ section('Local Website Options — and the two calls actually being wired up');
 const RUN_LOCAL = fs.readFileSync(path.join(__dirname, 'utils', 'runLocalOptions.js'), 'utf8');
 
 test('the colour comes from the design, not from a hard-wired structure', () => {
-  assert.match(RUN_LOCAL, /structure: buildOptionsFor\(global\.design\)\.structure/,
-    'the structure is no longer resolved from the chosen design');
+  /* THE MODE IS PART OF THE CALL NOW — 17 November. A design belonging to
+   * another mode must resolve to the default rather than colour this logo
+   * for a layout the build will not use. See designs.js: filtering a
+   * dropdown is not validating a field.
+   *
+   * AND IT IS A KEY RATHER THAN THE siteMode, later the same day. One door
+   * runs the `localoptions` builder and offers the Cloudflare layouts, so
+   * the siteMode is not the list a picked design lives in — passing it here
+   * coloured the logo for Ledger while the pages were built as Quarry.
+   * designsKeyFor() is the one place that answers it. */
+  assert.match(RUN_LOCAL, /structure: buildOptionsFor\(global\.design, designsKey\)\.structure/,
+    'the structure is no longer resolved from the chosen design and its key');
 });
 
 test('BOTH logo calls are handed the same options object', () => {

@@ -67,7 +67,17 @@ window.addEventListener('DOMContentLoaded', () => {
 
     /* ---------------------------------------------------------- alerts */
 
-    function showAlert(message) {
+    /**
+     * @param {string} message
+     * @param {object} [link]  { href, label } — a way out, when there is one
+     *
+     * THE LINK EXISTS BECAUSE OF THE 409. A build already running is the one
+     * refusal that is not about anything on this form: there is nothing to
+     * correct, and the useful next move is somewhere else. Saying so without
+     * offering the door would be a dead end; TAKING them through it without
+     * asking is what this replaced.
+     */
+    function showAlert(message, link) {
       const alertBox = document.getElementById('formAlert');
       if (!alertBox) return;
 
@@ -88,6 +98,21 @@ window.addEventListener('DOMContentLoaded', () => {
       }
 
       textEl.textContent = message || '';
+
+      /* A PREVIOUS ALERT'S LINK MUST NOT SURVIVE THIS ONE. The box is reused
+       * for every refusal, and a stale "watch the build" under a message
+       * about a missing phone number points at a build that finished. */
+      alertBox.querySelectorAll('a[data-alert-link]').forEach(a => a.remove());
+
+      if (link && link.href) {
+        const a = document.createElement('a');
+        a.setAttribute('data-alert-link', 'true');
+        a.href = link.href;
+        a.className = 'alert-link d-block mt-2';
+        a.textContent = link.label || 'Open it';
+        textEl.insertAdjacentElement('afterend', a);
+      }
+
       alertBox.classList.remove('d-none');
       alertBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
@@ -98,6 +123,7 @@ window.addEventListener('DOMContentLoaded', () => {
       alertBox.classList.add('d-none');
       const textEl = document.getElementById('formAlertText');
       if (textEl) textEl.textContent = '';
+      alertBox.querySelectorAll('a[data-alert-link]').forEach(a => a.remove());
     }
 
     /* --------------------------------------------------------- overlay */
@@ -298,6 +324,13 @@ window.addEventListener('DOMContentLoaded', () => {
           try { data = await response.json(); } catch (_) { /* fall through */ }
 
           if (response.ok && data.ok && data.redirect) {
+            /* ACCEPTED, SO THE ANSWERS ARE SAFE TO THROW AWAY — and this is
+             * the only place that knows it. The wizard fires the submit and
+             * never sees the response; it used to clear the draft just
+             * before firing, which wiped it on every refusal too. See the
+             * note on the Generate button in generateDinamycForm.js. */
+            if (typeof window.ieClearDraft === 'function') window.ieClearDraft();
+
             window.location.href = data.redirect;
             return;
           }
@@ -307,15 +340,37 @@ window.addEventListener('DOMContentLoaded', () => {
             return;
           }
 
-          // A 409 means a build is already running — send them to watch it
-          // rather than leaving them stuck on a form that will not submit.
-          if (response.status === 409 && data.redirect) {
-            window.location.href = data.redirect;
+          /* A 409 MEANS A BUILD OF THEIRS IS ALREADY RUNNING, AND IT IS
+           * SAID RATHER THAN ACTED ON — 17 November.
+           *
+           * This used to follow data.redirect immediately. The message was
+           * never shown, so from the customer's side pressing Generate
+           * simply teleported them to a progress page for a DIFFERENT
+           * website, already part way through, with their own answers gone
+           * from the screen. generateRoute.js's own comment records Edwin
+           * hitting exactly this and watching a bar fill for a build he had
+           * not started.
+           *
+           *     A REFUSAL THAT NAVIGATES INSTEAD OF SPEAKING IS
+           *     INDISTINGUISHABLE FROM A SUCCESS THAT WENT WRONG.
+           *
+           * Now it says what happened and offers the door. Staying put also
+           * keeps the form on screen — and the draft, which is no longer
+           * cleared before the submit, is still in sessionStorage either
+           * way. */
+          let message = data.error || 'Please fix the highlighted fields and try again.';
+
+          if (response.status === 409) {
+            showAlert(
+              data.error || 'A build is already running for your account. '
+                + 'Wait for it to finish, then press Generate again.',
+              data.redirect
+                ? { href: data.redirect, label: 'Watch the build that is running' }
+                : null
+            );
+
             return;
           }
-
-          let message = data.error || 'Please fix the highlighted fields and try again.';
-          if (response.status === 409) message = data.error || 'A generation is already running.';
           if (response.status === 413) message = 'Your upload is too large. Try smaller images.';
           if (response.status === 429) message = 'Too many requests. Please wait and try again.';
           if (response.status >= 500) message = data.error || 'Server error. Please try again shortly.';

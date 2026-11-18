@@ -50,6 +50,36 @@ function test(name, fn) {
   try { fn(); console.log(`  ok    ${name}`); passed++; }
   catch (err) { console.log(`  FAIL  ${name}\n        ${err.message}`); failed++; }
 }
+
+/* THE ASYNC ONE, AND IT IS NOT A CONVENIENCE — 17 November.
+ *
+ * test() above calls fn() and never awaits it. Hand it an async function
+ * and the promise comes straight back, the try/catch sees nothing thrown,
+ * and it prints `ok` and counts a pass. Whatever the test actually asserts
+ * happens later, in a rejection nobody is holding.
+ *
+ * Two tests written that way sat in this file passing unconditionally —
+ * including the one whose whole job was to catch the broken page. The
+ * Cloudflare suite lost its last test to the same shape of hole the day
+ * before, from the other end: a non-awaited call after the tally.
+ *
+ *     A RUNNER THAT DOES NOT AWAIT TURNS EVERY ASYNC TEST INTO A TEST
+ *     THAT CANNOT FAIL.
+ *
+ * Kept as a SECOND function rather than making test() async, because then
+ * every one of the forty synchronous calls in this file would have to be
+ * awaited to keep the tally honest, and one missed would be this bug
+ * again. */
+async function asyncTest(name, fn) {
+  try { await fn(); console.log(`  ok    ${name}`); passed++; }
+  catch (err) { console.log(`  FAIL  ${name}\n        ${err.message}`); failed++; }
+}
+
+/* Async tests are collected and run at the end, where they can be awaited
+ * before the tally is printed. */
+const deferred = [];
+
+function laterTest(name, fn) { deferred.push([name, fn]); }
 function section(n) { console.log(`\n${n}\n`); }
 
 /* Source with comments stripped.
@@ -72,6 +102,138 @@ section('The job page, driven for real');
  * passed before the fix as happily as after it. The two statements are
  * extracted and evaluated instead, so what is tested is what the browser
  * actually computes. */
+/* -------------------------------------------------------------------------
+ * THE PAGE'S OWN SCRIPT HAS TO PARSE
+ *
+ * EVERY OTHER CHECK IN THIS SUITE LIFTS A FUNCTION OUT OF THE SOURCE AND
+ * RUNS IT. That is useful, and it is blind to the one failure that takes the
+ * whole page down: this page is a TEMPLATE LITERAL, so the text in the file
+ * and the text the browser receives are not the same text.
+ *
+ * It happened on 17 November. finishedLine() tested the scheme with a
+ * regular expression, backslash before each slash — correct JavaScript in
+ * the file. Inside a template literal a backslash is an ESCAPE, so each pair
+ * collapsed and the browser got a short regex followed by what it read as a
+ * line comment. A syntax error is refused WHOLE, so nothing on the page ran:
+ * no polling, no progress, no finish.
+ *
+ *     The bar sat at nought per cent and the stage said "Starting..."
+ *     while the build ran, finished and published behind it.
+ *
+ * Edwin: *"i tried to build a githun site and it got stuck and never even
+ * started"*. It had not. It was already done — the page simply never asked.
+ *
+ *     node --check READS THE FILE. ONLY RENDERING THE PAGE READS WHAT THE
+ *     BROWSER READS.
+ *
+ * A backtick in a comment had taken the same file down four days earlier,
+ * in the same way, for the same reason. That one at least failed loudly at
+ * startup; this one shipped.
+ * ---------------------------------------------------------------------- */
+
+const vm = require('vm');
+const Job = require('./models/Job');
+
+/** The page as a browser gets it, with the model stubbed out. */
+async function renderJobPage(job = {}) {
+  const REAL = Job.findById;
+
+  Job.findById = () => ({
+    lean: async () => Object.assign({
+      _id: 'a'.repeat(24),
+      user: 'u1',
+      status: 'running',
+      kind: 'site',
+      progress: { done: 0, total: 0 },
+    }, job),
+  });
+
+  try {
+    const router = require('./routes/jobRoute');
+    const layer = router.stack.find(l =>
+      l.route && l.route.path === '/jobs/:id' && l.route.methods.get);
+
+    assert.ok(layer, 'GET /jobs/:id is not on the router');
+
+    const handle = layer.route.stack[layer.route.stack.length - 1].handle;
+
+    let html = '';
+    const res = {
+      locals: { csrfField: '' },
+      set() { return this; },
+      status() { return this; },
+      send(body) { html = String(body); return this; },
+    };
+
+    await handle({
+      user: { _id: 'u1' },
+      session: { userId: 'u1' },
+      params: { id: 'a'.repeat(24) },
+      query: {},
+      id: 'r1',
+    }, res);
+
+    return html;
+  } finally {
+    Job.findById = REAL;
+  }
+}
+
+/** The inline poller, as emitted — not as written. */
+function emittedScript(html) {
+  const blocks = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
+    .map(m => m[1]);
+
+  return blocks.find(b => b.includes('const jobId'));
+}
+
+laterTest('THE SCRIPT THE BROWSER RECEIVES IS VALID JAVASCRIPT', async function () {
+  const html = await renderJobPage();
+  const script = emittedScript(html);
+
+  assert.ok(script, 'the polling script is not in the rendered page at all');
+
+  /* COMPILED, NOT RUN. new vm.Script() parses and throws on a syntax error
+   * without executing a line — which is what the browser does first and
+   * what it refused to get past. Running it would need a DOM. */
+  assert.doesNotThrow(
+    () => new vm.Script(script, { filename: 'jobs-page-inline.js' }),
+    'the progress page ships broken JavaScript, so nothing on it runs'
+  );
+});
+
+laterTest('and it still polls, which is the thing that broke', async function () {
+  /* A script that parses and does not poll would pass the test above and
+   * leave the page just as dead. */
+  const script = emittedScript(await renderJobPage());
+
+  assert.match(script, /fetch\(/, 'the page never asks the server anything');
+  assert.match(script, /setTimeout\(poll/, 'the page asks once and never again');
+});
+
+test('AND NO ESCAPE SURVIVES THE TEMPLATE LITERAL INTO THE SCRIPT', function () {
+  /* THE RULE, STATED WHERE IT CAN FAIL. The test above catches a backslash
+   * that breaks the syntax; this catches one that does not — a regex that
+   * still parses but matches something else is the quieter half of the same
+   * bug, and no amount of rendering would show it.
+   *
+   * Read off the SOURCE, inside the page literal only: a backslash there is
+   * either an intended escape of the literal or a mistake, and this file has
+   * no legitimate use for one. */
+  const src = code('./routes/jobRoute.js');
+
+  const open = src.indexOf('res.send(`<!DOCTYPE html>');
+  assert.ok(open > -1, 'the page literal has moved; this test cannot find it');
+
+  const literal = src.slice(open);
+  const offenders = literal.split('\n')
+    .map((line, i) => ({ line, n: i }))
+    .filter(({ line }) => /\\[^\\]/.test(line));
+
+  assert.deepStrictEqual(offenders.map(o => o.line.trim()), [],
+    'a backslash inside the page template is an escape the browser never sees');
+});
+
 const routeSrc = code('./routes/jobRoute.js');
 const from = routeSrc.indexOf('const count =');
 const to = routeSrc.indexOf(';', routeSrc.indexOf('.join(', from));
@@ -84,6 +246,76 @@ const detailLine = new Function(
 );
 
 const line = (current, done, total) => detailLine({ progress: { current } }, done, total);
+
+/* THE FINISHED LINE IS LIFTED OUT AND RUN TOO.
+ *
+ * Same reason as the detail line above: it lives inside a template literal
+ * in the route, so nothing can reach it in place, and a regex over the
+ * source would pass on the comment explaining it. This one was written as a
+ * PURE FUNCTION returning pieces rather than markup precisely so it could
+ * be run here — the DOM beside it is built from these by hand. */
+const finishedFrom = routeSrc.indexOf('function finishedLine');
+assert.ok(finishedFrom > -1, 'finishedLine has been renamed or removed from routes/jobRoute.js');
+
+const finishedTo = routeSrc.indexOf('\n      }', finishedFrom) + '\n      }'.length;
+
+const finishedLine = new Function(
+  `${routeSrc.slice(finishedFrom, finishedTo)} return finishedLine;`
+)();
+
+test('A FINISHED BUILD SAYS WHERE IT WENT', function () {
+  /* EDWIN, 17 November. A Cloudflare build finishes on a hostname nobody
+   * has seen — typed on the review step, several minutes and a whole build
+   * earlier — and this page said only "Your website is ready" over a
+   * button. The one fact wanted at that moment, WHERE IS IT, was a click
+   * away.
+   *
+   * The old two-step flow did not have this problem: you had typed the
+   * address on the previous screen. Shortening the errand is what moved it
+   * out of sight. */
+  const out = finishedLine({
+    creditsCharged: 400,
+    published: { ok: true, url: 'https://leander-chiropractor.1-1o.com' },
+  });
+
+  assert.strictEqual(out.url, 'https://leander-chiropractor.1-1o.com');
+  assert.strictEqual(out.host, 'leander-chiropractor.1-1o.com',
+    'the address is shown with its scheme, which is noise in a hostname');
+  assert.strictEqual(out.credits, '400 credits were used.',
+    'the credits line was lost when the address was added beside it');
+});
+
+test('and a build that published nowhere still reports its credits', function () {
+  /* Most builds. The line must not go blank for them — it was the only
+   * thing there before the address existed. */
+  const out = finishedLine({ creditsCharged: 400, published: null });
+
+  assert.strictEqual(out.url, '');
+  assert.strictEqual(out.credits, '400 credits were used.');
+});
+
+test('and a FAILED publish is not announced as an address', function () {
+  /* `published` is present and carries a url on the GitHub path even when
+   * ok is false. Reading the url without the flag would print "Live at"
+   * over a site that is not live — under an amber bar saying it is not. */
+  const out = finishedLine({
+    creditsCharged: 400,
+    published: { ok: false, error: 'no room', url: 'https://hvac.1-1o.com' },
+  });
+
+  assert.strictEqual(out.url, '',
+    'a build that did not publish is reported as live');
+});
+
+test('AND ONLY https REACHES THE href', function () {
+  /* The value comes from our own database by way of jobGenerator, so this
+   * is belt. It is one line against a class of bug that would be somebody
+   * else's mistake three files away, in a value that ends up in an href. */
+  for (const url of ['javascript:alert(1)', 'http://hvac.1-1o.com', '//evil.test', 42, null]) {
+    assert.strictEqual(finishedLine({ published: { ok: true, url: url } }).url, '',
+      `${String(url)} was accepted as a published address`);
+  }
+});
 
 test('a page in flight is named, with the count beside it', function () {
   assert.strictEqual(line('Leander, TX', 37, 60), 'Leander, TX  —  37 of 60 pages');
@@ -495,5 +727,9 @@ test('and a re-render shows no progress bar, because it can count nothing', func
     'a re-render is given a progress bar it cannot fill');
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+(async () => {
+  for (const [name, fn] of deferred) await asyncTest(name, fn);
+
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+})();

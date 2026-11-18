@@ -95,15 +95,33 @@
       background:#082d5b; 
     }
 
+    /* A HEADING CLASS BEATS A HEADING TAG, AND THAT COST TWO BUGS.
+     *
+     * This list was element selectors only — h3, h4, h5 — and twice in two
+     * days a heading written as `<h4 class="h5">` or `<h1 class="h3">` came
+     * out near-black on navy while the labels beside it were white.
+     *
+     * Bootstrap 5.3 sets `h1..h6, .h1..h6 { color: var(--bs-heading-color) }`
+     * and that token resolves to `inherit`. A CLASS selector outranks an
+     * ELEMENT one, so Bootstrap's rule won and the heading inherited
+     * `.card`'s own near-black `--bs-body-color` instead of this white.
+     *
+     *     COLOURING BY TAG NAME IS ONE BOOTSTRAP CLASS AWAY FROM NOT
+     *     APPLYING, AND NOTHING ANYWHERE SAYS SO.
+     *
+     * The classes are named here as well, so the pair always match. h1 and
+     * h2 are in the list for the first time: nothing on this page used them
+     * until the wizard got a heading saying which door you came in by, and
+     * their absence is exactly why that heading was invisible. */
     .card-body h3,
     label,
     strong,
     p,
-    h3,
-    h4,
+    h1, h2, h3, h4, h5, h6,
+    .h1, .h2, .h3, .h4, .h5, .h6,
     .form-text,
     legend,
-    h5, hr {
+    hr {
       color: white;
     }
 
@@ -127,9 +145,10 @@
     .alert strong,
     .alert label,
     .alert p,
-    .alert h3,
-    .alert h4,
-    .alert h5,
+    .alert h1, .alert h2, .alert h3,
+    .alert h4, .alert h5, .alert h6,
+    .alert .h1, .alert .h2, .alert .h3,
+    .alert .h4, .alert .h5, .alert .h6,
     .alert .form-text,
     .alert legend {
       color: inherit;
@@ -166,6 +185,26 @@
         <div class="card border-card outer-card">
       
           <div class="card-body px-5 card-body-bottom">
+
+            <!-- WHICH DOOR YOU CAME IN BY, filled by routes/formRoute.js.
+                 One wizard serves three routes and, until 17 November, said
+                 so nowhere: the page opened on "1. What are we building?"
+                 whether you had pressed Websites, GitHub Websites or
+                 Cloudflare Websites, and the only difference visible
+                 anywhere was which sidebar row was lit.
+
+                 SERVER-RENDERED, NOT WRITTEN BY THE WIZARD. The title is
+                 per-request and this file is static, which is the same
+                 reason the CSRF token and the mode travel in meta tags. It
+                 also means the heading is correct in the HTML as it
+                 arrives, rather than appearing a frame later.
+
+                 The marker below is substituted by a GLOBAL regex, so it
+                 must not be named anywhere else in this file — including
+                 in a comment. See the note at the top of the stylesheet
+                 about the time that injected a second header. -->
+            {{WIZARD_TITLE}}
+
             <!--  Alert message for errors -->
             <div id="formAlert"
                  class="alert alert-danger d-none alert-dismissible"

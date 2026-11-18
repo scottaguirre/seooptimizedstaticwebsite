@@ -596,7 +596,15 @@ await test('A SHORT SUGGESTION IS TOPPED UP, NOT FAILED', async () => {
   assert.strictEqual(services.length, SERVICE_COUNT);
   assert.strictEqual(asks.length, 2, `it made ${asks.length} calls`);
 
-  assert.strictEqual(asks[0].count, SERVICE_COUNT);
+  /* ⚠ SERVICE_POOL, AND IT WAS SERVICE_COUNT UNTIL 17 November. Edwin,
+   * looking at two finished sites: *"all websites get the same services."*
+   * Asking for the six most commonly hired jobs has one right answer, so
+   * every plumbing site came back with the same six. The first call now
+   * asks for twelve and chooseServices() narrows them on the business
+   * name. See utils/localOptions/chooseServices.js. */
+  const { SERVICE_POOL } = require('./utils/localOptions/chooseServices');
+
+  assert.strictEqual(asks[0].count, SERVICE_POOL);
   assert.ok(!asks[0].exclude || !asks[0].exclude.length, 'the first call excluded something');
 
   /* ASKING FOR SIX AGAIN WOULD HAND BACK THE SAME FOUR AND GET NOWHERE.

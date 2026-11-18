@@ -78,6 +78,10 @@
     'global[logoSource]',
     'global[businessType]',
     'global[siteMode]',
+    /* WHERE THE BUILD GOES. Read off the page's meta tag, never off the
+     * form, so a snapshot taken on an earlier pass cannot re-inject a stale
+     * destination — the same failure that sent style5 builds to style.css. */
+    'global[siteTarget]',
   ];
 
   function injectHiddenSnapshot(form, snapshot, cssClass = 'js-hidden-mainform', filterFn) {
@@ -357,13 +361,209 @@
     try { sessionStorage.removeItem(DRAFT_KEY); } catch (_) {}
   }
 
+  /* ----------------------------------------------------------------- batch
+   *
+   * SEVERAL WEBSITES FROM ONE VISIT — Edwin, 18 November: *"fill out the
+   * information for at least the 3 sites we have available and the build
+   * starts and after one is deployed the app starts the second build."*
+   *
+   * WHAT IS STORED IS THE POSTED BODY, NOT A SECOND FORMAT.
+   *
+   * Each entry is the exact set of fields this form would have submitted,
+   * captured with FormData AFTER the submit handler has injected every
+   * hidden mirror — which is the only moment the form is complete. The
+   * server hands each entry straight to the single-site builder, so one
+   * shaped any other way would be a second format to keep in step with the
+   * first.
+   *
+   *     THE BATCH IS NOT A NEW KIND OF SUBMISSION.
+   *     IT IS THE SAME SUBMISSION, SEVERAL TIMES, HELD UNTIL THE END.
+   *
+   * sessionStorage, LIKE THE DRAFT, AND FOR THE SAME REASON: two filled-in
+   * sites are twenty minutes of somebody's evening, and "Add another site"
+   * reloads the page. Held in memory they would not survive the reload that
+   * is part of the flow, let alone an accidental one.
+   *
+   * KEYED SEPARATELY FROM THE DRAFT, because they answer different
+   * questions: the draft is what you were in the middle of, the batch is
+   * what you have already finished. Clearing one must not clear the other. */
+  const BATCH_KEY = 'wizardBatch.v1';
+
+  /* THE SAME CAP THE SERVER ENFORCES, named here so the wizard can refuse
+   * before somebody fills in the eleventh site rather than after. The server
+   * is the one that decides — see MAX_SITES in routes/generateBatchRoute.js
+   * — and a hand-crafted POST is still refused there. */
+  const MAX_BATCH = 10;
+
+  /**
+   * Which batch button started the submit that is happening right now.
+   *
+   * '' for every ordinary build, so nothing in any other wizard changes.
+   *
+   * CLEARED ON THE NEXT TICK AS WELL AS BY THE LISTENER, and that matters:
+   * a guard in the main submit handler can refuse the submit before the
+   * batch listener is ever reached — a duplicate service, a missing
+   * location. The flag would then still be set, and the NEXT submit, which
+   * could be an ordinary Generate, would be swallowed into the batch.
+   *
+   *     A ONE-SHOT FLAG THAT IS ONLY CLEARED ON THE HAPPY PATH
+   *     IS A FLAG THAT IS STILL SET WHEN IT MATTERS.
+   */
+  let pendingBatch = '';
+
+  function armBatch(action) {
+    pendingBatch = action;
+    setTimeout(() => { pendingBatch = ''; }, 0);
+  }
+
+  function batchList() {
+    try {
+      const raw = sessionStorage.getItem(BATCH_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+
+      return Array.isArray(list) ? list : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function batchSave(list) {
+    try { sessionStorage.setItem(BATCH_KEY, JSON.stringify(list)); } catch (_) {}
+  }
+
+  function batchClear() {
+    try { sessionStorage.removeItem(BATCH_KEY); } catch (_) {}
+  }
+
+  /**
+   * The address a stored entry asks for, for the list on the review step.
+   *
+   * READ BACK OUT OF THE ENTRY rather than remembered beside it. The entry
+   * is the truth about what will be built; a label stored alongside is a
+   * second copy that can disagree with it.
+   */
+  function batchAddressOf(entry) {
+    const prefix = String((entry || {})['global[cloudflare][prefix]'] || '').trim();
+    const domain = String((entry || {})['global[cloudflare][domain]'] || '').trim();
+
+    return [prefix, domain].filter(Boolean).join('.') || 'this website';
+  }
+
+  /* ⚠ THE RELOAD HAS TO SAY IT WAS OURS, AND THE FIRST VERSION DID NOT.
+   *
+   * "Add another site" saves the draft and reloads, which lands in the
+   * ordinary draft-restore path — written for a submit that was REFUSED.
+   * Edwin pressed the button and got:
+   *
+   *     "Your details were kept. ... We have brought you back to the logo
+   *     step, because choosing the file again is the one thing we cannot do
+   *     for you."
+   *
+   * Three things wrong with that, and one of them is the whole feature:
+   *
+   *   - it reads like something went wrong. Nothing did; he had just
+   *     finished a site.
+   *   - it is about a FILE FIELD. A batch uses the generated wordmark —
+   *     this path refuses an upload — so there is no file to choose again
+   *     and no reason to be on the logo step.
+   *   - NOTHING SAID THE FIRST SITE HAD BEEN SAVED. The list of queued
+   *     addresses only renders on the review step, and the restore drops
+   *     you on the logo step, so the one piece of feedback that the button
+   *     had worked was three steps away.
+   *
+   *     A BUTTON WHOSE ONLY VISIBLE EFFECT IS A WARNING ABOUT SOMETHING
+   *     ELSE HAS NOT TOLD THE PERSON ANYTHING.
+   *
+   * So the reload leaves a note for the page that comes back. */
+  const BATCH_ADDED_KEY = 'wizardBatch.added';
+
+  function batchMarkAdded(address) {
+    try { sessionStorage.setItem(BATCH_ADDED_KEY, String(address || '')); } catch (_) {}
+  }
+
+  /** The address just added, once — reading it clears it. */
+  function batchTakeAdded() {
+    try {
+      const v = sessionStorage.getItem(BATCH_ADDED_KEY);
+
+      sessionStorage.removeItem(BATCH_ADDED_KEY);
+
+      return v;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Published so spinner.js can save before it shows the credits modal. That
   // modal appears on TWO paths — the Add page gate here, and a rejected
   // submit over there — and only one of them lives in this file.
   window.ieSaveDraft = saveDraft;
 
+  /* And the matching clear, for the same reason in the other direction.
+   * ONLY spinner.js KNOWS THE BUILD WAS ACCEPTED: this file fires the
+   * submit and never sees the response, so clearing the draft here would
+   * mean clearing it on refusals too — see the note in the review step's
+   * Generate button. */
+  window.ieClearDraft = clearDraft;
+
   function applyDraft(draft) {
-    state.siteMode = draft.siteMode || state.siteMode;
+    /* A DRAFT FROM ANOTHER MODE IS NOT RESTORED ON A LOCKED PAGE.
+     *
+     * The draft is one key in sessionStorage shared by every entry point.
+     * Arriving at /github-sites with a half-finished Rank Fast draft, the
+     * old line below would have taken its words and its pages and left the
+     * mode locked to localoptions — a site with eleven fixed pages built
+     * out of a nine-page draft, which no branch in this file is written
+     * for and nothing would have reported.
+     *
+     *     A HALF-APPLIED DRAFT IS WORSE THAN NO DRAFT. The words are still
+     *     in sessionStorage; going back to / resumes them intact.
+     *
+     * The matching case — a localoptions draft resumed on / — is handled
+     * the other way, in modesOnOffer(): the mode is kept and its card is
+     * shown even though / no longer offers it, because there the draft is
+     * the only thing that decided anything. */
+    if (LOCKED_MODE && draft.siteMode && draft.siteMode !== LOCKED_MODE) return;
+
+    /* AND A DRAFT WHOSE MODE PUBLISHES ITSELF IS NOT RESTORED ONTO A PAGE
+     * THAT PUBLISHES SOMEWHERE ELSE.
+     *
+     * The one collision between the two axes. /cloudflare-sites/new locks a
+     * DESTINATION and no mode, so all four cards stay on offer — except
+     * that Local Website Options is not one of the four: modesOnOffer()
+     * filters it out of the open wizard already, and the only way it can
+     * reach state here is through a resumed draft.
+     *
+     * WHY IT COULD NOT BE ALLOWED THROUGH. That mode used to push its own
+     * eleven pages to GitHub whatever the destination said, because
+     * utils/jobGenerator.js returned on its `published` report BEFORE it
+     * looked at the target. The build went to GitHub, the Cloudflare
+     * address typed on the review step was dropped, and nothing anywhere
+     * said so.
+     *
+     *     THE SILENT WRONG DESTINATION IS THE FAILURE WORTH REFUSING.
+     *     Going back to / resumes the draft intact, exactly as above.
+     *
+     * ⚠ AND IT IS A RULE NOW, NOT A BLOCK — 17 November. Both halves of
+     * that failure are fixed: runLocalOptions no longer falls back to the
+     * account's GitHub installation when the target is Cloudflare, and
+     * jobGenerator reads the destination first. What is left is a question
+     * about THIS PAGE rather than about that mode.
+     *
+     * The refusal applies to a door that locks a DESTINATION AND NO MODE —
+     * /cloudflare-sites/new — where a self-publishing mode could only
+     * arrive by resumed draft and nobody chose it here. A door that locks
+     * BOTH, which is /local-automation, has chosen it on purpose and is the
+     * whole reason the pairing exists.
+     *
+     *     A GUARD AGAINST A COMBINATION NOBODY ASKED FOR MUST NOT REFUSE
+     *     THE COMBINATION SOMEBODY BUILT A DOOR FOR.
+     *
+     * LOCKED_MODE is already checked above, so by this line the draft's
+     * mode and the page's agree; all this adds is that the page named one. */
+    if (LOCKED_TARGET && !LOCKED_MODE && LOCKED_AWAY.has(draft.siteMode)) return;
+
+    state.siteMode = LOCKED_MODE || draft.siteMode || state.siteMode;
     state.styleKey = draft.styleKey || state.styleKey;
     state.businessType = draft.businessType || '';
     state.logoType = draft.logoType || state.logoType;
@@ -438,6 +638,67 @@
       <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     `;
     host.parentNode.insertBefore(note, host);
+  }
+
+  /**
+   * What comes back after "Add another site" — the one the person pressed.
+   *
+   * IT SAYS WHAT WAS SAVED, WHAT IS NEXT, AND HOW MANY SO FAR. The draft
+   * notice above answers "why am I not where I left off"; this answers "did
+   * that work", which is a different question and the only one being asked
+   * here.
+   *
+   * AND IT OFFERS A BLANK FORM, because keeping the details is right for
+   * three layouts of one business and wrong for three different ones. The
+   * batch lives under its own key, so clearing the draft empties the wizard
+   * without touching the sites already put by.
+   */
+  function showBatchAddedNotice(address, list) {
+    const host = document.getElementById('dynamicFormContainer');
+
+    if (!host) return;
+
+    /* Colours inline, for the reason showDraftNotice() records: the page
+     * paints text white for its dark background and that rule reaches
+     * inside a Bootstrap alert. */
+    const note = el('div', {
+      class: 'alert alert-dismissible fade show',
+      role: 'alert',
+      style: 'background:#cfe2ff;border:1px solid #9ec5fe;color:#052c65;',
+    });
+
+    const names = list.map(batchAddressOf).join(', ');
+    const n = list.length;
+
+    note.innerHTML = `
+      <strong style="color:#052c65;">Saved — ${escapeHtml(address)} is ready to build.</strong>
+      <span style="color:#052c65;">
+        ${n} website${1 === n ? '' : 's'} waiting so far (${escapeHtml(names)}).
+        Fill in the next one and press <strong style="color:#052c65;">Add another site</strong>
+        again, or go to the last step and build them all.
+        <br>
+        Your previous answers are still here so you only need to change what
+        differs — the business, the design and the address.
+        <button type="button" id="batchBlank"
+          class="btn btn-sm btn-outline-dark" style="margin-top:.5rem;">
+          Start this one blank instead
+        </button>
+      </span>
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+
+    host.parentNode.insertBefore(note, host);
+
+    const blank = note.querySelector('#batchBlank');
+
+    if (blank) {
+      blank.addEventListener('click', () => {
+        /* THE DRAFT ONLY. The batch is a separate key for exactly this: the
+         * sites already finished must survive emptying the form. */
+        clearDraft();
+        window.location.reload();
+      });
+    }
   }
 
   function showCreditsModal(quote) {
@@ -561,7 +822,26 @@
    * numbered — are in different places, and the second is easy to forget.
    */
   function hiddenSteps() {
-    return isLocalOptions() ? [STEP.DESIGN, STEP.PAGES, STEP.LOCATIONS] : [];
+    const hidden = isLocalOptions() ? [STEP.DESIGN, STEP.PAGES, STEP.LOCATIONS] : [];
+
+    /* AND STEP 1 ITSELF, ON A PAGE THAT HAS ALREADY ANSWERED IT.
+     *
+     * /github-sites locks the mode, so modesOnOffer() returns nothing — and
+     * the first version of this change stopped there. The step still
+     * RENDERED: a heading reading "1. What are we building?", no cards at
+     * all, and a Next button. The customer's first act was to answer an
+     * empty question.
+     *
+     *     HIDING THE OPTIONS IS NOT SKIPPING THE STEP. One leaves a page
+     *     with nothing on it, which looks like a page that failed to load.
+     *
+     * Putting it here rather than teaching go() about LOCKED_MODE is what
+     * the note above this function argues for, and it buys the numbering
+     * too: stepNumber() subtracts the hidden steps below, so the business
+     * type step is "1." on /github-sites and "2." on /. */
+    if (LOCKED_MODE) hidden.push(STEP.MODE);
+
+    return hidden;
   }
 
   /**
@@ -580,6 +860,156 @@
     return step + 1 - hiddenSteps().filter(hidden => hidden < step).length;
   }
 
+  /* ---- DECLARED HERE, ABOVE `state`, AND THAT POSITION IS A BUG FIX ----
+   *
+   * These three sat just above SITE_MODES, a hundred lines BELOW `state`.
+   * `state` initialises siteMode to `LOCKED_MODE || 'rankfast'`, and a
+   * `const` read before its declaration is a ReferenceError, not undefined:
+   *
+   *     Cannot access 'LOCKED_MODE' before initialization
+   *
+   * The whole IIFE threw on load. The header and the sidebar are rendered
+   * by the server, so the page looked completely normal with an empty space
+   * where the wizard goes — which is how Edwin found it, by pressing a
+   * button and getting nothing.
+   *
+   *     HOISTING MAKES A `const` VISIBLE, NOT USABLE. The tests did not
+   *     catch this because they lift individual functions out with
+   *     `new Function` and never run the file as a file. test-wizard-steps
+   *     now loads it in a real browser for exactly this reason.
+   */
+  /* The legal values, named once. LOCKED_MODE checks against this rather
+   * than against SITE_MODES because that list is built below it, and a
+   * list used for display should not also be the gate on what is legal —
+   * hiding a mode from the cards must not make it unacceptable. */
+  const SITE_MODE_VALUES = new Set(['rankfast', 'localoptions', 'sample', 'lead']);
+
+  /* MODES THAT HAVE A SIDEBAR ROW OF THEIR OWN, and are therefore not
+   * offered as a card on `/`. One product, one place to start it. */
+  const LOCKED_AWAY = new Set(['localoptions']);
+
+  /**
+   * The mode this PAGE is for, if it is for one.
+   *
+   * /github-sites serves this same wizard with
+   * <meta name="site-mode" content="localoptions">, so the sidebar can
+   * offer "GitHub Websites" as its own row instead of hiding a whole host
+   * inside a card on step 1. Empty string on `/`, which chooses nothing.
+   *
+   * A META TAG, LIKE THE CSRF TOKEN ABOVE IT, and for the same reason: this
+   * file is static and cached, the value is per-request, and the server
+   * already renders this page rather than sending the file. A query string
+   * would work until somebody bookmarked the page without it.
+   *
+   * READ ONCE. The document does not change under us, and a function that
+   * re-read it would invite callers to imagine the lock can be lifted.
+   */
+  /* WHERE THIS PAGE PUBLISHES, if it publishes anywhere.
+   *
+   * A SECOND AXIS, NOT A FIFTH MODE, and the distinction is the whole
+   * design. A mode is WHAT gets built — Rank Fast, the fixed eleven-page
+   * local site. A target is WHERE it lands. Cloudflare takes any mode, so
+   * it could never have been a card on step 1 without lying about what it
+   * is.
+   *
+   *     localoptions  a MODE.        Builds its own eleven pages and
+   *                                  publishes itself to GitHub.
+   *     cloudflare    a DESTINATION. Publishes whatever was built.
+   *
+   * Empty on `/` and on /github-sites: the first publishes nowhere, the
+   * second publishes itself. */
+  const SITE_TARGETS = new Set(['cloudflare']);
+
+  const LOCKED_TARGET = (() => {
+    const tag = document.querySelector('meta[name="site-target"]');
+    const v = tag ? String(tag.content || '').trim() : '';
+
+    return SITE_TARGETS.has(v) ? v : '';
+  })();
+
+  /**
+   * Put the destination into the form, so the POST carries it.
+   *
+   * ONE FUNCTION, CALLED FROM BOTH INJECTION POINTS. The two existing
+   * passes — the early one on the main-form step, and the one in the submit
+   * handler — each repeat eight lines per field, and `global[styleKey]` has
+   * already been fixed in one of them and not the other once. A field whose
+   * value comes from a meta tag rather than from `state` has nothing to
+   * differ about between the two passes, so there is no reason for it to be
+   * written twice.
+   *
+   * REMOVES BEFORE IT ADDS, like every field beside it: the early pass runs
+   * again every time the user walks back to step 4, and two inputs of the
+   * same name post both values.
+   *
+   * NOTHING AT ALL WHEN THERE IS NO DESTINATION, rather than an empty
+   * string. generateRoute.js puts the whole body in the job payload, and
+   * `siteTarget: ''` sitting in every job's payload forever is a field that
+   * reads as meaningful and is not.
+   */
+  function injectSiteTarget(form) {
+    form.querySelectorAll('input[name="global[siteTarget]"]').forEach(n => n.remove());
+
+    if (!LOCKED_TARGET) return;
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'global[siteTarget]';
+    input.classList.add('js-hidden-mirror');
+    input.value = LOCKED_TARGET;
+    form.appendChild(input);
+  }
+
+  /* THE DESIGNS THIS DOOR OFFERS, chosen by the server.
+   *
+   * Edwin, 17 November: *"can we just show each group of designs mapped out
+   * to either github/cloudflare so the user never has to worry about mixing
+   * them up?"* — so the filtering happens in routes/formRoute.js, where
+   * utils/localOptions/designs.js lives, and this file renders whatever it
+   * was handed. A design belonging to another mode is not hidden here; it
+   * never arrives.
+   *
+   * THE OPTIONS WERE TYPED OUT IN THE MARKUP UNTIL TODAY — three <option>
+   * elements that had to be kept in step with designs.js by hand, in a
+   * different file, in a different language. Adding a fourth meant
+   * remembering both. Now adding a row to designs.js is the whole job.
+   *
+   * AN EMPTY LIST DRAWS NO DROPDOWN, which is the honest answer for a mode
+   * with no layouts yet rather than a control with nothing in it.
+   *
+   * ABOVE `state`, like every other const read at module scope. A `const`
+   * read before its declaration throws, and this file lost its entire IIFE
+   * to exactly that on 16 November. */
+  const OFFERED_DESIGNS = (() => {
+    const tag = document.querySelector('meta[name="site-designs"]');
+    if (!tag) return [];
+
+    try {
+      const parsed = JSON.parse(tag.content || '[]');
+
+      /* SHAPE-CHECKED, NOT TRUSTED. It arrives as markup. A row without an
+       * id would render an option that posts nothing and silently builds
+       * the default. */
+      return Array.isArray(parsed)
+        ? parsed.filter(d => d && d.id && d.label)
+        : [];
+    } catch (_) {
+      return [];
+    }
+  })();
+
+  const LOCKED_MODE = (() => {
+    const tag = document.querySelector('meta[name="site-mode"]');
+    const v = tag ? String(tag.content || '').trim() : '';
+
+    /* AGAINST THE LIST, NOT TRUSTED AS TYPED. The value arrives in markup
+     * and a typo would set state.siteMode to something no branch in this
+     * file tests for — every isLocalOptions() returns false and the wizard
+     * runs as a fourth mode that does not exist. */
+    return SITE_MODE_VALUES.has(v) ? v : '';
+  })();
+
+
   const state = {
    // 'rankfast' = Rank Fast, the new formats. 'lead' = Rank GBPs, the full
     // optimised site as it has always been built. 'sample' = a one-page
@@ -590,7 +1020,9 @@
     // rather than by runGeneration, with its own stylesheet and its own
     // structured address.
 
-    siteMode: 'rankfast',
+    /* THE PAGE'S MODE WHEN IT HAS ONE, otherwise the default. See
+       LOCKED_MODE — /github-sites arrives here already decided. */
+    siteMode: LOCKED_MODE || 'rankfast',
     styleKey: 'style',
     businessType: '',
     logoType: 'square',     // 'square' | 'rect' | 'wide'
@@ -732,6 +1164,45 @@
    */
   function isLocalOptions() {
     return state.siteMode === 'localoptions';
+  }
+
+  /**
+   * Does this page ask for a domain in step 3 at all?
+   *
+   * THREE ANSWERS SINCE 17 NOVEMBER, WHERE THERE WERE TWO.
+   *
+   *   typed     the open wizard and /cloudflare-sites/new  -> global[domain]
+   *   picked    /github-sites                              -> global[domainId]
+   *   neither   /local-automation
+   *
+   * WHY THE NEW ONE ASKS NOTHING THERE. Cloudflare Local Automation locks
+   * the Local Website Options mode AND a Cloudflare destination, and the
+   * address it publishes to is chosen in "Where it goes" at the end — a
+   * name, a subdomain and a domain from the WEBSITES pool.
+   *
+   * THE BUG THIS FIXES WAS VISIBLE AND THE WORSE HALF WAS NOT. Locking that
+   * mode turned on the GitHub picker, so the page asked for two different
+   * destinations: a GitHub pool domain in step 3 and a Cloudflare address at
+   * the end. Edwin saw the two dropdowns. What he could not see is that
+   * sitePlace() reads domainId FIRST, so the site would have published to
+   * Cloudflare carrying canonicals, og:url, the sitemap and a CNAME naming
+   * the GitHub host instead.
+   *
+   *     TWO QUESTIONS ABOUT ONE THING GET TWO ANSWERS, AND THE CODE PICKS
+   *     ONE OF THEM WITHOUT SAYING WHICH.
+   *
+   * THE SERVER AGREES, in two more places: validateGlobalFields() requires
+   * neither field for this pairing, and sitePlace() ignores domainId when
+   * the destination is Cloudflare. Three copies of one rule, which is what
+   * the note in validateGlobalFields is about.
+   */
+  function picksPoolDomain() {
+    return isLocalOptions() && 'cloudflare' !== LOCKED_TARGET;
+  }
+
+  /** Does step 3 render a domain control of any kind? */
+  function asksForDomain() {
+    return !(isLocalOptions() && 'cloudflare' === LOCKED_TARGET);
   }
 
   /**
@@ -1022,12 +1493,48 @@
     sync();
   }
 
+  /**
+   * The mode cards this page shows.
+   *
+   * ON A LOCKED PAGE, NONE — the row in the sidebar made the choice, and
+   * offering it again on step 1 would mean "GitHub Websites" led to a
+   * screen asking which kind of website, which is the confusion this whole
+   * change was meant to remove.
+   *
+   * ON `/`, EVERYTHING EXCEPT THE LOCKED-AWAY ONES, so a product lives in
+   * exactly one place. localoptions left the cards the day /github-sites
+   * got its own row.
+   *
+   * PLUS WHATEVER YOU ALREADY ARE. A draft saved before that row existed
+   * holds siteMode 'localoptions', and / no longer offers it — so without
+   * this the wizard would restore the draft, run every localoptions branch,
+   * and show four cards with none of them selected. The person would be
+   * building an eleven-page GitHub site on a screen insisting they had not
+   * chosen one.
+   *
+   *     A VALUE REMOVED FROM A PICKER IS STILL IN EVERY DRAFT AND EVERY
+   *     JOB ROW THAT HOLDS IT. Hiding the option must not make the state
+   *     unrepresentable.
+   */
+  function modesOnOffer() {
+    if (LOCKED_MODE) return [];
+
+    const shown = SITE_MODES.filter(m => !LOCKED_AWAY.has(m.value));
+
+    if (!shown.some(m => m.value === state.siteMode)) {
+      const mine = SITE_MODES.find(m => m.value === state.siteMode);
+      if (mine) shown.push(mine);
+    }
+
+    return shown;
+  }
+
   function renderSiteModeStep() {
     container.innerHTML = '';
 
     const card = el('div', { class: 'card p-4' });
 
-    const options = SITE_MODES.map((mode, i) => {
+    const options = modesOnOffer().map((mode, i) => {
       const selected = state.siteMode === mode.value;
 
       return `
@@ -1558,6 +2065,38 @@
   }
 
   /**
+   * One of the three "Where it goes" boxes, out of the main form snapshot.
+   *
+   * ITS OWN READER BECAUSE THE KEY IS NESTED. snapshotValue() builds
+   * `global[x]`, and these are `global[cloudflare][x]` — passing
+   * "cloudflare][name" to it would work and would be a trick nobody should
+   * have to read twice.
+   */
+  function cloudflareValue(key) {
+    const snap = state.mainFormSnapshot;
+
+    if (!snap) return '';
+
+    const v = snap[`global[cloudflare][${key}]`];
+
+    return (undefined === v || null === v) ? '' : String(v).trim();
+  }
+
+  /**
+   * The hostname those boxes add up to, or '' if either half is missing.
+   *
+   * HALF AN ADDRESS IS NOT AN ADDRESS. "acme." or ".9-x.org" on the review
+   * step reads as a value the wizard mangled; an empty row reads as one
+   * that has not been filled in, which is what has happened.
+   */
+  function cloudflareHost() {
+    const prefix = cloudflareValue('prefix');
+    const domain = cloudflareValue('domain');
+
+    return (prefix && domain) ? `${prefix}.${domain}` : '';
+  }
+
+  /**
    * ONE COLOUR FOR ALL OF THEM, deliberately.
    *
    * They used to be four: light, blue, green, cyan. Four colours is four
@@ -1654,7 +2193,7 @@
              AND NO BACKTICKS IN HERE. This block is inside a template
              literal and one in a comment ends the string early, which has
              cost a syntax error in this file three times. -->
-        ${isLocalOptions() ? `
+        ${!asksForDomain() ? '' : (picksPoolDomain() ? `
         <div class="mb-3">
           <label class="form-label" for="siteDomain">Domain</label>
           <select name="global[domainId]" id="siteDomain" class="form-select" required>
@@ -1670,7 +2209,7 @@
           <label class="form-label">Domain</label>
           <input type="text" name="global[domain]" class="form-control" placeholder="example.com" required />
         </div>
-        `}
+        `)}
 
         <!-- Which design.
 
@@ -1711,14 +2250,13 @@
              here — completeSets() is what decides, and it requires both.
 
              AND NO BACKTICKS IN HERE. -->
-        ${isLocalOptions() ? `
+        ${OFFERED_DESIGNS.length ? `
         <div class="mb-3">
           <label class="form-label" for="design">Design</label>
           <select name="global[design]" id="design" class="form-select">
             <option value="">Choose for me</option>
-            <option value="1">Design 1</option>
-            <option value="2">Design 2</option>
-            <option value="3">Design 3</option>
+            ${OFFERED_DESIGNS.map(d =>
+              `<option value="${escapeHtml(d.id)}">${escapeHtml(d.label)}</option>`).join('')}
           </select>
           <div class="form-text">
             Each design has its own layout, its own photographs and its own
@@ -2157,6 +2695,27 @@
     `;
     container.appendChild(block);
 
+    /* WHERE IT GOES, ASKED WITH EVERYTHING ELSE ABOUT THE SITE — 18
+     * November, at Edwin's request. /github-sites asks for its domain here,
+     * among the phone and the address, and this door asked for its own at
+     * the very end instead.
+     *
+     * BEFORE restoreFormValues() AND BEFORE THE SNAPSHOT IS TAKEN, which is
+     * the whole reason this line sits exactly here. `container` is inside
+     * `#websiteForm`, so snapshotFormValues(form) picks these three up with
+     * the rest and injectHiddenSnapshot() replays them at submit — the
+     * fields travel on their own and nothing else had to learn about them.
+     * Appended after the footer instead, they would be below the Continue
+     * button; appended after the snapshot is read, they would be empty in
+     * it.
+     *
+     * THE VALUES ARE NOT TRUSTED. The server checks the subdomain's shape,
+     * that the domain is in the website pool and enabled, that the hostname
+     * is free across both products, and that the account has room — see
+     * createAndPublish() in routes/cloudflareSitesRoute.js. This is a
+     * convenience, not a gate. */
+    if ('cloudflare' === LOCKED_TARGET) renderCloudflareFields(container);
+
     // Footer: Back/Next (Next validates)
     const footer = el('div', { class: 'd-flex gap-2 wizard-nav' });
     const backBtn = el('button', { type: 'button', class: 'btn', style: 'background:#148ec6;color:#fff;min-width:150px;font-size:18px;' }, 'Back');
@@ -2291,8 +2850,27 @@
          * wrong one means it is never checked: the map below returns null
          * for a field that was not rendered and the loop skips it, so a
          * customer could reach the end with no domain picked and the build
-         * would fail three minutes later, after paying for the writing. */
-        isLocalOptions() ? 'global[domainId]' : 'global[domain]',
+         * would fail three minutes later, after paying for the writing.
+         *
+         * AND ON ONE DOOR IT IS NEITHER FIELD — see asksForDomain(). A list
+         * that named a box this page does not render would be skipped
+         * silently by that same loop, which is the quiet half of the bug it
+         * was written for. */
+        ...(asksForDomain()
+          ? [picksPoolDomain() ? 'global[domainId]' : 'global[domain]']
+          : []),
+
+        /* AND ON THE CLOUDFLARE DOOR IT IS THREE BOXES, NOT ONE — 18
+         * November, when "Where it goes" moved onto this step. Leaving them
+         * off this list is the same silent hole the comment above describes
+         * and one step worse: `required` on the markup does nothing here,
+         * because Continue is a plain button and the form is never natively
+         * submitted until the review step. The customer would walk to the
+         * end and be refused there, having answered everything. */
+        ...('cloudflare' === LOCKED_TARGET
+          ? ['global[cloudflare][name]', 'global[cloudflare][prefix]',
+            'global[cloudflare][domain]']
+          : []),
 
         ...(isLocalOptions()
           ? ['global[street]', 'global[city]', 'global[state]', 'global[zip]']
@@ -2402,7 +2980,14 @@
           'global[state]': 'State',
           'global[zip]': 'ZIP code',
           'global[phone]': 'Phone',
-          'global[email]': 'Email'
+          'global[email]': 'Email',
+
+          /* THE THREE THAT ARRIVED WITH "WHERE IT GOES". A field in the
+           * required list with no label here falls back to "all required
+           * fields", which points at nothing on a step with twenty boxes. */
+          'global[cloudflare][name]': 'Name',
+          'global[cloudflare][prefix]': 'Subdomain',
+          'global[cloudflare][domain]': 'Domain',
         };
         showAlert(container, `Please fill out ${labels[name] || 'all required fields'}.`);
         return;
@@ -2923,6 +3508,8 @@
       siteModeEarly.classList.add('js-hidden-mirror');
       siteModeEarly.value = state.siteMode;
       form.appendChild(siteModeEarly);
+
+      injectSiteTarget(form);
 
       // Business type too, so the review step reflects what will be posted
       form.querySelectorAll('input[name="global[businessType]"]').forEach(n => n.remove());
@@ -4019,6 +4606,196 @@
                  style="max-height:80px;max-width:200px;padding:0;border-radius:6px;">`;
   }
 
+  /**
+   * Name, subdomain and domain, for a build that publishes itself.
+   *
+   * THE DOMAIN LIST ARRIVES AFTER THE STEP IS DRAWN, like the one in the
+   * main form: making a step wait on a request to fill one dropdown is
+   * worse than the dropdown arriving a moment later. /api/cloudflare-domains
+   * is the websites-only list — siteDomains(), not the blog pool, which is
+   * a distinction utils/domainPool.js exists to keep.
+   *
+   * PREFILLED FROM WHAT WAS ALREADY TYPED. The business name is a name and
+   * a slug of it is a reasonable subdomain, so the common case is to read
+   * them and carry on. Both stay editable; neither is forced.
+   *
+   * ⚠ IT MOVED FROM THE REVIEW STEP TO THE MAIN FORM — 18 November. Edwin:
+   * *"instead of the domain option/form appearing in step 4 i would like to
+   * have the select domain option like we have in github. i think it is in
+   * step 3"* — and /github-sites does ask for its domain in the middle of
+   * Global Information, beside the phone and the address.
+   *
+   * THE PREFILL HAD TO CHANGE WITH IT, and that is the whole of the work.
+   * On the review step the business name was already typed and sitting in
+   * `state.mainFormSnapshot`, so reading it was enough. On THIS step the
+   * name is being typed into a box three inches up the page and the
+   * snapshot does not exist yet — the first visit would have prefilled from
+   * an empty string and left the subdomain blank.
+   *
+   *     A PREFILL THAT READS A SNAPSHOT TAKEN WHEN THE STEP IS LEFT
+   *     CANNOT RUN WHILE THE STEP IS STILL BEING FILLED IN.
+   *
+   * So the name and the subdomain FOLLOW the business name as it is typed,
+   * and stop the moment either box is touched. Nothing is forced: an
+   * edited subdomain is never overwritten, and a returning customer's
+   * restoreFormValues() counts as touched too, or the trip back from the
+   * review step would wipe what they had chosen.
+   */
+  function renderCloudflareFields(parent) {
+    const slug = (v) => String(v || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 63);
+
+    const typedName = (state.mainFormSnapshot
+      && state.mainFormSnapshot['global[businessName]']) || '';
+
+    /* text-white IS ON THE CARD, NOT ON THE HEADING, and the heading is why
+     * it is here at all.
+     *
+     * "Where it goes" rendered near-black on navy — unreadable — while the
+     * labels beside it were white. form.html whitens `h4` by element name,
+     * and this heading is `<h4 class="h5">`: Bootstrap's `h5, .h5` rule sets
+     * `color: var(--bs-heading-color)`, which resolves to `inherit`, and a
+     * CLASS selector outranks an element one. So the page's rule lost and
+     * the heading inherited `.card`'s own near-black `--bs-body-color`.
+     *
+     *     A STYLESHEET THAT COLOURS BY TAG NAME IS ONE BOOTSTRAP CLASS
+     *     AWAY FROM NOT APPLYING, AND NOTHING SAYS SO.
+     *
+     * Setting it on the CARD fixes the heading AND anything added inside it
+     * later, which setting it on the heading would not — the same fix, with
+     * the same reasoning, as the build card on /cloudflare-sites. The grey
+     * paragraph and footnote keep their own `text-white-50`. */
+    const card = el('div', { class: 'card p-4 mt-4 text-white' });
+
+    card.innerHTML = `
+      <h4 class="h5 mb-1">Where it goes</h4>
+      <p class="text-white-50 small mb-3">
+        This website is published as soon as it is built.
+      </p>
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="cfName">Name</label>
+          <input class="form-control" id="cfName" name="global[cloudflare][name]"
+                 maxlength="200" required value="${escapeHtml(typedName)}">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label" for="cfPrefix">Subdomain</label>
+          <input class="form-control" id="cfPrefix" name="global[cloudflare][prefix]"
+                 maxlength="63" required value="${escapeHtml(slug(typedName))}">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label" for="cfDomain">Domain</label>
+          <select class="form-select" id="cfDomain" name="global[cloudflare][domain]" required>
+            <option value="">Loading the domains…</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-text text-white-50 mt-2">
+        One word in front of the domain — letters, numbers and hyphens.
+      </div>
+    `;
+
+    parent.appendChild(card);
+
+    const select = card.querySelector('#cfDomain');
+    const nameBox = card.querySelector('#cfName');
+    const prefixBox = card.querySelector('#cfPrefix');
+
+    /* THE NAME AND THE SUBDOMAIN FOLLOW THE BUSINESS NAME UNTIL THEY ARE
+     * TOUCHED. `input` fires on typing and on paste but not on a value set
+     * from script, so restoreFormValues() further down the step does not
+     * trip this — a returning customer's own subdomain is restored and then
+     * left alone, which is the behaviour the old step had by accident and
+     * this one has on purpose. */
+    const businessBox = parent.querySelector('[name="global[businessName]"]');
+
+    if (businessBox) {
+      /* ⚠ "HAS A VALUE" IS NOT "WAS CHOSEN", AND THE BATCH IS WHERE THAT
+       * BITES. "Add another site" reloads with the previous site's draft
+       * restored, so both boxes arrive full — of the LAST site's address.
+       * Read as chosen, they would then refuse to follow the new business
+       * name, and the customer would type "Dallas Drain Pros" over a
+       * subdomain still reading austin-drain-pros. The one field that must
+       * differ between two sites would be the one field that would not.
+       *
+       * generateBatchRoute.js refuses two sites at one address, so it would
+       * have been caught — at the end, as a rejected batch, after every
+       * other field had been filled in again.
+       *
+       *     A VALUE THIS CODE DERIVED IS STILL THIS CODE'S TO CHANGE.
+       *     ONLY A VALUE SOMEBODY TYPED IS THEIRS.
+       *
+       * So a box still holding exactly what it would have derived is not
+       * owned, and keeps following; anything else is left alone. */
+      const derivedName = (state.mainFormSnapshot
+        && state.mainFormSnapshot['global[businessName]']) || '';
+
+      let ownName = Boolean(nameBox.value) && nameBox.value !== derivedName;
+      let ownPrefix = Boolean(prefixBox.value) && prefixBox.value !== slug(derivedName);
+
+      nameBox.addEventListener('input', () => { ownName = true; });
+      prefixBox.addEventListener('input', () => { ownPrefix = true; });
+
+      businessBox.addEventListener('input', () => {
+        if (!ownName) nameBox.value = businessBox.value;
+        if (!ownPrefix) prefixBox.value = slug(businessBox.value);
+      });
+    }
+
+    /* THE CHOSEN DOMAIN IS REAPPLIED AFTER THE OPTIONS ARRIVE, for the
+     * reason the picker in the main form carries the same dance: a <select>
+     * cannot hold a value for an option it has not got yet, so
+     * restoreFormValues() runs against an empty list and drops it silently.
+     *
+     * READ AT THIS MOMENT RATHER THAN CAPTURED ABOVE, because the step may
+     * have been left and come back to while the request was in flight. */
+    fetch('/api/cloudflare-domains', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(({ domains }) => {
+        if (!Array.isArray(domains) || !domains.length) {
+          select.innerHTML = '<option value="">No domains are set up yet</option>';
+
+          return;
+        }
+
+        /* AND IT OPENS ON "CHOOSE A DOMAIN…", LIKE THE GITHUB ONE.
+         *
+         * Without a valueless first option a <select> shows its first real
+         * row and reports that value, so the customer was handed whichever
+         * domain the pool happened to list first and never had to look at
+         * the box. On the review step, where this used to live, the damage
+         * was limited to a row they could read. Here it is one of twenty
+         * fields on a long step, and the address is the one thing on this
+         * page that cannot be fixed after the build.
+         *
+         *     A DEFAULT NOBODY CHOSE IS NOT A DEFAULT. IT IS A GUESS
+         *     WEARING A CUSTOMER'S ANSWER.
+         *
+         * It also makes `required` mean something: an untouched box is now
+         * empty, so the step refuses to continue and says which field. */
+        select.innerHTML = '<option value="">Choose a domain…</option>'
+          + domains
+            .map(d => `<option value="${escapeHtml(d.domain)}">${escapeHtml(d.domain)}</option>`)
+            .join('');
+
+        const chosen = (state.mainFormSnapshot || {})['global[cloudflare][domain]'] || '';
+
+        if (chosen) select.value = chosen;
+      })
+      .catch(() => {
+        /* A LIST THAT DID NOT ARRIVE IS NOT AN EMPTY LIST. Saying so beats
+         * an empty dropdown, which reads as "there are none". */
+        select.innerHTML = '<option value="">The domains could not be loaded</option>';
+      });
+  }
+
   function renderReviewStep() {
     container.innerHTML = '';
 
@@ -4146,6 +4923,22 @@
           : [reviewRow('Example reviews', reviewsSummary())]),
       ].join(''), STEP.MAIN),
 
+      /* WHERE IT GOES, SHOWN BUT NO LONGER ASKED HERE — 18 November.
+       *
+       * The three boxes moved to the main form at Edwin's request, and a
+       * step that collects something the review never mentions is a step
+       * the customer cannot check. The address is also the one fact on this
+       * page that cannot be fixed afterwards: a site published to the wrong
+       * hostname is a site rebuilt.
+       *
+       * THE HOSTNAME IS SHOWN AS ONE LINE as well as in parts, because that
+       * is the thing they are about to own and neither half reads as an
+       * address on its own. */
+      ...('cloudflare' !== LOCKED_TARGET ? [] : [reviewCard('Where it goes', [
+        reviewRow('Address', cloudflareHost() || '', { strong: true }),
+        reviewRow('Name', cloudflareValue('name')),
+      ].join(''), STEP.MAIN)]),
+
       reviewCard('Contact', [
         reviewRow('Phone', snapshotValue('phone')),
         reviewRow('Email', snapshotValue('email')),
@@ -4202,8 +4995,70 @@
       btn.addEventListener('click', () => go(Number(btn.dataset.step)));
     });
 
-    const generateLabel = (n) =>
-      `Generate ${state.siteMode === 'sample' ? 'Sample' : 'Website'} (${n} credits)`;
+    /* WHERE IT GOES USED TO BE RENDERED HERE, AND IS NOW ON THE MAIN FORM.
+     *
+     * The three fields were put at the end on 17 November on the argument
+     * that an address is the last thing you need. Edwin asked for them
+     * where /github-sites asks for its domain instead — in the middle of
+     * Global Information — on 18 November, and that is where they are.
+     * renderCloudflareFields() carries the note.
+     *
+     * THE REVIEW STEP STILL SHOWS THEM, as a card above, read out of the
+     * snapshot with an edit link back to the step that asks. A step that
+     * collects something the review never mentions is a step the customer
+     * cannot check. */
+
+    /* SEVERAL WEBSITES IN ONE GO — 18 November, and ONLY on the Cloudflare
+     * door. That mode builds a fixed eleven-page site with no uploaded logo
+     * and no service rows, which is what makes a batch possible at all; the
+     * other wizards carry files and page rows that cannot share one job.
+     *
+     * RENDERED HERE, AT THE END, because this is the step that knows the
+     * address — and an address is the one thing each site in a batch must
+     * have of its own. */
+    const queued = 'cloudflare' === LOCKED_TARGET ? batchList() : [];
+
+    if (queued.length) {
+      const strip = el('div', {
+        class: 'alert alert-info d-flex flex-wrap align-items-center gap-2',
+        style: 'margin-bottom:1rem;',
+      });
+
+      strip.appendChild(el('strong', {},
+        `${queued.length} website${1 === queued.length ? '' : 's'} ready to build:`));
+
+      queued.forEach((entry) => {
+        strip.appendChild(el('span', { class: 'badge bg-secondary' }, batchAddressOf(entry)));
+      });
+
+      const drop = el('button', {
+        type: 'button',
+        class: 'btn btn-sm btn-link ms-auto text-danger',
+      }, 'Start over');
+
+      /* CONFIRMED, BECAUSE IT THROWS AWAY TYPING. Two filled-in sites are
+       * twenty minutes, and this button sits next to the one that builds
+       * them. */
+      drop.addEventListener('click', () => {
+        if (!window.confirm(`Remove all ${queued.length} and start the batch again?`)) return;
+
+        batchClear();
+        go(STEP.REVIEW);
+      });
+
+      strip.appendChild(drop);
+      container.appendChild(strip);
+    }
+
+    /* THE LABEL COUNTS THE ONE ON SCREEN AS WELL AS THE ONES PUT BY.
+     *
+     * The site being filled in right now is not in the list yet — it goes in
+     * when the button is pressed. A button reading "Build all 2" beside a
+     * strip saying 2 and a form holding a third would be off by one at the
+     * moment somebody is deciding whether to press it. */
+    const generateLabel = (n) => (queued.length
+      ? `Build all ${queued.length + 1} websites`
+      : `Generate ${state.siteMode === 'sample' ? 'Sample' : 'Website'} (${n} credits)`);
 
     renderNav(container, {
       showBack: true,
@@ -4211,12 +5066,36 @@
       nextText: generateLabel(creditsLabel()),
       onBack: () => go(STEP.LOCATIONS),
       onNext: () => {
-        // Hidden fields were injected on the previous step, so this only
-        // needs to fire the submit that spinner.js listens for.
-        // Submitted, so there is nothing to come back to. Left behind, it
-        // would reappear on the next visit as a half-finished form nobody
-        // asked for.
-        clearDraft();
+        /* THE DRAFT IS NOT CLEARED HERE ANY MORE — 17 November.
+         *
+         * It used to be, on the reasoning that a submitted form has nothing
+         * to come back to. That is true of a submit that SUCCEEDS. This one
+         * can be refused, and the three ways it is refused are exactly the
+         * ways somebody most needs their answers back:
+         *
+         *   409  a build of theirs is already running
+         *   402  not enough credits
+         *   400  something the server validates and the wizard does not
+         *
+         * On a 409 spinner.js navigates to the running build's progress
+         * page — so the page holding the only copy of those answers is
+         * gone, and the draft that would have restored them was wiped a
+         * moment before the request was even sent.
+         *
+         *     A DRAFT CLEARED BEFORE THE SUBMIT LANDS IS A DRAFT CLEARED
+         *     ON THE ONE PATH WHERE IT WAS STILL NEEDED.
+         *
+         * spinner.js clears it on success instead — it is the only code
+         * that knows the build was accepted — through the same
+         * window.ieSaveDraft-style hook, window.ieClearDraft. */
+
+        /* WITH SITES PUT BY, THIS BUTTON SENDS THE BATCH INSTEAD.
+         *
+         * Armed BEFORE the submit is fired, because the listener that reads
+         * it runs during the dispatch below. With nothing put by the flag
+         * stays empty and this is the ordinary single build it has always
+         * been — which is what keeps the other three wizards untouched. */
+        if (queued.length) armBatch('build');
 
         if (typeof form.requestSubmit === 'function') {
           form.requestSubmit();
@@ -4225,6 +5104,79 @@
         }
       }
     });
+
+    /* AND THE BUTTON THAT PUTS THIS ONE BY AND STARTS THE NEXT.
+     *
+     * Added to the nav AFTER renderNav so the existing two keep their
+     * places: Back on the left, the build button on the right, and this
+     * between them. renderNav is used by every step in the wizard and is not
+     * the place for a button only one of them has.
+     *
+     * AN UPLOADED LOGO IS REFUSED HERE AS WELL AS AT THE SERVER, because
+     * the server's refusal arrives after somebody has filled in three sites.
+     * Uploads are keyed by job id and a batch is one job, so the first
+     * site's cleanup would take the third site's file. */
+    if ('cloudflare' === LOCKED_TARGET) {
+      const nav = container.querySelector('.wizard-nav');
+      const addBtn = el('button', {
+        type: 'button',
+        id: 'addSiteBtn',
+        /* WHITE, AND THE COLOURS ARE INLINE RATHER THAN A BOOTSTRAP CLASS.
+         *
+         * btn-outline-primary paints itself #0d6efd, which is blue on a
+         * navy page — Edwin's screenshot — and it sets `color` on the
+         * button itself, so the page's own white-text rule cannot reach it.
+         * An inline style is the one thing that wins.
+         *
+         * The Back button two lines up does the same thing for the same
+         * reason. */
+        class: 'btn',
+        style: 'min-width:170px;font-size:17px;background:transparent;'
+          + 'color:#fff;border:1px solid #fff;',
+      }, '+ Add another site');
+
+      /* HOVER IN JS, BECAUSE AN INLINE STYLE HAS NO :hover. Two listeners
+       * rather than a stylesheet rule: this button exists on one step of
+       * one wizard, and a global rule for it would outlive the button. */
+      addBtn.addEventListener('mouseenter', () => {
+        addBtn.style.background = '#fff';
+        addBtn.style.color = '#0b2545';
+      });
+
+      addBtn.addEventListener('mouseleave', () => {
+        addBtn.style.background = 'transparent';
+        addBtn.style.color = '#fff';
+      });
+
+      addBtn.addEventListener('click', () => {
+        if ('upload' === state.logoSource) {
+          showAlert(container,
+            'A batch uses the generated wordmark. Choose that on the logo step, '
+            + 'or build this website on its own.');
+
+          return;
+        }
+
+        if (batchList().length + 1 >= MAX_BATCH) {
+          showAlert(container,
+            `A batch can hold ${MAX_BATCH} websites. Build these and start another.`);
+
+          return;
+        }
+
+        armBatch('add');
+
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else {
+          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+      });
+
+      /* BEFORE the build button, so the eye reaches "add another" first on
+       * the way to a button that spends money. */
+      if (nav) nav.insertBefore(addBtn, nav.querySelector('#nextBtn'));
+    }
 
     // The total is fetched rather than computed, so it arrives a moment after
     // the step renders. Both places that show it are updated together — the
@@ -4236,10 +5188,22 @@
 
       const line = document.getElementById('reviewCredits');
       if (line) {
-        line.innerHTML = `This will use <strong>${q.totalCost.toLocaleString()}</strong> credits.`;
-        if (!q.affordable) {
+        /* THE WHOLE BATCH IS PRICED, NOT THE SITE ON SCREEN. quote() prices
+         * this mode flat, so N sites is N times one — and somebody about to
+         * press a button that spends three sites' worth of credits should be
+         * reading three sites' worth of number. */
+        const each = q.totalCost;
+        const sites = queued.length + 1;
+        const due = queued.length ? each * sites : each;
+
+        line.innerHTML = queued.length
+          ? `This will use <strong>${due.toLocaleString()}</strong> credits `
+            + `for ${sites} websites.`
+          : `This will use <strong>${due.toLocaleString()}</strong> credits.`;
+
+        if (due > (q.available || 0)) {
           line.innerHTML +=
-            ` <span class="text-warning">You have ${q.available.toLocaleString()}.</span>`;
+            ` <span class="text-warning">You have ${(q.available || 0).toLocaleString()}.</span>`;
         }
       }
 
@@ -4367,11 +5331,31 @@
     const draft = loadDraft();
     let resumeAt = STEP.MODE;
 
+    /* READ BEFORE THE DRAFT IS APPLIED, and it clears itself as it is read:
+     * this is a one-shot note from the reload that "Add another site" just
+     * did, and a second refresh must come back as an ordinary restore. */
+    const justAdded = batchTakeAdded();
+
     if (draft) {
       applyDraft(draft);
-      resumeAt = draftResumeStep(draft);
+
+      /* A BATCH ADD LANDS ON THE DETAILS, NOT ON THE LOGO STEP.
+       *
+       * draftResumeStep() sends every restore to the logo, because a
+       * browser will not let a page refill a file input — see the note on
+       * that function. A batch cannot contain an uploaded logo at all, so
+       * there is no file to choose again, and the logo step is three steps
+       * away from the two fields that actually differ between sites: the
+       * business and the address.
+       *
+       *     THE RIGHT PLACE TO COME BACK TO IS THE FIRST THING
+       *     YOU HAVE TO CHANGE. */
+      resumeAt = justAdded ? STEP.MAIN : draftResumeStep(draft);
+
       clearDraft();
-      showDraftNotice();
+
+      if (justAdded) showBatchAddedNotice(justAdded, batchList());
+      else showDraftNotice();
     }
 
     // single hidden logo input (backend expects this exact name)
@@ -4660,6 +5644,8 @@
       siteModeHidden.value = state.siteMode;
       form.appendChild(siteModeHidden);
 
+      injectSiteTarget(form);
+
       // Business type is chosen on step 1 but rendered as a hidden input
       // inside the main form, so the step-3 snapshot captures it. Going back
       // to change it left the snapshot holding the OLD value, which then
@@ -4728,7 +5714,200 @@
           return true;
         }
       );
-    });   
+    });
+
+    /* ------------------------------------------------------- the batch hook
+     *
+     * REGISTERED AFTER THE HANDLER ABOVE, DELIBERATELY, AND THAT IS THE
+     * WHOLE TRICK.
+     *
+     * Listeners on one element run in the order they were added. By the time
+     * this one runs, the handler above has finished every guard — duplicate
+     * services, missing locations, the logo — and injected every hidden
+     * mirror, so `new FormData(form)` is EXACTLY the body that was about to
+     * be posted. Capturing any earlier would capture a form that is missing
+     * half its fields.
+     *
+     *     THE ONLY MOMENT THE FORM IS COMPLETE IS THE MOMENT BEFORE
+     *     IT IS SENT.
+     *
+     * AND A GUARD THAT REFUSED THE SUBMIT STOPS THIS TOO. Those paths call
+     * stopImmediatePropagation(), which prevents listeners registered after
+     * them — so a site that failed validation is never added to the batch,
+     * without this needing to know any of the rules.
+     *
+     * IT DOES NOTHING AT ALL ON A NORMAL BUILD. `pendingBatch` is only set
+     * by the two buttons the Cloudflare review step adds, so every other
+     * wizard in the app submits exactly as it did before. */
+    form.addEventListener('submit', (e) => {
+      const action = pendingBatch;
+
+      pendingBatch = '';
+
+      if (!action) return;
+
+      e.preventDefault();
+      e.stopImmediatePropagation();   // stop spinner.js posting this one
+
+      /* FormData, FLATTENED TO STRINGS. A batch carries no uploaded logo —
+       * uploads are keyed by job id and three sites share one job, so the
+       * first site's cleanup would take the third site's file. The server
+       * refuses `logoSource: upload` for the same reason and says so; this
+       * drops any File rather than stringifying it into nonsense. */
+      const entry = {};
+
+      for (const [k, v] of new FormData(form).entries()) {
+        if ('string' === typeof v) entry[k] = v;
+      }
+
+      const list = batchList();
+
+      list.push(entry);
+      batchSave(list);
+
+      if ('add' === action) {
+        /* THE DRAFT IS SAVED AND THE PAGE RELOADS, which is what makes the
+         * next site start from this one rather than from nothing. Three
+         * layouts of one business differ by a design and a subdomain; a
+         * blank form would make somebody type the address, the hours and
+         * the six towns again for each of them. */
+        saveDraft();
+        batchMarkAdded(batchAddressOf(entry));
+        window.location.reload();
+
+        return;
+      }
+
+      /* 'build' — send the lot. */
+      const btn = document.getElementById('nextBtn');
+
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = `Queueing ${list.length} websites…`;
+      }
+
+      /* ⚠ THE CSRF TOKEN, WITHOUT WHICH THIS IS A 403 AND AN HTML PAGE.
+       *
+       * middleware/csrf.js guards every unsafe method and reads the token
+       * from `req.body._csrf`, the `x-csrf-token` header or the query — in
+       * that order. An ordinary wizard submit carries the hidden `_csrf`
+       * field the page renders; a fetch carries nothing unless it is told
+       * to, so the first version of this was refused before it reached the
+       * route at all.
+       *
+       *     EVERY POST IN THIS APP NEEDS THE TOKEN. A NEW ENDPOINT IS NOT
+       *     AN EXCEPTION TO THAT, IT IS JUST A PLACE THAT HAS NOT BEEN
+       *     TOLD YET.
+       *
+       * Read the same way spinner.js reads it — off the meta tag
+       * routes/formRoute.js puts on the page — rather than inventing a
+       * second route for the same value.
+       *
+       * AND Accept: application/json, WHICH IS THE OTHER HALF OF WHY THIS
+       * SAID NOTHING. rejectCsrf() only replies in JSON when the request
+       * asked for JSON; without this header it renders an error PAGE, so
+       * the refusal arrived as HTML and the one sentence that explains it
+       * — "Your session expired. Please refresh the page and try again." —
+       * never reached the person. */
+      const csrf = document
+        .querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+      fetch('/api/generate-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRF-Token': csrf,
+        },
+        body: JSON.stringify({ sites: list }),
+      })
+        .then(async (res) => {
+          /* ⚠ A REPLY THAT IS NOT JSON USED TO VANISH INTO THE FALLBACK.
+           *
+           * `res.json().catch(() => ({}))` turns an HTML error page into an
+           * empty object, so `data.error` is undefined and the alert shows
+           * the generic sentence below — which is also what the route says
+           * on a 500. Edwin saw "The batch could not be queued." and there
+           * was no way to tell which of the two had happened.
+           *
+           *     A CATCH-ALL MESSAGE THAT MATCHES A REAL ONE MAKES THE REAL
+           *     ONE UNREADABLE.
+           *
+           * Express renders HTML for anything that never reaches a handler
+           * — a body over the parser's limit, a route that is not mounted,
+           * an error thrown before the route — so those are exactly the
+           * cases worth telling apart, and exactly the ones that said
+           * nothing. The status goes in the message. */
+          const raw = await res.text();
+
+          let data = {};
+
+          try { data = JSON.parse(raw); } catch (_) { data = null; }
+
+          if (!res.ok) {
+            if (!data) {
+              if (btn) {
+                btn.disabled = false;
+                btn.textContent = `Build all ${list.length} websites`;
+              }
+
+              showAlert(container,
+                `The server refused the batch with a ${res.status} and did not say why. `
+                + 'Your websites are still here — try again, and if it keeps happening '
+                + 'send this number on.');
+
+              return;
+            }
+            /* THE BATCH IS KEPT ON A REFUSAL. Every way this is refused —
+             * a taken address, not enough credits, a build already running
+             * — is a way somebody most needs the three sites they typed
+             * still to be there. The draft note on the review step records
+             * the same lesson for a single build. */
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = `Build all ${list.length} websites`;
+            }
+
+            showAlert(container, data.error || 'The batch could not be queued.');
+
+            if (data.redirect) window.location.href = data.redirect;
+
+            return;
+          }
+
+          /* ACCEPTED: the sites are on a job now, so the only copies that
+           * matter are there. Clearing both is what stops a second visit
+           * queueing them all over again.
+           *
+           * A 200 THAT IS NOT JSON IS NOT AN ACCEPTANCE. Clearing the batch
+           * on one would throw away every site the person typed on the word
+           * of a reply nobody could read. */
+          if (!data || !data.ok) {
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = `Build all ${list.length} websites`;
+            }
+
+            showAlert(container, (data && data.error)
+              || 'The server replied but did not confirm the batch. Nothing was queued.');
+
+            return;
+          }
+
+          batchClear();
+          clearDraft();
+          window.location.href = data.redirect || '/dashboard';
+        })
+        .catch(() => {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = `Build all ${list.length} websites`;
+          }
+
+          showAlert(container, 'The batch could not be queued. Check your connection and try again.');
+        });
+    });
+
     go(resumeAt);
   });
 })();

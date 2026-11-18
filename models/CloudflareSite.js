@@ -144,12 +144,60 @@ const cloudflareSiteSchema = new mongoose.Schema({
    * somebody else while Cloudflare may still hold the project and the DNS
    * record, and the next publish on that name would collide with a
    * leftover nobody can see. The row is kept and the list hides it.
+   *
+   * AND `removed` ALONE DOES NOT RESERVE THE HOSTNAME ANY MORE — see
+   * `released` below. Edwin, 17 November, having deleted a test site and
+   * been refused its name: *"i deleted the previus site and now it wont let
+   * me use it withe same business name"*.
    */
   status: {
     type: String,
     enum: ['draft', 'live', 'removed'],
     default: 'draft',
     index: true,
+  },
+
+  /**
+   * What the delete actually managed to take down at Cloudflare.
+   *
+   * WHY IT IS THREE FACTS AND NOT ONE FLAG. The reservation above exists
+   * for a leftover — a custom domain still attached, a DNS record still
+   * pointing, a Pages project still holding the name. Each is removed by a
+   * separate call and each can fail on its own, which is why the delete
+   * already logs all three. It just never wrote them down, so nothing could
+   * tell a clean delete from a half-finished one and both reserved the
+   * hostname for ever.
+   *
+   *     THE ROW REMEMBERED THAT THE NAME HAD BEEN USED AND NOT WHETHER IT
+   *     WAS STILL IN USE. Those are different questions and only the
+   *     second one should refuse a new site.
+   *
+   * ALL THREE TRUE MEANS THE HOSTNAME IS FREE, and checkWant() then lets it
+   * be taken again. Anything less and it stays reserved, which is the case
+   * the rule was written for.
+   *
+   * A SITE THAT NEVER DEPLOYED SETS ALL THREE TOO. There is no project, no
+   * domain and no record to take down, so nothing can be left behind —
+   * `project: ''` and a reserved hostname was the strictest possible answer
+   * to a question with nothing in it.
+   *
+   * DEFAULTS ARE false, SO EVERY ROW WRITTEN BEFORE THIS FIELD EXISTED
+   * STAYS RESERVED. That is the safe direction: an old removed site may
+   * well still have a project behind it, and nothing stored can say
+   * otherwise. The names those rows hold can be released by hand.
+   */
+  released: {
+    /** The custom domain was detached from the Pages project. */
+    domain: { type: Boolean, default: false },
+
+    /** The DNS record we created was removed from the zone. */
+    dns: { type: Boolean, default: false },
+
+    /** The Pages project itself was deleted. */
+    project: { type: Boolean, default: false },
+
+    /** When, for anybody reading a row and wondering. */
+    at: { type: Date, default: null },
   },
 
   /**
@@ -210,6 +258,19 @@ const cloudflareSiteSchema = new mongoose.Schema({
    * NEITHER CAN FAIL A PUBLISH. The site is up on pages.dev regardless;
    * these say whether the hostname will answer yet.
    */
+  /* SEARCH CONSOLE VERIFICATION — added 16 November.
+   *
+   * SAME FIELD NAME AS BlogSite, and the same type. The two products have
+   * separate collections and separate screens, but a customer verifying a
+   * website and a customer verifying a blog are doing one thing, and
+   * utils/blog/verificationTags.js parses both. A second name for the same
+   * value is how two screens drift into disagreeing about what is stored.
+   *
+   * TOKENS, NOT TAGS, despite the name it inherits. What is kept is what
+   * the parser extracted; the <meta> element is built at publish time by
+   * utils/cloudflareSites/verificationHead.js and never echoed. */
+  verificationTags: { type: [String], default: () => [] },
+
   domainAttached: { type: Boolean, default: false },
   dnsCreated: { type: Boolean, default: false },
 

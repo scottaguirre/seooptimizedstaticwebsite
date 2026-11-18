@@ -2753,6 +2753,1910 @@ which is the one that would reach the published prose.
 
 `test-admin-tabs.php` 93 → **97**.
 
+### ~~FOR TOMORROW~~ CLOSED 16 November 2026 — the sidebar's shape, and GitHub's missing row
+
+**ASKED FOR 15 November.** Edwin: *"the options to build websites or blogs
+are a little disorganized. What would be the best way to have options for
+regular websites (the main generator), github sites, cloudflare sites and
+blogs… a better and more intuitive user experience"*. Deferred the same day:
+*"We can do it tomorrow."*
+
+**THE DIAGNOSIS, FROM READING ALL SEVEN ROWS.** `appSidebar()` in
+`utils/appHeader.js` names things on THREE axes at once:
+
+    by what it makes    Build a Website, Build WP blogs
+    by where it hosts   Build Cloudflare Blogs, Build Cloudflare Websites
+    by activity         Blog Report, Dashboard
+
+So "Build a Website" and "Build Cloudflare Websites" read as the same thing
+and are not, and the difference is not the one the labels state.
+
+**GITHUB IS THE HOST THAT APPEARS NOWHERE.** Cloudflare has two named rows,
+WordPress one, GitHub none. Its builder is a MODE inside the main wizard —
+`localoptions`, captioned "Local Website Options", which names neither the
+host nor the publishing — and its manager, `/my-sites`, is not in the sidebar
+at all. It is a header dropdown item (`utils/appHeader.js`, the `/my-sites`
+line). Two separate pieces of insider knowledge for one product.
+
+    THE TOOL NOBODY CAN FIND IS THE TOOL NOBODY USES. This file already
+    says that twice, about /blog-sites and about the blog report. This is
+    the same failure a third time, and worse, because the thing hidden is
+    not a screen but a whole host.
+
+**AND `/` CONCEALS FOUR PRODUCTS WHILE EVERY OTHER ROW GETS ONE.** Rank Fast,
+Rank GBPs, One-Page Design and Local Website Options differ from each other
+about as much as Cloudflare Sites differs from WP Blogs.
+
+**BUILD AND MANAGE ARE PAIRED INCONSISTENTLY.** `/cloudflare-sites` is both
+the builder and the list ("Your websites", around line 547 of
+`routes/cloudflareSitesRoute.js`). GitHub's two halves are in two places.
+
+**THE SHAPE EDWIN CHOSE** — its own row, and the mode hidden there:
+
+    BUILD WEBSITES
+      Websites              /                 Rank Fast, Rank GBPs, One-Page
+      GitHub Websites       /github-sites     what "Local Website Options" is
+      Cloudflare Websites   /cloudflare-sites
+
+    BUILD BLOGS
+      WordPress Blogs       /blog-sites
+      Cloudflare Blogs      /static-blogs
+
+    MANAGE
+      My Websites           /my-sites         out of the header dropdown
+      Blog Report           /blog-report
+      Dashboard             /dashboard
+
+    TOOLS
+      Keyword Research      /keyword-research
+
+**NO URL MOVES.** `/blog-sites` and `/static-blogs` are bookmarked, linked
+from the plugin's setup text and written in Edwin's own notes — the rule is
+already stated beside TOOL_WP_BLOGS in `utils/pageTitle.js`. Labels and
+grouping change; paths do not. One route is added.
+
+**TWO PASSES, AND THE SPLIT IS THE POINT.**
+
+*Pass one — labels and grouping.* `utils/appHeader.js` and
+`utils/pageTitle.js` only. No routes, no wizard state. Reversible, and you
+can tell by looking whether the grouping reads right. Do this FIRST so that
+if the grouping is wrong it is found before a route is built on top of it.
+
+*Pass two — the route and the mode move.* `/github-sites` serving the wizard
+locked to `localoptions`, and the option removed from the main wizard's
+cards.
+
+**WHY PASS TWO IS THE RISKY HALF, IN DETAIL.** `localoptions` is not a card.
+It is a value that drives, in `public/js/generateDinamycForm.js` and beyond:
+
+  - the extra steps — `[STEP.DESIGN, STEP.PAGES, STEP.LOCATIONS]`, around
+    line 564
+  - the Domain control: a `/api/site-domains` SELECT instead of a text box,
+    because the row carries the GitHub account
+  - a fixed eleven pages, six services enforced
+  - a price of its own in `utils/pricing.js` — an early return, because the
+    page set is fixed and what is posted must not change what is charged
+
+        I WROTE "A FLAT 800" HERE FIRST, having lifted it from the
+        SITE_MODES comment in the wizard, which says *"charges a flat 800
+        whatever is posted"*. `utils/pricing.js` says the opposite in
+        capitals: *"NOT A FLAT `LOCAL_OPTIONS: 800`. The rule is PARITY
+        WITH THE LEAD SITE."* It is DERIVED — `LEAD_BASE 200 + 6 x
+        SERVICE_PAGE 100` — so repricing the generator moves it too.
+
+        A COMMENT QUOTING ANOTHER FILE IS A COPY, AND COPIES GO STALE.
+        Checked against pricing.js before this note was saved, which is
+        the only reason it says the right thing now.
+
+  - **AND EVERY EXISTING DRAFT AND JOB HOLDS THE STRING.** The wizard
+    restores with `state.siteMode = draft.siteMode || state.siteMode`
+    (around line 366), so a half-finished localoptions draft must still work
+    after the option disappears from the list it was chosen from. That is
+    the test to write before the change, not after.
+
+Keeping the two passes apart means that when something breaks there is no
+question which change did it.
+
+**WHAT SHIPPED, 16 November.** Both passes, in that order, and the split
+earned its keep: the grouping was right first time and pass two broke the
+wizard twice.
+
+*Pass one.* `utils/appHeader.js` rows carry a `group` string and the
+renderer builds its order from the rows themselves, so adding a row cannot
+leave a heading behind. `/my-sites` left the header dropdown.
+`utils/pageTitle.js` gained `TOOL_GH_SITES`, and TOOL_WP_BLOGS /
+TOOL_CF_BLOGS / TOOL_CF_SITES / TOOL_MY_SITES were reworded to name the host
+rather than the verb. `test-app-header.js` 72, including an assertion on the
+whole group map. **Tools sits ABOVE Manage**, which looks wrong against the
+list above and is deliberate: it keeps Keyword Research immediately before
+Blog Report, which a 23 October request asked for.
+
+*Pass two.* `routes/formRoute.js` serves ONE wizard through two routes —
+`renderWizard()` returning a handler — and the lock travels in a
+`site-mode` meta tag, read once into `LOCKED_MODE`. No URL moved.
+
+**AND IT BROKE TWICE, BOTH FOUND BY EDWIN PRESSING THE BUTTON.**
+
+*One: a temporal dead zone took the whole file down.* `LOCKED_MODE` was
+declared about a hundred lines BELOW `state`, which initialises
+`siteMode: LOCKED_MODE || 'rankfast'`. A `const` read before its declaration
+**throws** — hoisting makes it visible, not usable:
+
+    Cannot access 'LOCKED_MODE' before initialization
+
+The IIFE died on load. The header and the sidebar are server-rendered, so
+the page looked entirely normal with a blank space where the wizard goes.
+Edwin: *"something is wrong. I press build website and githhub websites and
+no wizard appears"*.
+
+    A SUITE THAT ONLY EVER RUNS PIECES OF A FILE CANNOT TELL YOU THE FILE
+    RUNS. 104 tests passed, because every one of them lifts one function
+    out with `new Function`.
+
+Fixed by moving the declarations above `state`, and `test-wizard-steps.js`
+gained `evaluateWizard()` — the whole file run in `vm` against a dozen DOM
+stubs, no jsdom. Three tests that fail on exactly this bug.
+
+*Two: hiding the options is not skipping the step.* `modesOnOffer()`
+returning `[]` stopped the CARDS being drawn and nothing stopped the STEP.
+`/github-sites` opened on "1. What are we building?", nothing beneath it,
+and a Next button. Fixed in `hiddenSteps()`, which already existed for this
+— `go()` steps past anything in it and `stepNumber()` renumbers what is
+left, so there is no gap.
+
+**ONE DELIBERATE SURVIVING MUTANT.** Deleting `group` from a sidebar row
+that already sits beneath its own heading renders **byte-identical HTML** —
+1789 bytes, same sha256. An equivalent mutant, recorded rather than chased.
+
+### ~~FOR TOMORROW~~ CLOSED 16 November 2026 — Cloudflare's two-step shuffle
+
+**ASKED FOR 16 November**, immediately after the sidebar shipped. Edwin:
+*"so the clouldflare websites on the sidebar shows a button in the wizard
+that takes you to the main generator wizard. So basically we could duplicate
+the wizard from the generator and make appears when the users press the
+cloudflare websites button on the sidebar right or am i wrong?"* — then,
+after the discussion below, *"have you fixed the clouldflare 2 steps? that
+what i need"*.
+
+**WHAT IT WAS.** Putting a generated website on a Cloudflare subdomain took
+two visits:
+
+    1.  `/`                   build it. Land back on the build page.
+    2.  `/cloudflare-sites`   fill a second form that publishes
+                              "whatever was built last".
+
+`dist/user_<id>` is ONE folder per user, wiped by the next build, so step 2
+depended on step 1 having been the last thing you did. Build two sites and
+publish once and you publish the wrong one — with no way to tell from the
+screen, because the page said "the website you have just generated".
+
+    THE SECOND STEP WAS NOT A STEP. It was the first step's output,
+    re-entered by hand.
+
+**WHY NOT A DUPLICATED WIZARD, which is what Edwin asked about.** A copy
+inherits nothing: every fix needs making twice and the two differ within a
+week. The sidebar work had just demonstrated the opposite — one wizard,
+two doors — so Cloudflare got a third door rather than a second wizard.
+
+**THE DISTINCTION THE WHOLE CHANGE RESTS ON.**
+
+    localoptions   a MODE.        Builds its own eleven pages and
+                                  publishes itself to GitHub.
+    cloudflare     a DESTINATION. Publishes whatever was built, any mode.
+
+A mode decides WHAT gets built; a destination decides WHERE it lands. They
+are two parameters, not one — `renderWizard({ mode, target, row })` — so
+`/cloudflare-sites/new` locks no mode, hides no step, and leaves all the
+cards on step 1 exactly as `/` has them. Cloudflare could never have been a
+fifth card without lying about what it is.
+
+**THE PARTS.**
+
+  - `routes/formRoute.js` — `renderWizard({ mode, target, row })`. The
+    destination travels in a `site-target` meta tag, like the mode and for
+    the same reason (static cached file, per-request value). `row` is passed
+    in rather than derived from the mode, because this door belongs to the
+    `/cloudflare-sites` row and locks no mode.
+  - `public/js/generateDinamycForm.js` — `SITE_TARGETS` / `LOCKED_TARGET`,
+    **declared above `state`**, which is the TDZ lesson from the day before
+    applied before it could bite again. `renderCloudflareFields()` draws
+    Name / Subdomain / Domain on the REVIEW step, because none of it is a
+    choice about what gets built: it is the address, and an address is the
+    last thing you need. `injectSiteTarget(form)` puts the destination into
+    the POST, called from BOTH injection passes.
+  - `utils/cloudflareSites/wanted.js` (NEW) — `siteTargetOf(body)` and
+    `wantedAddress(body)`, reading **either body shape**. See below.
+  - `routes/cloudflareSitesRoute.js` — `checkWant()` extracted out of
+    `createAndPublish()`; the list page gained a "Build a website" button
+    pointing at `/cloudflare-sites/new` and its lead no longer assumes you
+    have already been to the generator.
+  - `routes/generateRoute.js` — calls `checkWant()` **before `Job.create`**.
+  - `utils/jobGenerator.js` — calls `createAndPublish()` when a build
+    finishes with that destination.
+  - `routes/jobRoute.js` — `publishDestination(job)`, so the amber box stops
+    naming GitHub for a Cloudflare failure, and the done button becomes the
+    live link.
+
+**THE TWO BODY SHAPES, AND WHY THEY GOT A FILE.** The wizard submits
+multipart; multer expands bracket notation through `append-field`, so fields
+land as `body.global.cloudflare.prefix`. A urlencoded post leaves them flat
+as `body['global[cloudflare][prefix]']`. `routes/generateRoute.js` already
+carries the scar — its site-mode read is
+`req.body.global?.siteMode ?? req.body['global[siteMode]']`, and the note
+above it says handling only the first shape is what refused a whole mode's
+builds. THREE places now need the destination, so three copies of a
+two-shape read would be three chances to write one of them single-shape.
+
+    A MISSED DESTINATION DOES NOT THROW. The build succeeds, goes
+    nowhere, and says nothing.
+
+**A CHECK THAT ONLY RUNS AFTER THE BILL IS NOT A CHECK.** The address is
+typed last and used last, after a build that costs credits. Every refusal in
+`checkWant()` — a dot in the subdomain, a hostname taken yesterday, a domain
+switched off this morning — would have arrived after the money was gone. So
+the generator runs it before it queues, and the publish runs it again
+afterwards (minutes pass during a build; that is what the `raced` code is
+for). ONE function, called twice. `checkWant()` deliberately holds only the
+CHEAP checks: Cloudflare's live project count is a third-party network call,
+and "is there a build on disk" is false before the build that is about to
+happen. Both stay in `createAndPublish()`.
+
+**THE ROW IS WRITTEN BEFORE THE DEPLOY IS ATTEMPTED**, which is the
+recoverability Edwin asked for — *"the build has to be parked somewhere you
+can press 'try publishing again'"*. It was already true and already tested
+(A FAILED FIRST PUBLISH KEEPS THE ROW, WITH A WAY OUT): deleting the row on
+a failed publish would be tidier and wrong, because `deployBlog` may already
+have created the Pages project and throwing away the only record of it
+leaves an orphan nothing in the app can reach.
+
+**THE ONE COLLISION BETWEEN THE TWO AXES.** `localoptions` pushes its own
+pages to GitHub and reports back in `published` — and `utils/jobGenerator.js`
+returns on that report BEFORE it looks at the destination. So a localoptions
+build carrying a Cloudflare address would go to GitHub, drop the address and
+say nothing. It cannot be CHOSEN on that page (`modesOnOffer()` filters it
+out of the open wizard), so the only way in is a resumed draft — and
+`applyDraft()` now refuses one, the same way it already refused a Rank Fast
+draft on `/github-sites`. A half-applied draft is worse than no draft; going
+back to `/` resumes it intact.
+
+**TESTS.** `test-wizard-steps.js` 110 → **122**, `test-cloudflare-sites.js`
+79 → **95**. Sixteen mutants, all killed, including: the route dropping the
+`site-target` tag (every unit test still passes — they hand `LOCKED_TARGET`
+in directly); only one of the two injection passes carrying it; the flat body
+shape going unread; and `checkWant` running after `Job.create` instead of
+before, which is asserted by POSITION and not by presence.
+
+**AND THE HARNESS HAD A HOLE WORTH RECORDING.** `test()` in
+`test-cloudflare-sites.js` is `async` and `await`s its function, so a
+**trailing non-awaited `test(...)` never prints**: the tally and
+`process.exit` run before the microtask flushes. Three new tests at the end
+of the file silently did not run, and the tally looked right. Fixed by
+awaiting them — and `THE PUBLISH PATH IS WIRED TO IT` had been in that
+position before them, passing only because something awaited later happened
+to flush it.
+
+    A SUITE THAT CAN SILENTLY SKIP ITS LAST TEST HAS NO LAST TEST.
+
+**STILL TWO SCREENS FOR ONE CASE, ON PURPOSE.** The old publish-the-last-
+build form stays on `/cloudflare-sites`, demoted under "Publish the build
+you already have", because a build made on `/` or `/github-sites` is still
+publishable and `Publish again` on each row needs it.
+
+**AND THE PAGES WERE BUILT FOR THE WRONG ADDRESS — CLOSED 17 November.**
+
+This was written up here as "not done, worth knowing" and Edwin asked what
+it meant the same day, so it was fixed the same day.
+
+**THE BUG.** Step 4 asks for a DOMAIN from the pool (`acmesites.com`); the
+review step asks for a SUBDOMAIN (`hvac`); the site publishes to
+`hvac.acmesites.com`. But `utils/canonicalUrl.js` and
+`utils/buildSitemap.js` both build from `global.domain`, so every page
+shipped saying
+
+    <link rel="canonical" href="https://acmesites.com/contact.html">
+
+from a page served at `hvac.acmesites.com`.
+
+    A CANONICAL IS AN INSTRUCTION — *index THIS address, not the one you
+    are on* — AND THAT ADDRESS IS A DIFFERENT SITE, OR NOTHING AT ALL.
+
+Worst case the subdomain's pages are dropped from the index in favour of an
+address that does not serve them.
+
+**WHY IT HAD NOT BEEN NOTICED.** The sitemap agreed with the canonical. Both
+were wrong and CONSISTENT, which is the only state canonicalUrl.js's own
+header does not warn about — it warns about them disagreeing. Two wrong
+claims that match look like one right one.
+
+**NOT A REGRESSION FROM THE TWO-STEP VERSION**, and that is why it survived:
+the generator never knew the subdomain, because it was typed on a different
+screen afterwards. The fix is only possible now both arrive in one submit.
+
+**THE FIX.** `setGlobalDomain(body, hostname)` in
+`utils/cloudflareSites/wanted.js`, called from `routes/generateRoute.js`
+after `checkWant()` succeeds:
+
+    setGlobalDomain(req.body, ready.domain);   // 'hvac.acmesites.com'
+
+**THE BODY IS REWRITTEN RATHER THAN AN ARGUMENT THREADED THROUGH.**
+`global.domain` reaches the canonical of seven page builders, the sitemap
+and the htaccess redirects. The one thing they all agree on is that the
+address comes from that field, so the narrow change is to make the field
+right — not to add a second source of truth and seven places that have to
+choose between them. And because the payload IS the body, a rebuild months
+later gets the hostname too.
+
+**THE POSITION IS THE WHOLE THING, AND IT IS ASSERTED BY POSITION.**
+
+    validateGlobalFields   ... requires `domain` present.      Still true.
+    checkWant              ... proves the POSTED domain is in the pool.
+    setGlobalDomain        ... overwrites it with the hostname.
+    Job.create             ... stores the body as the payload.
+
+Rewrite before `checkWant` and it is handed a hostname to look up, so it
+refuses every submission. Rewrite after `Job.create` and the build never
+sees it. `test-cloudflare-sites.js` asserts `check < rewrite < queue` by
+index, having stripped the comments first.
+
+**`global[cloudflare][domain]` IS LEFT ALONE**, which is not an oversight:
+the publish resolves the hostname from `prefix` + the POOL domain, so
+overwriting that one as well would publish to `hvac.hvac.acmesites.com`.
+
+**NEITHER SHAPE GROWS A SECOND SPELLING.** A flat body does not sprout a
+`global` object and an expanded one does not sprout a bracketed key — either
+leaves TWO spellings of the domain in the payload for the next reader to
+choose between, which is the duplicate-hidden-input bug that once sent
+style5 builds to `style.css`, one layer down.
+
+**THE TEST USES THE REAL `canonicalTag`**, not a regex over the source, and
+asserts the WRONG value first — otherwise a change to canonicalUrl.js could
+make the bug unreproducible and the test would still pass while proving
+nothing.
+
+`test-cloudflare-sites.js` 95 → **98**. Twenty mutants over the whole
+two-step feature, all killed.
+
+**AND THE ROW OPENED THE WRONG PAGE — CORRECTED 17 November, same day.**
+
+Edwin deployed, pressed **Cloudflare Websites** in the sidebar, and got the
+list: *"The cloudflare website button takes me to the same old screen that
+was before"*. Everything on that screen WAS new — the button, the lead, the
+grouping. The row just went somewhere else than he expected.
+
+**THE ACTUAL DEFECT.** Under one heading, two products wired opposite ways:
+
+    BUILD WEBSITES
+      GitHub Websites      /github-sites       -> a WIZARD
+      Cloudflare Websites  /cloudflare-sites   -> a LIST      <-- wrong
+
+    MANAGE
+      My Websites          /my-sites           -> GitHub's list
+                                               (Cloudflare had none)
+
+So GitHub had a build row and a manage row; Cloudflare had one row doing
+both jobs, filed under the wrong heading.
+
+    A HEADING IS A PROMISE EVERY ROW BENEATH IT HAS TO KEEP, AND THE ROW
+    THAT BREAKS IT IS INVISIBLE FROM ANY ONE ROW.
+
+**WHAT CHANGED.** Four lines and two labels:
+
+    BUILD WEBSITES
+      Cloudflare Websites     /cloudflare-sites/new    the wizard
+    MANAGE
+      My GitHub Websites      /my-sites
+      My Cloudflare Websites  /cloudflare-sites        the list
+
+`routes/formRoute.js` passes `row: '/cloudflare-sites/new'` so the build row
+is the one that lights up, and the list page is titled **My Cloudflare
+Websites** to match the row that leads to it. `TOOL_MY_SITES` was renamed
+from "My Websites": it always meant GitHub only, which was survivable until
+a second list stood next to it and made it read as the whole of which the
+other was a part — the same mistake as "Build a Website" beside "Build
+Cloudflare Websites", which is what started this whole thread.
+
+**A NEW TEST STATES THE RULE, NOT THE ARRANGEMENT.** The group map in
+`test-app-header.js` is a change-detector by design, and somebody repeating
+this mistake would simply rewrite it. So EVERY BUILD ROW OPENS A WIZARD AND
+EVERY LIST HAS A MANAGE ROW asserts the pairing itself: no list URL under
+"Build websites", every list URL under "Manage".
+
+**AND A MUTANT CAUGHT A TEST READING THE FURNITURE.** Two tests asserted
+`href="/cloudflare-sites/new"` appeared on the list page, to prove its
+*Build a website* button was there. The moment the SIDEBAR pointed at that
+same URL — and `send()` renders the sidebar into every page in that suite —
+a mutant sending the button to `/` survived.
+
+    A TEST THAT NAMES A BUTTON AND MATCHES A URL PASSES ON ANY LINK
+    ANYWHERE ON THE PAGE, INCLUDING THE FURNITURE AROUND IT.
+
+Both now match `<a href="…" class="btn…"`, which the sidebar's
+`app-sidebar-link` cannot satisfy. This is the second time in two days that
+widening what a page contains made an existing assertion stop meaning what
+its name says — the first was the badges test matching my own comment.
+
+`test-app-header.js` 72 → **73**. Twenty-three mutants over the feature, all
+killed.
+
+**THE ADDRESS CARD'S HEADING WAS INVISIBLE — 17 November.** Edwin: *"This
+font should be white"*. "Where it goes" rendered near-black on navy while
+the labels beside it were white. `form.html` whitens headings BY ELEMENT
+NAME (`h3, h4, label, p, …`); the heading is `<h4 class="h5">`, and
+Bootstrap's `h5, .h5` sets `color: var(--bs-heading-color)`, which resolves
+to `inherit`. A CLASS selector outranks an ELEMENT one, so the page's rule
+lost and the heading inherited `.card`'s near-black `--bs-body-color`.
+
+    A STYLESHEET THAT COLOURS BY TAG NAME IS ONE BOOTSTRAP CLASS AWAY
+    FROM NOT APPLYING, AND NOTHING ANYWHERE SAYS SO.
+
+`text-white` went on the CARD, not the heading — the same fix, for the same
+reason, as the build card on `/cloudflare-sites`, which is the second time
+and why it is now asserted. The test RUNS `renderCloudflareFields` against
+stubs rather than grepping, and checks the heading is still inside the card
+so a card with no heading cannot pass it.
+
+### ~~FOR TOMORROW~~ CLOSED 17 November 2026 — three things Edwin asked for in one breath
+
+**1. EVERY DOOR NOW SAYS WHAT IT IS BUILDING.**
+
+*"Please add a heading to the wizard showing the user if they are Building a
+Website, Building a Cloudflare Website, building a Github Website."*
+
+The page had **no heading at all**. Three routes, all opening on "1. What
+are we building?", and the only thing on screen that differed was which
+sidebar row was lit.
+
+    THE LIT ROW IS WHERE YOU CAME FROM. A HEADING IS WHERE YOU ARE, AND
+    ONLY ONE OF THOSE SURVIVES A BOOKMARK OR A RELOAD.
+
+`{{WIZARD_TITLE}}` in `src/views/form.html`, filled by `renderWizard()` from
+a `heading` and a `blurb` passed per route — server-rendered, so it is right
+in the HTML as it arrives rather than a frame later. Build a website / Build
+a GitHub website / Build a Cloudflare website. The blurb carries what a
+heading cannot: *what happens when it finishes*, which is the actual
+difference between the three doors and was said nowhere before the review
+step — on `/github-sites`, not even then.
+
+**BLOGS ARE NOT THIS WIZARD**, which Edwin's question assumed. `/blog-sites`
+and `/static-blogs` are separate screens with their own headings.
+
+**AND THE SUITE'S COPY OF THE SUBSTITUTION LIST WENT STALE AGAIN.**
+`renderFormPage()` in `test-app-header.js` repeats formRoute's `.replace`
+chain, and its sibling test's comment already recorded this happening when
+`{{SIDEBAR}}` was added. It happened on the very next placeholder. The copy
+is kept — the helper renders a page the real route cannot, one with no
+request behind it — and the test that checks the page against the ROUTE is
+what makes the staleness loud rather than silent.
+
+**2. A SECOND GENERATE WHILE THE FIRST IS STILL BUILDING.**
+
+*"How do we fix the problem of a user creating a site and while the site is
+being built he fills out the generator form again and presses generate for a
+second site?"*
+
+**IT WAS ALREADY PREVENTED.** `routes/generateRoute.js` refuses with a 409
+when a queued or running job of theirs touches the build folder. Two builds
+cannot overlap. What was broken was everything after the refusal:
+
+  - `spinner.js` followed `data.redirect` **without showing the message**.
+    Pressing Generate teleported them to a progress page for a DIFFERENT
+    website, already part way through. generateRoute.js's own comment
+    records Edwin hitting exactly this and watching a bar fill for a build
+    he had not started.
+  - The review step called `clearDraft()` **before** firing the submit. So
+    by the time they landed there, the answers they had just typed were
+    gone from the screen AND from sessionStorage.
+
+        A REFUSAL THAT NAVIGATES INSTEAD OF SPEAKING IS INDISTINGUISHABLE
+        FROM A SUCCESS THAT WENT WRONG — and this one took the draft with
+        it.
+
+**THE FIX IS WHO OWNS THE CLEARING.** The wizard fires the submit and never
+sees the response, so it cannot know whether the build was accepted. It now
+exposes `window.ieClearDraft` — beside the `window.ieSaveDraft` that already
+existed for the credits modal — and `spinner.js` calls it inside the success
+branch only. The 409 shows the message with a *Watch the build that is
+running* link, so leaving the page is the customer's decision and the form
+stays where it is.
+
+**ASSERTED BY POSITION, NOT PRESENCE.** A clear anywhere in that handler is
+"we cleared the draft"; only one inside the success branch is "we cleared it
+because the build exists". And the handler must contain exactly ONE
+`window.location.href = data.redirect` — a second one anywhere is the old
+behaviour back.
+
+**3. THE REPUBLISH FORM IS FOLDED AWAY ONCE THE BUILD IS LIVE.**
+
+*"I built a website using the new flow and it's live. Now what is the
+purpose of this?"*
+
+It had one until the wizard learned to publish. The build folder used to
+hold something nobody had published, because that form was the only way to
+publish at all. Now the common case is the build that just went live through
+`/cloudflare-sites/new` — and the form sat open, prefilled with its name,
+offering to put the SAME PAGES at a SECOND address. Free, instant, and
+duplicate content competing with itself.
+
+    A FORM THAT WAS THE ONLY WAY THROUGH BECOMES A TRAP THE DAY A BETTER
+    WAY THROUGH EXISTS, AND IT DOES NOT CHANGE TO SAY SO.
+
+**FOLDED, NOT REMOVED**, because it is still the only FREE route in two real
+cases: a build made on `/` or `/github-sites` that you then want on
+Cloudflare, and a publish refused BEFORE a row existed — a hostname taken
+during the build (`raced`), or a Cloudflare account with no room (`full`).
+Both leave paid-for pages on disk and nothing to press. Rebuilding through
+the wizard would charge again.
+
+    A FAILED publish AFTER the row exists is a different path: the draft
+    row carries its own Publish button. That one was already right.
+
+**TIMESTAMPS, BECAUSE NOTHING TIES A ROW TO A BUILD.** `CloudflareSite` has
+no "built from" field, and adding one would be a migration for a question
+two dates already answer: `publishNow()` always reads the CURRENT dist
+folder, so a site published AFTER this build was generated was published
+FROM it. There is no way to publish an older build — the folder only ever
+holds one.
+
+**`<details>`, NOT JAVASCRIPT.** A native disclosure needs no script, works
+before the page finishes loading, and keeps this page's promise that nothing
+on it has an inline handler (`test-inline-handlers.js`). The summary names
+the address the build is already serving from, so the one fact that makes
+the form a mistake is the first thing read.
+
+**ONE COPY OF THE FORM MARKUP**, lifted into `publishForm` and used by both
+states. Writing it twice is how the two versions start disagreeing about
+which fields exist.
+
+**4. THE FINISHED SCREEN NAMES THE ADDRESS.**
+
+A Cloudflare build ends on a hostname nobody has seen — typed on the review
+step, several minutes and a whole build earlier — and `/jobs/:id` said only
+"Your website is ready" over a button. The one fact wanted at that moment,
+WHERE IS IT, was a click away or a trip to the list.
+
+    THE OLD TWO-STEP FLOW DID NOT HAVE THIS PROBLEM, because the address
+    had been typed on the previous screen. SHORTENING THE ERRAND IS WHAT
+    MOVED IT OUT OF SIGHT — the cost of the fix, paid two screens away
+    from where it was made.
+
+`finishedLine(job)` returns `{ url, host, credits }` and the DOM beside it
+is built by hand from those, never from a string, so a hostname cannot be
+parsed as HTML. The line now reads *Live at leander-chiropractor.1-1o.com ·
+400 credits were used.*
+
+**A PURE FUNCTION BECAUSE OF WHERE IT LIVES.** This page is a template
+literal inside a route, so the only way a test can reach a decision in it is
+to lift it out and run it — the trick `test-build-progress.js` already used
+for the detail line. Returning pieces rather than markup is what makes that
+possible.
+
+**https ONLY, AND IT IS BELT.** The value comes from our own database by way
+of jobGenerator. Checked anyway: it ends in an href, and one line here
+covers a class of bug that would be somebody else's mistake three files
+away.
+
+**AND A BACKTICK IN A COMMENT TOOK THE WHOLE PAGE DOWN.** The first draft of
+that function's note quoted a URL scheme in backticks. Everything in that
+script is inside a template literal, so the backtick ENDED THE PAGE and
+`node --check` failed sixty lines higher, on the line that interpolates the
+job id.
+
+    THE SAME FAMILY AS form.html's RULE ABOUT NEVER NAMING A PLACEHOLDER
+    IN A COMMENT: in a file that is also a string, a comment is not inert.
+
+**5. THE VERB MOVED ONTO THE ROWS, AND A CLICKED ROW SAYS SO.**
+
+*"I noticed we are not using ajax, right? … there is nothing telling the
+user that request has been sent. Also all the options on the sidebar should
+add the word Build."*
+
+**THE LABELS.** Edwin asked for "Build" on every build row. The groups were
+`Build websites` and `Build blogs` — the 16 November regrouping had put the
+verb in the HEADING precisely so it was not repeated down the column, so
+doing both would read *"Build websites → Build Cloudflare Websites"*. The
+headings became **WEBSITES** and **BLOGS** and the verb moved down.
+
+    A VERB BELONGS WHERE THE CLICK IS. A heading is a filing label; the
+    row is the thing you do.
+
+**THE FIRST ROW READS "Click to Build Websites"**, named by Edwin later the
+same day. The other four are "Build <host> Websites"; this is the open
+generator and the row that is also the page's primary action.
+
+**AND THE TEST HAD TO STOP BEING ABOUT WORD ORDER.** It asserted every build
+label matched `/^Build /`, which this breaks. The property was never "starts
+with Build" — it is "says what pressing it does", so it is `/\bBuild\b/`
+now, with the Manage and Tools rows asserted NOT to contain it. An anchored
+test would have failed on a wording change rather than on a wrong one.
+
+**AND IT PROVED NAV LABELS AND PAGE TITLES ARE DIFFERENT THINGS.**
+`TOOL_CF_BLOGS` titles `/static-blogs` — a LIST of blogs — and
+`TOOL_WP_BLOGS` also labels a button on the blog report and a card on the
+dashboard. Renaming those to carry "Build" would have titled a list page
+"Build Cloudflare Blogs". So five `NAV_*` constants were added beside them,
+and `utils/appHeader.js` stopped importing four `TOOL_*` names it no longer
+uses.
+
+    A NAVIGATION LABEL AND A PAGE TITLE ANSWER DIFFERENT QUESTIONS —
+    "what will this do" against "where am I" — AND ONE STRING CANNOT DO
+    BOTH ONCE EITHER OF THEM GROWS A VERB.
+
+**THE FEEDBACK, AND IT IS NOT AJAX.** Every screen here is a full page load.
+The browser does report one — in the tab, at the top of a window nobody is
+looking at while their eyes are on the row they just clicked. Inside the app
+nothing changed, so a slow response was indistinguishable from a click that
+missed.
+
+    THE PROBLEM IS NOT THE NAVIGATION. IT IS THAT THE PAGE SAYS NOTHING
+    WHILE IT HAPPENS.
+
+Ajax navigation would mean every screen rendering as a fragment, a client
+router, and a second way for every page to be wrong — to buy exactly this.
+`public/js/sidebarBusy.js` is a dozen lines: the clicked row's icon becomes
+a spinner and the row dims.
+
+**NOTHING CLEARS IT, AND THAT IS THE TRICK.** The document is replaced when
+the new page arrives, which takes the spinner with it. A timeout would be a
+guess about how long a page takes, and clearing early is worse than never
+showing it. **The one exception is the back button**: a browser restores a
+page from the back/forward cache frozen as it was — the same snapshot
+behaviour `routes/jobRoute.js` disables caching for — so `pageshow` with
+`persisted` is the only reset.
+
+**AND A SPINNER OVER THE WHOLE SCREEN ON TOP OF IT** — Edwin, same day. The
+row answers "did my click register"; the curtain answers "the app is working
+and is not ready for you yet", which a single dimmed line in a column does
+not carry on a slow load.
+
+**NO DELAY AND NO TEXT, BOTH HIS CALL.** The obvious refinement is to arm it
+and show it only after ~300ms, so a fast page never flashes one up; he said
+not to bother. A plain navigation also has nothing to report beyond "wait",
+which is what a spinner already means — the wizard's own overlay says
+"Generating your website" because there IS something happening that takes a
+name. It sits at z-index 9998, UNDER that one, so a generating build is
+never covered by a navigation curtain.
+
+**AND MY OWN COMMENT BROKE A SUITE THREE PRODUCTS AWAY.** The note beside
+the overlay's CSS used the word "lost"; `test-static-blogs.js` asserts a
+clean article save reports nothing missing by scanning the whole page for
+that word, and the comment is IN that page.
+
+    A <style> BLOCK GOES TO THE BROWSER AS WRITTEN, so a comment in
+    appHeader.js's stylesheet is in the HTML of every page the header
+    renders — unlike a comment in a .js file, which is served once and
+    cached.
+
+        A COMMENT IN A SHIPPED STYLESHEET IS PAGE CONTENT, and every
+        assertion anybody makes about a whole page can read it.
+
+That is the fifth time in two days that prose has decided a test: the badges
+test, two sidebar mutants, the busy-row mutants, and this — the first one
+where the comment broke a passing test rather than propping up a failing
+mutant.
+
+**AND TWO MORE MUTANTS CAUGHT THE SAME SHAPE OF WEAK ASSERTION.**
+`script.match(/showOverlay\(\)/)` is satisfied by the line
+`function showOverlay() {`, so deleting the CALL left it passing over a
+feature that never fired.
+
+    A FUNCTION THAT EXISTS AND IS NEVER CALLED PASSES EVERY TEST THAT
+    LOOKS FOR ITS NAME.
+
+Both are now asserted inside the handler that has to make the call.
+
+**WHAT IS NOT MARKED:** the row you are already on (a reload is not a
+journey, and a spinner there reads as "something is wrong with this page");
+and any click that leaves this page alone — cmd, ctrl, shift, alt, middle
+click, another origin, a download. Those open a new tab, so a marked row
+would spin for ever on a page that never navigated.
+
+**AND THREE MUTANTS SURVIVED BY FINDING MY OWN PROSE.** The first draft of
+these tests searched the rendered CSS, the script tags and the script file
+for a word. Deleting the `<script>` tag outright still passed — because the
+HTML comment above it NAMES THE FILE. Same for `pageshow`, named in the
+script's own header.
+
+    A TEST THAT SEARCHES A FILE FOR A WORD FINDS THE SENTENCE EXPLAINING
+    THE CODE AS HAPPILY AS THE CODE.
+
+Fourth time in this project: the badges test, two sidebar mutants, and this.
+All three assertions now run through `withoutComments` / `codeOnly`.
+
+**AND THE TEMPORAL DEAD ZONE, AGAIN, IN THE SUITE.** `test-app-header.js`
+runs each test as it reads the file, and the new `NAV_*` import sat three
+hundred lines BELOW the first test that used one. A `const` read before its
+declaration throws. The wizard lost its whole IIFE to this on 16 November;
+here it cost one test, which is the cheap version of the same lesson. The
+import moved to the top of the file.
+
+**6. AND THE NEW HEADING WAS INVISIBLE, FOR THE REASON I HAD JUST WRITTEN
+DOWN.** Edwin: *"the headings should be white color"*.
+
+    "Where it goes"             <h4 class="h5">    16 November
+    "Build a Cloudflare..."     <h1 class="h3">    17 November
+
+The same defect, one day apart, the second one written by me AFTER noting
+the first. `src/views/form.html` colours headings BY ELEMENT NAME. Bootstrap
+5.3 sets `h1..h6, .h1..h6 { color: var(--bs-heading-color) }`, that token
+resolves to `inherit`, and a CLASS selector outranks an ELEMENT one — so the
+page's rule lost and the heading inherited `.card`'s near-black.
+
+    COLOURING BY TAG NAME IS ONE BOOTSTRAP CLASS AWAY FROM NOT APPLYING,
+    AND NOTHING ANYWHERE SAYS SO.
+
+**THE FIRST FIX WAS LOCAL AND THE SECOND IS NOT.** `text-white` on the
+address card fixed one heading; `h1` and `h2` were not even in form.html's
+list, because nothing on the page used them until this heading existed. The
+classes are now named beside the tags, and the `.alert` exception beside it
+gained the same pairs so an alert still keeps its own variant colour.
+
+**THE TEST ASSERTS THE PAIRING, NOT THE LIST.** It reads every
+`color: white` selector out of the page's own `<style>`, finds every heading
+in the rendered HTML that carries a Bootstrap heading class, and requires
+the class to be one the stylesheet names. So it fails on the next
+`<h2 class="h4">` somebody writes, rather than on an edit to a list of
+selectors — and it refuses to pass vacuously if no such heading exists.
+
+**TESTS.** `test-wizard-steps.js` 123 → **131**, `test-cloudflare-sites.js`
+98 → **101**, `test-build-progress.js` 28 → **32**, `test-app-header.js`
+73 → **78**. Forty-seven mutants over the whole two-step feature, all killed — including one that gives every door the same
+heading, one that clears the draft whatever the server said, one that makes
+the 409 navigate again, and one that folds the form away for everybody who
+has ever published anything.
+
+### CLOSED 17 November 2026 — editing a Rank Fast build before it is exported
+
+**ASKED FOR 17 November.** Edwin: *"in Rank Fast mode if I want to change
+something in the content before exporting to wordpress or static sites with
+webpack at the moment I don't have the option to update the content … say I
+press preview I check the site and I want to make a change I want to have an
+option for that"*, and in the same message *"I also need a way to add the
+verification for google search console"*.
+
+**THE ONLY CONTROL OVER THE WORDS WAS AN EXPENSIVE RE-ROLL.** Generating
+again meant a fresh set of model calls, a fresh bill, and a DIFFERENT site —
+the generator does not write the same sentences twice.
+
+**ALMOST NONE OF IT WAS NEW, WHICH IS WHY IT TOOK AN EVENING AND NOT A WEEK.**
+Every build already writes both halves of what an edit needs — `_src/content.json`
+(the words) and `_src/build.json` (what the wizard was asked for) — and
+`runGeneration({ body: recipe.body, reuse: model })` already re-renders from
+stored words. The Cloudflare edit screen has used that path since 8 November.
+
+    AND A RE-RENDER CHARGES NOTHING. runGeneration.js, line 267:
+    `const charged = reuse ? 0 : credit.totalCost`. That fact is what makes
+    an edit screen worth building rather than a cheaper-looking "generate
+    it again".
+
+**THE PARTS.** `routes/editSiteRoute.js` (GET draws the boxes, POST applies
+and queues), `utils/editSiteJob.js` (the `siteedit` job), `utils/editForm.js`
+(the boxes, extracted — see below), `utils/buildDir.js`, an **Edit words**
+button beside Preview on the dashboard card, and `siteedit` added to the Job
+enum, the runner and the progress page's copy table.
+
+**THE FORM LEFT THE CLOUDFLARE ROUTE.** Ninety lines of markup that turn a
+content model into controls. Copying them into a second route is ninety
+lines that agree today and diverge the first time one is fixed — and what
+the two screens share is not "a form", it is the rule for which block gets a
+heading box and where the ticked list sits among the paragraphs. That rule
+was already one function (`editableText.collect`); now the rendering is too.
+
+**THE TAG DOES NOT NEED A REBUILD**, and that is the whole reason it is a
+separate path. A verification element is a line in the <head>; it has nothing
+to do with a sentence. Saving it alone writes it straight into the built
+pages and answers at once. Only changed WORDS cost a re-render.
+
+**STRIP THEN INSERT, FOR SET, CHANGE AND CLEAR ALIKE.** The build folder is
+written into and read back, so unlike the Cloudflare file map it cannot
+assume its pages are clean. Without the strip, changing a token would leave
+BOTH — which Search Console reads as a property verified by somebody else's
+code. The Cloudflare path now strips too: a folder that has been through
+this screen already carries a tag when it is published.
+
+**AND THE REBUILD HAS TO PUT IT BACK.** runGeneration writes every page from
+scratch, so the token lives in `_src/verification.json` and the job
+re-injects it. Without that the property would verify, then quietly stop,
+days later, the next time Google re-checked — a failure with no moment you
+could point at.
+
+**SIX OF MY OWN TESTS WERE LYING.** They set `editSite.distDirFor = () => tmp`
+— which replaces the EXPORT while the route goes on calling its own
+module-local copy. So they arranged a temporary build folder and then
+asserted against the real `dist/`.
+
+    A FUNCTION CALLED THROUGH ITS MODULE OBJECT CAN BE REPLACED. ONE
+    CALLED BY ITS BARE NAME CANNOT, AND NOTHING SAYS SO AT THE CALL SITE.
+
+`utils/buildDir.js` exists because of that, and earns its keep anyway: three
+files needed the path and each had its own `path.join` walking a different
+number of directories up.
+
+`test-edit-site.js` **19**, ten mutants, all killed.
+
+### CLOSED 17 November 2026 — the progress page shipped broken JavaScript
+
+**EDWIN: *"i tried to build a githun site and it got stuck and never even
+started"*.** It had not. Every job on the server read `completed`, including
+his — created 04:37:31, finished 04:41:24. The site was built and waiting on
+his dashboard the whole time.
+
+**THE PAGE NEVER ASKED.** `routes/jobRoute.js` is one enormous template
+literal, and the night before I had added `finishedLine()` inside it with a
+regular expression anchored on the scheme — a backslash before each slash.
+Correct JavaScript. In a template literal a backslash is an ESCAPE, so each
+pair collapsed and the browser received a short regex followed by what it
+read as a line comment.
+
+    A SYNTAX ERROR IS REFUSED WHOLE. Not the line — the script. So
+    nothing on that page ran: no polling, no progress, no finish. The bar
+    sat at nought per cent under the word "Starting..." while the build
+    ran, finished and published behind it.
+
+**IN A FILE THAT IS ALSO A STRING, THE SOURCE AND THE OUTPUT ARE NOT THE
+SAME TEXT — AND `node --check` ONLY EVER READS THE FIRST ONE.**
+
+**THE SECOND TIME IN FOUR DAYS, IN THE SAME FILE.** A backtick in a comment
+had taken it down the same way on the 17th; I wrote the lesson up, and then
+put a regex into the same string. That one at least failed at startup. This
+one shipped, and the symptom pointed at the job runner — which was healthy.
+
+**AND MY FIRST FIX REPEATED IT.** The comment explaining the bug quoted the
+broken regex in backticks. `node --check` caught that one.
+
+**WHY NOTHING ELSE CAUGHT IT.** `test-build-progress.js` lifts
+`finishedLine` out of the source with `new Function` and runs it — so it
+tested the function AS WRITTEN and never AS EMITTED.
+
+**THE FIX IS TWO THINGS.** `indexOf` and `slice` instead of a regex, so the
+function carries no escapes at all and cannot differ between the file and
+the page; and two tests that RENDER the page, pull out the inline script and
+compile it with `new vm.Script`, plus a third that refuses any backslash
+inside the page literal — the quieter half of the same bug is an escape that
+still parses and matches something else.
+
+**AND THE RUNNER DID NOT AWAIT.** `test()` in that suite calls `fn()` and
+returns. Hand it an async function and the promise comes straight back, the
+try/catch sees nothing, and it prints `ok`. **Both new tests passed
+unconditionally** — including the one whose entire job was to catch this.
+The Cloudflare suite lost its last test to the same hole the day before,
+from the other end.
+
+    A RUNNER THAT DOES NOT AWAIT TURNS EVERY ASYNC TEST INTO A TEST THAT
+    CANNOT FAIL.
+
+Fixed with a second `asyncTest` helper and a deferred queue, rather than by
+making `test()` async — which would need every one of forty synchronous
+calls awaited, and one missed would be this bug again.
+
+`test-build-progress.js` 32 → **35**, and the bug put back fails two of
+them.
+
+### ON THE LIST — the heartbeat proves the process, not the work
+
+**NOTICED 17 November**, while hunting a build that looked stuck. It was not
+the cause — every job on the server read `completed` — but the hunt turned
+this up and Edwin asked for it to be written down.
+
+**WHAT A HEARTBEAT IS HERE.** `utils/jobRunner.js` `runJob()` starts a bare
+`setInterval` that stamps `heartbeatAt` every 15 seconds, and
+`requeueStaleJobs()` puts back any `running` job whose stamp is older than
+90. That recovers a job whose PROCESS died — a restart, a crash, an OOM —
+which is what it was built for and what it does well.
+
+    THE TIMER IS INDEPENDENT OF THE WORK. A generation wedged on a call
+    that never returns keeps stamping, so it never looks stale, is never
+    requeued, and holds its slot in generationLimiter the whole time.
+    Every job queued behind it waits.
+
+That is the shape of the failure: not a crash, but a job that is alive by
+every measure the app takes and is doing nothing.
+
+**IT IS BOUNDED TODAY, AND ONLY BY A DEFAULT.** `utils/openaiClient.js`
+builds the client with the api key and nothing else — no `timeout`, no
+`maxRetries` — so the SDK's own defaults apply: ten minutes a call, two
+retries. A wedged call therefore DOES eventually fail, and the job fails
+with it. The ceiling is roughly half an hour of a held slot, not for ever.
+
+    A BOUND NOBODY CHOSE IS A BOUND NOBODY IS KEEPING. It is one
+    `timeout: 0` away from unbounded, and the file gives no sign that
+    anything depends on the default.
+
+**WHAT WOULD ACTUALLY FIX IT**, roughly in order of how much they are worth:
+
+  - **Set the timeout explicitly** in `openaiClient.js`, so the bound is a
+    decision with a reason beside it rather than an inherited default. One
+    line, and it closes the unbounded case outright.
+  - **Stamp the heartbeat from the WORK, not from a timer.** The runner
+    already receives `onProgress` from every generator; a heartbeat written
+    there means the stamp proves a page was finished, not that a process is
+    running. Jobs that report nothing for 90 seconds are then genuinely
+    stuck — though note runGeneration's long single-page calls would need a
+    sensible floor, or every big page would look stale.
+  - **A wall-clock ceiling per job**, independent of both. The crudest and
+    the only one that catches a hang nobody predicted.
+
+**DO NOT START WITH THE SECOND ONE.** It changes what "stale" means for
+every kind of job at once — site, blog, build, cfedit, siteedit — and the
+blog campaigns are the ones that legitimately go quietest for longest.
+
+### FOR TOMORROW — automated Cloudflare websites, five NEW layouts
+
+**ANSWERED IN FULL on the evening of 17 November.** Edwin, across four
+messages:
+
+  - *"the concept would be similar to the sites for github but 5 sites with
+    different html structure"*
+  - *"these automated site have to have the same amount of pages as the
+    github sites"* — ELEVEN pages, the Local Website Options page set.
+  - *"It would be self-publishing mode."*
+  - *"I want these 5 new layouts to be different from all layouts including
+    github layouts"* — they share NOTHING with ledger, beacon or anvil.
+  - *"new images for the new 5 layouts"* — their own photographs too.
+
+**THE GOOD NEWS: THE ARCHITECTURE IS ALREADY BUILT.** A "design" here is a
+PACKAGE, from Edwin's own 30 October instruction: *"I want a different html
+structure, diferent css and different classes and prefix and css IDs,
+Different prompts. Keep the same sections."* Three exist — ledger, beacon,
+anvil — and two files hold the seam:
+
+    designs.js     what a human picks           (label, structure, imageSet)
+    structures.js  what the renderer is handed  (pages, prompt, stylesheet)
+
+The renderer never sees a design id and the wizard never sees a structure
+key. Adding a layout is adding a row to each, not changing either.
+
+**THE COST, MEASURED RATHER THAN GUESSED.** The three existing layouts:
+
+    render/<name>/pages.js      ~430 lines
+    render/<name>/chrome.js     ~450
+    prompt-<name>.js            ~375
+    a block in theme.js         ~270
+    ----------------------------------
+    one layout                ~1,500 lines
+
+**Five of them is roughly 7,500 lines**, and none of it is boilerplate: the
+markup, the class prefixes, the ids, the stylesheet and the voice all differ
+by definition.
+
+**THE PHOTOGRAPHS ARE SMALLER THAN THEY LOOK.** A set is four heroes and an
+`alt.json`:
+
+    set-1/  hero-1.webp .. hero-4.webp  +  alt.json
+
+`alt.json` carries `cover` and one sentence per hero. HERO_COUNT is 4 and
+the rotation is `index % HERO_COUNT`, so eleven pages cycle through four
+pictures. Every trade folder under `local-website-options/` currently holds
+set-1, set-2 and set-3 — one per existing design, bound 1:1 in designs.js.
+
+    FIVE NEW DESIGNS MEANS set-4 .. set-8 — five sets of four pictures per
+    trade, Edwin's call on 17 November. Ten trade folders exist today, so
+    that is FIFTY SETS / TWO HUNDRED PHOTOGRAPHS, each needing a line in
+    an alt.json.
+
+That is the long pole, and it is Edwin's work rather than this file's. It
+also lands on top of image work already outstanding — see the known-gaps
+list for the seventeen offered trades with no local-options pictures at all,
+and the separate note about `painter/` being half full of fences.
+
+**THE ORDER, AND IT MATTERS MORE THAN USUAL.**
+
+*Pass one — the MODE, on the three layouts that already exist.* This is the
+risky half and it has nothing to do with markup: a SECOND SELF-PUBLISHER.
+`utils/jobGenerator.js` returns on a `published` report BEFORE it reads
+`siteTarget`, so today a self-publishing mode carrying a Cloudflare address
+would go to GitHub and drop the address silently. Two shapes to choose
+between — see the earlier note in this entry's predecessor — and the second
+is almost certainly right, because it is the only one where `checkWant()`
+still runs before the credits are spent. Also `applyDraft()`'s refusal has
+to become a rule rather than a block, or it will refuse this new mode on its
+own page.
+
+*Pass two — the five layouts, one at a time.* Purely additive: a folder, a
+prompt, a theme block and two rows. None of them can break pass one.
+
+    DOING BOTH AT ONCE MEANS DEBUGGING A NEW PUBLISH PATH AND NEW MARKUP
+    TOGETHER, WITH NO WAY TO TELL WHICH BROKE. The sidebar work two days
+    ago split for the same reason and the split earned its keep twice.
+
+**DONE THE SAME NIGHT — EACH DOOR OFFERS ONLY ITS OWN DESIGNS.** Edwin:
+*"can we just show each group of designs mapped out to either
+github/cloudflare so the user never has to worry about mixing them up?"*
+
+Built ahead of the layouts, while it was a no-op: the dropdown still reads
+Designs 1-3 on /github-sites and the screen is unchanged.
+
+  - Every row in `designs.js` carries a `mode`, and `designsFor(mode)`
+    returns that mode's rows — an unknown or empty mode gets `[]`, never
+    everything.
+  - `routes/formRoute.js` filters ON THE SERVER and hands the result to the
+    page in a `site-designs` meta tag, beside the mode and the target it
+    already injects. The browser on /github-sites is never told the other
+    designs exist.
+  - The wizard renders whatever it was handed, and draws NO dropdown for an
+    empty list — which is the state the Cloudflare mode is in until its
+    first layout exists.
+
+**WHY NOT A WARNING.** `structureFor()` falls back rather than throwing, and
+its own note explains why: refusing to build a paid-for site over a typo in
+a layout name is the worse failure. So picking a Cloudflare layout on the
+GitHub wizard would not fail — it would quietly build Ledger, and the only
+sign would be that the site looked like the last one.
+
+    A WRONG CHOICE THAT STILL BUILDS SOMETHING IS WORSE THAN ONE THAT
+    REFUSES. The fix is not to warn about it; it is not to offer it.
+
+**AND THE OPTIONS WERE HAND-TYPED UNTIL TONIGHT** — three `<option>`
+elements in the wizard's markup that had to be kept in step with designs.js
+by hand, in another file, in another language. Adding a layout meant
+remembering both. Now **adding a row to designs.js is the whole job.**
+
+**TWO MUTANTS SURVIVED THE FIRST ATTEMPT, FOR A REASON WORTH KEEPING.**
+Every design belongs to `localoptions` today, so `return DESIGNS` — no
+filtering at all — produces the same answer as the real filter for the only
+mode that has any. Both passed every test that went through the served page.
+
+    WHILE ONE MODE OWNS EVERYTHING, "FILTERED" AND "NOT FILTERED" ARE THE
+    SAME OUTPUT. The behaviour that distinguishes them is what happens to
+    every OTHER mode, and that has to be asked directly.
+
+So `designsFor` is now asserted on its own: an unknown mode, an empty one
+and a mode with no designs all get `[]`. That is the test that will still be
+true the day design 4 arrives.
+
+`test-wizard-steps.js` 131 → **134**, five mutants, all killed.
+
+### CLOUDFLARE LOCAL AUTOMATION — the fourth door, and three bugs of mine
+
+**17 November.** Edwin asked what was missing to build a Quarry site in the
+product. The answer was that the eleven-page builder always published to
+GitHub and the Cloudflare destination only worked for the other builder.
+Both ends fixed, a door built, and then three things I got wrong.
+
+**THE DOOR.** `/local-automation`, sidebar row **Cloudflare Local
+Automation** — Edwin's name, kept over his own earlier *"all the options on
+the sidebar should add the word Build"* when the two were shown to clash.
+Same builder as /github-sites, Cloudflare destination, Designs 4-8. The
+finished sites list in **My Cloudflare Websites** with the rest.
+
+**THE TWO FAILURES THAT MADE IT IMPOSSIBLE.** Neither threw, neither failed
+a test.
+
+  - `runLocalOptions` took the GitHub installation off the ACCOUNT when the
+    domain pool had not supplied one. An account that ever installed the app
+    carries that id for ever, so a Cloudflare-bound site was pushed to
+    GitHub because of a choice made weeks earlier. *A fallback is only a
+    fallback while there is one destination.*
+  - `jobGenerator` returned on the builder's `published` report before it
+    read the destination, and runLocalOptions always reports that — `null`
+    included. The Cloudflare step below was unreachable. *A function that
+    checks where it has been before it checks where it is going only ever
+    works for one destination.*
+
+**AND THREE I SHIPPED.**
+
+**1. Two destinations on one page.** Locking `localoptions` turned on the
+GitHub domain picker in step 3, so the form asked for a GitHub pool domain
+AND a Cloudflare address. Edwin saw the two dropdowns. The invisible half
+was worse: `sitePlace()` reads `domainId` first, so the site would have
+published to the Cloudflare address while every canonical, og:url, the
+sitemap and the CNAME named the GitHub host.
+
+    A CONTROL THAT APPEARS BECAUSE OF A FLAG SET FOR ANOTHER REASON IS A
+    CONTROL NOBODY DECIDED TO SHOW.
+
+The rule lived in four places and all four now agree: the markup, the
+wizard's required-field list, `validateGlobalFields()` and `sitePlace()`.
+
+**2. Design 4 built Design 1.** Edwin: *"but this is a copy of design 1. i
+thoght design 4 was different"*. The route offered Design 4 by asking
+`designsFor(CF_MODE)`; the build resolved it with
+`buildOptionsFor(design, siteMode)`, and that door's siteMode is
+`localoptions`, where the row does not live. The mode guard refused it, the
+default came back, `structureFor()` fell back to Ledger.
+
+    ONE DECISION ASKED WITH TWO DIFFERENT KEYS. Every piece behaved exactly
+    as written — the guard refused, the fallback fell back, nothing threw —
+    and the customer got Design 1.
+
+`designsKeyFor({ siteMode, siteTarget })` in designs.js is now the only
+place that answers it, and both ends call it. It returns the mode unchanged
+for the three older doors.
+
+**WHAT I SHOULD HAVE SEEN.** I spent the morning writing that a wrong design
+"still builds something" rather than failing, then shipped exactly that —
+because I checked the two keys were SEPARATE and never checked they MATCHED.
+And I changed a destination without re-reading what locking a mode drags
+along with it.
+
+**3. A deleted hostname stays reserved for ever — PARKED, NOT FIXED.**
+Edwin: *"i deleted the previus site and now it wont let me use it withe same
+business name"*. Deleting marks the row `removed` and keeps it, on purpose;
+the clash check ignored the status. He chose to free the name when the
+delete was CLEAN — the teardown already computes whether the domain was
+detached, the DNS record removed and the project deleted, and wrote them to
+a log line and nowhere else.
+
+    A LOG IS WHAT HAPPENED. A FIELD IS WHAT IS STILL TRUE.
+
+**DONE the same day, after Edwin asked the question that found the dead
+end:** *"but what happened if the clouldflare deletion failed. What options
+does the user have?"*
+
+Three, and only one was any good. The delete page already said what was left
+behind, and running the delete again really did retry it — but the list
+hides removed sites, so the only way back to that page was a URL nobody
+kept. The other two options were the Cloudflare dashboard, and giving up.
+
+    A RETRY NOTHING LINKS TO IS NOT A RETRY. And a failed teardown now
+    keeps the address reserved, which is right — and would be a trap
+    without a visible way to finish the job and free it.
+
+**WHAT SHIPPED**
+
+  - `released: { domain, dns, project, at }` on CloudflareSite, all
+    defaulting false.
+  - `removeFromCloudflare()` — the teardown extracted out of the delete
+    handler, writing those three from the same expressions the log line
+    uses. *A retry that is a second copy of the thing it retries is two
+    teardowns that will disagree within a month.*
+  - `checkWant()` excludes a row whose three flags are all true — IN THE
+    QUERY, because findOne returns one row and a hostname can have two.
+  - `POST /cloudflare-sites/:id/finish-removing`, and a **Deleted, but not
+    finished** table on the list with a **Finish removing** button. Keyed
+    to the same three flags, so a row appearing there means exactly "this
+    address is still reserved".
+  - No typed confirmation on the retry: that box stops a live site being
+    destroyed by a misclick, and this one is already deleted.
+
+**WHAT STAYS RESERVED, ON PURPOSE:** a delete where the box was unticked, a
+teardown that half-failed, and every row stored before the field existed —
+all-false by default. Those are freed by pressing Finish removing, which
+settles the question instead of assuming.
+
+**THE TEST STUB WAS THE REAL RISK.** `CloudflareSite.findOne` ignored `$nor`
+and `find` ignored `status`. Left alone, the new tests would have been
+measuring the stub: *a stub that ignores part of a query is not a simpler
+database, it is a different one, answering a question nobody asked.*
+
+`test-cloudflare-sites.js` 101 → **108**, seven mutants, all killed.
+
+**Suites:** `test-local-automation.js` (new, registered in deploy.sh) 25,
+test-wizard-steps 135, test-app-header 79, test-local-options-quarry 85.
+Twenty-one mutants across the day's changes, all killed.
+
+### Three websites from one submission — 18 November
+
+**Edwin:** *"i would like to be able to fill out the information for at
+least the 3 sites we have available and the build starts and after one is
+deployed the app starts the second build and so on? is this possible?"*
+
+**MOST OF IT ALREADY EXISTED.** `models/Job.js` is a durable queue,
+`jobRunner` claims atomically every two seconds, and an Interlink Engine
+campaign is already ONE `kind:'blog'` job that writes fifteen posts. The
+batch is that shape with sites in place of posts.
+
+**ONE JOB, NOT THREE, AND THE REASON IS NOT TIDINESS.** Every Local Website
+Options build calls `resetUserDirs()`, which wipes and refills
+`dist/user_<id>` — one folder per user — and `generationLimiter` allows
+three jobs at once.
+
+    THREE QUEUED SITE JOBS FOR ONE USER WOULD RUN TOGETHER, AND SITE TWO
+    WOULD WIPE SITE ONE'S FOLDER HALF WAY THROUGH. NOTHING WOULD THROW.
+
+So `generateRoute.js`'s refusal of a second build is correct and stays, and
+`'sitebatch'` joined `DIST_KINDS` beside it.
+
+**IT CALLS `generateForJob()` PER SITE** rather than rebuilding the hundred
+lines of decisions that function makes about builders, destinations and
+publish outcomes. *A site in a batch is not a different kind of site; it is
+the same build with something else waiting behind it.*
+
+**NEW:** `utils/batchGenerator.js`, `routes/generateBatchRoute.js`,
+`test-site-batch.js` (**25 passed**, 25 mutants, all killed).
+
+  - **the resume reuses `completedPages` and `skippedPages`** — done, and
+    not-done-with-a-reason — so a killed process does not rebuild a site
+    that is already live, and the report survives the restart. No schema
+    change: the runner already persists both.
+  - **the inner build's page counters never become the batch's.** It
+    reports eleven pages, the batch reports three sites; forwarded straight
+    through the bar jumps to 7 of 11 and back, and a page slug lands in the
+    list the resume reads.
+  - **carry on past a failure**, Edwin's choice: sites one and three deploy,
+    site two is reported. The job still **completes** when every site
+    failed — `failed` means the batch could not run, and a failed job shows
+    an error page instead of the report.
+  - **two sites in one batch may not ask for the same address.**
+    `checkWant()` cannot catch it: neither is taken yet, and the second
+    would publish over the first.
+  - **no uploaded logo in a batch.** Uploads are keyed by job id and cleaned
+    up by job id, so three sites in one job share one folder and the first
+    site's cleanup takes the third site's file. The wordmark is what these
+    sites use anyway.
+
+**THE WIZARD HOOK IS A SECOND SUBMIT LISTENER, REGISTERED AFTER THE FIRST.**
+Listeners run in registration order, so by the time it runs every hidden
+mirror is injected and `new FormData(form)` is exactly the body that was
+about to be posted. *The only moment the form is complete is the moment
+before it is sent.* A guard that refuses the submit calls
+`stopImmediatePropagation()`, so a site that failed validation is never
+added — without the hook knowing any of the rules.
+
+**⚠ AND THE RELOAD CAME BACK AS A REFUSED SUBMIT.** Edwin hit it on the
+first try. "Add another site" saves the draft and reloads, which landed in
+the ordinary draft-restore path — written for a submit that FAILED:
+
+    "Your details were kept ... We have brought you back to the logo step,
+    because choosing the file again is the one thing we cannot do for you."
+
+Three things wrong, and one of them was the whole feature: it reads like
+something went wrong; it is about a FILE FIELD, and a batch cannot contain
+an uploaded logo at all; and **nothing said the first site had been saved**
+— the queued list only renders on the review step, and the restore drops
+you on the logo step, three steps away.
+
+    A BUTTON WHOSE ONLY VISIBLE EFFECT IS A WARNING ABOUT SOMETHING ELSE
+    HAS NOT TOLD THE PERSON ANYTHING.
+
+Now the reload leaves a one-shot note: the page lands on the **main form**
+(the first thing that differs between sites), says what was saved and how
+many are waiting, and offers "Start this one blank instead" — because
+keeping the details is right for three layouts of one business and wrong
+for three different ones. The batch is a separate key so the blank button
+empties the form without touching the sites already put by.
+
+**⚠ AND THEN EVERY BATCH WAS REFUSED, WITH A MESSAGE THAT SAID NOTHING.**
+Edwin queued three and got "The batch could not be queued." Three faults in
+one press:
+
+  - **the body arrives FLAT.** A normal submission is multipart and Express
+    expands `global[city]` into `body.global.city`. A batch entry is
+    captured with FormData and posted as JSON, and JSON.parse expands
+    nothing — the key stays the literal `global[city]`. `vetOne` read
+    `body.global`, found nothing, and refused over an address that was
+    filled in. *The same submission arrives in two shapes, and half this
+    codebase already knows it* — `siteTargetOf()` and `wantedAddress()`
+    read both, which is why the checks before the address passed and the
+    failure landed three checks downstream of its cause.
+  - **the first expander only went two levels deep**, so it dropped
+    `global[hours][monday][open]` — every opening time the wizard posts.
+    *A parser that handles the depths you thought of drops the ones you did
+    not, quietly.* It now takes any depth, and removes the flat keys so one
+    decision is not readable under two names.
+  - **the 100 KB default.** The global `express.json()` names no limit, and
+    ten submissions in one `sites` array is a different size of thing. A
+    body over the limit throws before any handler runs, so Express renders
+    HTML and the route's own messages never get a chance. Mounted a 4 MB
+    parser for that path ABOVE the global one — a limit set on the route
+    itself is dead code, because by then the body has been read.
+
+**AND THEN A 403, WHICH THE BETTER MESSAGE NAMED.** The improved client
+reported "The server refused the batch with a 403 and did not say why" —
+and that was enough to find it in one step. `middleware/csrf.js` guards
+every unsafe method and reads the token from `req.body._csrf`, the
+`x-csrf-token` header or the query. An ordinary wizard submit carries the
+hidden field the page renders; a `fetch` carries nothing unless told to.
+
+    EVERY POST IN THIS APP NEEDS THE TOKEN. A NEW ENDPOINT IS NOT AN
+    EXCEPTION TO THAT, IT IS JUST A PLACE THAT HAS NOT BEEN TOLD YET.
+
+Read off the same meta tag `spinner.js` reads — and `Accept:
+application/json` added too, because `rejectCsrf()` only replies in JSON
+when the request asked for it; otherwise it renders a PAGE, which is why
+the refusal arrived as HTML and "Your session expired. Please refresh the
+page and try again." never reached the screen.
+
+**AND THE CLIENT HID ALL OF IT.** `res.json().catch(() => ({}))` turns an
+HTML error page into an empty object, so `data.error` was undefined and the
+alert fell through to the same sentence the route says on a 500. *A
+catch-all message that matches a real one makes the real one unreadable.*
+It now reports the status when a reply cannot be read, and refuses to treat
+a 200 it could not parse as an acceptance — clearing the batch on one would
+throw away every site typed.
+
+**AND `escapeAttr` DOES NOT EXIST IN THAT FILE.** It is a server helper; the
+notice would have thrown a ReferenceError the moment it rendered. Caught by
+running the real function in a browser rather than by reading it.
+
+**⚠ THE FLAG HAD TO CLEAR ITSELF ON A TIMER.** A refused submit never
+reaches the hook, so `pendingBatch` would stay armed and the NEXT submit —
+possibly an ordinary Generate — would be swallowed into the batch. *A
+one-shot flag that is only cleared on the happy path is a flag that is still
+set when it matters.* Checked in a real browser, not only in the source.
+
+**A MUTANT FOUND THE ORDERING TEST LYING.** It asserted the hook sits after
+the main handler and never that it listens for `submit` at all — so a hook
+renamed to an event nothing fires was in the right place, never ran, and
+passed. *Being after the right listener is not the same as being a listener
+for the right event.*
+
+**`deploy.sh` WAS EDITED**: `chmod +x deploy.sh && ./deploy.sh`.
+
+### Every site got the same six services — 17 November
+
+**Edwin, looking at two finished sites:** *"the problem i see now is that all
+websites get the same services."*
+
+**NOTHING WAS BROKEN.** There is no services step in this wizard — he
+removed it on 28 October, *"the service pages option should not be there as
+the model will suggest"* — so `generate.js` calls `suggestServices()` with
+the trade and the town and nothing else, and that prompt says:
+
+    ORDER THEM BY HOW COMMONLY THIS KIND OF BUSINESS IS ACTUALLY HIRED
+    FOR THEM. The first is the one they are called about most.
+
+**Asking for the six most common plumbing jobs has one right answer.** Two
+plumbers differ by name, address and town; none of those changes what a
+plumber sells.
+
+    THE INPUT DID NOT VARY, SO THE OUTPUT COULD NOT.
+    THE FIX IS NOT A BETTER PROMPT. IT IS A WIDER LIST AND A CHOICE.
+
+**`utils/localOptions/chooseServices.js` (new).** Ask for **eighteen**, keep
+the top **one**, choose the other five by hashing the **business name** —
+the same trick `pickSet()` already uses to decide which folder of
+photographs a site gets. Same business rebuilt → same six; two businesses →
+different sixes.
+
+**⚠ IT SHIPPED AT TWELVE-AND-TWO FIRST, AND EDWIN COULD NOT SEE IT.** On
+the first site built after the change: *"i thought you fixed the same 6
+services always repeating."* Measured across ten business names,
+twelve-and-two left **3.4 of 6 shared** between any two sites and **2.8 in
+the same position** — more than half the list, the first two identical by
+design, and the start of the list is where the eye goes.
+
+    A CHANGE THAT CANNOT BE SEEN IS NOT A CHANGE.
+    I PICKED THE SAFE NUMBERS AND SHIPPED SOMETHING INVISIBLE.
+
+Eighteen-and-one gives **2.4 shared, 1.6 in the same position**. Every test
+in the suite passed against the timid setting, because they all asked
+whether the lists *differ* and none asked **by how much**. There is now one
+that measures it and fails on twelve-and-two.
+
+  - **the anchor is what stops this being randomisation.** A plumber whose
+    site leads on "Hose Bib Replacement" has a worse site, not a different
+    one.
+  - **`HOME_BODY_LINKS` is two and only ONE is anchored**, so the second
+    linked home-page row is a chosen service. It is safe for a reason that
+    is easy to break: the chosen five **keep their order**, so row two is
+    the EARLIEST of them in the suggested list, not a free draw. Across 320
+    names it lands at position 3 on median, 7 at the 90th percentile, 11 at
+    worst. Anything that stops preserving the order turns row two into a
+    coin toss and has to revisit `ANCHORS`; the suite says so.
+  - **the name is hashed with the SERVICE, not with its position.** A
+    rebuild asks the model again and can get the same eighteen in a
+    different order; hashing the position would deal a different six for no
+    visible reason. A service that was chosen stays chosen while it is on
+    the list.
+  - **the order out is the order in** — anchors first, the rest keeping
+    their places, so the list still runs most-common-first for the ring and
+    for the 01–06 numbering.
+  - **it sits INSIDE the `if (!names)` block.** A customer who supplied
+    their own six gets theirs. *A choice among suggestions is not a choice
+    among instructions.*
+
+**THE COMMENT THAT SAID THE OPPOSITE WAS KEPT.** The top-up loop explains
+why the first call asks for exactly six — *"asking for nine up front... a
+plumbing site could come back with a different six than it does today."*
+That reasoning was right for what was known then, so it stands with a note
+above it rather than being quietly rewritten.
+
+**AND IT MAKES THE TOP-UP RARER, NOT COMMONER.** A narrow practice whose
+first answer was padded now has eighteen names for `cleanServices()` to cut
+down rather than six.
+
+**TWO MUTANTS FOUND TWO TESTS THAT WERE LYING.**
+
+  - Moving the chooser OUT of the `if (!names)` block — so it narrows the
+    customer's own list too — changed nothing when exactly six were
+    supplied, because six or fewer come back untouched. *A guard that only
+    runs on longer lists cannot be tested with a short one.* The test now
+    supplies eight.
+  - Shrinking `SERVICE_POOL` back to twelve survived everything, because
+    `chooseServices()` narrows whatever list it is handed and the constant
+    only decides what `generate.js` ASKS THE MODEL FOR — nothing connected
+    the number to the result. *A constant that no test reads the effect of
+    is a constant anybody can tune back to wrong.* The spread test now
+    draws from `POOL.slice(0, SERVICE_POOL)`.
+
+`test-local-options-services.js` — **17 passed**, 21 mutants, all killed.
+Registered in `deploy.sh`. This changes the GitHub sites too, not only the
+Cloudflare ones: they share `runLocalOptions.js`.
+
+### "WHERE IT GOES" MOVED FROM STEP 4 TO STEP 3
+
+**18 November.** Edwin: *"instead of the domain option/form appearing in
+step 4 i would like to have the select domain option like we have in github.
+i think it is in step 3."* He was right about where GitHub asks: its Domain
+dropdown sits inside **Global Information**, among the phone and the
+address. The Cloudflare door asked for its own address at the very end.
+
+The Name, Subdomain and Domain boxes now render on the main form.
+`renderReviewStep()` shows them as a **read-only card** with an edit link
+back to step 3 — a step that collects something the review never mentions is
+a step the customer cannot check, and the address is the one fact on that
+page that cannot be fixed after the build.
+
+**THE MOVE WAS ONE LINE, AND ITS POSITION IS THE WHOLE BEHAVIOUR.**
+`container` is inside `#websiteForm`, so a card appended **before**
+`snapshotFormValues(form)` runs is picked up with everything else and
+`injectHiddenSnapshot()` replays it at submit. The three fields travel on
+their own and nothing else had to learn about them — the batch included,
+because the batch hook reads `new FormData(form)` after those mirrors exist.
+Appended after the footer they would sit below the Continue button;
+appended after the snapshot is read they would be empty in it. A test
+asserts the line's position against both.
+
+**FOUR THINGS CAME WITH IT, AND THREE WERE BUGS THE MOVE CREATED.**
+
+  - **`required` in the markup does nothing on this step.** Continue is a
+    plain button; the form is not natively submitted until the review step.
+    The three names are now in the step's own required list, with labels —
+    a required field with no label falls back to "all required fields",
+    which points at nothing on a step with twenty boxes.
+  - **the domain list preselected whichever row came first.** A `<select>`
+    with no valueless first option reports its first real value, so the
+    customer was handed a domain without looking at the box. On the review
+    step that was a row they could read; here it is one field among twenty.
+    It now opens on **"Choose a domain…"**, exactly as the GitHub picker
+    always has — which is what Edwin was asking for. *A default nobody
+    chose is not a default.*
+  - **the prefill read a snapshot that does not exist yet.** On the review
+    step the business name was already typed and sitting in
+    `state.mainFormSnapshot`. On this step it is being typed three inches up
+    the page. The name and the subdomain now **follow the business name as
+    it is typed** and stop the moment either box is edited.
+  - **and "has a value" is not "was chosen".** ⚠ This is the one that would
+    have hurt. "Add another site" reloads with the previous site's draft
+    restored, so both boxes arrive full — of the LAST site's address. Read
+    as chosen, they refuse to follow the new business name, and **the one
+    field that must differ between two sites is the one field that would
+    not**. `generateBatchRoute.js` refuses two sites at one address, so it
+    would have been caught — at the very end, as a rejected batch, after
+    everything else had been typed in again. A box still holding exactly
+    what it would have derived is not owned and keeps following.
+
+**DRIVEN IN A REAL BROWSER BEFORE ANY OF IT WAS BELIEVED.**
+`scratchpad/wizflow.js` serves `form.html` with the two meta tags
+/local-automation sets, inlines the page's own scripts and a vendored
+Bootstrap, and walks the wizard: type → logo → step 3 → refuse without a
+domain → step 4 → submit. Fourteen checks, including that the live boxes are
+**gone** by the review step, so anything the POST carries came from the
+hidden snapshot. The source-reading tests in the suite guard the structure;
+the browser run is what proved the behaviour.
+
+Ten mutants against the new assertions, all dead. `test-wizard-steps.js`
+lifts `renderCloudflareFields` and runs it against stubs — its stub parent
+had no `querySelector`, which is how that test announced the function's
+reach had changed.
+
+### THE CLOUDFLARE DOOR NOW OFFERS ALL SEVEN LAYOUTS
+
+**18 November.** Edwin, before adding a photo set for Orchard: *"how about
+if we use the same images and html structure of the sites generated with
+github, that way cloudflare sites will have 7 html structure and 7 set of
+images?"* And then, on what that allows: *"If we do the 7 cloudflare sites
+structures and images probably I wont use the github option to build
+sites... right now I dont want you to delete the github options but dont
+worry about cloudflare duplicating a site from github."*
+
+So **Ledger, Beacon and Anvil are offered at both doors**. The Cloudflare
+list runs **1 to 7** — Ledger/set-1, Beacon/set-2, Anvil/set-3, Quarry/set-4,
+Harbor/set-5, Atlas/set-6, Orchard/set-7 — and the GitHub list is the same
+three rows it always was. Nothing was deleted.
+
+**A ROW CARRIES A LIST OF DOORS, NOT ONE.** `mode: 'localoptions'` became
+`modes: ['localoptions', CF_MODE]`, `designFor()` tests membership instead
+of equality and `designsFor()` filters on it. About ten lines.
+
+**ONE ROW, NOT A COPY OF IT.** The alternative was a second Ledger row under
+a new id for the Cloudflare door. That writes the structure-and-set pairing
+in two places, which is the exact failure the header of `designs.js` is
+about: the copies drift and a site gets the other one's photographs with
+nothing failing. A test asserts the shared rows are the **same object** at
+both doors.
+
+**⚠ THE EQUALITY TEST WOULD HAVE FAILED SILENTLY.** `found.mode !==
+want_mode` against a row carrying an ARRAY is never equal, so every shared
+design would have been refused at both doors and every build would have
+fallen back to Ledger — the same silent fallback that made Design 4 build
+Design 1 on 17 November. It is named in the code at the line that fixes it.
+
+**SIX SUITES HELD THE OLD RULE AND ALL SIX FIRED**, which is what they were
+for: quarry, atlas, harbor, anvil, wizard-steps and local-automation. The
+rule they were written to protect was never *"the two lists are disjoint"* —
+it was *"nothing is offered where it cannot be built"*. That half is intact
+and still tested: a Cloudflare-only layout on the GitHub door is still
+refused. `test-local-automation.js` went from asserting no overlap to
+asserting overlap in **one direction only**.
+
+**AND ONE OF THEM WAS PROVING NOTHING.** `test-wizard-steps.js` built its
+expected list with `DESIGNS.filter(d => d.mode === 'localoptions')` — which,
+after the change, matched **nothing**, and then compared an empty list
+against an empty list and passed. It now asserts the list is non-empty
+first. *A test that compares two things it computed the same wrong way is
+green and worthless.*
+
+**set-7 ARRIVED THE SAME MORNING.** Four plumbing photographs; `alt.json`
+written from the images themselves — an outdoor shut-off, a toilet auger, a
+tankless heater, a drain camera on the lawn — with `cover: 1`. Plumbing now
+has **seven complete sets**. Orchard's set-7 test reported itself out of
+date the day after it was written, which is three for three (set-5, set-6,
+set-7 all did it) and is why it is written that way.
+
+**TWO MUTANTS SURVIVED AND BOTH WERE THE TEST'S FAULT.** Both are the same
+shape as Atlas's pair, and both are now fixed in Atlas's suite too.
+
+  - **`/^(?:image|photo|picture) of/i` does not catch "A photo of…"**. Alt
+    text almost always starts with an article, so the one phrasing anybody
+    would actually write walked past the guard. Now `^(?:an?\s+)?…`.
+  - **the cover was read back through `coverFor()`, which CLAMPS.** A
+    `"cover": 9` in alt.json silently resolves to 1, so asserting the
+    resolved cover is in range can never fail. The test now reads the raw
+    `alt.json` and also checks the resolved cover equals the stated one.
+    *A folder that names a cover nobody honours is a folder whose author
+    believes a different photograph is going into the search result.*
+
+**AND A MUTATION RUN THAT PROVED NOTHING.** A doc comment was closed twice,
+`designs.js` was a syntax error, and eleven mutants all reported "dead" —
+every suite failed for a reason that had nothing to do with any test. The
+mutation scripts now **refuse to start** unless the file parses and the
+baseline suite is green. *A mutant is only dead if it was alive first.*
+
+**NOT A SECOND DROPDOWN.** The layout and the photo set are still chosen
+together under one name. See the header of `designs.js` for why.
+
+**NEXT:** Forge, the last of the five. It will need a `set-8`.
+
+### ORCHARD — the fourth of the five
+
+**18 November.** Edwin: *"now create the other html layout/css design.
+Continue from where you left off."* He chose **"Alternating rows"**.
+
+**ORCHARD** — cards that lean. Every section is a card in a full-width row,
+and the rows alternate: first left of centre, then right, then left. On the
+phone they stack dead centre and the page looks like any other; the lean
+arrives at **900px**, because an offset needs somewhere to offset into and a
+card squeezed to 86% of a 360px screen is not a design, it is a margin
+somebody forgot to remove. Green and white, generous radius, the warmest of
+the seven. `MAIN_ID='story'`, ids `story/grove/nearby`, prefix `.orchard-`
+/ `--oc-`. `test-local-options-orchard.js` **63 passed**, 51 mutants, all
+killed.
+
+**THE ZIGZAG IS A COUNTER, NOT A SELECTOR.** `:nth-child(odd)` cannot do
+this: the rows are not siblings in one list — the hero, the prose sections,
+the services, the hours and the map are emitted by different functions on
+different pages. So `pages.js` has
+
+    function leaning() { let n = 0; return () => (n++ % 2 ? 'right' : 'left'); }
+
+and **every page builder calls `const side = leaning();` of its own**. One
+counter per page, passed into `prose()` so the prose shares the same
+rhythm. Every page therefore starts on the left and alternates without a
+gap, whatever mix of sections it happens to hold — which the suite checks
+on all five page kinds, not just the home page.
+
+**THE SEVENTH VOICE IS SPOKEN.** `prompt-orchard.js` runs 560–690 words
+with a **banned-word list** (utilise, leverage, ensure, facilitate,
+comprehensive, seamless, cutting-edge, state-of-the-art, bespoke, robust,
+holistic), a title that **must be a question**, and a meta description that
+**must answer it**. The About heading has to contain "we" or "us" and may
+not open with "We are". Dividers name a thing carried in the van or a thing
+taken away. *Seven briefs that rhyme are one brief* — the voices are
+checked against each other pairwise, not assumed to differ.
+
+**THE FOOTER LOST FOUR RULES TO ONE SELECTOR, AND ONLY A SCREENSHOT SAW
+IT.** `.orchard-foot p{margin:0 0 .5rem}` is specificity **(0,1,1)**. The
+five modifiers under it — the name, the address, the links, the social
+marks, the base line — are single classes at **(0,1,0)**. Every one of them
+lost. The address sat left of centre and three `margin-top`s were silently
+zeroed. All five are now qualified with `.orchard-foot ` so they outrank the
+element rule, three mutants die on it, and a test measures the centring.
+*An element selector plus a class beats a class on its own, and nothing
+warns you.*
+
+**THE HOURS WERE RAGGED, AND THE COMMENT ABOVE THEM WAS WRONG.** The chips
+were sized "so two fit side by side on a 360px phone". Measured in a
+browser: a chip holding `7:00 AM – 6:00 PM` wants about **166px** and the
+list has **287**. Two never fitted. What Edwin got was five days alone and
+then **Saturday paired with Sunday** — because "Closed" is short, not
+because anyone chose it. Two only pair if the time drops to **12px**, and
+the time is the thing somebody opened the page to read. So below 620 every
+chip takes `flex:1 1 100%` and the column is a decision; at 620 the chips
+are let go with `flex:0 1 auto` and wrap as pills, three or four to a row.
+*A comment that states a measurement is a claim, and this one had never
+been checked.*
+
+**AND THE SERVER WAS SERVING YESTERDAY'S CSS.** Four rounds of measurement
+said the new rule had no effect. It had none *in the browser*: a stale
+`http.server` already held port 4632 and my own never bound, because the
+error went to `/dev/null`. The disk file and the served file differed by
+exactly the bytes I had just added. *If a measurement disagrees with the
+source, check that you are measuring the source.* `curl | md5sum` against
+the file on disk, before believing anything a screenshot says.
+
+**`deploy.sh` WAS EDITED** (`test-local-options-orchard.js` added to
+`NODE_SUITES`), so the executable bit is gone: `chmod +x deploy.sh &&
+./deploy.sh`.
+
+**`set-7` HAS NO PHOTOGRAPHS FOR ANY TRADE** — same as `set-6`.
+`available()` falls back to the automatic pick and the suite pins it, so
+the test reports the day Edwin fills one.
+
+**NEXT:** Forge, the last of the five.
+
+### HARBOR and ATLAS — the second and third of the five
+
+**17 November.** Edwin, after deploying Harbor: *"it worked. Now could you
+work on the next html layout/design?"* He chose **"Headings in the margin"**.
+
+**HARBOR** — a navy rail fixed down the left at 960px carrying the name, the
+phone, the hours, the address and all six services, so the number never
+scrolls away. `test-local-options-harbor.js` **63**. Live, with plumbing's
+`set-5`.
+
+**ATLAS** — a reference page. Every section's heading sits in the **left
+margin beside its own prose**, so the page can be read down one edge.
+Services are a real `<table>`, numbered. Hours are one line of type with
+consecutive identical days folded into runs. The divider sets its sentence
+in the margin with **no rule at all**. Body in a serif, margin labels in a
+small tracked sans — the inverse of Ledger. `MAIN_ID='text'`, ids
+`text/list/place`, prefix `.atlas-` / `--at-`, form `mn/mp/me/mm`.
+`test-local-options-atlas.js` **76**, 74 mutants, all killed.
+
+**THE STRUCTURE IS MARKUP, NOT CSS, AND THAT IS WHY IT IS TESTABLE.** No
+stylesheet can lift an `<h2>` out of the flow and set it beside the
+paragraphs that follow it, so `leaf()` emits a label cell and a body cell
+and `prose()` returns **one leaf per section** instead of headings over
+text. The phone gets the label above its block, as everywhere else; the
+grid arrives at 900px.
+
+**FOUR THINGS THE TESTS DID NOT FIND, AND A MEASUREMENT DID.**
+
+  - **the bar had no side gutter on any page.** `.atlas-head__top` carries
+    `.atlas-wrap` as well, and the wrap is what gives the page its gutter —
+    but `padding:1.05rem 0 .9rem` is a SHORTHAND, it set all four sides, and
+    it comes later in the file. The logo sat flush against the left edge of
+    a phone and the number flush against the right, while the menu one line
+    below was correctly indented. *A shorthand does not set the properties
+    you wrote. It sets all of them, and the ones you left out go back to
+    zero.*
+  - **the hours wrapped into a staircase.** The `·` was a `::before` on each
+    run, so it lived inside the span that followed it and wrapped with it —
+    four lines on a phone, each one further in than the last. Now an
+    `::after` on every run but the last: *a leading separator is part of
+    what follows it.*
+  - **the separator was invisible** on the contact page at `--at-line`, the
+    hairline colour. A separator nobody can see is four times of day run
+    together. Now `--at-soft`.
+  - **one paragraph had a measure of its own** — `.atlas-said` at 48ch
+    inside a 41rem column — so the sentence introducing the services wrapped
+    visibly shorter than the prose above it and the table below it, and read
+    as a mistake. Removed; the leaf body already caps the measure.
+
+**AND A COLLISION THE OTHER SUITES COULD NOT SEE.** Quarry's `WHERE_ID` was
+`'visit'`, which is the id sitting in **Ledger's** `pages.js`. Quarry's and
+Harbor's suites compare the three constants each structure EXPORTS — and
+Ledger exports none; its ids are string literals in its markup. *A
+uniqueness check that reads what the structures declare cannot see the
+structure that declares nothing.* Atlas's suite reads the ids out of the
+rendered HTML of all six sites instead, found exactly one collision in the
+set, and Quarry's moved to `'yard'` (Ledger's is older and has sites on it;
+nothing links to either fragment).
+
+**TWO MUTANTS SURVIVED, AND BOTH WERE THE TEST'S FAULT.**
+
+  - `css.slice(0, css.indexOf('@media'))` is **not** "the rules that apply
+    at every width". Atlas has two media queries, so a rule written between
+    them is unconditional and invisible to that. A mutant put the margin
+    grid exactly there — a two-column page on a 360px screen — and the suite
+    passed. There is now a `baseRules()` that cuts every `@media` block out.
+  - matching `font-size:16px` anywhere in a declaration block proves
+    nothing: a mutant APPENDED `font-size:14px` and the match still found
+    the 16px. *A declaration that is present is not a declaration that
+    applies.* The test now reads every `font-size` in the rule and checks
+    the last.
+
+**`set-6` HAS NO PHOTOGRAPHS FOR ANY TRADE.** `available()` falls back to
+the automatic pick, which the suite pins — and the test says out loud what
+would make it wrong, so it reports the day Edwin fills one rather than
+quietly describing a world that has changed.
+
+**`deploy.sh` WAS EDITED** (`test-local-options-atlas.js` added to
+`NODE_SUITES`), so the executable bit is gone: `chmod +x deploy.sh &&
+./deploy.sh`.
+
+**NEXT:** Orchard, then Forge.
+
+### QUARRY — the first of the five, built and dormant
+
+**17 November.** Edwin: *"build the 5 new layouts"*, then *"start with this
+one: Quarry"*. One at a time, each complete — chrome, pages, stylesheet,
+prompt, registrations and a suite — the way Anvil is built. Five at once
+would have been 7,500 lines nobody could verify.
+
+`test-local-options-quarry.js` — **83 passed**, 20 mutants, all killed.
+Every other suite still green except the three that fail here only because
+my copy of the repo is partial.
+
+**WHAT MAKES IT A FOURTH DESIGN RATHER THAN A RECOLOUR**
+
+  - **the order** — the H1 comes BEFORE the photograph. All three others put
+    a picture at or above it. This is the inversion the whole structure is
+    built on, and the suite asserts it BY POSITION: a refactor that moved
+    the picture back up would still render, still pass every shared test,
+    and quietly make this Anvil in a light palette.
+  - **the index** — a sticky column of service names beside the blurbs. The
+    other three are three answers to *how should six services be listed*;
+    this is a different question.
+  - **mobile first** — the first of the four written with `min-width`
+    queries. The other three are one wide layout with `max-width` rules
+    subtracting from it, so each DESCRIBES the phone as an exception.
+  - **the hours** — the week split where people split it, weekdays against
+    the weekend, beside the prose rather than under it.
+  - **the voice** — the symptom first. Every page opens on what the reader
+    can see, hear or smell before the work is named. Title leads with the
+    PROBLEM (Ledger name, Beacon work, Anvil place); the description names
+    no service at all.
+  - **square, stone and moss** — no radius variable, 2px ink rules, labels
+    in 11px uppercase.
+
+**A HOLE THE DESIGN-MAPPING WORK LEFT OPEN, FOUND WHILE REGISTERING IT.**
+The mapping above filters the DROPDOWN, on the server, which is protection
+against a confused customer. It is not protection against a posted field.
+
+    FILTERING A DROPDOWN IS NOT VALIDATING A FIELD.
+    THE LIST THE FORM DREW IS NOT THE LIST THE SERVER WAS SENT.
+
+`design=4` typed into the request built a Quarry site in `localoptions` mode
+with a photo set that does not exist. `runLocalOptions.js` would not have
+refused it — its own guard is about the siteMode, which was perfectly valid
+— and `structureFor()` falls back rather than throwing, so nothing
+downstream would have complained either. `designFor(id, mode)` and
+`buildOptionsFor(id, mode)` now take the mode; the two calls that decide
+what gets BUILT pass it, and the logo preview deliberately does not (it
+colours a picture, and nothing is built from its answer).
+
+**THE REGISTRY GUARDS ALL FIRED, WHICH IS WHY THEY ARE THERE.** Registering
+a fourth structure broke, by design, four assertions in three other suites
+and one list in `industries.js` — `structureKeys()` written out rather than
+counted, the design-id list, `STRUCTURE_INK`, and the lemon-law profile's
+per-voice briefs. Each one forced a decision instead of letting a half-added
+layout ship.
+
+**AND ONE OF THEM WAS SUBTLY WRONG.** `test-wordmark-logo.js` asserted every
+structure draws on `#ffffff`. Quarry has no plate — its bar is `--qy-raise`,
+`#f6f5f1` — so the rule was never "white", it was "a light surface the
+letters actually land on". That is Anvil's old bug with the error running
+the other way, and quieter: near-white letters on a white card are obviously
+wrong, ink mixed for white on `#f6f5f1` is merely slightly off.
+
+**THREE THINGS THE TESTS COULD NOT HAVE FOUND, AND A SCREENSHOT DID.**
+
+  - **the caption.** The seam was captioned with the owner's own sub-line —
+    so the same sentence appeared under the H1 and again two inches below
+    it, and on a service page the blurb did the same. *A caption that
+    restates the line above it is not a caption.* Removed.
+  - **the hours split.** A viewport rule cannot tell a full-width box from a
+    22rem aside, so at 1440px the service page split a narrow box into two
+    columns and every row wrapped three ways. Now a **container query** at
+    30rem: *the box is not the page.* A browser without container queries
+    gets the single column, which is the phone layout and is correct.
+  - **an empty `<p>`** where the contact page has no sub-line.
+
+**AND A COLLISION NOTHING WOULD HAVE FAILED ON.** Quarry's `MAIN_ID` was
+`'content'` — Beacon's — for an hour. The skip link and its `<main>` are
+both inside one page, so the duplicate lives in two sites that never meet.
+*Two layouts sharing an id still work. They just cannot be told apart by a
+fragment in a URL, by a scraper, or by a test.* Now `'read'`.
+
+**STILL TRUE OF IT TODAY: NOTHING OFFERS IT.** Design 4 is tagged to
+`CF_MODE` — a plain string in `designs.js`, deliberately NOT added to
+`seoPresets.MODES`, because `normalizeSiteMode()` would then let it through
+pricing, contentModel and jobGenerator, none of which have a branch for it.
+*A mode that exists in the table and nowhere else is not a half-finished
+mode; it is a job that builds the wrong product.* There is a test in the
+Quarry suite whose only job is to be DELETED by whoever makes the mode real.
+
+**`set-4` HAS NO PHOTOGRAPHS.** Edwin is filling set-4 to set-8, four each
+plus `alt.json`, per trade. `heroSet()` falls back, so a Quarry site built
+today would borrow set-1 — correct for a layout nothing can select, wrong
+the moment one can. The mode tag is what stands between those two.
+
+**`deploy.sh` WAS EDITED** (the suite was added to `NODE_SUITES`), so the
+executable bit is gone: `chmod +x deploy.sh && ./deploy.sh`.
+
+**NEXT:** Harbor, then Atlas, Orchard, Forge — same shape, one at a time.
+
+### FOR TOMORROW — automated Cloudflare websites, five of them, different shapes
+
+**ASKED FOR 17 November**, at the end of the day the Cloudflare two-step
+closed. Edwin, verbatim:
+
+    *"For tomorrow we will work on the prompts and creating another option
+    on the sidebar for automated cloudflare websites; the concept would be
+    similar to the sites for github but 5 sites with different html
+    structure"*
+
+**ANSWERED THE SAME EVENING, AND BOTH ANSWERS MATTER.** Edwin: *"these
+automated site have to have the same amount of pages as the github sites. It
+would be self-publishing mode."*
+
+So, settled:
+
+  - **ELEVEN PAGES**, the Local Website Options page set — home, six
+    services, contact and three legal. Not five pages. The "5" is five
+    HTML STRUCTURES to choose between, the way `styleKey` picks one of nine
+    themes; it is not a count of pages or of sites.
+  - **A SELF-PUBLISHING MODE**, like `localoptions`. Not an ordinary build
+    with the Cloudflare destination attached.
+
+**AND THAT SECOND ANSWER IS THE EXPENSIVE ONE.** It is the branch the note
+below warns about, chosen deliberately — so the collision has to be designed
+rather than avoided.
+
+**WHAT IS ALREADY DECIDED AND CONSTRAINS IT.**
+
+`localoptions` is a **MODE** — it builds its own eleven pages and publishes
+ITSELF to GitHub. `cloudflare` is a **DESTINATION** — it publishes whatever
+was built, of any mode. The note on Cloudflare's two-step shuffle above sets
+this out in full, and the whole of 16–17 November rests on it.
+
+"Automated Cloudflare websites" is asking for a mode AND a destination at
+once, and **that combination is currently REFUSED on purpose.**
+`utils/jobGenerator.js` returns on a `published` report BEFORE it looks at
+`siteTarget`, so a self-publishing mode carrying a Cloudflare address would
+go to GitHub and drop the address silently. `applyDraft()` in the wizard
+refuses the one path that could reach it.
+
+    SO THE FIRST TECHNICAL QUESTION IS NOT ABOUT TEMPLATES. It is whether
+    the new mode publishes ITSELF (like localoptions, a second
+    self-publisher) or is an ordinary build with the Cloudflare
+    DESTINATION attached (like /cloudflare-sites/new, which already
+    works).
+
+**THE ANSWER IS "IT PUBLISHES ITSELF", SO THE WORK IS IN `jobGenerator`.**
+Today that function returns on a `published` report before it reads
+`siteTarget`. A second self-publisher makes that early return a bug rather
+than a shortcut, so it has to learn WHICH host a mode publishes to instead
+of assuming there is only one. Two shapes to weigh:
+
+  - the mode carries its own publisher and `jobGenerator` dispatches on the
+    mode, which keeps the branch flat but puts a Cloudflare deploy inside
+    `utils/` beside `runLocalOptions`;
+  - or the mode declares a destination and the existing `createAndPublish`
+    is reused, which keeps ONE Cloudflare publish path — the thing the whole
+    of 17 November was spent earning — and makes `published` a report about
+    a destination rather than about GitHub.
+
+**THE SECOND IS ALMOST CERTAINLY RIGHT**, because it is the only one where
+`checkWant()` still runs before the credits are spent. Decide it before
+writing any template.
+
+And `applyDraft`'s refusal has to become a RULE rather than a block: it
+currently refuses any `LOCKED_AWAY` mode on a page with a destination, which
+would refuse this new mode on its own page.
+
+**THE PAGE SET IS ELEVEN, SO THE PRICE IS ALREADY DERIVED.**
+`utils/pricing.js` prices Local Website Options as parity with the lead site
+— `LEAD_BASE 200 + 6 x SERVICE_PAGE 100` — explicitly NOT a flat 800. A
+second eleven-page mode either shares that derivation or states why it does
+not, and the comment in pricing.js is the one to read first. It has already
+caught one note in this file quoting the wrong number.
+
+**THE ROW ITSELF IS THE EASY PART** and the shape is already set by
+yesterday: a BUILD row under WEBSITES carrying the verb, a route serving
+`renderWizard({ ... })`, and — if it keeps its own list — a MANAGE row
+beside My Cloudflare Websites. `utils/appHeader.js` and the five `NAV_*`
+names in `utils/pageTitle.js` are the only two files that touch.
+
+**AND THE PROMPTS ARE THE OTHER HALF OF THE SAME SENTENCE**, which is
+probably not a coincidence: five different HTML structures want five
+different kinds of copy — and with the page count now fixed at eleven, the
+copy is the only thing left that can differ between them beyond layout. See the entry directly below — it has been open
+since 14 November and its first instruction is to ask Edwin what he dislikes
+about what the generator writes now, rather than to start rewriting.
+
 ### FOR TOMORROW — the home page prompts for Rank Fast
 
 **ASKED FOR 14 November**, at the end of the day the nav dropdown was fixed
@@ -2774,9 +4678,33 @@ re-gathered.
 
 ### ~~FOR TOMORROW~~ CLOSED 14 November 2026 — the SERVICES dropdown runs off the screen
 
-**DONE, AND IT WAS THREE BUGS, NOT ONE.** Fixed in `src/css/themes/style8.css`
-only; `buildNavMenu.js` and Designs 1–7 were not touched. Guarded by the new
-`test-nav-dropdown.js` (8 tests, in NODE_SUITES), six mutants killed.
+**DONE ACROSS ALL NINE DESIGNS.** `buildNavMenu.js` was never touched — the
+markup was right and every fix was CSS.
+
+**THIS PARAGRAPH SAID "style8.css only … 8 tests" FOR A DAY AFTER IT STOPPED
+BEING TRUE.** It was written the hour the first fix landed, and then Edwin
+asked for style7, style6, style5, style4, style3, style2 and style one at a
+time, and style9 and the rebuilt style5 followed. Lower down this same entry
+already said "all eight: 32 tests", so the entry contradicted itself — and
+the stale half was the half at the top, where anyone would stop reading.
+
+    A CLOSING NOTE WRITTEN WHILE THE WORK IS STILL MOVING DATES FASTER
+    THAN THE WORK DOES.
+
+As of 15 November: `test-nav-dropdown.js` is **39 tests** over nine designs,
+in NODE_SUITES, every fix with a mutant proving the test bites. It keys on
+three per-design lists rather than treating the designs alike —
+
+    CAPPED               all nine: the menu is capped and scrolls at 992+
+    MARGIN_SCOPED        style, style4, style5, style7, style8, style9
+    LIGHT_HEADER         style8: dark items, so the panel must not be dark
+    DARK_BAR_LIGHT_PANEL style5, style9: white items, so it must not be white
+
+— because the designs differ and a list that pretends otherwise either fails
+on the innocent or guards nobody. The last two exist because the SAME bug
+arrived twice from opposite sides: style8 turned its header white and its
+items went dark onto a dark panel; style9 turned its header back to blue and
+its items went white onto the white panel style8 had left behind.
 
 1. **The items were invisible, and had been live for a day.** style8's header
    went white on 13 November, so `.nav-link` went dark — and buildNavMenu
@@ -2915,13 +4843,30 @@ bug. style2-style6's colours, style7's navy panel and style5's blue entries
 (4.91:1) were all measured and are fine. No colours were changed in any
 design but style8.
 
-`test-nav-dropdown.js` covers all eight: 32 tests, and every fix has a
+`test-nav-dropdown.js` covers all nine: 39 tests, and every fix has a
 mutant proving the test bites.
 
 Same cause, same fix, and each needs its OWN subtrahend measured — do not
-copy 70px or 90px. **NOT DONE, AND DELIBERATELY SO:** `style2.css`–
-`style5.css` are on the DO NOT TOUCH list above and `style.css` is to be
-treated the same way, so this is Edwin's call, design by design.
+copy 70px or 90px. **THIS SAID "NOT DONE, AND DELIBERATELY SO" AND IS NOW
+DONE.** The reasoning was sound: `style2.css`–`style5.css` are on the DO NOT
+TOUCH list above and `style.css` is treated the same way, so it was Edwin's
+call. He made it, one design at a time, on 14 November — style7, then
+style6, style5, style4, style3, style2 and style — and every change was
+reported plainly as it was made.
+
+**THE SUBTRAHENDS, READ OUT OF THE NINE STYLESHEETS ON 15 NOVEMBER** — not
+recalled, because the first version of this table was written from memory
+and had four of the nine wrong:
+
+    style  80   style2 78   style3 80   style4 80   style5 90
+    style6 70   style7 90   style8 90   style9 90
+
+Each is `calc(100vh - Npx)` and each N is that design's own `menuTop + 25`,
+measured in a real render. None was copied from another.
+
+**style5 IS 90 BECAUSE style5 IS style9.** Its stylesheet was replaced with
+a copy on 15 November; the 80 it had belonged to the design that used to be
+there. A number in a note does not follow a file that gets overwritten.
 
 **WHAT WAS CHECKED AND IS FINE:** none of the six has the invisible-text
 bug. A first pass read `getComputedStyle(menu).backgroundColor` and reported
@@ -2929,9 +4874,15 @@ style6 as white-on-white; walking up to the actually-painted surface showed
 `rgb(18, 35, 48)` behind white text. The alarm was the measurement, not the
 stylesheet.
 
-The original note follows.
+The original note follows, kept for the history and NOT as a live item.
 
-### FOR TOMORROW — the SERVICES dropdown runs off the screen
+---
+
+**ORIGINAL ENTRY — the SERVICES dropdown runs off the screen (CLOSED, see
+above).** Its heading used to be a live `### FOR TOMORROW`, which is how it
+came to be read as outstanding work on 15 November, a day after it was
+finished. A closed item that keeps an open item's heading is a closed item
+nobody can tell is closed.
 
 **ASKED FOR TWICE AND WRITTEN DOWN LATE.** Edwin raised it on 7 November
 (*"reminde me tomorrow that we need to work on the nav dropdown"*, then
@@ -2972,7 +4923,22 @@ and the hero media, not the menu.)
 JavaScript.** It is also the only one that cannot drop a service from the
 menu, which matters because those pages are the point of the build.
 
-### FOR TOMORROW — Design 6's trust tick, and it is a taste call not a bug
+### ~~FOR TOMORROW~~ CLOSED 15 November 2026 — Design 6's trust tick
+
+**DONE.** Edwin asked for it on 15 November — *"do this: Design 6's trust
+tick"* — and `--trust-bg` in `src/css/themes/style6.css` went from `#ee5519`
+to `#d6440c`. White on it measures 4.48:1, up from 3.53:1; both figures below
+were re-measured against the live file before the edit and both were right.
+The old value is kept in the comment beside the new one.
+
+**IT WAS A TASTE CALL AND IT CLOSED AS ONE.** Nothing was failing — see
+below. The entry stayed open for forty-one days because the change was his to
+make, not because anything was broken.
+
+---
+
+The original entry, kept:
+
 
 **WRITTEN DOWN 5 OCTOBER, having lived only in conversation until now.** It
 had been carried from session to session in summaries and was never in this
@@ -4026,6 +5992,50 @@ back when disputing a bill. Now covered, and the mutation is caught.
 `test-admin-tabs.php` 71 → 81.
 
 ## Outstanding
+
+### SMALL — the Cloudflare domain dropdown should name the registrar too
+
+**Edwin, 18 November**, right after "Where it goes" moved onto step 3:
+*"those domains should also show the registrar."*
+
+The GitHub picker has done this since 14 November and the reasoning is
+already written down beside it in `renderMainForm()`: the label is NOT
+shown, because it repeats the domain and reads as "7-y.xyz — 7-y.xyz"; the
+REGISTRAR is a different fact and cannot repeat it. A row with no registrar
+set shows the domain alone.
+
+    const describe = (row) =>
+      row.registrar ? row.domain + ' — ' + row.registrar : row.domain;
+
+**THE CLOUDFLARE LIST DOES NOT, because it is a different list.**
+`renderCloudflareFields()` fetches `/api/cloudflare-domains`, which is
+`siteDomains()` — the websites pool, not the blog pool — and maps
+`d.domain` to both the value and the text. **The value must stay the bare
+domain**: unlike the GitHub picker, which posts a row id, this one posts
+the hostname itself and the server matches it against the pool. So only the
+OPTION TEXT changes.
+
+**THE ENDPOINT ALREADY SENDS IT — checked, 18 November.** `authRoute.js`
+selects `domain label registrar` and maps all three into the response, so
+this is a CLIENT-ONLY change: three lines in `renderCloudflareFields()`,
+plus a test, plus the note that the VALUE must not change with the text.
+
+### NEXT — the Cloudflare prompts: the copy reads as confusing
+
+**Edwin, 18 November, with the first three batch sites live:** *"we only need
+to work on the prompts because the text is confusing but no now."*
+
+**NOT SCOPED YET, AND NOT STARTED.** What is known: three sites are live
+through the batch, built by Quarry, Harbor and Atlas, and the WORDS on them
+read badly enough to be the next thing worth fixing. Which pages, which
+sections and whether it is one voice or all six is the first question to
+ask him — the six voices differ on purpose, so "the text is confusing"
+could be one brief, one structure, or the shared rules in `prompt.js` that
+all of them inherit.
+
+**START BY READING THE LIVE PAGES, NOT THE PROMPTS.** The prompts are what
+was asked for; the pages are what came back, and the gap between them is
+the actual fault. Ask him which of the three sites reads worst.
 
 ### ~~NEXT~~ CLOSED 23 October 2026 — blogs on a pool of domains, across several Cloudflare accounts
 
@@ -5520,6 +7530,24 @@ page's own layout.
 `${appHeaderAssets()}`. There is a test listing every such page.
 
 ## Deliberately dropped — do not re-propose
+
+**Matching "Click to" across all five build rows.** Dropped 17 November
+2026: *"forget about this one."*
+
+The sidebar's build rows read *Click to Build Websites*, *Build GitHub
+Websites*, *Build Cloudflare Websites*, *Build WordPress Blogs*, *Build
+Cloudflare Blogs* — Edwin named the first one himself, hours after asking
+for "Build" on all of them. I offered to make the other four match.
+
+**Dropped, and it was never a defect.** The property the sidebar has to hold
+is that a build row says what pressing it does, and all five do; symmetry of
+phrasing is taste, and it is his. `test-app-header.js` asserts the rule
+(`/\bBuild\b/` on every row under WEBSITES and BLOGS, and NOT on the Manage
+and Tools rows) rather than the wording, which is precisely so this stays a
+preference and not a test failure. The one test that does pin the exact five
+strings is there to make a silent change visible, not to make them uniform.
+
+---
 
 **Per-account project-name uniqueness.** Dropped 25 October 2026: *"forget
 about this."*

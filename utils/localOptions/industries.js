@@ -339,13 +339,192 @@ const LEMON_LAW = {
       + 'not promise a buyback, a replacement, a refund, a settlement or any '
       + 'sum, and do not say any outcome is guaranteed or likely.',
     ],
+
+    /* QUARRY, AND IT IS THE RISKIEST OF THE FOUR TO RE-AIM.
+     *
+     * Its three trade angles are what goes wrong round here, what leaving it
+     * does, and how to tell urgent from not. The first two re-point onto a
+     * file without much trouble. The third does not: on a plumbing site
+     * "this can wait until Monday" is useful, and on a law firm's it is
+     * advice about a limitation period, given by a static page, to somebody
+     * whose state and purchase date it does not know.
+     *
+     *     A PARAGRAPH THAT TELLS SOMEBODY THEIR CLAIM CAN WAIT IS NOT A
+     *     DULL PARAGRAPH. IT IS THE ONE SENTENCE ON THE SITE THAT COULD
+     *     COST THE READER THE THING THEY CAME FOR.
+     *
+     * So the third angle is kept — it is what makes this voice Quarry — and
+     * turned around: what makes a first call MORE useful, with saying that
+     * anything can wait, and naming any deadline, refused outright. */
+    quarry: [
+      'What tends to go wrong with vehicles bought and leased around here, '
+      + 'and what the ordinary pattern looks like — the same fault coming '
+      + 'back, the same part replaced twice, time off the road. IN THE '
+      + 'GENERAL: never a particular owner, a named manufacturer, a model or '
+      + 'a matter that took place. Do not state a count of repair attempts, a '
+      + 'number of days or any other figure. Name the areas covered once, in '
+      + 'the last sentence, without making them the subject.',
+
+      'What tends to happen when an owner keeps taking it back and does '
+      + 'nothing else — what gets harder to show later, and what goes '
+      + 'missing from a file over time. Plain and unexcited. Do not name a '
+      + 'deadline, a time limit, a cut-off, a number of days or a sum, do not '
+      + 'predict an outcome, and do not tell the reader to stop having the '
+      + 'vehicle repaired.',
+
+      'What makes a first call useful — what is worth having to hand, and '
+      + 'why being asked early is easier for everybody than being asked '
+      + 'late. End on the fact that we would rather be asked than not. Do '
+      + 'NOT say that any situation can wait, do not state or imply a time '
+      + 'limit or a deadline, do not promise a callback time, and do not say '
+      + 'what the outcome would be.',
+    ],
+
+    /* HARBOR, AND THE THIRD ONE IS THE REASON IT RE-AIMS WELL.
+     *
+     * Its trade angles are who we work for, how the week runs, and what we
+     * do not take on. A law firm has a sharper version of all three: the
+     * kinds of client, how a matter moves rather than how a day does, and
+     * the work that goes to somebody else.
+     *
+     * THE THIRD IS THE ONE WORTH HAVING AND THE ONE MOST LIKELY TO GO
+     * WRONG. A firm saying what it does not take on is one sentence away
+     * from saying who does it badly, and the trade version already refuses
+     * that. Here it refuses it twice, because the subject is other
+     * lawyers. */
+    harbor: [
+      'The kinds of owner this firm hears from \u2014 people who bought, people '
+      + 'who leased, people still making payments, small businesses with a '
+      + 'vehicle or two \u2014 and what differs about each. IN THE GENERAL: '
+      + 'never a particular client, a named manufacturer or a matter that '
+      + 'took place. Do not say which kind there is most of and do not give '
+      + 'a proportion.',
+
+      'How a matter is handled over time rather than in one conversation \u2014 '
+      + 'what happens first, what waits on paperwork, what the owner is '
+      + 'asked for along the way. Do not promise a response time, a '
+      + 'callback window or a deadline, do not say how long a matter takes, '
+      + 'and do not say what the outcome would be.',
+
+      'What this firm does NOT take on, and where somebody should look '
+      + 'instead \u2014 the matters that belong to another kind of lawyer or '
+      + 'another state. A short run of named things is allowed here and '
+      + 'nowhere else on the page. End on being willing to say so on the '
+      + 'first call rather than later. Do not criticise any other firm or '
+      + 'lawyer, do not say anyone does anything badly, do not name a bar '
+      + 'association or a licence, and do not claim any result.',
+    ],
+
+    /* ATLAS, AND THE THIRD ONE IS THE BEST PARAGRAPH ON ANY OF THESE SIX
+     * HOME PAGES.
+     *
+     * Its trade angles are what the words mean, how the year runs, and what
+     * to check before ringing. All three re-aim, and the third one re-aims
+     * into something a lemon-law site should have had from the start: an
+     * owner who gathers their repair orders before the first call has a
+     * better call, and nothing on a trade site is that directly useful.
+     *
+     * THE FIRST IS THE ONE THAT HAD TO BE FENCED HARDEST, and the fence is
+     * not the one the trade version needs. On a plumbing site, explaining a
+     * word is translation. Here the words themselves are the law's — a
+     * buyback, a repair attempt, a cure — and saying what one MEANS is one
+     * clause away from saying what the law REQUIRES, which is advice, given
+     * by a static page, to somebody whose state and purchase date it does
+     * not know.
+     *
+     *     A GLOSSARY ON A LAW FIRM'S WEBSITE IS NOT A GLOSSARY
+     *     ONCE IT STARTS NAMING THRESHOLDS.
+     *
+     * So it says what a term refers to and refuses every number, every
+     * deadline and every judgement about whether anything qualifies.
+     *
+     * AND THE SECOND DROPS THE WEATHER, obviously. The trade version is
+     * about what a year does to the work, read off the town; a firm's year
+     * is not shaped that way, so it becomes the points in an ownership
+     * where owners tend to start asking — which is a shape of time rather
+     * than a schedule, and is not Harbor's "how a matter moves". The guard
+     * is the same one Quarry's third angle needed: when people DO call,
+     * never when they must. */
+    atlas: [
+      'The words an owner meets when this comes up, and what each of them '
+      + 'refers to in plain language. TRANSLATION ONLY: say what a term '
+      + 'means and nothing else. Do not say what the law requires or allows, '
+      + 'do not state any number of repair attempts, days, miles or months, '
+      + 'do not name a deadline, a time limit or a cut-off, and do not say '
+      + 'whether any situation would or would not qualify. Name no statute '
+      + 'and no court.',
+
+      'The points in owning a vehicle at which people tend to start asking '
+      + 'about this — after a fault keeps coming back, when a lease is '
+      + 'drawing to an end, when a vehicle has spent a stretch at the shop. '
+      + 'When owners DO ask, never when they must: do not name a deadline, '
+      + 'a time limit, a cut-off, a mileage or a number of days, and do not '
+      + 'say that anything can wait. Do not predict an outcome.',
+
+      'What an owner can usefully gather or write down before ringing '
+      + 'anybody — the paperwork that already exists, the dates, what the '
+      + 'shop wrote on each visit, what the vehicle was bought or leased '
+      + 'under. End on what is worth having to hand when the call is made. '
+      + 'Do not tell anybody to stop having the vehicle repaired, to sign or '
+      + 'refuse to sign anything, or to contact a dealer or manufacturer in '
+      + 'any particular way. Do not say what any document proves, and do not '
+      + 'say what the outcome would be.',
+    ],
+
+    /* ORCHARD, AND ALL THREE RE-AIM ALMOST WITHOUT CHANGING.
+     *
+     * Its trade angles are what it is like while the work happens, why two
+     * jobs that sound the same differ, and how to tell it was done
+     * properly. A legal matter has a version of each: what the months feel
+     * like, why two files that sound identical go different ways, and what
+     * a client should be seeing from whoever is handling it.
+     *
+     * THE SECOND IS THE ONE THAT CHANGES MOST. On a trade site "why two
+     * jobs differ" is about access and what is behind the wall, and the
+     * fence is against quoting a price. Here it is about the FACTS of a
+     * file, and the fence is against predicting an outcome — which is a
+     * worse thing to get wrong than a price.
+     *
+     *     A PARAGRAPH EXPLAINING WHY FILES DIFFER IS ONE SENTENCE FROM
+     *     TELLING SOMEBODY THEIRS IS A GOOD ONE.
+     *
+     * AND THE THIRD CARRIES A FLOOR THE TRADE VERSION DOES NOT NEED. "How
+     * to tell it was done properly" on a plumbing site is about a tidy
+     * finish; on a law firm's it is one step from telling a reader how to
+     * judge their current lawyer, which is both a claim about somebody
+     * else and advice nobody here can give. */
+    orchard: [
+      'What the months of a matter like this actually feel like from the '
+      + 'owner\u2019s side \u2014 how much of it is waiting, how often they hear '
+      + 'anything, what they are asked to do and when. Honest rather than '
+      + 'reassuring. Do not say how long a matter takes, do not promise a '
+      + 'response time or a callback window, and do not predict an outcome. '
+      + 'Name the areas covered once, in the last sentence, without making '
+      + 'them the subject.',
+
+      'Why two situations that sound identical on the phone turn out to be '
+      + 'different matters \u2014 what was bought and how, what was written '
+      + 'down at the time, what the paperwork actually says. Explain what '
+      + 'changes the picture, never what it is worth: no sum, no range, no '
+      + 'fee, and no saying that one kind of situation is stronger or '
+      + 'weaker than another. Do not predict, estimate or hint at any '
+      + 'outcome, and do not say whether anything would qualify.',
+
+      'What an owner should be seeing from whoever is handling something '
+      + 'like this \u2014 being told what happens next, having their questions '
+      + 'answered, knowing what is being asked of them. Written as what to '
+      + 'look for, not as what this firm does: do not claim this firm '
+      + 'always does any of it, do not say it is better than anyone else, '
+      + 'do not criticise any other firm or lawyer, and do not mention a '
+      + 'guarantee, a result or a fee arrangement.',
+    ],
   },
 
   /* THE ABOUT HEADING, ALSO PER VOICE, AND FOR THE SAME REASON AS THE THREE
    * PARAGRAPHS.
    *
    * A SINGLE STRING HERE WOULD HAVE BEEN THE EASY VERSION AND WOULD HAVE
-   * FLATTENED THE THREE LAYOUTS INTO ONE. Beacon's heading rule and Anvil's
+   * FLATTENED THE FIVE LAYOUTS INTO ONE. Beacon's heading rule and Anvil's
    * differ on purpose — one demands the trade and the town, the other a verb
    * and the town — and a lemon-law site would have lost that difference
    * while gaining nothing.
@@ -358,7 +537,7 @@ const LEMON_LAW = {
    * not a "<trade> company", so Ledger's had to be rewritten here anyway and
    * is written as a property rather than a sentence.
    *
-   * AND ALL THREE CARRY THE SAME FLOOR: no claim about results. A heading is
+   * AND ALL FIVE CARRY THE SAME FLOOR: no claim about results. A heading is
    * the one line a skimmer reads, which makes it the worst place on the page
    * for a promise. */
   aboutHeading: {
@@ -376,6 +555,50 @@ const LEMON_LAW = {
       + 'what the firm does, and it MUST name the town. It MUST NOT begin '
       + 'with We, Your, Our or About, must not be the business name on its '
       + 'own, and must not claim anything about an outcome',
+
+    /* QUARRY'S IS THE EXACT OPPOSITE OF ANVIL'S, which is the point: Anvil's
+     * heading must contain a verb and this one must not. Told anything
+     * vaguer the four layouts produce the same heading with the nouns
+     * shuffled, which is what happened to Ledger and Beacon on 30 October. */
+    quarry: 'a heading for this section. It MUST name the town and it MUST '
+      + 'be five words or fewer. It MUST NOT contain a verb, so it is a '
+      + 'phrase rather than a statement. It MUST NOT begin with We, Your, '
+      + 'Our or About, must not be the business name on its own, and must '
+      + 'not claim anything about an outcome',
+
+    /* HARBOR REQUIRES THE WORD BEACON AND ANVIL FORBID. Those two ban
+     * "Your"; this one demands it, because a heading addressed to the
+     * reader is the fifth available shape and suits a voice whose whole
+     * rule is to answer rather than announce. */
+    harbor: 'a heading for this section. It MUST address the reader '
+      + 'directly, using the word your, and it MUST name the town. It MUST '
+      + 'NOT begin with We, Our or About, must not be the business name on '
+      + 'its own, must not be a question, and must not claim anything about '
+      + 'an outcome',
+
+    /* ATLAS FIXES THE FIRST WORD, WHICH IS THE ONE SLOT THE OTHER FIVE
+     * LEAVE OPEN. Quarry's forbids a verb, Anvil's demands one, Harbor's
+     * demands the word "your"; none of them says where the place goes.
+     * Atlas's About heading is set in tracked capitals, ranged right, in a
+     * margin beside its own text, and a label in that position beginning
+     * with the town reads as an index entry — which is what the layout is. */
+    atlas: 'a heading for this section. It MUST BEGIN with the name of the '
+      + 'town, and it MUST also name the kind of law practised. It MUST NOT '
+      + 'begin with We, Our, About, You or Your, must not be the business '
+      + 'name on its own, must not be a question, and must not claim '
+      + 'anything about an outcome',
+
+    /* ORCHARD DEMANDS THE FIRST PERSON, WHICH THREE OF THE OTHERS FORBID.
+     * Beacon, Anvil and Atlas all ban "We"; Harbor demands "your". This is
+     * the one position left, and it is the only one that suits a voice
+     * whose rule is to sound like the person answering the phone — a
+     * heading in the third person over three paragraphs of "we" is two
+     * people talking. Ledger's known-bad output is banned by name. */
+    orchard: 'a heading for this section. It MUST speak as the firm, using '
+      + 'the word we or us, and it MUST name the town. It MUST NOT begin '
+      + 'with the words We are, must not be the words About us, must not be '
+      + 'the business name on its own, must not be a question, and must not '
+      + 'claim anything about an outcome',
   },
 };
 

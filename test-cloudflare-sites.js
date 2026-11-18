@@ -60,6 +60,8 @@ const { readSite, walk } = require('./utils/cloudflareSites/siteFiles');
 const { blogDomains, siteDomains, githubDomains, targetOf } = require('./utils/domainPool');
 const { normalisePrefix } = require('./utils/dnsLabel');
 const editableText = require('./utils/cloudflareSites/editableText');
+const verificationHead = require('./utils/cloudflareSites/verificationHead');
+const { parseVerificationTags } = require('./utils/blog/verificationTags');
 const Job = require('./models/Job');
 const { rebuildForJob } = require('./utils/cloudflareSites/rebuildJob');
 
@@ -280,8 +282,47 @@ function install(over = {}) {
 
   CloudflareSite.find = (filter) => {
     db.findFilters.push(filter);
-    return { sort: () => ({ lean: async () => db.sites }) };
+
+    /* FILTERED NOW, WHERE IT USED TO HAND BACK EVERYTHING. The list screen
+     * runs two queries against this collection — the live sites and the
+     * deletes that did not finish — and a stub that returned the same rows
+     * to both would show every site in both tables. */
+    const rows = db.sites.filter(s =>
+      (!filter.status || matchesStatus(s, filter.status))
+      && passesNor(s, filter));
+
+    return { sort: () => ({ lean: async () => rows }) };
   };
+
+  /* $nor IS HONOURED, AND A STUB THAT IGNORED IT WOULD BE WORSE THAN NO
+   * STUB — 17 November.
+   *
+   * checkWant() stopped counting rows whose Cloudflare side was fully torn
+   * down, and it does that IN THE QUERY: `$nor: [{ 'released.domain': true,
+   * 'released.dns': true, 'released.project': true }]`. A stub that dropped
+   * the clause would hand back the released row anyway, so the test for
+   * "a cleanly deleted address can be reused" would fail against correct
+   * code and the test for "a half-deleted one cannot" would pass against
+   * any code at all.
+   *
+   *     A STUB THAT IGNORES PART OF A QUERY IS NOT A SIMPLER DATABASE.
+   *     IT IS A DIFFERENT ONE, ANSWERING A QUESTION NOBODY ASKED.
+   *
+   * Dotted paths, because that is how the real filter is written. */
+  /* `status` ARRIVES TWO WAYS: `{ $ne: 'removed' }` on the live list and a
+   * plain string on the unfinished one. */
+  const matchesStatus = (doc, want) => (want && 'object' === typeof want
+    ? doc.status !== want.$ne
+    : doc.status === want);
+
+  const dotted = (doc, path) =>
+    String(path).split('.').reduce((o, k) => (o == null ? o : o[k]), doc);
+
+  const matchesAll = (doc, clause) =>
+    Object.entries(clause).every(([k, v]) => dotted(doc, k) === v);
+
+  const passesNor = (doc, where) =>
+    !Array.isArray(where.$nor) || !where.$nor.some(c => matchesAll(doc, c));
 
   CloudflareSite.findOne = async (where) => {
     db.findFilters.push(where);
@@ -289,7 +330,9 @@ function install(over = {}) {
     const found = db.sites.find(s =>
       (!where.siteUrl || s.siteUrl === where.siteUrl)
       && (!where._id || String(s._id) === String(where._id))
-      && (!where.user || String(s.user) === String(where.user)));
+      && (!where.user || String(s.user) === String(where.user))
+      && (!where.status || s.status === where.status)
+      && passesNor(s, where));
 
     if (!found) return null;
 
@@ -1108,16 +1151,147 @@ await test('AND A SITE THAT CANNOT BE EDITED IS NOT OFFERED THE BUTTON', async (
     'a site with nothing stored was offered an edit button');
 });
 
+/* THE BUTTON, NOT MERELY THE URL — 17 November, found by a mutant.
+ *
+ * These two tests asserted `href="/cloudflare-sites/new"` appeared in the
+ * page. Then the sidebar's BUILD WEBSITES row was pointed at that same URL,
+ * and `send()` renders the sidebar into every page here — so a mutant that
+ * sent the page's own button to `/` instead SURVIVED. The assertion was
+ * being satisfied by markup the test is not about.
+ *
+ *     A TEST THAT NAMES A BUTTON AND MATCHES A URL PASSES ON ANY LINK
+ *     ANYWHERE ON THE PAGE, INCLUDING THE FURNITURE AROUND IT.
+ *
+ * `class="btn` is what tells the two apart: the sidebar's link carries
+ * `app-sidebar-link`. */
+const BUILD_BUTTON = /<a href="\/cloudflare-sites\/new" class="btn[^"]*"/;
+
 await test('WITH NO BUILD, THE FORM IS NOT THERE AND IT SAYS WHY', async () => {
   /* A publish form over an empty dist is a button that cannot work. The
    * page says what to do instead, which is the only useful thing it can
-   * say. */
+   * say.
+   *
+   * AND WHAT IT SAYS CHANGED ON 16 NOVEMBER. It used to read "generate a
+   * website first, then come back here" — the two-step errand, written out
+   * as an instruction. An empty dist is no longer a thing to go and fix:
+   * /cloudflare-sites/new builds and publishes in one pass. So the test
+   * asserts the way OUT is on the page, not that a particular sentence
+   * is. */
   install({ domains: [CF_DOMAIN], accounts: [ACCOUNT], build: null });
 
   const out = await call(handler('get', '/cloudflare-sites'));
 
   assert.ok(!/action="\/cloudflare-sites"/.test(out.html), 'it offered a publish form with nothing to publish');
-  assert.match(out.html, /no build to publish/i);
+  assert.match(out.html, /no build waiting/i);
+  assert.match(out.html, BUILD_BUTTON,
+    'a page with nothing to publish did not offer the one way to get something');
+});
+
+await test('A BUILD THAT IS ALREADY LIVE DOES NOT GET OFFERED A SECOND ADDRESS', async () => {
+  /* EDWIN, 17 November: *"I built a website using the new flow and it's
+   * live. Now what is the purpose of this?"* — about the publish form at
+   * the bottom of this page, sitting open and prefilled with the name of
+   * the website he had just published.
+   *
+   * THE FORM HAD ONE PURPOSE UNTIL THE WIZARD LEARNED TO PUBLISH. The build
+   * folder used to hold something nobody had published, because this form
+   * was the only way to publish at all. Now the common case is the build
+   * that just went live through /cloudflare-sites/new — and the form was
+   * offering to put the SAME PAGES at a SECOND address. Free, instant, and
+   * duplicate content competing with itself.
+   *
+   *     A FORM THAT WAS THE ONLY WAY THROUGH BECOMES A TRAP THE DAY A
+   *     BETTER WAY THROUGH EXISTS, AND IT DOES NOT CHANGE TO SAY SO.
+   *
+   * IT IS FOLDED, NOT REMOVED. Still the only free route to a second
+   * address, and to recovering a build whose publish was refused before a
+   * row existed. */
+  install({
+    domains: [CF_DOMAIN],
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'hvac.acmesites.com',
+      project: 'p', status: 'live',
+      publishedAt: new Date('2026-11-17T02:00:00Z'),
+    }],
+  });
+
+  // The build on disk was generated BEFORE that publish, so that publish
+  // came from it — publishNow only ever reads the current dist folder.
+  db.build.generatedAt = new Date('2026-11-17T01:00:00Z');
+
+  const out = await call(handler('get', '/cloudflare-sites'));
+
+  assert.match(out.html, /<details/, 'the form is still open on a published build');
+  assert.match(out.html, /already live at[\s\S]*hvac\.acmesites\.com/,
+    'the page does not say where this build already is');
+
+  // Folded, not gone: the form is still in the page, inside the details.
+  assert.match(out.html, /action="\/cloudflare-sites"/,
+    'the publish form was removed rather than folded away');
+});
+
+await test('and an UNPUBLISHED build still gets the form, open', async () => {
+  /* THE CASE THE FORM EXISTS FOR. Built on / or /github-sites, or published
+   * and refused before a row was written — either way the pages are paid
+   * for and sitting there, and this is the free way out.
+   *
+   * ASSERTED SEPARATELY so the fold above cannot quietly become "never show
+   * the form", which would pass the test above on its own. */
+  install({ domains: [CF_DOMAIN], accounts: [ACCOUNT], sites: [] });
+  db.build.generatedAt = new Date('2026-11-17T01:00:00Z');
+
+  const out = await call(handler('get', '/cloudflare-sites'));
+
+  assert.ok(!/<details/.test(out.html),
+    'a build nobody has published is hidden behind a disclosure');
+  assert.match(out.html, /Publish the build you already have/);
+  assert.match(out.html, /action="\/cloudflare-sites"/);
+});
+
+await test('and a site published BEFORE this build was made does not count', async () => {
+  /* THE TIMESTAMP RULE, FROM THE WRONG SIDE. A website published yesterday
+   * says nothing about the build sitting on disk today — that one wiped the
+   * folder the older site came from. Reading "this user has a published
+   * site" as "this build is published" would fold the form away for
+   * everybody who has ever published anything, which is the state the form
+   * exists to rescue them from. */
+  install({
+    domains: [CF_DOMAIN],
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'hvac.acmesites.com',
+      project: 'p', status: 'live',
+      publishedAt: new Date('2026-11-16T01:00:00Z'),
+    }],
+  });
+
+  db.build.generatedAt = new Date('2026-11-17T01:00:00Z');
+
+  const out = await call(handler('get', '/cloudflare-sites'));
+
+  assert.ok(!/<details/.test(out.html),
+    'an older publish was read as this build having gone out');
+  assert.match(out.html, /Publish the build you already have/);
+});
+
+await test('AND THE ONE-STEP WAY IN IS ON THE PAGE EVEN WHEN THERE IS A BUILD', async () => {
+  /* Edwin, 16 November: *"the cloudflare websites on the sidebar shows a
+   * button in the wizard that takes you to the main generator wizard"*.
+   * The page's whole job used to begin after the generator had been used
+   * — its own lead said "the website you have JUST generated" — so the
+   * first screen of a Cloudflare website was somewhere else, and this one
+   * only worked if you happened to arrive in the right order.
+   *
+   * THE BUTTON IS THE FIX, and it is asserted on the populated page too:
+   * the empty-state version above would keep passing if the link only
+   * ever appeared when there was nothing to do. */
+  install({ domains: [CF_DOMAIN], accounts: [ACCOUNT] });
+
+  const out = await call(handler('get', '/cloudflare-sites'));
+
+  assert.match(out.html, BUILD_BUTTON,
+    'the list page does not offer building a new website');
 });
 
 await test('WITH NO WEBSITE DOMAINS, IT SAYS THAT RATHER THAN SHOWING AN EMPTY SELECT', async () => {
@@ -1931,6 +2105,568 @@ await test('AND THE PUBLIC PAGES ARE NOT GIVEN IT', async () => {
 });
 
 /* ===================================================================== */
+
+/* ===================================================================== */
+section('Search Console verification reaches a published website');
+
+const B = (str) => Buffer.from(str, 'utf8');
+const PAGE = '<!DOCTYPE html>\n<html>\n<head>\n<title>t</title>\n</head>\n<body>b</body>\n</html>';
+
+test('THE TAG IS BUILT HERE, NOT ECHOED BACK FROM WHAT WAS PASTED', () => {
+  /* The two halves of the defence, checked together: the parser reduces a
+   * pasted <meta> element to a token, and verificationHead writes a fresh
+   * element around it. A site that echoed the customer's string would put
+   * their markup on every page of a domain that is not ours. */
+  const pasted = '<meta name="google-site-verification" content="tok_ABC-123" />';
+  const tags = parseVerificationTags(pasted);
+
+  assert.deepStrictEqual(tags, ['tok_ABC-123'],
+    'the parser no longer reduces a pasted tag to its token');
+
+  const out = verificationHead.injectVerification({ 'index.html': B(PAGE) }, tags);
+  const html = out['index.html'].toString('utf8');
+
+  assert.ok(html.includes('<meta name="google-site-verification" content="tok_ABC-123">'),
+    'the built tag is not on the page');
+  assert.ok(!html.includes('/>'),
+    'the page carries the customer\'s own markup rather than one we wrote');
+});
+
+test('and a token with a quote in it cannot break out of the attribute', () => {
+  /* The parser should refuse this outright. If a later change relaxes it,
+   * the escape in verificationHead is the second defence — so this asserts
+   * the OUTCOME rather than which of the two did the work. */
+  const out = verificationHead.injectVerification(
+    { 'index.html': B(PAGE) }, ['abc" onload="alert(1)']);
+
+  const html = out['index.html'].toString('utf8');
+
+  assert.ok(!/content="abc"\s+onload=/.test(html),
+    'a quote in a token closed the attribute — the page has an extra one');
+});
+
+test('EVERY PAGE, NOT ONLY THE FRONT ONE', () => {
+  const out = verificationHead.injectVerification({
+    'index.html':          B(PAGE),
+    'about-us.html':       B(PAGE),
+    'services/roof.html':  B(PAGE),
+  }, ['tok_ABC-123']);
+
+  for (const p of Object.keys(out)) {
+    assert.ok(out[p].toString('utf8').includes('google-site-verification'),
+      `${p} has no verification tag, so the property stops verifying the `
+      + 'day Search Console is pointed at that URL');
+  }
+});
+
+test('and nothing that is not a page is rewritten', () => {
+  /* A .js file containing the string "<head>" is a real thing; a stylesheet
+   * decoded to utf8 and back is a corrupt stylesheet if it ever is not. */
+  const css = B('body{color:red}');
+  const js  = B('var s = "<head>";');
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  const out = verificationHead.injectVerification({
+    'index.html': B(PAGE), 'css/index.css': css, 'js/app.js': js, 'img/a.png': png,
+  }, ['tok_ABC-123']);
+
+  assert.ok(out['css/index.css'].equals(css), 'the stylesheet was rewritten');
+  assert.ok(out['js/app.js'].equals(js),      'a script was rewritten');
+  assert.ok(out['img/a.png'].equals(png),     'an image was rewritten');
+});
+
+test('A SITE WITH NO TAGS IS HANDED BACK UNTOUCHED', () => {
+  /* Almost every site. The same object, so nothing is copied and nothing
+   * can differ. */
+  const files = { 'index.html': B(PAGE) };
+
+  assert.strictEqual(verificationHead.injectVerification(files, []), files);
+  assert.strictEqual(verificationHead.injectVerification(files, undefined), files);
+  assert.strictEqual(verificationHead.injectVerification(files, ['  ']), files);
+});
+
+test('and publishing twice does not stack the same tag up', () => {
+  const once  = verificationHead.injectVerification({ 'index.html': B(PAGE) }, ['tok_ABC-123']);
+  const twice = verificationHead.injectVerification(once, ['tok_ABC-123']);
+  const html  = twice['index.html'].toString('utf8');
+
+  assert.strictEqual(html.match(/google-site-verification/g).length, 1,
+    'the tag was added a second time');
+});
+
+test('A PAGE WITH NO <head> IS LEFT ALONE RATHER THAN REPAIRED', () => {
+  /* If one ever appears it is a generator bug, and growing a head here
+   * would hide it behind a page that looks fine. */
+  const bare = B('<html><body>no head</body></html>');
+  const out = verificationHead.injectVerification({ 'odd.html': bare }, ['tok_ABC-123']);
+
+  assert.strictEqual(out['odd.html'].toString('utf8'), bare.toString('utf8'));
+});
+
+await test('THE PUBLISH PATH IS WIRED TO IT, AND THERE IS ONLY ONE', () => {
+  /* publishNow() is what both the first publish and the edit rebuild call.
+   * This reads the route source: the unit above proves the injector works,
+   * and nothing else proves it is reached.
+   *
+   * Comments are stripped first — this route file explains the feature at
+   * length, so a search of the raw text passes on the prose alone. */
+  const src = fs.readFileSync(path.join(__dirname, 'routes', 'cloudflareSitesRoute.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
+  assert.ok(/verificationHead\.injectVerification\s*\(/.test(src),
+    'publishNow no longer injects the verification tags');
+
+  assert.ok(!/files:\s*read\.files/.test(src),
+    'the deploy is handed read.files again, so the injected copy is '
+    + 'built and then thrown away — the tags never reach Cloudflare');
+
+  assert.ok(/parseVerificationTags\s*\(\s*req\.body/.test(src),
+    'the route does not put the submitted value through the shared parser');
+});
+
+/* ===================================================================== */
+section('THE WIZARD\'S DESTINATION — ONE ERRAND INSTEAD OF TWO');
+
+/* Edwin, 16 November: *"have you fixed the clouldflare 2 steps? that what i
+ * need"*.
+ *
+ * A website for a Cloudflare subdomain took two visits: build it in the
+ * generator, come back here, and fill a second form that published
+ * "whatever was built last". The second screen silently depended on the
+ * first having been the last thing you did — build two sites and publish
+ * once and you publish the wrong one.
+ *
+ * /cloudflare-sites/new is the same wizard with a DESTINATION attached. The
+ * address is typed on the review step and utils/jobGenerator.js calls
+ * createAndPublish() when the build finishes, so one pass does both. */
+
+await test('checkWant REFUSES A BAD ADDRESS WITHOUT TOUCHING ANYTHING', async () => {
+  /* THE PROPERTY THAT MAKES THE PRE-CHARGE CHECK SAFE TO RUN.
+   *
+   * routes/generateRoute.js calls this BEFORE it queues the build, so that
+   * a typo in the subdomain is a refused form rather than a website the
+   * customer paid for and cannot publish. That is only safe if the check
+   * itself creates nothing, publishes nothing and does not care whether a
+   * build exists yet — at that moment the build has not happened.
+   *
+   *     A CHECK WITH A SIDE EFFECT CANNOT BE MOVED EARLIER. */
+  install({ domains: [CF_DOMAIN], accounts: [ACCOUNT], build: null, read: { ok: false, error: 'nothing built' } });
+
+  const out = await router.checkWant({
+    userId: USER,
+    want: { name: 'Quality Plumbing', prefix: 'my.site', domain: 'acmesites.com' },
+  });
+
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.code, 'badName');
+  assert.strictEqual(db.created, null, 'the cheap check created a website');
+  assert.deepStrictEqual(db.deployCalls, [], 'the cheap check deployed something');
+  assert.deepStrictEqual(db.readCalls, [],
+    'the cheap check went looking for a build that has not been made yet');
+});
+
+await test('and it ACCEPTS a good one, resolving the hostname', async () => {
+  install({ domains: [CF_DOMAIN], accounts: [ACCOUNT] });
+
+  const out = await router.checkWant({
+    userId: USER,
+    want: { name: 'Quality Plumbing', prefix: 'HVAC', domain: 'acmesites.com' },
+  });
+
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.domain, 'hvac.acmesites.com',
+    'the subdomain was not normalised, or the hostname was assembled wrongly');
+  assert.strictEqual(out.name, 'Quality Plumbing');
+  assert.strictEqual(db.created, null, 'the cheap check created a website');
+});
+
+await test('and it refuses a hostname somebody already has', async () => {
+  /* The case the pre-charge check exists for. Without it the customer pays
+   * for a build and is then told the address is gone. */
+  install({
+    domains: [CF_DOMAIN],
+    accounts: [ACCOUNT],
+    sites: [{ _id: 'other', siteUrl: 'hvac.acmesites.com', status: 'live' }],
+  });
+
+  const out = await router.checkWant({
+    userId: USER,
+    want: { name: 'Quality Plumbing', prefix: 'hvac', domain: 'acmesites.com' },
+  });
+
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.code, 'taken');
+  assert.strictEqual(out.domain, 'hvac.acmesites.com', 'the refusal does not say which address');
+});
+
+await test('THE DELETE WRITES DOWN WHAT IT MANAGED TO TAKE DOWN', async () => {
+  /* It already worked all three out and put them in a log line. A log is
+   * what happened; a field is what is still true, and only the second one
+   * can answer a question asked later. */
+  const src = require('fs').readFileSync('./routes/cloudflareSitesRoute.js', 'utf8');
+
+  const fn = /async function removeFromCloudflare\([\s\S]*?\n\}/.exec(src);
+
+  assert.ok(fn, 'the teardown is no longer one function');
+
+  assert.match(fn[0], /site\.released = \{[\s\S]*?domain: Boolean\(released\.detached && released\.detached\.ok\)/,
+    'the detach result is not recorded');
+  assert.match(fn[0], /dns: Boolean\(released\.dns && released\.dns\.ok && released\.dns\.removed\)/,
+    'the DNS result is not recorded');
+  assert.match(fn[0], /project: Boolean\(project && project\.ok\)/,
+    'the project result is not recorded');
+
+  /* AND A SITE THAT NEVER DEPLOYED IS CLEAN BY DEFINITION — no project, no
+   * domain, no record, nothing to collide with. NOT an `else` on the
+   * teardown: that is also skipped when the owner unticks the box on a
+   * site that does have one. */
+  assert.match(fn[0], /if \(!site\.project\) \{\s*\n\s*site\.released = \{ domain: true, dns: true, project: true/,
+    'a site that never deployed still reserves its address');
+
+  assert.ok(!/\} else \{\s*\n\s*site\.released = \{ domain: true/.test(fn[0]),
+    'the never-deployed case is an else on the teardown, so unticking the box frees the name');
+});
+
+await test('AND BOTH THE DELETE AND THE RETRY GO THROUGH IT', async () => {
+  /* A retry that is a second copy of the thing it retries is two teardowns
+   * that will disagree within a month. */
+  const src = require('fs').readFileSync('./routes/cloudflareSitesRoute.js', 'utf8');
+
+  const calls = (src.match(/await removeFromCloudflare\(site, \{/g) || []).length;
+
+  assert.strictEqual(calls, 2,
+    `removeFromCloudflare is called ${calls} times; the delete and the retry should be both`);
+
+  assert.match(src, /router\.post\('\/cloudflare-sites\/:id\/finish-removing'/,
+    'there is no way to retry a failed teardown');
+
+  /* IT REFUSES A SITE THAT IS NOT REMOVED, because on a live one this is an
+   * undisclosed delete button. */
+  const route = /router\.post\('\/cloudflare-sites\/:id\/finish-removing'[\s\S]*?\n\}\);/.exec(src);
+
+  assert.match(route[0], /'removed' !== site\.status/,
+    'the retry will tear down a site that is still live');
+});
+
+await test('AND THE LIST SHOWS THE ONES STILL HOLDING AN ADDRESS', async () => {
+  /* Edwin asked what options a failed deletion leaves. The retry existed
+   * and nothing linked to it — the list hides removed sites — so in
+   * practice there were none.
+   *
+   *     HIDING A ROW IS THE RIGHT ANSWER WHEN THERE IS NOTHING LEFT TO DO
+   *     ABOUT IT, AND THE WRONG ONE WHEN THERE IS.
+   *
+   * THE SAME THREE FLAGS THE HOSTNAME CHECK READS, so what is listed is
+   * exactly the set of addresses still reserved. */
+  const src = require('fs').readFileSync('./routes/cloudflareSitesRoute.js', 'utf8');
+
+  const query = /const unfinished = await CloudflareSite\.find\(\{[\s\S]*?\}\)/.exec(src);
+
+  assert.ok(query, 'the list never asks for the unfinished deletes');
+
+  assert.match(query[0], /status: 'removed'/, 'it is not looking at deleted sites');
+  assert.match(query[0], /'released\.domain': true[\s\S]*?'released\.dns': true[\s\S]*?'released\.project': true/,
+    'it does not use the same three flags the hostname check uses');
+  assert.match(query[0], /\$nor/, 'it lists the clean ones rather than the stuck ones');
+
+  assert.match(src, /action="\/cloudflare-sites\/\$\{s\._id\}\/finish-removing"/,
+    'the rows have no button, so the retry is still unreachable');
+});
+
+await test('A CLEANLY DELETED ADDRESS CAN BE USED AGAIN', async () => {
+  /* EDWIN, 17 November: *"i deleted the previus site and now it wont let me
+   * use it withe same business name"*.
+   *
+   * Deleting marks the row `removed` and keeps it — on purpose, because a
+   * hard delete frees the subdomain while Cloudflare may still hold the
+   * project. But the check read every row whatever its status, so a deleted
+   * site reserved its address for ever.
+   *
+   *     THE ROW REMEMBERED THAT THE NAME HAD BEEN USED AND NOT WHETHER IT
+   *     WAS STILL IN USE. Those are different questions and only the second
+   *     one should refuse a new site. */
+  install({
+    domains: [CF_DOMAIN],
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: 'gone', siteUrl: 'hvac.acmesites.com', status: 'removed',
+      released: { domain: true, dns: true, project: true, at: new Date() },
+    }],
+  });
+
+  const out = await router.checkWant({
+    userId: USER,
+    want: { name: 'Quality Plumbing', prefix: 'hvac', domain: 'acmesites.com' },
+  });
+
+  assert.strictEqual(out.ok, true,
+    'a hostname with nothing left behind is still reserved');
+});
+
+await test('BUT A HALF-FINISHED DELETE STILL HOLDS IT', async () => {
+  /* The case the reservation was written for, and the reason the fix is
+   * three facts rather than "was it deleted". The Pages project is still up
+   * there; handing the name out means the next publish collides with a
+   * leftover nobody can see. */
+  for (const [what, released] of [
+    ['the project is still there', { domain: true, dns: true, project: false }],
+    ['the domain is still attached', { domain: false, dns: true, project: true }],
+    ['the DNS record is still there', { domain: true, dns: false, project: true }],
+    ['nothing was taken down', { domain: false, dns: false, project: false }],
+  ]) {
+    install({
+      domains: [CF_DOMAIN],
+      accounts: [ACCOUNT],
+      sites: [{ _id: 'gone', siteUrl: 'hvac.acmesites.com', status: 'removed', released }],
+    });
+
+    const out = await router.checkWant({
+      userId: USER,
+      want: { name: 'Q', prefix: 'hvac', domain: 'acmesites.com' },
+    });
+
+    assert.strictEqual(out.ok, false, `the address was freed while ${what}`);
+    assert.strictEqual(out.code, 'taken');
+  }
+});
+
+await test('AND A ROW FROM BEFORE THE FIELD EXISTED STAYS RESERVED', async () => {
+  /* The safe direction, and it is a decision rather than an oversight: an
+   * old removed site may well still have a project behind it and nothing
+   * stored can say otherwise. Those names are freed by pressing "Finish
+   * removing", which settles the question instead of assuming. */
+  install({
+    domains: [CF_DOMAIN],
+    accounts: [ACCOUNT],
+    sites: [{ _id: 'old', siteUrl: 'hvac.acmesites.com', status: 'removed' }],
+  });
+
+  const out = await router.checkWant({
+    userId: USER,
+    want: { name: 'Q', prefix: 'hvac', domain: 'acmesites.com' },
+  });
+
+  assert.strictEqual(out.ok, false, 'a row with no record of its teardown was assumed clean');
+});
+
+await test('and a LIVE site still holds its address, released or not', async () => {
+  /* The query asks what is still holding the name, not what the status is —
+   * so this is the assertion that the simpler rule did not open a hole. A
+   * live row has no `released` at all and must refuse. */
+  install({
+    domains: [CF_DOMAIN],
+    accounts: [ACCOUNT],
+    sites: [{ _id: 'live', siteUrl: 'hvac.acmesites.com', status: 'live' }],
+  });
+
+  const out = await router.checkWant({
+    userId: USER,
+    want: { name: 'Q', prefix: 'hvac', domain: 'acmesites.com' },
+  });
+
+  assert.strictEqual(out.ok, false, 'a live website stopped reserving its own address');
+});
+
+await test('and a blog domain is refused here too, not just at the form', async () => {
+  install({ domains: [CF_DOMAIN, BLOG_DOMAIN], accounts: [ACCOUNT] });
+
+  const out = await router.checkWant({
+    userId: USER,
+    want: { name: 'Q', prefix: 'hvac', domain: 'acmeblogs.com' },
+  });
+
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.code, 'badDomain');
+});
+
+await test('THE ADDRESS IS READ OUT OF EITHER BODY SHAPE', () => {
+  /* THE SHAPE PROBLEM THIS PROJECT HAS ALREADY BEEN BITTEN BY.
+   *
+   * The wizard submits multipart, and multer expands bracket notation
+   * through append-field, so the fields land as
+   * `body.global.cloudflare.prefix`. A urlencoded post leaves them flat, as
+   * `body['global[cloudflare][prefix]']`. routes/generateRoute.js carries
+   * the scar in its site-mode read, whose note says that handling only the
+   * first shape is what refused a whole mode's builds.
+   *
+   *     A MISSED DESTINATION DOES NOT THROW. The build succeeds, goes
+   *     nowhere, and says nothing. */
+  const { siteTargetOf, wantedAddress } = require('./utils/cloudflareSites/wanted');
+
+  const expanded = {
+    global: { siteTarget: 'cloudflare', cloudflare: { name: 'Q', prefix: 'hvac', domain: 'acmesites.com' } },
+  };
+
+  const flat = {
+    'global[siteTarget]': 'cloudflare',
+    'global[cloudflare][name]': 'Q',
+    'global[cloudflare][prefix]': 'hvac',
+    'global[cloudflare][domain]': 'acmesites.com',
+  };
+
+  for (const [label, body] of [['expanded', expanded], ['flat', flat]]) {
+    assert.strictEqual(siteTargetOf(body), 'cloudflare', `${label}: the destination was missed`);
+    assert.deepStrictEqual(wantedAddress(body),
+      { name: 'Q', prefix: 'hvac', domain: 'acmesites.com' },
+      `${label}: the address was missed`);
+  }
+
+  // No destination at all is the common case, and it is '' rather than a throw.
+  assert.strictEqual(siteTargetOf({ global: {} }), '');
+  assert.strictEqual(siteTargetOf({}), '');
+  assert.strictEqual(siteTargetOf(undefined), '');
+
+  // An unknown destination reads as none: the build stays where it was made
+  // and can be published by hand, rather than branching on something
+  // nothing implements.
+  assert.strictEqual(siteTargetOf({ global: { siteTarget: 'ftp' } }), '');
+
+  // Always an object, so no caller writes its own `|| {}`.
+  assert.deepStrictEqual(wantedAddress({}), { name: '', prefix: '', domain: '' });
+
+  /* A REPEATED FIELD ARRIVES AS AN ARRAY, and String(['a','b']) is 'a,b' —
+   * which normalisePrefix refuses. The first value is the honest reading. */
+  assert.strictEqual(wantedAddress({ 'global[cloudflare][prefix]': ['hvac', 'evil'] }).prefix, 'hvac');
+});
+
+await test('THE PAGES ARE BUILT FOR THE ADDRESS THEY WILL LIVE AT', () => {
+  /* EDWIN, 17 NOVEMBER. The wizard asks for a pool DOMAIN on step 4 and a
+   * SUBDOMAIN on the review step, and the site publishes to
+   * `prefix.domain`. utils/canonicalUrl.js and utils/buildSitemap.js both
+   * build from `global.domain`, so every page shipped saying
+   *
+   *     <link rel="canonical" href="https://acmesites.com/contact.html">
+   *
+   * from a page served at hvac.acmesites.com. A canonical is an INSTRUCTION
+   * — index THIS address, not the one you are on — and that one is a
+   * different site, or nothing.
+   *
+   *     THE PAGES WERE TELLING GOOGLE TO INDEX SOMEWHERE THEY DO NOT LIVE.
+   *
+   * THE REAL canonicalTag, NOT A REGEX OVER THE SOURCE. The property worth
+   * holding is what ends up in the <head>, and this suite can have it
+   * cheaply because that function is pure. */
+  const { setGlobalDomain } = require('./utils/cloudflareSites/wanted');
+  const { canonicalTag } = require('./utils/canonicalUrl');
+
+  const expanded = {
+    global: {
+      domain: 'acmesites.com',
+      siteTarget: 'cloudflare',
+      cloudflare: { name: 'Q', prefix: 'hvac', domain: 'acmesites.com' },
+    },
+  };
+
+  assert.match(canonicalTag(expanded.global, 'contact.html'),
+    /href="https:\/\/acmesites\.com\/contact\.html"/,
+    'the bug this fixes is not reproducible, so the test below proves nothing');
+
+  assert.strictEqual(setGlobalDomain(expanded, 'hvac.acmesites.com'), true);
+
+  assert.match(canonicalTag(expanded.global, 'contact.html'),
+    /href="https:\/\/hvac\.acmesites\.com\/contact\.html"/,
+    'the canonical still names a domain the pages are not served from');
+
+  /* THE ADDRESS FIELDS ARE UNTOUCHED, and that matters: the publish resolves
+   * the hostname from prefix + the POOL domain, and overwriting that one
+   * would make the site publish to hvac.hvac.acmesites.com. */
+  const { wantedAddress } = require('./utils/cloudflareSites/wanted');
+  assert.deepStrictEqual(wantedAddress(expanded),
+    { name: 'Q', prefix: 'hvac', domain: 'acmesites.com' },
+    'rewriting the site domain clobbered the address the publish needs');
+});
+
+await test('and it rewrites the flat body shape too', () => {
+  const { setGlobalDomain, globalField } = require('./utils/cloudflareSites/wanted');
+
+  const flat = { 'global[domain]': 'acmesites.com', 'global[siteTarget]': 'cloudflare' };
+
+  assert.strictEqual(setGlobalDomain(flat, 'hvac.acmesites.com'), true);
+  assert.strictEqual(flat['global[domain]'], 'hvac.acmesites.com');
+  assert.strictEqual(globalField(flat, 'domain'), 'hvac.acmesites.com');
+});
+
+await test('and it does not grow a second spelling of the domain', () => {
+  /* A flat body must not sprout a `global` object, and an expanded one must
+   * not sprout a bracketed key — either leaves TWO spellings of the domain
+   * in the payload for the next reader to choose between, which is the
+   * duplicate-hidden-input bug that once sent style5 builds to style.css,
+   * one layer down. */
+  const { setGlobalDomain } = require('./utils/cloudflareSites/wanted');
+
+  const flat = { 'global[domain]': 'acmesites.com' };
+  setGlobalDomain(flat, 'hvac.acmesites.com');
+  assert.strictEqual(flat.global, undefined, 'a flat body grew a global object');
+
+  const expanded = { global: { domain: 'acmesites.com' } };
+  setGlobalDomain(expanded, 'hvac.acmesites.com');
+  assert.ok(!Object.prototype.hasOwnProperty.call(expanded, 'global[domain]'),
+    'an expanded body grew a bracketed key');
+
+  // Nothing to write, nothing written — and it says so rather than throwing.
+  assert.strictEqual(setGlobalDomain({ global: {} }, ''), false);
+  assert.strictEqual(setGlobalDomain(null, 'hvac.acmesites.com'), false);
+  assert.strictEqual(setGlobalDomain({}, 'hvac.acmesites.com'), false,
+    'a body with no domain field anywhere was given one out of nowhere');
+});
+
+await test('THE GENERATOR CHECKS THE ADDRESS BEFORE IT QUEUES THE BUILD', () => {
+  /* ORDER IS THE WHOLE POINT, so this asserts position and not presence.
+   *
+   * The address is typed on the LAST step and used LAST, after a build that
+   * costs real credits. If the check ran anywhere after Job.create() it
+   * would still be a check — of the kind that tells somebody their
+   * subdomain has a dot in it once they have paid for the website.
+   *
+   *     A CHECK THAT ONLY RUNS AFTER THE BILL IS NOT A CHECK.
+   *
+   * Comments stripped first, so the prose above the code cannot satisfy
+   * this on its own — three mutants have hit this suite's own comments. */
+  const src = fs.readFileSync(path.join(__dirname, 'routes', 'generateRoute.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
+  const check = src.indexOf('checkWant(');
+  const queue = src.indexOf('Job.create(');
+
+  assert.ok(check > -1, 'the generator does not check a Cloudflare address at all');
+  assert.ok(queue > -1, 'Job.create has moved; this test cannot tell where the check runs');
+  assert.ok(check < queue,
+    'the address is checked after the build is queued — the customer pays first');
+
+  /* AND THE DOMAIN REWRITE SITS BETWEEN THEM. After the check, because
+   * checkWant() is what proved the POSTED domain is in the pool — hand it a
+   * hostname and it refuses every submission. Before Job.create, because the
+   * payload IS the body, and a rewrite after it is stored never reaches the
+   * build or any later rebuild. */
+  const rewrite = src.indexOf('setGlobalDomain(');
+
+  assert.ok(rewrite > -1, 'the site is still built for the pool domain');
+  assert.ok(rewrite > check,
+    'the domain is rewritten before it is checked — checkWant will refuse everything');
+  assert.ok(rewrite < queue,
+    'the domain is rewritten after the job is stored, so the build never sees it');
+
+  assert.ok(/siteTargetOf\s*\(\s*req\.body\s*\)/.test(src),
+    'the generator reads the destination its own way rather than through the shared reader');
+});
+
+await test('AND THE JOB RUNNER USES THAT READER RATHER THAN ITS OWN', () => {
+  /* The mutant: `job.payload.global.siteTarget`, which is correct for the
+   * shape the wizard happens to post and silently wrong for the other.
+   * Comments stripped first — this module explains itself at length. */
+  const src = fs.readFileSync(path.join(__dirname, 'utils', 'jobGenerator.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
+  assert.ok(/siteTargetOf\s*\(\s*job\.payload\s*\)/.test(src),
+    'the job runner reads the destination its own way');
+  assert.ok(/want:\s*wantedAddress\s*\(\s*job\.payload\s*\)/.test(src),
+    'the job runner reads the address its own way');
+  assert.ok(/createAndPublish\s*\(/.test(src),
+    'the job runner no longer publishes a Cloudflare build at all');
+});
 
 cleanup();
 

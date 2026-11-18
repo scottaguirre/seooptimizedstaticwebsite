@@ -37,6 +37,7 @@ const {
   generalLimiter,
 } = require('./middleware/rateLimits');
 const generateRoute = require('./routes/generateRoute');
+const generateBatchRoute = require('./routes/generateBatchRoute');
 const productionRoute = require('./routes/productionRoute');
 const downloadZipRoute = require('./routes/downloadZipRoute');
 const exportWpThemeRoute = require('./routes/exportWpThemeRoute');
@@ -192,6 +193,24 @@ app.use('/cloudflare-sites', express.urlencoded({
   limit: '8mb',
   parameterLimit: 50000,
 }));
+
+/* A BATCH IS SEVERAL WHOLE SUBMISSIONS IN ONE BODY — 18 November.
+ *
+ * The global express.json() below names no limit, so it takes the default:
+ * 100 KB. One wizard submission fits easily; ten of them in a `sites` array
+ * is a different size of thing, and the failure is not a message anybody can
+ * act on — body-parser throws PayloadTooLargeError, Express renders its own
+ * HTML error page, and the browser's `res.json()` then fails too. The person
+ * sees whatever the client says when it cannot read a reply.
+ *
+ *     A LIMIT THAT IS HIT PRODUCES A PAGE, NOT A JSON ERROR,
+ *     SO THE ROUTE'S OWN MESSAGES NEVER GET A CHANCE TO RUN.
+ *
+ * MOUNTED HERE, ABOVE THE GLOBAL PARSER, BECAUSE THE FIRST ONE WINS. A
+ * limit set on the route itself is dead code: by the time the router is
+ * reached the body has already been read and the error already thrown. Same
+ * shape as the /cloudflare-sites rule above it, and for the same reason. */
+app.use('/api/generate-batch', express.json({ limit: '4mb' }));
 
 app.use(express.urlencoded({ extended: true }));
 
@@ -446,12 +465,17 @@ app.use('/', requireAuth, mySitesRoute);
 
 app.use('/', requireAuth, formRoute);         // /
 app.use('/', requireAuth, generateRoute);     // /generate
+/* Several websites from one submission — 18 November. Its own router rather
+ * than a flag through generateRoute's four-hundred-line handler; see the
+ * note at the top of the file. */
+app.use('/api', requireAuth, generateBatchRoute); // /api/generate-batch
 app.use('/', requireAuth, productionRoute);   // /production
 app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
 app.use('/', requireAuth, blogSitesRoute);    // /blog-sites — licence keys
 app.use('/', requireAuth, staticBlogsRoute);  // /static-blogs — Cloudflare blogs, planned here rather than in wp-admin
 app.use('/', requireAuth, cloudflareSitesRoute); // /cloudflare-sites — generated websites on a Cloudflare subdomain
+app.use('/', requireAuth, require('./routes/editSiteRoute')); // /edit-site — change the current build's words
 app.use('/', requireAuth, blogReportRoute);   // /blog-report(.csv) — every post, every site
 app.use('/', requireAuth, pluginDownloadRoute); // /plugin/download — the WP plugin
 
@@ -544,6 +568,23 @@ jobRunner.registerGenerator('build', buildForJob);
  * lazily, and keeping the require beside the registration is what makes a
  * kind registered-but-unimplemented impossible to miss. */
 jobRunner.registerGenerator('cfedit', require('./utils/cloudflareSites/rebuildJob').rebuildForJob);
+
+/* The Rank Fast edit screen's re-render — 17 November. Same shape as the one
+ * above and a different errand at both ends: it reads a FOLDER rather than a
+ * row, and finishes by putting the Search Console tag back rather than by
+ * deploying. See utils/editSiteJob.js. */
+jobRunner.registerGenerator('siteedit', require('./utils/editSiteJob').rebuildForJob);
+
+/* Several websites from one submission, built one after another — 18
+ * November, Edwin: *"after one is deployed the app starts the second build
+ * and so on"*.
+ *
+ * ONE JOB AND NOT THREE, because every Local Website Options build wipes and
+ * refills dist/user_<id> and generationLimiter would run three of them at
+ * once. It calls generateForJob() per site rather than rebuilding the
+ * hundred lines of decisions that function makes. See
+ * utils/batchGenerator.js. */
+jobRunner.registerGenerator('sitebatch', require('./utils/batchGenerator').generateForBatch);
 
 // Wakes each customer's WordPress when a post is due. The schedule lives here
 // rather than in WP-Cron because WP-Cron fires on a visit, and a brand new

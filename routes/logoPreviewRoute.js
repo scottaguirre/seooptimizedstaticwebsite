@@ -62,6 +62,15 @@ router.get('/logo-preview', logoPreviewLimiter, async (req, res) => {
    *
    * Absent `design` leaves structure empty, which paletteFor() reads as
    * "another mode" and falls through to the theme table. */
+  /* NO MODE PASSED, DELIBERATELY, and designs.js documents what omitting it
+   * means: any mode. This route colours a preview and nothing is built from
+   * its answer, so a design id from a mode this page does not belong to is a
+   * wrong colour at worst. The build call in runLocalOptions.js passes the
+   * mode, because that one decides what the customer gets.
+   *
+   * WHEN THE CLOUDFLARE WIZARD USES THIS PREVIEW it will want its own mode
+   * passed in, and that is a query parameter to add then rather than a
+   * default to guess now. */
   const structure = 'design' in req.query
     ? buildOptionsFor(req.query.design).structure
     : '';

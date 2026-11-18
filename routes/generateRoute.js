@@ -47,6 +47,10 @@ const { buildContactPage } = require('../utils/buildContactPage');
 const { buildContactFormHtml } = require('../utils/pageParts');
 const { MODES, normalizeSiteMode, pagesToBuild } = require('../utils/seoPresets');
 const { localAddress } = require('../utils/localOptions/address');
+/* WHERE THE FINISHED BUILD GOES, read out of either body shape — see the
+ * note at the top of that file. The CHECK on what it reads is required
+ * lazily further down, because it lives in a route. */
+const { siteTargetOf, wantedAddress, setGlobalDomain } = require('../utils/cloudflareSites/wanted');
 
 const CM = require('../utils/contentModel');
 
@@ -305,7 +309,18 @@ router.post('/generate', upload.any(), async (req, res) => {
     /* THE MODE IS HANDED OVER, because this handler has already worked it
      * out of a body that carries it in one of two shapes — and the domain
      * field this mode requires depends on it. */
-    const validGlobal = validateGlobalFields(global, { siteMode });
+    /* THE DESTINATION IS PASSED TOO — 17 November. A Local Website Options
+     * build addressed to Cloudflare picks neither `domain` nor `domainId`;
+     * the address is the three cloudflare fields, and checkWant() below
+     * validates them properly. See the note in validateGlobalFields.
+     *
+     * READ THROUGH siteTargetOf, not off `global`, for the reason the note
+     * in that function records about `siteMode`: the body arrives in two
+     * shapes and `global.siteTarget` is undefined in one of them. */
+    const validGlobal = validateGlobalFields(global, {
+      siteMode,
+      siteTarget: siteTargetOf(req.body),
+    });
     if (!validGlobal.ok) {
       return jsonValidationError(res, 400, validGlobal.error, validGlobal.fields);
     }
@@ -314,6 +329,72 @@ router.post('/generate', upload.any(), async (req, res) => {
     const validPages = validateEachPageInputs(pages);
     if (!validPages.ok) {
       return jsonValidationError(res, 400, validPages.error, validPages.fields);
+    }
+
+    /* THE CLOUDFLARE ADDRESS, CHECKED BEFORE ANYBODY IS CHARGED — 16 Nov.
+     *
+     * /cloudflare-sites/new is this same wizard with a DESTINATION attached,
+     * so the subdomain is typed on the review step and the publish happens
+     * at the END of the build, inside the job. Without this block every
+     * refusal in checkWant() would have arrived after the credits were
+     * spent: a typo in the subdomain, a hostname taken yesterday, a domain
+     * switched off this morning — and the customer would have paid for a
+     * website that cannot go to the address they asked for.
+     *
+     *     THE BUILD IS THE EXPENSIVE PART, SO THE ADDRESS IS CHECKED
+     *     FIRST, EVEN THOUGH IT IS USED LAST.
+     *
+     * THE SAME FUNCTION THE PUBLISH ITSELF CALLS, not a copy of its rules.
+     * It runs again at publish time because minutes pass during a build and
+     * a hostname can go in that window — which is what the `raced` code in
+     * that route is for. This one only closes the common case.
+     *
+     * REQUIRED HERE RATHER THAN AT THE TOP for the reason the job runner
+     * gives: that route pulls in a dozen models, and most requests through
+     * this handler publish nowhere.
+     *
+     * A REFUSAL NAMES THE FIELD, so the wizard can send them back to the
+     * box rather than to a sentence with no box attached. */
+    if ('cloudflare' === siteTargetOf(req.body)) {
+      const { checkWant } = require('./cloudflareSitesRoute');
+
+      const ready = await checkWant({
+        userId: req.user._id,
+        want: wantedAddress(req.body),
+      });
+
+      if (!ready.ok) {
+        const SAY = {
+          badName: ['Give the website a name and a subdomain.', 'global[cloudflare][prefix]'],
+          badDomain: ['Choose one of the domains in the list.', 'global[cloudflare][domain]'],
+          taken: [`${ready.domain || 'That address'} is already in use. Try another subdomain.`,
+            'global[cloudflare][prefix]'],
+          tooMany: [`You have reached the limit of ${ready.limit} websites.`,
+            'global[cloudflare][prefix]'],
+        };
+
+        const [message, field] = SAY[ready.code]
+          || ['That address could not be used.', 'global[cloudflare][prefix]'];
+
+        return jsonValidationError(res, 400, message, [{ name: field, message }]);
+      }
+
+      /* AND THE SITE IS BUILT FOR THE ADDRESS IT WILL LIVE AT — 17 Nov.
+       *
+       * `ready.domain` is the whole hostname, `hvac.acmesites.com`, not the
+       * pool domain that was posted. Writing it back into the body is what
+       * makes every canonical and every sitemap URL name the address the
+       * pages are actually served from — see the note on setGlobalDomain().
+       *
+       * AFTER THE CHECK, NEVER BEFORE IT. checkWant() is what proved the
+       * posted domain is in the website pool and enabled; overwriting the
+       * field first would hand it a hostname to look up and it would refuse
+       * every submission.
+       *
+       * AFTER validateGlobalFields TOO, which has already run above and
+       * required `domain` to be present. It is still present and still a
+       * hostname, so nothing it checked stops being true. */
+      setGlobalDomain(req.body, ready.domain);
     }
 
     /**
@@ -383,7 +464,14 @@ router.post('/generate', upload.any(), async (req, res) => {
      * The `$exists: false` arm is for rows written before `kind` existed —
      * those are site builds, and utils/jobRunner.js's claimNextJob() treats
      * them the same way for the same reason. */
-    const DIST_KINDS = ['site', 'build'];
+    /* 'sitebatch' IS ONE OF THEM — 18 November. A batch owns
+     * dist/user_<id> for its whole run, building each of its sites into it
+     * in turn, so it must not overlap with a single build or a download
+     * build for the same reason those two must not overlap with each other.
+     *
+     *     THE RULE IS NOT "ONE JOB", IT IS "ONE JOB THAT TOUCHES THIS
+     *     USER'S BUILD FOLDER" — and a batch touches it N times. */
+    const DIST_KINDS = ['site', 'build', 'sitebatch'];
 
     const activeJob = await Job.findOne({
       user: req.user._id,

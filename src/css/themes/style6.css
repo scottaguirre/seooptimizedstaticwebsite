@@ -1536,16 +1536,27 @@ footer a {
    green everywhere; style4.css already overrides to its own red, so matching
    the theme is the established exception rather than a new idea.
 
-   CONTRAST, because it is the one thing that is worse here than on the other
-   themes: white on #ee5519 is 3.53:1, against 5.07:1 for the green and
-   6.33:1 for style4's red. The tick is a 2px glyph and not text, so no WCAG
-   rule is broken — but it is thinner than elsewhere. #d6440c is the same
-   orange a shade deeper and reaches 4.48:1, if the tick ever looks washed
-   out against a photograph.
+   CONTRAST, AND IT WAS DEEPENED ON 15 NOVEMBER at Edwin's request. White on
+   the theme's own #ee5519 is 3.53:1, against 5.07:1 for the green and 6.33:1
+   for style4's red; #d6440c is the same orange a shade deeper and reaches
+   4.48:1.
+
+   NOT A BUG FIX, AND THE DISTINCTION IS WORTH KEEPING. This note said "fails
+   AA" for days and that was wrong — the tick is a 2px glyph beside a label
+   that already states the fact, so it is decorative, and contrast rules
+   cover text and meaningful graphics. Nothing was failing. It simply looked
+   thinner here than on the other themes, most visibly over a photograph.
+
+       A TASTE CALL RECORDED AS A DEFECT GETS "FIXED" BY SOMEBODY WHO NEVER
+       ASKED WHETHER IT WAS ONE.
+
+   This file is hand-styled — Edwin's own work from 10 September — so the
+   change waited for him to ask rather than being made on a hunch about
+   taste. #ee5519 is kept on the line below: putting it back is one edit.
    ========================================================================== */
 
 .trust-points {
-    --trust-bg: #ee5519;      /* circle — this theme's accent */
+    --trust-bg: #d6440c;      /* circle — the accent, a shade deeper (was #ee5519) */
     --trust-tick: #ffffff;    /* the check inside it */
 
     list-style: none;

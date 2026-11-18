@@ -38,6 +38,10 @@ const jobSchema = new mongoose.Schema({
    *             that existed when this model was written)
    *   'blog'    one Interlink Engine post
    *   'build'   webpack + zip for download
+   *   'siteedit' re-render the build in dist/user_<id> from its own edited
+   *              words, after the Rank Fast edit screen saved them. Charges
+   *              nothing: every sentence comes from the stored model.
+   *
    *   'cfedit'  re-render a published Cloudflare website from its stored
    *             words and deploy it again
    *
@@ -57,7 +61,17 @@ const jobSchema = new mongoose.Schema({
    */
   kind: {
     type: String,
-    enum: ['site', 'blog', 'build', 'cfedit'],
+    /* 'sitebatch' — several websites from one submission, built one after
+     * another. ONE job rather than several, deliberately: every Local
+     * Website Options build wipes and refills dist/user_<id>, and
+     * generationLimiter allows three jobs at once, so three queued site jobs
+     * for one user would run together and the second would wipe the first's
+     * folder half way through. See utils/batchGenerator.js.
+     *
+     * IT IS IN DIST_KINDS IN routes/generateRoute.js TOO, for the same
+     * reason: it owns the build folder for its whole run, so it must not
+     * overlap with a 'site' or a 'build'. */
+    enum: ['site', 'blog', 'build', 'cfedit', 'siteedit', 'sitebatch'],
     default: 'site',
     index: true,
   },

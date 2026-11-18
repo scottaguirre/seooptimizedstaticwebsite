@@ -83,6 +83,8 @@ const requireAuth = require('../middleware/requireAuth');
 const cfDeploy = require('../utils/blog/cloudflare/deploy');
 const cloudflare = require('../utils/blog/cloudflare/accounts');
 const siteFiles = require('../utils/cloudflareSites/siteFiles');
+const verificationHead = require('../utils/cloudflareSites/verificationHead');
+const { parseVerificationTags, MAX_TAGS } = require('../utils/blog/verificationTags');
 const currentSite = require('../utils/currentSite');
 
 /* WHAT A PUBLISHED SITE NEEDS KEPT SO IT CAN BE RENDERED AGAIN — the model
@@ -97,6 +99,7 @@ const siteStore = require('../utils/cloudflareSites/siteStore');
  * the generator and is a script tag on a published page the moment it is
  * not. */
 const editableText = require('../utils/cloudflareSites/editableText');
+const { renderSections } = require('../utils/editForm');
 
 
 const { childEnv } = require('../utils/blog/cloudflare/deploy');
@@ -107,7 +110,7 @@ const { siteDomains } = require('../utils/domainPool');
 const { normalisePrefix } = require('../utils/dnsLabel');
 
 const { withAppHeader } = require('../utils/appHeader');
-const { pageTitle, TOOL_CF_SITES } = require('../utils/pageTitle');
+const { pageTitle, TOOL_MY_CF_SITES } = require('../utils/pageTitle');
 const { log } = require('../utils/logger');
 
 /* THE SAME ROOT runGeneration.js AND generateRoute.js USE. Resolved here
@@ -234,6 +237,13 @@ async function publishNow({ userId, requestId, site }) {
   const read = siteFiles.readSite(buildDirFor(userId));
   if (!read.ok) return { ok: false, error: read.error };
 
+  /* THE SEARCH CONSOLE TAGS GO IN HERE, which is the only place they can go
+   * in once. This function is what BOTH the first publish and the edit
+   * rebuild call, so a tag added here reaches a site however it got built —
+   * and a site with none pays an array check. See verificationHead.js for
+   * why this is not a template placeholder. */
+  const files = verificationHead.injectVerification(read.files, site.verificationTags);
+
   /* THE ACCOUNT THIS SITE BELONGS TO, AND A FAILURE TO GET IT IS FATAL.
    *
    * credsFor() returns undefined for a site that names no account, which
@@ -264,7 +274,7 @@ async function publishNow({ userId, requestId, site }) {
 
   const result = await cfDeploy.deployBlog({
     blog: site,
-    files: read.files,
+    files,
     requestId,
     creds,
   });
@@ -396,6 +406,37 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
       status: { $ne: 'removed' },
     }).sort({ createdAt: -1 }).lean();
 
+    /* THE DELETES THAT DID NOT FINISH — 17 November.
+     *
+     * A removed site is hidden from the list above and should be. But a
+     * removed site whose teardown FAILED is not finished business: a Pages
+     * project is still up there counting against the hundred-project
+     * ceiling, and its hostname stays reserved because of it.
+     *
+     *     HIDING A ROW IS THE RIGHT ANSWER WHEN THERE IS NOTHING LEFT TO
+     *     DO ABOUT IT, AND THE WRONG ONE WHEN THERE IS. Edwin asked what
+     *     options a failed deletion leaves: the retry existed and nothing
+     *     linked to it, so in practice there were none.
+     *
+     * THE SAME THREE FLAGS THE HOSTNAME CHECK READS, so what is listed here
+     * is exactly the set of addresses that are still reserved. A site that
+     * tore down cleanly is gone from this screen entirely, which is what
+     * makes a row appearing here mean something.
+     *
+     * ROWS FROM BEFORE THE FIELD EXISTED default to all-false and will show
+     * up here too. That is honest rather than tidy: nothing stored can say
+     * whether their projects are gone, and this screen is where somebody
+     * can look and settle it. */
+    const unfinished = await CloudflareSite.find({
+      user: req.user._id,
+      status: 'removed',
+      $nor: [{
+        'released.domain': true,
+        'released.dns': true,
+        'released.project': true,
+      }],
+    }).sort({ updatedAt: -1 }).lean();
+
     /* THE DOMAINS ON OFFER, AND ONLY THE WEBSITE ONES — Edwin, 5 November:
      * *"these domains will be separate than the ones for blogs. So the
      * dropdown for these domains has to be separate from the dropdown of
@@ -412,6 +453,39 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
      * case there is nothing to publish and the form has no business being
      * on screen. */
     const build = currentSite.getCurrentSite(req.user._id);
+
+    /* HAS THE BUILD ON DISK ALREADY BEEN PUBLISHED, AND WHERE?
+     *
+     * WHY THIS QUESTION EXISTS — 17 November, Edwin: *"I built a website
+     * using the new flow and it's live. Now what is the purpose of this?"*,
+     * about the publish form at the bottom of this page.
+     *
+     * It had one until the wizard learned to publish. The build folder used
+     * to hold something nobody had published yet, because this form was the
+     * only way to publish at all. Now the common case is that the build
+     * sitting there is the one that just went live through
+     * /cloudflare-sites/new — and the form was offering, prefilled with its
+     * name, to put the SAME PAGES at a SECOND address. Free, instant, and
+     * duplicate content competing with itself.
+     *
+     *     A FORM THAT WAS THE ONLY WAY THROUGH BECOMES A TRAP THE DAY A
+     *     BETTER WAY THROUGH EXISTS, AND IT DOES NOT CHANGE TO SAY SO.
+     *
+     * TIMESTAMPS, BECAUSE NOTHING TIES A ROW TO A BUILD. CloudflareSite has
+     * no "built from" field and adding one would be a migration for a
+     * question two dates already answer: publishNow() always reads the
+     * CURRENT dist folder, so a site published AFTER this build was
+     * generated was published FROM it. There is no way to publish an older
+     * build — the folder only ever holds one.
+     *
+     * THE MOST RECENT ONE, since republishing to several addresses is
+     * allowed and the newest is the one the customer just did.
+     *
+     * null WHEN THERE IS NO BUILD, which keeps every reader below from
+     * having to check twice. */
+    const alreadyLive = (!build || !build.generatedAt) ? null : sites
+      .filter(s => s.publishedAt && new Date(s.publishedAt) >= new Date(build.generatedAt))
+      .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt))[0] || null;
 
     /* THE REGISTRAR, THEN THE LABEL, AND BOTH ARE OPTIONAL.
      *
@@ -489,6 +563,43 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
       </tr>`;
     }).join('');
 
+    /* WHAT IS STILL HOLDING EACH ONE, named rather than summarised. "Not
+     * fully removed" tells somebody there is a problem and nothing about
+     * where to look; "the Pages project" tells them which screen in the
+     * Cloudflare dashboard to open if the retry keeps failing. */
+    const stillThere = (r = {}) => [
+      r.project ? '' : 'the Pages project',
+      r.domain ? '' : 'the custom domain',
+      r.dns ? '' : 'the DNS record',
+    ].filter(Boolean).join(', ');
+
+    const unfinishedRows = unfinished.map(s => `
+      <tr>
+        <td>${esc(s.name || 'Untitled')}</td>
+        <td>${esc(s.siteUrl)}
+          <div class="small text-white-50">Still at Cloudflare: ${esc(stillThere(s.released))}</div>
+        </td>
+        <td class="text-end">
+          <form method="post" action="/cloudflare-sites/${s._id}/finish-removing" class="d-inline">
+            ${res.locals.csrfField || ''}
+            <button class="btn btn-sm btn-outline-warning" type="submit">Finish removing</button>
+          </form>
+        </td>
+      </tr>`).join('');
+
+    const unfinishedList = !unfinished.length ? '' : `
+      <h2 class="h4 mt-5 mb-1">Deleted, but not finished</h2>
+      <p class="text-white-50 mb-3">
+        These websites were deleted here, and something was left behind at
+        Cloudflare. Their addresses stay reserved until it is gone.
+      </p>
+      <div class="table-responsive">
+        <table class="table table-navy table-hover align-middle">
+          <thead><tr><th>Website</th><th>Address</th><th></th></tr></thead>
+          <tbody>${unfinishedRows}</tbody>
+        </table>
+      </div>`;
+
     const list = sites.length
       ? `<div class="table-responsive">
          <table class="table table-navy table-hover align-middle">
@@ -523,34 +634,27 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
            </div>
          </div>`
       : `<div class="alert alert-secondary">
-           <strong>There is no build to publish yet.</strong>
+           <strong>There is no build waiting here.</strong>
            <div class="small mt-1">
-             Generate a website first, then come back here to put it on a
-             subdomain. Only your most recent build can be published — the
-             generator keeps one at a time.
+             Nothing is missing — building and publishing are one errand now.
+             Start a website and it goes out at the address you give on the
+             last step.
            </div>
-           <a href="/" class="btn btn-sm btn-primary mt-2">Build a website</a>
          </div>`;
 
-    send(res, page({
-      title: TOOL_CF_SITES,
-      body: `
-        <h1 class="h2 mb-1">${TOOL_CF_SITES}</h1>
-        <p class="lead text-white-50 mb-4">
-          Put the website you have just generated on a subdomain of one of
-          our domains. Cloudflare writes the DNS record itself, so there is
-          nothing to paste anywhere.
-        </p>
-
-        ${buildCard}
-
-        <h2 class="h4 mb-3">Your websites</h2>
-        ${list}
-
-        ${build && pool.length ? `
-        <h2 class="h4 mt-5 mb-3">Publish it to a subdomain</h2>
-
-        <form method="post" action="/cloudflare-sites" class="row g-2">
+    /* THE REPUBLISH FORM, AND WHETHER IT IS OPEN — 17 November.
+     *
+     * ONE COPY OF THE MARKUP, TWO PRESENTATIONS. The published and
+     * unpublished cases differ only in what is said above the form and
+     * whether it starts open, so the form itself is built once. Writing it
+     * twice is how the two versions start disagreeing about which fields
+     * exist, which is the whole reason this file has one publish path
+     * rather than two.
+     *
+     * <details>, NOT JAVASCRIPT. A native disclosure needs no script, works
+     * before the page finishes loading, and keeps this page's promise that
+     * nothing here has an inline handler — see test-inline-handlers.js. */
+    const publishForm = !build ? '' : `<form method="post" action="/cloudflare-sites" class="row g-2">
           ${res.locals.csrfField || ''}
           <div class="col-md-4">
             <label class="form-label" for="name">Name</label>
@@ -578,7 +682,78 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
             <em>Publish again</em> on its row: it goes out at the same
             address.
           </div>
-        </form>` : ''}
+        </form>`;
+
+    /* WHEN THE BUILD HAS ALREADY GONE OUT, THE FORM IS FOLDED AWAY.
+     *
+     * Not removed: it is still the only free route for somebody who wants
+     * the same pages at a second address, and for the narrow case where the
+     * publish was refused BEFORE a row existed — a hostname taken during
+     * the build, or a Cloudflare account with no room. Both leave a paid-for
+     * build on disk and nothing to press.
+     *
+     * But it is no longer the thing the page offers you. The summary names
+     * the address this build is already serving from, so the one fact that
+     * makes the form a mistake is the first thing read. */
+    const publishSection = !build || !pool.length ? '' : (alreadyLive ? `
+        <details class="mt-5">
+          <summary class="text-white-50" style="cursor:pointer">
+            This build is already live at
+            <strong class="text-white">${esc(alreadyLive.siteUrl)}</strong>.
+            Publish the same pages at a second address.
+          </summary>
+
+          <div class="mt-3">
+            ${publishForm}
+          </div>
+        </details>` : `
+        <h2 class="h4 mt-5 mb-1">Publish the build you already have</h2>
+        <p class="text-white-50 mb-3">
+          This is the last website the generator made, whichever screen you
+          made it on. It has not been published anywhere yet. Building a new
+          one above does this step for you.
+        </p>
+
+        ${publishForm}`);
+
+    send(res, page({
+      /* THE PAGE IS NAMED AFTER THE ROW THAT LEADS TO IT — 17 November.
+       * This screen is the LIST, and it is reached from "My Cloudflare
+       * Websites" under MANAGE. Titling it "Cloudflare Websites" was fine
+       * while that was also the name of the only row; now that the build
+       * row carries that name, a heading repeating it would say the two
+       * rows lead to the same place. */
+      title: TOOL_MY_CF_SITES,
+      body: `
+        <h1 class="h2 mb-1">${TOOL_MY_CF_SITES}</h1>
+        <p class="lead text-white-50 mb-3">
+          Websites on a subdomain of one of our domains. Cloudflare writes
+          the DNS record itself, so there is nothing to paste anywhere.
+        </p>
+
+        ${/* THE WAY IN, AT THE TOP, AND IT IS THE WHOLE TWO-STEP FIX.
+             Edwin, 16 November: the page's own job used to begin after the
+             generator had already been used — "put the website you have
+             JUST generated" — so the first screen of a Cloudflare website
+             was somewhere else, and this one only worked if you happened to
+             arrive in the right order. Now the errand starts where the
+             product lives. */''}
+        <p class="mb-4">
+          <a href="/cloudflare-sites/new" class="btn btn-primary">Build a website</a>
+        </p>
+
+        ${buildCard}
+
+        <h2 class="h4 mb-3">Your websites</h2>
+        ${list}
+
+        ${/* BELOW THE LIVE SITES AND ABOVE THE PUBLISH FORM. It is not part
+             of "Your websites" — these are gone — and it is not an aside
+             either: each row is an action somebody has to take. Empty on
+             every account where nothing went wrong, which is most. */''}
+        ${unfinishedList}
+
+        ${publishSection}
 
         ${build && !pool.length ? `
         <div class="alert alert-secondary mt-4">
@@ -602,115 +777,158 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
 });
 
 /* -------------------------------------------------------------------------
+ * Is this address usable, asked without building anything
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The four cheap checks on a wanted address.
+ *
+ * WHY THIS IS ITS OWN FUNCTION — 16 November. The wizard now carries a
+ * Cloudflare destination, so the address is typed on the review step and the
+ * publish happens at the END of the build, inside the job. Every refusal
+ * below would therefore have arrived AFTER the credits were spent: a typo in
+ * the subdomain, or a hostname somebody took yesterday, and the customer
+ * pays for a website that cannot go to the address they asked for.
+ *
+ *     A CHECK THAT ONLY RUNS AFTER THE BILL IS NOT A CHECK.
+ *
+ * So routes/generateRoute.js calls this BEFORE queuing the job and refuses
+ * the form instead, and createAndPublish() calls the same function again at
+ * publish time. The second call is not redundant — minutes pass during a
+ * build and a hostname can go in that window — which is why `raced` exists
+ * further down.
+ *
+ * ONLY THE CHEAP ONES. Cloudflare's live project count and the presence of
+ * a build on disk are deliberately NOT here: the first is a network call
+ * against a third party and the second is false before the build that is
+ * about to happen. Both stay in createAndPublish(), after this.
+ *
+ * @param   {object} userId  whose cap to count against
+ * @param   {object} want    { name, prefix, domain } as posted
+ * @returns {Promise<object>} { ok: true, name, prefix, pick, domain }
+ *                            or { ok: false, code, ... }
+ */
+async function checkWant({ userId, want = {} }) {
+  const name = String(want.name || '').trim().slice(0, 200);
+  const prefix = normalisePrefix(want.prefix);
+
+  if (!name || !prefix) {
+    return { ok: false, code: 'badName' };
+  }
+
+  /* THE DOMAIN MUST BE ONE OF OURS, AND ONE OF THE WEBSITE ONES.
+   *
+   * The form is a dropdown, so an unknown domain only arrives on a posted
+   * request — which is to say, from anybody. `target` is in the filter
+   * rather than checked afterwards: without it, a posted BLOG domain
+   * would create a website on a hostname the blog screen also offers, and
+   * whichever published second would overwrite the other.
+   *
+   * `enabled` is the same door. A domain taken off the list when a client
+   * left must not come back through a replayed form. */
+  const pick = await Domain.findOne({
+    domain: String(want.domain || '').trim().toLowerCase(),
+    ...siteDomains(false),
+  });
+
+  if (!pick || false === pick.enabled) {
+    return { ok: false, code: 'badDomain' };
+  }
+
+  const domain = `${prefix}.${pick.domain}`;
+
+  /* ACROSS EVERY ACCOUNT AND ACROSS BOTH PRODUCTS, BY THE WHOLE HOSTNAME.
+   *
+   * UNSCOPED, so the refusal can be about a site belonging to somebody
+   * this person cannot see. That is worth the vague wording: the
+   * alternative is letting them create something that silently destroys
+   * another customer's site, which is what /static-blogs discovered about
+   * its own user-scoped check on 22 October.
+   *
+   * AND BlogSite TOO, even though a Domain row is either a blog domain or
+   * a website domain and never both. It costs one indexed lookup and it
+   * is the check that still holds on the day somebody edits a row's
+   * `target` — at which point every hostname under it becomes reachable
+   * from the other screen. */
+  /* A ROW WHOSE HOSTNAME WAS ACTUALLY RELEASED DOES NOT RESERVE IT — 17
+   * November. Edwin deleted a test site and was refused its name:
+   * *"i deleted the previus site and now it wont let me use it withe same
+   * business name"*.
+   *
+   * The reservation is about a LEFTOVER at Cloudflare — a project, an
+   * attached domain, a DNS record — not about the name having once been
+   * used. models/CloudflareSite.js records all three outcomes now, and
+   * all three true means there is nothing up there to collide with.
+   *
+   * EXCLUDED IN THE QUERY, NOT AFTER IT. findOne returns one row, and a
+   * hostname can have two: a released one and a live one. Filtering in
+   * JavaScript would pass whenever Mongo happened to hand back the
+   * released row first, which is the kind of test that passes for a year.
+   *
+   * ANYTHING LESS THAN ALL THREE STILL BLOCKS, which is the case the rule
+   * was written for — including every row stored before the field existed,
+   * where all three default to false. */
+  const RELEASED = {
+    'released.domain': true,
+    'released.dns': true,
+    'released.project': true,
+  };
+
+  const [clashSite, clashBlog] = await Promise.all([
+    CloudflareSite.findOne({ siteUrl: domain, $nor: [RELEASED] }),
+    BlogSite.findOne({ siteUrl: domain }),
+  ]);
+
+  if (clashSite || clashBlog) {
+    return { ok: false, code: 'taken', domain };
+  }
+
+  /* A RUNAWAY GUARD, NOT A PRODUCT LIMIT, and the difference matters
+   * because it was read as one.
+   *
+   * The oldest of the three copies, in routes/blogSitesRoute.js, says what
+   * it is for: "a cap, because nothing else limits this and a loop against
+   * the form would otherwise fill the collection." The two later copies
+   * took the number and left the sentence behind, so a bare `|| 50` sat
+   * here looking like a decision about how many sites a customer may have.
+   * It is not. Nothing about 50 was ever chosen.
+   *
+   *     A NUMBER WITH NO REASON BESIDE IT GETS READ AS A REASON.
+   *
+   * 300 rather than 50 because the guard has to be past what a person
+   * reaches by hand and nowhere near what a loop reaches in seconds — and
+   * at 50 it was the FIRST ceiling hit, in front of the real one.
+   *
+   * THE REAL CEILING IS CLOUDFLARE'S: 100 Pages projects per account,
+   * counted live in createAndPublish() rather than here, because asking a
+   * third party is not a cheap check and this function is also what the
+   * generator form calls before it charges anybody. That one is external,
+   * documented and worth refusing on. This one only has to stop a bug. */
+  const limit = Number(process.env.CF_MAX_SITES_PER_USER) || 300;
+  const existing = await CloudflareSite.countDocuments({
+    user: userId,
+    status: { $ne: 'removed' },
+  });
+
+  if (existing >= limit) {
+    return { ok: false, code: 'tooMany', limit };
+  }
+
+  return { ok: true, name, prefix, pick, domain };
+}
+
+/* -------------------------------------------------------------------------
  * Creating a site and publishing it, which is one button
  * ---------------------------------------------------------------------- */
 
-router.post('/cloudflare-sites', requireAuth, async (req, res) => {
+async function createAndPublish({ userId, requestId, want }) {
   try {
-    const name = String(req.body.name || '').trim().slice(0, 200);
-    const prefix = normalisePrefix(req.body.prefix);
+    const ready = await checkWant({ userId, want });
 
-    if (!name || !prefix) {
-      return send(res, page({
-        status: 400,
-        title: 'Publish a website',
-        body: `<h1 class="h3">A website needs a name and a subdomain</h1>
-               <p class="lead">
-                 The subdomain is a single word — letters, numbers and
-                 hyphens — in front of the domain you picked.
-               </p>
-               <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
-      }));
-    }
+    if (!ready.ok) return ready;
 
-    /* THE DOMAIN MUST BE ONE OF OURS, AND ONE OF THE WEBSITE ONES.
-     *
-     * The form is a dropdown, so an unknown domain only arrives on a posted
-     * request — which is to say, from anybody. `target` is in the filter
-     * rather than checked afterwards: without it, a posted BLOG domain
-     * would create a website on a hostname the blog screen also offers, and
-     * whichever published second would overwrite the other.
-     *
-     * `enabled` is the same door. A domain taken off the list when a client
-     * left must not come back through a replayed form. */
-    const pick = await Domain.findOne({
-      domain: String(req.body.domain || '').trim().toLowerCase(),
-      ...siteDomains(false),
-    });
+    const { name, pick, domain } = ready;
 
-    if (!pick || false === pick.enabled) {
-      return send(res, page({
-        status: 400,
-        title: 'Not a domain we host',
-        body: `<h1 class="h3">That domain is not available for websites</h1>
-               <p class="lead">Pick one from the list.</p>
-               <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
-      }));
-    }
-
-    const domain = `${prefix}.${pick.domain}`;
-
-    /* ACROSS EVERY ACCOUNT AND ACROSS BOTH PRODUCTS, BY THE WHOLE HOSTNAME.
-     *
-     * UNSCOPED, so the refusal can be about a site belonging to somebody
-     * this person cannot see. That is worth the vague wording: the
-     * alternative is letting them create something that silently destroys
-     * another customer's site, which is what /static-blogs discovered about
-     * its own user-scoped check on 22 October.
-     *
-     * AND BlogSite TOO, even though a Domain row is either a blog domain or
-     * a website domain and never both. It costs one indexed lookup and it
-     * is the check that still holds on the day somebody edits a row's
-     * `target` — at which point every hostname under it becomes reachable
-     * from the other screen. */
-    const [clashSite, clashBlog] = await Promise.all([
-      CloudflareSite.findOne({ siteUrl: domain }),
-      BlogSite.findOne({ siteUrl: domain }),
-    ]);
-
-    if (clashSite || clashBlog) {
-      return send(res, page({
-        status: 400,
-        title: 'Already taken',
-        body: `<h1 class="h3">${esc(domain)} is already in use</h1>
-               <p class="lead">Pick a different word in front of the domain.</p>
-               <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
-      }));
-    }
-
-    /* A RUNAWAY GUARD, NOT A PRODUCT LIMIT, and the difference matters
-     * because it was read as one.
-     *
-     * The oldest of the three copies, in routes/blogSitesRoute.js, says what
-     * it is for: "a cap, because nothing else limits this and a loop against
-     * the form would otherwise fill the collection." The two later copies
-     * took the number and left the sentence behind, so a bare `|| 50` sat
-     * here looking like a decision about how many sites a customer may have.
-     * It is not. Nothing about 50 was ever chosen.
-     *
-     *     A NUMBER WITH NO REASON BESIDE IT GETS READ AS A REASON.
-     *
-     * 300 rather than 50 because the guard has to be past what a person
-     * reaches by hand and nowhere near what a loop reaches in seconds — and
-     * at 50 it was the FIRST ceiling hit, in front of the real one.
-     *
-     * THE REAL CEILING IS BELOW THIS AND IS CLOUDFLARE'S: 100 Pages projects
-     * per account, counted live a few lines down. That one is external,
-     * documented and worth refusing on. This one only has to stop a bug. */
-    const limit = Number(process.env.CF_MAX_SITES_PER_USER) || 300;
-    const existing = await CloudflareSite.countDocuments({
-      user: req.user._id,
-      status: { $ne: 'removed' },
-    });
-
-    if (existing >= limit) {
-      return send(res, page({
-        status: 400,
-        title: 'Too many websites',
-        body: `<h1 class="h3">You have reached the limit of ${limit} websites</h1>
-               <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
-      }));
-    }
 
     /* IS THERE ROOM ON THAT CLOUDFLARE ACCOUNT?
      *
@@ -738,23 +956,13 @@ router.post('/cloudflare-sites', requireAuth, async (req, res) => {
        * room. A `=== 100` test here would wave those through. */
       if (room.ok && accountCapacity({ projects: room.projects }).left <= 0) {
         log.info('cfSites.accountFull', {
-          requestId: req.id,
-          userId: String(req.user._id),
+          requestId,
+          userId: String(userId),
           domain: pick.domain,
           projects: room.projects,
         });
 
-        return send(res, page({
-          status: 400,
-          title: 'That domain is full',
-          body: `<h1 class="h3">${esc(pick.domain)} has no room left</h1>
-                 <p class="lead">
-                   Cloudflare allows 100 sites per account and this one is
-                   full. Pick a different domain from the list, or ask us to
-                   add another.
-                 </p>
-                 <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
-        }));
+        return { ok: false, code: 'full', domain: pick.domain };
       }
     }
 
@@ -773,20 +981,14 @@ router.post('/cloudflare-sites', requireAuth, async (req, res) => {
      * disagreeing about which build went out. Two reads of a folder of
      * files already in the page cache is a cost worth paying for one code
      * path instead of two. */
-    const check = siteFiles.readSite(buildDirFor(req.user._id));
+    const check = siteFiles.readSite(buildDirFor(userId));
 
     if (!check.ok) {
-      return send(res, page({
-        status: 400,
-        title: 'Nothing to publish',
-        body: `<h1 class="h3">There is nothing to publish</h1>
-               <p class="lead">${esc(check.error)}</p>
-               <a href="/" class="btn btn-primary mt-3">Build a website</a>`,
-      }));
+      return { ok: false, code: 'noBuild', error: check.error };
     }
 
     const site = await CloudflareSite.create({
-      user: req.user._id,
+      user: userId,
       siteUrl: domain,
       name,
       status: 'draft',
@@ -799,13 +1001,13 @@ router.post('/cloudflare-sites', requireAuth, async (req, res) => {
     });
 
     log.info('cfSites.created', {
-      requestId: req.id,
-      userId: String(req.user._id),
+      requestId,
+      userId: String(userId),
       siteId: String(site._id),
       domain,
     });
 
-    const result = await publishNow({ userId: req.user._id, requestId: req.id, site });
+    const result = await publishNow({ userId, requestId, site });
 
     /* THE ROW SURVIVES A FAILED FIRST PUBLISH, ON PURPOSE.
      *
@@ -817,12 +1019,12 @@ router.post('/cloudflare-sites', requireAuth, async (req, res) => {
     if (!result.ok) {
       log.error('cfSites.firstPublish.failed',
         new Error(result.error || 'deploy failed'),
-        { requestId: req.id, siteId: String(site._id), domain });
+        { requestId, siteId: String(site._id), domain });
 
-      return send(res, failedSpec({ site, result }));
+      return { ok: false, code: 'publishFailed', site, result };
     }
 
-    return send(res, publishedSpec({ site, result, first: true }));
+    return { ok: true, site, result };
 
   } catch (err) {
     /* A DUPLICATE KEY HERE IS THE RACE THE CLASH CHECK CANNOT WIN. Two
@@ -830,24 +1032,14 @@ router.post('/cloudflare-sites', requireAuth, async (req, res) => {
      * can pass the index. The index is the real answer; this turns its
      * error into the same sentence the check would have produced. */
     if (11000 === err.code) {
-      return send(res, page({
-        status: 400,
-        title: 'Already taken',
-        body: `<h1 class="h3">That address was just taken</h1>
-               <p class="lead">Pick a different word in front of the domain.</p>
-               <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
-      }));
+      return { ok: false, code: 'raced' };
     }
 
-    log.error('cfSites.create.failed', err, { requestId: req.id });
-    send(res, page({
-      status: 500,
-      title: 'Something went wrong',
-      body: `<h1>We could not publish that</h1>
-             <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
-    }));
+    log.error('cfSites.create.failed', err, { requestId });
+
+    return { ok: false, code: 'error' };
   }
-});
+}
 
 /** The page shown after a successful publish. */
 function publishedSpec({ site, result, first }) {
@@ -908,6 +1100,103 @@ function publishedSpec({ site, result, first }) {
  * IT IS ALSO THE RETRY for a first publish that failed, which is why it does
  * not care whether `status` is draft or live.
  */
+/**
+ * The form on /cloudflare-sites, which is now one caller of two.
+ *
+ * EVERY REFUSAL ABOVE IS A CODE, AND THE WORDS LIVE HERE. The seven checks
+ * createAndPublish() runs — name, domain, hostname clash, per-user guard,
+ * Cloudflare capacity, a build on disk, and the publish itself — are the
+ * same seven whether a person pressed Publish on this page or finished the
+ * wizard with Cloudflare as its destination.
+ *
+ *     THE SECOND CALLER IS WHY THEY MOVED. A background job cannot send a
+ *     404 page, and a copy of seven checks is seven chances for the two
+ *     paths to start disagreeing about what is allowed. utils/domainPool.js
+ *     exists because that already happened once with a two-condition
+ *     filter.
+ */
+router.post('/cloudflare-sites', requireAuth, async (req, res) => {
+  const out = await createAndPublish({
+    userId: req.user._id,
+    requestId: req.id,
+    want: req.body,
+  });
+
+  if (out.ok) {
+    return send(res, publishedSpec({ site: out.site, result: out.result, first: true }));
+  }
+
+  if ('publishFailed' === out.code) {
+    return send(res, failedSpec({ site: out.site, result: out.result }));
+  }
+
+  const back = '<a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>';
+
+  const pages = {
+    badName: {
+      status: 400,
+      title: 'Publish a website',
+      body: `<h1 class="h3">A website needs a name and a subdomain</h1>
+             <p class="lead">
+               The subdomain is a single word — letters, numbers and
+               hyphens — in front of the domain you picked.
+             </p>
+             ${back}`,
+    },
+    badDomain: {
+      status: 400,
+      title: 'Not a domain we host',
+      body: `<h1 class="h3">That domain is not available for websites</h1>
+             <p class="lead">Pick one from the list.</p>
+             ${back}`,
+    },
+    taken: {
+      status: 400,
+      title: 'Already taken',
+      body: `<h1 class="h3">${esc(out.domain || '')} is already in use</h1>
+             <p class="lead">Pick a different word in front of the domain.</p>
+             ${back}`,
+    },
+    tooMany: {
+      status: 400,
+      title: 'Too many websites',
+      body: `<h1 class="h3">You have reached the limit of ${out.limit} websites</h1>
+             ${back}`,
+    },
+    full: {
+      status: 400,
+      title: 'That domain is full',
+      body: `<h1 class="h3">${esc(out.domain || '')} has no room left</h1>
+             <p class="lead">
+               Cloudflare allows 100 sites per account and this one is full.
+               Pick a different domain from the list, or ask us to add
+               another.
+             </p>
+             ${back}`,
+    },
+    noBuild: {
+      status: 400,
+      title: 'Nothing to publish',
+      body: `<h1 class="h3">There is nothing to publish</h1>
+             <p class="lead">${esc(out.error || '')}</p>
+             <a href="/" class="btn btn-primary mt-3">Build a website</a>`,
+    },
+    raced: {
+      status: 400,
+      title: 'Already taken',
+      body: `<h1 class="h3">That address was just taken</h1>
+             <p class="lead">Pick a different word in front of the domain.</p>
+             ${back}`,
+    },
+  };
+
+  return send(res, page(pages[out.code] || {
+    status: 500,
+    title: 'Something went wrong',
+    body: `<h1>We could not publish that</h1>${back}`,
+  }));
+});
+
 router.post('/cloudflare-sites/:id/publish', requireAuth, async (req, res) => {
   try {
     const site = await ownedSite(req);
@@ -1002,112 +1291,11 @@ router.get('/cloudflare-sites/:id/edit', requireAuth, async (req, res) => {
       }));
     }
 
-    const blocks = editableText.collect(site.contentModel);
-
-    /* GROUPED BY PAGE, in the model's own order, because that is the order
-     * the site reads in and the only way somebody finds the sentence they
-     * came here to change. */
-    const byPage = new Map();
-
-    for (const block of blocks) {
-      if (!byPage.has(block.pageSlug)) byPage.set(block.pageSlug, []);
-      byPage.get(block.pageSlug).push(block);
-    }
-
-    /* ONE COLUMN, AT EVERY WIDTH. The boxes are full-width text; a grid
-     * would only put two half-width paragraphs side by side and make both
-     * harder to read. Nothing here needs a breakpoint, which is the right
-     * amount of responsive layout for a form of stacked fields. */
-    const sections = [...byPage.entries()].map(([slug, list]) => `
-      <h2 class="h4 mt-5 mb-3">${esc(list[0].pageTitle)}</h2>
-      <p class="text-white-50 small mb-3">${esc(slug)}</p>
-      ${list.map(block => `
-        <div class="mb-4">
-          <div class="small text-white-50 mb-1">${esc(block.sectionLabel)}</div>
-
-          ${block.headingField ? `
-            <label class="form-label small text-white-50 mb-1"
-                   for="${esc(block.headingField)}">Heading</label>
-            <input class="form-control mb-2" type="text"
-                   id="${esc(block.headingField)}"
-                   name="${esc(block.headingField)}"
-                   value="${esc(block.heading)}" spellcheck="true">` : ''}
-
-          ${block.subheadingField ? `
-            <label class="form-label small text-white-50 mb-1"
-                   for="${esc(block.subheadingField)}">Subheading</label>
-            <input class="form-control mb-2" type="text"
-                   id="${esc(block.subheadingField)}"
-                   name="${esc(block.subheadingField)}"
-                   value="${esc(block.subheading)}" spellcheck="true">` : ''}
-
-          ${/* THE LIST GOES WHERE THE PAGE PUTS IT, WHICH IS BETWEEN THE TWO
-                PARAGRAPHS — not after them. aboutUsTemplate.html reads
-                P1, LIST, P2, and a screen that draws P1, P2, LIST is a screen
-                that does not look like the thing it edits. The position comes
-                from editableText.trustAfterParagraph; see the note there.
-
-                EIGHT BOXES WHETHER OR NOT EIGHT ARE FILLED. The empty ones
-                are how a claim is added and emptying a full one is how a
-                claim is removed — no add button and no delete button,
-                because the boxes already are both. */''}
-          ${(() => {
-            const boxes = block.paragraphs.map((text, i) => `
-              <textarea class="form-control mb-2 cf-edit"
-                        name="${esc(editableText.fieldName(block.pageSlug, block.sectionKey, i))}"
-                        rows="4" spellcheck="true">${esc(text)}</textarea>`);
-
-            if (!block.trustPoints) return boxes.join('');
-
-            const list = `
-              <div class="small text-white-50 mt-3 mb-1">
-                Ticked list — empty a box to remove that line, type in an empty one to add
-              </div>
-              ${block.trustPoints.map((text, i) => `
-                <input class="form-control form-control-sm mb-1" type="text"
-                       name="${esc(editableText.trustName(block.pageSlug, block.sectionKey, i))}"
-                       value="${esc(text)}" spellcheck="true"
-                       aria-label="Trust point ${i + 1}">`).join('')}
-              <div class="mb-3"></div>`;
-
-            const at = block.trustAfterParagraph;
-
-            return [...boxes.slice(0, at), list, ...boxes.slice(at)].join('');
-          })()}
-
-          ${/* THE REVIEW CARDS.
-
-                AFTER the paragraphs rather than spliced into them, because
-                on the page they ARE after: the reviews section is its own
-                block under the case study, not a list threaded between two
-                sentences the way the ticked list is.
-
-                FOUR CARDS WHETHER OR NOT FOUR ARE FILLED, the same bargain
-                the ticked list makes — emptying the body removes that
-                review and typing into an empty card adds one back. No add
-                button and no delete button, because the boxes are both.
-
-                NO STARS. There is no sensible control for a rating in a row
-                of text boxes, so the stored value rides through untouched;
-                see REVIEW_DEFAULT_STARS for what a re-added card gets. */''}
-          ${!block.reviews ? '' : `
-            <div class="small text-white-50 mt-3 mb-2">
-              Reviews — empty the review to remove that card, type in an empty one to add
-            </div>
-            ${block.reviews.map((row, i) => `
-              <div class="border border-secondary rounded p-2 mb-2">
-                <textarea class="form-control form-control-sm mb-1 cf-edit"
-                          name="${esc(editableText.reviewName(block.pageSlug, block.sectionKey, i))}"
-                          rows="3" spellcheck="true"
-                          aria-label="Review ${i + 1}">${esc(row.text)}</textarea>
-                <input class="form-control form-control-sm" type="text"
-                       name="${esc(editableText.reviewerName(block.pageSlug, block.sectionKey, i))}"
-                       value="${esc(row.name)}" spellcheck="true"
-                       placeholder="Who wrote it"
-                       aria-label="Reviewer name ${i + 1}">
-              </div>`).join('')}
-            <div class="mb-3"></div>` }
-        </div>`).join('')}`).join('');
+    /* THE BOXES COME FROM utils/editForm.js — moved out on 17 November so
+     * the Rank Fast edit screen draws the same controls rather than a
+     * second copy of them. The rule for WHICH controls a block gets lives
+     * one layer further down, in editableText.collect(). */
+    const sections = renderSections(site.contentModel, esc);
 
     send(res, page({
       title: 'Edit the words',
@@ -1157,6 +1345,44 @@ router.get('/cloudflare-sites/:id/edit', requireAuth, async (req, res) => {
               costs no credits.
             </div>
           </div>
+        </form>
+
+        <!-- SEARCH CONSOLE, AND THE FIELD TAKES WHAT IS ON THE CLIPBOARD.
+             Google shows a whole <meta> element, so that is what arrives
+             here. parseVerificationTags() pulls the value out and
+             verificationHead.js builds its own tag around it at publish
+             time — customer markup never reaches a published page.
+
+             ITS OWN FORM, NOT A ROW IN THE ONE ABOVE. That form rebuilds
+             and republishes the whole site and is answered by a job page;
+             this is a field on a row. Putting them together would mean
+             changing a verification tag costs a full re-render, and the
+             two would share one Save whose label could only be right for
+             one of them. -->
+        <h2 class="h4 mt-5 mb-3">Google Search Console</h2>
+
+        <form method="post" action="/cloudflare-sites/${site._id}/verification" class="mb-5">
+          ${res.locals.csrfField || ''}
+
+          <label class="form-label" for="verificationTags">Verification tag</label>
+          <textarea class="form-control font-monospace" id="verificationTags"
+                    name="verificationTags" rows="3" spellcheck="false"
+                    placeholder="&lt;meta name=&quot;google-site-verification&quot; content=&quot;...&quot; /&gt;"
+                    >${esc((site.verificationTags || []).join('\n'))}</textarea>
+
+          <div class="form-text text-white-50">
+            In Search Console choose <strong>URL prefix</strong>, then
+            <strong>HTML tag</strong>, and paste what it gives you here. One
+            per line if more than one person needs to verify this website,
+            up to ${MAX_TAGS}.
+            <!-- THE SUPPORT TICKET THIS SENTENCE PREVENTS: they paste the
+                 tag, press Verify in Search Console straight away, and it
+                 fails, because the live site has not been published since. -->
+            <strong>Save, then publish</strong> — the tag only reaches
+            ${esc(site.siteUrl)} the next time this site is published.
+          </div>
+
+          <button class="btn btn-outline-light mt-3" type="submit">Save verification</button>
         </form>`,
     }));
 
@@ -1168,6 +1394,63 @@ router.get('/cloudflare-sites/:id/edit', requireAuth, async (req, res) => {
       body: `<h1>We could not load that</h1>
              <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
     }));
+  }
+});
+
+/**
+ * Save this website's Search Console verification tags.
+ *
+ * NO REBUILD, AND THAT IS THE WHOLE REASON THIS IS ITS OWN ROUTE. The tag
+ * is added to the pages at publish time by verificationHead.js, from the
+ * value on the row — so changing it needs the row changed and the site
+ * published, not a re-render of thirty-eight pages through the model.
+ *
+ * SAME PARSER AS THE BLOGS. The temptation is a quick regex on req.body,
+ * and then this route and utils/blog/verificationTags.js disagree about
+ * what a token is, which is how a value the parser would have refused ends
+ * up on every page of a published site. This is the only door the value
+ * comes in through.
+ */
+router.post('/cloudflare-sites/:id/verification', requireAuth, async (req, res) => {
+  try {
+    const site = await CloudflareSite.findOne({
+      _id: req.params.id,
+      user: req.user._id,
+      status: { $ne: 'removed' },
+    });
+
+    if (!site) {
+      return res.status(404).send('Not found');
+    }
+
+    const tags = parseVerificationTags(req.body.verificationTags);
+
+    /* AN EMPTY LIST IS SAVED, NOT IGNORED. Clearing the box is how somebody
+     * removes a verification, so a blank submission is an instruction
+     * rather than a mistake to guard against. */
+    const before = (site.verificationTags || []).length;
+
+    await CloudflareSite.updateOne(
+      { _id: site._id },
+      { $set: { verificationTags: tags } },
+    );
+
+    /* THE TOKENS ARE NOT LOGGED. They are not secrets — they end up in the
+     * page source — but they identify somebody's Search Console property,
+     * and a log line is the wrong place for another person's account
+     * identifiers. The count says what happened. */
+    log.info('cfSites.verificationSet', {
+      requestId: req.id,
+      siteId: String(site._id),
+      from: before,
+      to: tags.length,
+    });
+
+    res.redirect(`/cloudflare-sites/${site._id}/edit`);
+
+  } catch (err) {
+    log.error('cfSites.verification.failed', err, { requestId: req.id });
+    res.status(500).send('We could not save that.');
   }
 });
 
@@ -1371,6 +1654,283 @@ router.get('/cloudflare-sites/:id/delete', requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * Take a website down at Cloudflare, and record what that achieved.
+ *
+ * EXTRACTED 17 November, when "Finish removing" was added. The delete
+ * handler owned this and nothing else could reach it — so a delete whose
+ * teardown half-failed left a Pages project up there, a reserved hostname,
+ * and no way to try again except re-typing the URL of a page the list no
+ * longer links to.
+ *
+ *     A RETRY THAT IS A SECOND COPY OF THE THING IT RETRIES IS TWO
+ *     TEARDOWNS THAT WILL DISAGREE WITHIN A MONTH. So both paths call
+ *     this, and `released` is written in one place.
+ *
+ * IT DOES NOT SAVE, AND IT DOES NOT SET `status`. The caller decides what
+ * the row becomes: a first delete marks it removed, a retry is working on
+ * a row that is removed already. This only touches `released`.
+ *
+ * @param {object} site         a CloudflareSite document, not a lean object
+ * @param {object} opts
+ * @param {boolean} opts.drop   false leaves Cloudflare alone entirely
+ * @param {string} [opts.requestId]
+ * @returns {Promise<{released: object|null, project: object|null}>}
+ *          the raw results, for the sentences the caller shows
+ */
+/**
+ * What a teardown left behind, in sentences.
+ *
+ * SHARED BY THE DELETE AND THE RETRY, because they are reporting the same
+ * three calls and a second copy would describe them differently the first
+ * time one is reworded.
+ *
+ * EMPTY MEANS NOTHING WAS LEFT, which both callers test rather than
+ * printing an empty list.
+ */
+function troubleWith(released, project) {
+  const trouble = [];
+
+  if (released && released.skipped) {
+    trouble.push('Its Cloudflare account could not be read, so nothing was '
+               + 'removed there.');
+
+    return trouble;
+  }
+
+  if (!released) return trouble;
+
+  if (released.detached && !released.detached.ok) {
+    trouble.push('The custom domain could not be taken off the project.');
+  }
+
+  if (released.dns && !released.dns.ok) {
+    trouble.push('The DNS record could not be removed.');
+  }
+
+  if (project && !project.ok) {
+    trouble.push('The Pages project could not be deleted.');
+  }
+
+  return trouble;
+}
+
+async function removeFromCloudflare(site, { drop = true, requestId = '' } = {}) {
+  /* THE CLOUDFLARE SIDE FIRST, AND FAILING IT DOES NOT STOP THE REST.
+   *
+   * If the project cannot be removed — a token short a permission, a
+   * project somebody already deleted by hand — the right outcome is still
+   * to mark our own row removed, because the alternative is a website
+   * nobody can delete at all. The reason is logged and shown. */
+  let project = null;
+  let released = null;
+
+  if (site.project && drop) {
+    /* `expected` IS WHAT MAKES THIS SAFE TO RUN. It is the pages.dev host
+     * this site actually deploys to, so removeDnsRecord() can refuse any
+     * record that is not the one we created. The zone may hold a live
+     * site on the same domain — Edwin's do — and one careless delete in
+     * here would take it down. */
+    const expected = String(site.lastDeployUrl || '')
+      .replace(/^https:\/\//, '')
+      .replace(/\/$/, '');
+
+    /* WHICH ACCOUNT, RESOLVED BEFORE ANYTHING IS TOUCHED.
+     *
+     * This path is more dangerous to get wrong than the deploy.
+     * releaseDomain() detaches a hostname and deletes a DNS record;
+     * pointed at the wrong account it either does nothing, or finds
+     * something of the same name and removes it. Project names are
+     * derived from the hostname, and two accounts can host domains that
+     * look alike.
+     *
+     * A SITE THAT NAMES AN UNREADABLE ACCOUNT IS NOT TORN DOWN REMOTELY.
+     * The local row still goes — the customer asked for the site to be
+     * deleted and the credentials are our problem, not theirs — but
+     * nothing is detached or deleted at Cloudflare, and the log says why.
+     * Falling back to the env here would aim a delete at the server's own
+     * account. */
+    let creds;
+
+    try {
+      creds = await cloudflare.credsFor(site);
+    } catch (err) {
+      log.error('cfSites.delete.credentials', err, {
+        requestId: requestId,
+        siteId: String(site._id),
+        project: site.project,
+      });
+
+      released = { skipped: true, error: err.message };
+      project = { ok: false, output: err.message };
+    }
+
+    if (!released) {
+      /* THE DOMAIN COMES OFF BEFORE THE PROJECT GOES, and that order is
+       * not tidiness: Cloudflare refuses to delete a Pages project that
+       * is still serving an active custom domain. On the blogs screen it
+       * showed as three deletes that worked and one that did not — the
+       * three had domains still `pending` and the fourth had one that had
+       * gone live. Edwin read the warning and thought his blog had not
+       * been deleted. It had; the project had not. */
+      released = await cfDeploy.releaseDomain({
+        project: site.project,
+        domain: site.siteUrl,
+        expected: expected || undefined,
+        creds,
+      });
+
+      project = await cfDeploy.deleteProject({
+        project: site.project,
+        env: childEnv(creds),
+        creds,
+      });
+    }
+
+    log.info('cfSites.projectDeleted', {
+      requestId: requestId,
+      siteId: String(site._id),
+      project: site.project,
+      domainDetached: Boolean(released.detached && released.detached.ok),
+      dnsRemoved: Boolean(released.dns && released.dns.ok && released.dns.removed),
+      projectDeleted: Boolean(project && project.ok),
+    });
+
+    /* AND WRITTEN DOWN, NOT ONLY LOGGED — 17 November.
+     *
+     * These three facts decided whether the hostname is still held at
+     * Cloudflare, and they went into a log line and nowhere else. So
+     * every removed row reserved its name for ever, clean delete or not,
+     * and Edwin could not reuse the name of a site he had just deleted.
+     *
+     *     A LOG IS WHAT HAPPENED. A FIELD IS WHAT IS STILL TRUE.
+     *     Only the second one can answer a question asked later.
+     *
+     * Computed from the same expressions as the log above rather than
+     * near them, so the two cannot describe different outcomes. */
+    site.released = {
+      domain: Boolean(released.detached && released.detached.ok),
+      dns: Boolean(released.dns && released.dns.ok && released.dns.removed),
+      project: Boolean(project && project.ok),
+      at: new Date(),
+    };
+  }
+
+  /* A SITE THAT NEVER DEPLOYED HOLDS NOTHING, so its hostname is free.
+   *
+   * No project means no Pages project, no attached custom domain and no
+   * DNS record — there is no leftover for the reservation to protect
+   * against. Reserving the name anyway was the strictest possible answer
+   * to a question with nothing in it.
+   *
+   * NOT AN `else` ON THE BLOCK ABOVE. That block is also skipped when the
+   * owner leaves `dropProject` unticked on a site that DOES have one, and
+   * then everything is still up there. The test is what exists, not which
+   * branch ran. */
+  if (!site.project) {
+    site.released = { domain: true, dns: true, project: true, at: new Date() };
+  }
+
+  return { released, project };
+}
+
+/* FINISH REMOVING — the retry, 17 November.
+ *
+ * EDWIN ASKED THE QUESTION THAT FOUND THE DEAD END: *"but what happened if
+ * the clouldflare deletion failed. What options does the user have?"*
+ *
+ * Three, and only one of them was any good. The delete page already says
+ * what was left behind — "The Pages project could not be deleted." — and
+ * running the delete again really does retry it. But the list hides removed
+ * sites, so the only way back to that page was a URL nobody kept.
+ *
+ *     A RETRY NOTHING LINKS TO IS NOT A RETRY. The other two options were
+ *     the Cloudflare dashboard, and giving up: a project counting against
+ *     the hundred-project ceiling and a hostname reserved for ever.
+ *
+ * AND IT IS THE OTHER HALF OF THE HOSTNAME RULE. A failed teardown now
+ * keeps the address reserved, which is right — and would be a trap without
+ * a visible way to finish the job and free it.
+ *
+ * NO TYPED CONFIRMATION, UNLIKE THE DELETE. That box exists so a live site
+ * is not destroyed by a misclick. This site is already deleted: its pages
+ * are already meant to be gone, and the destructive decision was made and
+ * confirmed when it was. Asking again would be ceremony over a leftover.
+ *
+ * IT REFUSES A SITE THAT IS NOT REMOVED, because on one that is still live
+ * this is simply an undisclosed delete button. */
+router.post('/cloudflare-sites/:id/finish-removing', requireAuth, async (req, res) => {
+  try {
+    const site = await ownedSite(req);
+    if (!site) return notFound(res);
+
+    if ('removed' !== site.status) {
+      return send(res, page({
+        status: 400,
+        title: 'Still live',
+        body: `<h1 class="h2">That website has not been deleted</h1>
+               <p class="lead">
+                 There is nothing to finish removing. Delete it first if that
+                 is what you meant to do.
+               </p>
+               <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back to your websites</a>`,
+      }));
+    }
+
+    const { released, project } = await removeFromCloudflare(site, {
+      drop: true,
+      requestId: req.id,
+    });
+
+    await site.save();
+
+    const freed = Boolean(site.released
+      && site.released.domain && site.released.dns && site.released.project);
+
+    log.info('cfSites.finishRemoving', {
+      requestId: req.id,
+      siteId: String(site._id),
+      project: site.project,
+      freed,
+    });
+
+    return send(res, page({
+      title: freed ? 'Removed' : 'Still not clear',
+      body: `<h1 class="h2">${esc(site.siteUrl)}</h1>
+
+             ${freed
+               ? `<p class="lead">
+                    Everything this app created at Cloudflare is gone, and the
+                    address is free to use again.
+                  </p>`
+               : `<div class="alert alert-warning">
+                    <strong>Some of it is still there.</strong>
+                    <ul class="mb-0 small mt-1">
+                      ${troubleWith(released, project)
+                        .map(t => `<li>${esc(t)}</li>`).join('')}
+                    </ul>
+                  </div>
+                  <p class="text-white-50">
+                    The address stays reserved while anything is still
+                    holding it. You can try again, or clear it in the
+                    Cloudflare dashboard.
+                  </p>`}
+
+             <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back to your websites</a>`,
+    }));
+
+  } catch (err) {
+    log.error('cfSites.finishRemoving.failed', err, { requestId: req.id });
+    send(res, page({
+      status: 500,
+      title: 'Something went wrong',
+      body: '<h1 class="h2">That did not work</h1>'
+          + '<p class="lead">Nothing was changed. Please try again.</p>'
+          + '<a href="/cloudflare-sites" class="btn btn-primary mt-3">Back to your websites</a>',
+    }));
+  }
+});
+
 router.post('/cloudflare-sites/:id/delete', requireAuth, async (req, res) => {
   try {
     const site = await ownedSite(req);
@@ -1395,90 +1955,19 @@ router.post('/cloudflare-sites/:id/delete', requireAuth, async (req, res) => {
     }
 
     /* THE CLOUDFLARE SIDE FIRST, AND FAILING IT DOES NOT STOP THE REST.
-     *
-     * If the project cannot be removed — a token short a permission, a
-     * project somebody already deleted by hand — the right outcome is still
-     * to mark our own row removed, because the alternative is a website
-     * nobody can delete at all. The reason is logged and shown. */
-    let project = null;
-    let released = null;
-
-    if (site.project && '1' === String(req.body.dropProject || '')) {
-      /* `expected` IS WHAT MAKES THIS SAFE TO RUN. It is the pages.dev host
-       * this site actually deploys to, so removeDnsRecord() can refuse any
-       * record that is not the one we created. The zone may hold a live
-       * site on the same domain — Edwin's do — and one careless delete in
-       * here would take it down. */
-      const expected = String(site.lastDeployUrl || '')
-        .replace(/^https:\/\//, '')
-        .replace(/\/$/, '');
-
-      /* WHICH ACCOUNT, RESOLVED BEFORE ANYTHING IS TOUCHED.
-       *
-       * This path is more dangerous to get wrong than the deploy.
-       * releaseDomain() detaches a hostname and deletes a DNS record;
-       * pointed at the wrong account it either does nothing, or finds
-       * something of the same name and removes it. Project names are
-       * derived from the hostname, and two accounts can host domains that
-       * look alike.
-       *
-       * A SITE THAT NAMES AN UNREADABLE ACCOUNT IS NOT TORN DOWN REMOTELY.
-       * The local row still goes — the customer asked for the site to be
-       * deleted and the credentials are our problem, not theirs — but
-       * nothing is detached or deleted at Cloudflare, and the log says why.
-       * Falling back to the env here would aim a delete at the server's own
-       * account. */
-      let creds;
-
-      try {
-        creds = await cloudflare.credsFor(site);
-      } catch (err) {
-        log.error('cfSites.delete.credentials', err, {
-          requestId: req.id,
-          siteId: String(site._id),
-          project: site.project,
-        });
-
-        released = { skipped: true, error: err.message };
-        project = { ok: false, output: err.message };
-      }
-
-      if (!released) {
-        /* THE DOMAIN COMES OFF BEFORE THE PROJECT GOES, and that order is
-         * not tidiness: Cloudflare refuses to delete a Pages project that
-         * is still serving an active custom domain. On the blogs screen it
-         * showed as three deletes that worked and one that did not — the
-         * three had domains still `pending` and the fourth had one that had
-         * gone live. Edwin read the warning and thought his blog had not
-         * been deleted. It had; the project had not. */
-        released = await cfDeploy.releaseDomain({
-          project: site.project,
-          domain: site.siteUrl,
-          expected: expected || undefined,
-          creds,
-        });
-
-        project = await cfDeploy.deleteProject({
-          project: site.project,
-          env: childEnv(creds),
-          creds,
-        });
-      }
-
-      log.info('cfSites.projectDeleted', {
-        requestId: req.id,
-        siteId: String(site._id),
-        project: site.project,
-        domainDetached: Boolean(released.detached && released.detached.ok),
-        dnsRemoved: Boolean(released.dns && released.dns.ok && released.dns.removed),
-        projectDeleted: Boolean(project && project.ok),
-      });
-    }
+     * See removeFromCloudflare() above — both this and "Finish removing"
+     * go through it, so the teardown and what it records cannot drift. */
+    const { released, project } = await removeFromCloudflare(site, {
+      drop: '1' === String(req.body.dropProject || ''),
+      requestId: req.id,
+    });
 
     /* MARKED REMOVED, NOT DELETED, and models/CloudflareSite.js says why:
      * the row is the only record that this hostname was ever used, and a
      * hard delete frees the subdomain for somebody else while Cloudflare
-     * may still be holding the project. */
+     * may still be holding the project. What `released` adds is the second
+     * half of that sentence: once the project, the domain and the record
+     * are confirmed gone, there is nothing left to collide with. */
     site.status = 'removed';
 
     /* AND THE KEPT COPY GOES WITH IT.
@@ -1520,22 +2009,7 @@ router.post('/cloudflare-sites/:id/delete', requireAuth, async (req, res) => {
       domain: site.siteUrl,
     });
 
-    const trouble = [];
-
-    if (released && released.skipped) {
-      trouble.push('Its Cloudflare account could not be read, so nothing was '
-                 + 'removed there.');
-    } else if (released) {
-      if (released.detached && !released.detached.ok) {
-        trouble.push('The custom domain could not be taken off the project.');
-      }
-      if (released.dns && !released.dns.ok) {
-        trouble.push('The DNS record could not be removed.');
-      }
-      if (project && !project.ok) {
-        trouble.push('The Pages project could not be deleted.');
-      }
-    }
+    const trouble = troubleWith(released, project);
 
     return send(res, page({
       title: 'Deleted',
@@ -1588,6 +2062,15 @@ module.exports = router;
  * whyNotEditable goes with it so the job re-checks the same rule the screen
  * checked, rather than trusting that nothing changed between the save and
  * the moment the runner picks the job up. */
+/* createAndPublish GOES WITH THEM, for the wizard's Cloudflare destination.
+ * utils/jobGenerator.js calls it when a build finishes with that target, so
+ * a site made in one step passes exactly the checks a site made in two
+ * does. */
+/* AND checkWant, so routes/generateRoute.js can refuse an unusable address
+ * BEFORE it charges for a build nobody can publish. Same function, called
+ * twice: once at the form and once at the publish. */
+module.exports.createAndPublish = createAndPublish;
+module.exports.checkWant = checkWant;
 module.exports.publishNow = publishNow;
 module.exports.whyNotEditable = whyNotEditable;
 module.exports.buildDirFor = buildDirFor;

@@ -167,10 +167,38 @@ function validateGlobalFields(global, options = {}) {
     options.siteMode || global.siteMode || ''
   ).trim();
 
+  /* AND A THIRD ANSWER SINCE 17 NOVEMBER: NEITHER FIELD.
+   *
+   * Cloudflare Local Automation is `localoptions` with a Cloudflare
+   * destination, and it picks neither. The address is three fields of its
+   * own — name, subdomain, pool domain — and `global.domain` is written
+   * from them by setGlobalDomain() in generateRoute.js, AFTER this runs.
+   *
+   *     THIS FUNCTION CANNOT REQUIRE A FIELD THAT THE STEP AFTER IT FILLS
+   *     IN. Asking for `domainId` here sent that door looking for a GitHub
+   *     pool row, which is the wrong product's domain entirely.
+   *
+   * NOTHING IS LEFT UNCHECKED BY DROPPING IT. checkWant() runs immediately
+   * below in that route and validates the whole address — the name, the
+   * subdomain, that the domain is in the WEBSITE pool and enabled, that the
+   * hostname is not taken on either product — with a message naming the
+   * field, which is more than a missing-field list can say.
+   *
+   * ONLY THE COMBINATION, not either half. /github-sites still requires
+   * `domainId` and /cloudflare-sites/new still requires `domain`; this is a
+   * new door and it changes neither of theirs. */
+  const addressed = 'cloudflare' === String(
+    options.siteTarget || global.siteTarget || ''
+  ).trim();
+
+  const domainField = (addressed && picksDomain)
+    ? null
+    : (picksDomain ? 'domainId' : 'domain');
+
   const requiredGlobalFields = [
     'businessName',
     'businessType',
-    picksDomain ? 'domainId' : 'domain',
+    ...(domainField ? [domainField] : []),
     'phone',
     'address',
     'location',

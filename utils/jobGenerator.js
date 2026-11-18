@@ -22,6 +22,9 @@ const { cleanupJobUploads, filesFromJob } = require('./jobUploads');
 const { clearForUsers } = require('./jobPayloads');
 const { MODES, normalizeSiteMode } = require('./seoPresets');
 const { log } = require('./logger');
+/* The destination the submission carried, read out of either body shape —
+ * the payload IS the posted body, so both shapes reach here too. */
+const { siteTargetOf, wantedAddress } = require('./cloudflareSites/wanted');
 
 /**
  * Which builder this job needs.
@@ -53,6 +56,30 @@ function builderFor(job) {
  * @param {object} handlers
  * @param {Function} handlers.onProgress
  */
+/**
+ * A sentence for a refusal code from createAndPublish().
+ *
+ * THE CODES ARE FOR THE SCREEN THAT HAS PAGES FOR THEM. That route turns
+ * each one into a titled page with a Back button; a job has one line on a
+ * progress page, so it needs the same meanings in one sentence each.
+ *
+ * NOT RE-EXPORTED FROM THE ROUTE, because the two audiences differ: the
+ * form's reader is looking at the field they just filled in, this one is
+ * looking at a build that finished and did not go up.
+ */
+function refusalText(out) {
+  switch (out.code) {
+    case 'badName':   return 'The website needs a name and a subdomain.';
+    case 'badDomain': return 'That domain is not available for websites.';
+    case 'taken':     return `${out.domain || 'That address'} is already in use.`;
+    case 'raced':     return 'That address was taken a moment before this finished.';
+    case 'tooMany':   return `You have reached the limit of ${out.limit} websites.`;
+    case 'full':      return `${out.domain || 'That domain'} has no room left on its Cloudflare account.`;
+    case 'noBuild':   return out.error || 'There was no build to publish.';
+    default:          return 'The website was built but could not be published.';
+  }
+}
+
 async function generateForJob(job, { onProgress }) {
   // Loaded fresh rather than taken from the job: the balance may have
   // changed since it was queued, and charging is based on the live value.
@@ -138,7 +165,25 @@ async function generateForJob(job, { onProgress }) {
      * NOT THE WHOLE OBJECT. A successful publish carries file counts and
      * shas; the progress page needs to know whether it worked and, if not,
      * why. Everything else is noise in a Mongo document. */
-    if (result && result.published !== undefined) {
+    /* THE DESTINATION IS ASKED FIRST, AND IT USED TO BE ASKED LAST.
+     *
+     * The GitHub branch below returns as soon as the builder reports
+     * `published` — which runLocalOptions always does, even as `null` for an
+     * account with no installation. So a Local Website Options build bound
+     * for Cloudflare returned here and never reached the publish step at the
+     * bottom of this function: eleven pages built, paid for, and left on
+     * disk with the job saying `completed`.
+     *
+     *     A FUNCTION THAT CHECKS WHERE IT HAS BEEN BEFORE IT CHECKS WHERE
+     *     IT IS GOING ONLY EVER WORKS FOR ONE DESTINATION.
+     *
+     * Reading the target first makes the two builders agree: whoever built
+     * it, a site addressed to Cloudflare is published to Cloudflare. The
+     * runGeneration path reached the block below already, because it reports
+     * no `published` at all — so this changes nothing for it. */
+    const target = siteTargetOf(job.payload);
+
+    if (result && result.published !== undefined && 'cloudflare' !== target) {
       const p = result.published;
 
       return Object.assign({}, result, {
@@ -152,6 +197,66 @@ async function generateForJob(job, { onProgress }) {
             owner: p.owner || '',
             repo: p.repo || '',
           } : null,
+        },
+      });
+    }
+
+    /* THE CLOUDFLARE DESTINATION — 16 November.
+     *
+     * A Cloudflare website used to be made in two visits: build here, then
+     * go to /cloudflare-sites and publish the last build. The wizard now
+     * carries a DESTINATION alongside its mode, and this is where the two
+     * halves join.
+     *
+     * AFTER THE BUILD, NOT INSTEAD OF IT. Everything above has already run
+     * and the credits are already spent; this step only decides whether the
+     * finished site goes up.
+     *
+     * createAndPublish() RATHER THAN A SECOND IMPLEMENTATION. The seven
+     * checks it runs — name, domain in the website pool, hostname clash
+     * across both products, the per-user guard, Cloudflare's 100-project
+     * ceiling, a build on disk, then the publish — are the ones the form on
+     * that screen runs. Writing them again here is how the two paths start
+     * disagreeing about what is allowed, which is exactly what
+     * utils/domainPool.js was written after.
+     *
+     * REQUIRED HERE, NOT AT THE TOP. The route pulls in express and a dozen
+     * models; this module is loaded by the job runner in every process,
+     * including ones that never build a site. The rebuild job requires it
+     * the same way and for the same reason.
+     *
+     * IT REPORTS LIKE THE GITHUB PATH ABOVE, through `published`, because
+     * the note there is the lesson: a build that was paid for and did not
+     * go live is the one case the customer most needs told about, and it
+     * was the quietest thing this function did. */
+    if ('cloudflare' === target) {
+      const { createAndPublish } = require('../routes/cloudflareSitesRoute');
+
+      const out = await createAndPublish({
+        userId: job.user,
+        requestId: `job:${job._id}`,
+        want: wantedAddress(job.payload),
+      });
+
+      log.info('jobs.cloudflarePublish', {
+        jobId: String(job._id),
+        ok: Boolean(out.ok),
+        code: out.code || '',
+        siteId: out.site ? String(out.site._id) : '',
+      });
+
+      /* THE ROW EXISTS EITHER WAY WHEN THE PUBLISH ITSELF FAILED, so the
+       * message can say where to go. createAndPublish writes it before
+       * attempting the deploy for exactly this reason — see the note on
+       * the first-publish failure in that route. */
+      return Object.assign({}, result, {
+        result: {
+          published: {
+            ok: Boolean(out.ok),
+            error: out.ok ? '' : (out.error || refusalText(out)),
+            url: out.site ? `https://${out.site.siteUrl}` : '',
+            siteId: out.site ? String(out.site._id) : '',
+          },
         },
       });
     }

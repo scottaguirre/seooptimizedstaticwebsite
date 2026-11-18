@@ -1,5 +1,10 @@
 /* ==========================================================================
-   style7.css — Design 7 "Spotlight"
+   style9.css — Design 9 "Two columns"
+   --------------------------------------------------------------------------
+   THE HEADER SAID style7.css UNTIL 15 NOVEMBER. This file was copied from
+   style8.css, which was copied from style7.css, and the title came along
+   both times — so the one line that says what the file IS was the only line
+   in it that was wrong. Nothing reads it, which is exactly why it survived.
    ==========================================================================
 
    HOW THIS FILE IS ORGANISED
@@ -1439,16 +1444,23 @@
    which is a single image or the intro video. It keeps its own rule.
    ========================================================================== */
 
-/* THE SHADOW IS THE HERO'S BLUE — Edwin, 14 November.
+/* THE SHADOW IS THE THEME'S OWN COLOUR, AND IT IS OFFSET — Edwin, 15
+   November, the same geometry he settled on for style5: 4px across, 4px
+   down, 10px of blur.
 
-   It was rgba(--navy-rgb, .13), which at 13% of a very dark navy is
-   indistinguishable from plain grey: the picture looked like it had a
-   default drop shadow rather than one belonging to this design. --brand is
-   the blue the hero is painted in, and a heavier alpha is what makes the
-   hue readable at all — at .13 any colour reads as grey. */
+   var(--brand), NOT A LITERAL. This design's brand is #013CAE and style5's
+   is #5629ba, so the two files carry the same RULE and render different
+   shadows — which is the whole point of the token, and the reason neither
+   of them has a hex typed into this line.
+
+   SOLID, NOT rgba. This started as rgba(--navy-rgb, .13), and at thirteen
+   per cent any colour at all renders as a neutral grey smudge: the picture
+   looked like it had a browser default rather than a shadow belonging to
+   this design. At full strength the hue is the point, which is what an
+   offset shadow with a short blur is for. */
 .col-md-5 img {
     border-radius: 10px;
-    box-shadow: 0 14px 34px rgba(var(--brand-rgb), .32);
+    box-shadow: 4px 4px 10px var(--brand);
 }
 
 
@@ -2418,7 +2430,12 @@ a:hover svg {
        and the circle is 9.30:1 against the white page and 8.52:1 against
        --faq-grey, so the marker reads on both surfaces it lands on. */
     --trust-bg:   var(--brand);
-    --trust-tick: var(--accent);
+
+    /* WHITE, NOT --accent — Edwin, 15 November, matching the same change on
+       style5. The yellow on the blue disc was 6.90:1 and perfectly legible;
+       this is a taste call, not a repair. White on --brand is 9.30:1, so it
+       is also the better of the two. */
+    --trust-tick: #ffffff;
 
     list-style: none;
     padding: 0;

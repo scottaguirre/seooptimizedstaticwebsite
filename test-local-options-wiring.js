@@ -550,14 +550,20 @@ test('the build guard asks about site jobs, not about every job', () => {
   assert.ok(/kind/.test(query),
     'a running blog campaign refuses every website build on the account');
 
-  /* 'site' AND 'build', NOT 'blog'. The rule is not "one job at a time", it
-   * is "one job at a time that touches dist/user_<id>" — a site build wipes
-   * that folder and a production zip reads it, so those two must not
+  /* 'site', 'build' AND 'sitebatch', NOT 'blog'. The rule is not "one job
+   * at a time", it is "one job at a time that touches dist/user_<id>" — a
+   * site build wipes that folder, a production zip reads it, and a batch
+   * builds each of its sites into it in turn, so those three must not
    * overlap. A campaign writes to Mongo and Cloudflare and never opens it.
+   *
+   * ⚠ 'sitebatch' JOINED ON 18 November AND THIS ASSERTION REPORTED IT,
+   * which is what it is for. A batch that was left out of the list could
+   * run beside a single build and the two would wipe each other's folder —
+   * the exact failure that made the batch one job rather than three.
    *
    * ASSERTED ON THE NAMED CONSTANT, which is outside the query object: the
    * list is the decision and the query is only where it is applied. */
-  assert.match(GENERATE_ROUTE, /const DIST_KINDS = \['site', 'build'\]/,
+  assert.match(GENERATE_ROUTE, /const DIST_KINDS = \['site', 'build', 'sitebatch'\]/,
     'the kinds that share a build folder have changed');
 
   assert.ok(/DIST_KINDS/.test(query), 'the guard no longer applies that list');

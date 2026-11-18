@@ -41,6 +41,7 @@ const { SECTIONS } = require('./prompt');
 const { structureFor } = require('./render/structures');
 const { renderSite } = require('./render/renderSite');
 const { heroSet, completeSets } = require('./render/heroes');
+const { chooseServices, SERVICE_POOL } = require('./chooseServices');
 const { SERVICE_COUNT } = require('./render/shape');
 
 const MODEL = process.env.LOCAL_OPTIONS_MODEL
@@ -311,9 +312,32 @@ async function generateLocalOptionsSite({
 
     const where = [business.city, business.state].filter(Boolean).join(', ');
 
+    /* ⚠ SERVICE_POOL, NOT SERVICE_COUNT, SINCE 17 November — and the
+     * comment on the top-up loop below says the opposite, because it was
+     * written when this asked for exactly six. It is kept, with this note,
+     * rather than quietly edited: the reasoning there was right for what
+     * was known then.
+     *
+     * EDWIN, LOOKING AT TWO FINISHED SITES: *"the problem i see now is that
+     * all websites get the same services."* Asking for the six most
+     * commonly hired jobs has one right answer, and two plumbers differ
+     * only by name, address and town — none of which changes what a plumber
+     * sells. Every plumbing site came back with the same six.
+     *
+     *     THE INPUT DID NOT VARY, SO THE OUTPUT COULD NOT.
+     *
+     * So twelve are asked for and chooseServices() narrows them to six on
+     * the business name. See that file for why the top two are kept for
+     * everybody and why the name is hashed rather than the position.
+     *
+     * AND IT MAKES THE TOP-UP LOOP RARER, which is the one thing the old
+     * comment worried about in reverse: a narrow practice whose first
+     * answer was padded now has twelve names for cleanServices() to cut
+     * down rather than six, so the second call is needed less often, not
+     * more. */
     const suggested = await suggester(
       { businessType: business.trade, location: where },
-      { count: SERVICE_COUNT }
+      { count: SERVICE_POOL }
     );
 
     /* suggestServices RESOLVES TO { services, dropped, usage } — NOT TO THE
@@ -411,6 +435,21 @@ async function generateLocalOptionsSite({
 
       names = names.concat(more.services);
     }
+
+    /* AND NOW THE SIX, OUT OF HOWEVER MANY SURVIVED.
+     *
+     * INSIDE THIS BLOCK, WHICH IS THE WHOLE POINT OF WHERE IT SITS. The
+     * block runs only when nobody supplied serviceNames. A customer who
+     * typed their own six — an old queued job from before the step was
+     * removed, or any caller that passes them — gets THEIR six, in their
+     * order, and a hash of their business name never touches the list.
+     *
+     *     A CHOICE AMONG SUGGESTIONS IS NOT A CHOICE AMONG INSTRUCTIONS.
+     *
+     * BEFORE servicesFrom(), WHICH TAKES THE FIRST SIX. Narrowing after it
+     * would mean slicing six off the top and then choosing among those
+     * six, which is the list we already had. */
+    names = chooseServices(Array.from(names), { key: business.name });
   }
 
   const services = servicesFrom(Array.from(names));

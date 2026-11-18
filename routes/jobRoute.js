@@ -16,6 +16,7 @@ const requireAuth = require('../middleware/requireAuth');
 const { log } = require('../utils/logger');
 const { appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets } = require('../utils/appHeader');
 const { pageTitle } = require('../utils/pageTitle');
+const { siteTargetOf } = require('../utils/cloudflareSites/wanted');
 
 /**
  * Load a job the current user is allowed to see.
@@ -44,6 +45,36 @@ async function loadOwnedJob(req) {
   return job;
 }
 
+/**
+ * WHERE THIS JOB WAS TRYING TO PUBLISH, if anywhere.
+ *
+ * WHY THE PAGE NEEDS IT AT ALL. The amber "built but not published" box was
+ * written when exactly one kind of job published anything, so its sentence
+ * ends *"could not be pushed to GitHub"* — a hard-coded destination in a
+ * message about a failure. A Cloudflare build that failed to go live read as
+ * a GitHub problem, and the recovery — /cloudflare-sites, press Publish —
+ * was named nowhere.
+ *
+ *     A FAILURE MESSAGE THAT NAMES THE WRONG SYSTEM
+ *     COSTS MORE THAN NO MESSAGE.
+ *
+ * READ OFF THE JOB, NOT STORED SECOND. `siteTarget` is in the payload
+ * because generateRoute.js keeps the whole posted body, and the mode is a
+ * column — so both are already here, and a third copy would be a third
+ * thing to keep in step.
+ *
+ * ORDER MATTERS: a Local Website Options build can also carry a Cloudflare
+ * destination one day, and the destination is the thing that just failed.
+ *
+ * @returns {'cloudflare'|'github'|''}
+ */
+function publishDestination(job) {
+  if ('cloudflare' === siteTargetOf(job.payload)) return 'cloudflare';
+  if ('localoptions' === job.siteMode) return 'github';
+
+  return '';
+}
+
 /* -------------------------------------------------------------------------
  * Polled by the progress page
  * ---------------------------------------------------------------------- */
@@ -69,6 +100,10 @@ router.get('/api/jobs/:id', requireAuth, async (req, res) => {
        * shipped — the page treats missing as "nothing to say", which is the
        * honest reading of a job that never recorded it. */
       published: (job.result && job.result.published) || null,
+
+      /* WHICH HOST THE LINE ABOVE IS ABOUT. '' on a build that publishes
+       * nowhere, which is most of them. */
+      publishedTo: publishDestination(job),
       // The message only — never the stack, which discloses file paths and
       // dependency versions.
       error: job.status === 'failed' ? (job.error?.message || 'Generation failed') : null,
@@ -123,6 +158,19 @@ ${appHeaderScripts()}
      * nothing new is being made, and somebody who has just pressed Save on
      * two sentences should not be told their website is being built. */
     cfedit: { title: 'Updating your website', done: 'Your website is updated', cta: 'My websites', href: '/cloudflare-sites' },
+    /* The Rank Fast edit screen's re-render. "Updating" for the same reason
+     * cfedit says it — nothing new is being made — and the finish link goes
+     * to the dashboard card, where Preview, Download and Convert are. */
+    siteedit: { title: 'Updating your website', done: 'Your website is updated', cta: 'My Dashboard', href: '/dashboard' },
+    /* Several websites from one submission — 18 November. PLURAL
+     * throughout, because the one thing this page must not do is tell
+     * somebody who queued three that "your website is ready" when two of
+     * them went live and one did not.
+     *
+     * THE FINISH LINK GOES TO THE LIST, NOT TO A SITE. There is no single
+     * site to see, and the batch's report — which of them went live, and
+     * why the others did not — belongs beside the websites it is about. */
+    sitebatch: { title: 'Building your websites', done: 'Your websites are ready', cta: 'My websites', href: '/cloudflare-sites' },
   };
   const copy = COPY[kind] || COPY.site;
 
@@ -188,6 +236,74 @@ ${appSidebar('/jobs')}
       const bar      = document.getElementById('bar');
       const stage    = document.getElementById('stage');
       const detail   = document.getElementById('detail');
+      /**
+       * What the line under the heading says once the build has finished.
+       *
+       * A PURE FUNCTION RETURNING PIECES, NOT MARKUP, for two reasons. The
+       * DOM is built from these by hand a few lines down — never from a
+       * string — so a hostname can never be parsed as HTML. And this page
+       * lives inside a template literal in a route, where the only way a
+       * test can reach a decision is to lift it out and run it.
+       *
+       * https ONLY. The value comes from our own database, by way of
+       * jobGenerator joining "https://" to a hostname this app validated.
+       *
+       * NO BACKTICKS IN THIS COMMENT, and that is not style. Everything in
+       * this script lives inside a template literal in the route, so a
+       * backtick here ENDS THE PAGE — the first draft of this note quoted a
+       * URL scheme in backticks and node --check failed sixty lines above,
+       * on the line that interpolates the job id. The same family as
+       * form.html's rule about never naming a placeholder in a comment.
+       * Checked anyway: this ends up in an href, and a scheme test here is
+       * one line against a class of bug that is somebody else's mistake
+       * three files away.
+       */
+      function finishedLine(job) {
+        const credits = job.creditsCharged
+          ? job.creditsCharged.toLocaleString() + ' credits were used.'
+          : '';
+
+        const p = job.published;
+
+        /* NO REGEX, AND NO BACKSLASH ANYWHERE IN THIS FUNCTION.
+         *
+         * THIS LINE SHIPPED BROKEN ON 17 NOVEMBER, and it took the whole
+         * page with it. It was written as a regular expression anchored on
+         * the scheme, with a backslash before each slash: correct
+         * JavaScript, in a file that is also a TEMPLATE LITERAL.
+         *
+         * A backslash inside a template literal is an ESCAPE. So each
+         * backslash-slash collapsed to a bare slash on the way out, the
+         * browser received a short regex followed by what it read as a line
+         * comment, and the rest of the statement vanished into it.
+         *
+         * A SYNTAX ERROR IS REFUSED WHOLE. Not the line: the script. So
+         * nothing on this page ran at all -- no polling, no progress, no
+         * finish. The bar sat at nought per cent and the stage said
+         * "Starting..." while the build ran, finished and published behind
+         * it. Edwin: "i tried to build a githun site and it got stuck and
+         * never even started". It had not; it was already done.
+         *
+         *     IN A FILE THAT IS ALSO A STRING, THE SOURCE AND THE OUTPUT
+         *     ARE NOT THE SAME TEXT -- and node --check only ever reads
+         *     the first one.
+         *
+         * The same trap as the backtick in a comment one screen above,
+         * found in the same week, in the same file. indexOf and slice carry
+         * no escapes at all, so this version cannot differ between the file
+         * and the page.
+         *
+         * test-build-progress.js now renders this page and parses the
+         * script it emits, which is the only check that reads what the
+         * browser reads. */
+        const PREFIX = 'https://';
+
+        const url = (p && false !== p.ok && 'string' === typeof p.url
+          && 0 === p.url.indexOf(PREFIX)) ? p.url : '';
+
+        return { url: url, host: url.slice(PREFIX.length), credits: credits };
+      }
+
       const doneBox  = document.getElementById('done');
       const failBox  = document.getElementById('failed');
       const skipBox  = document.getElementById('skipped');
@@ -269,9 +385,45 @@ ${appSidebar('/jobs')}
             bar.style.width = '100%';
             bar.textContent = '100%';
             title.textContent = ${JSON.stringify(copy.done)};
-            subtitle.textContent = job.creditsCharged
-              ? job.creditsCharged.toLocaleString() + ' credits were used.'
-              : '';
+            /* THE ADDRESS, UNDER THE HEADING — 17 November, Edwin's ask.
+             *
+             * A Cloudflare build finishes on a hostname nobody has seen: it
+             * was typed on the review step, several minutes and a whole
+             * build earlier, and this page said only "Your website is
+             * ready" over a button. The one fact somebody wants at that
+             * moment — WHERE IS IT — was a click away, or a trip to the
+             * list.
+             *
+             * The old two-step flow did not have this problem, because you
+             * had typed the address on the previous screen. Shortening the
+             * errand is what moved it out of sight.
+             *
+             *     FINISHING IS WHEN AN ADDRESS BECOMES THE ANSWER, NOT A
+             *     DETAIL.
+             *
+             * The button still says "See it live"; this is the address
+             * itself, readable and copyable without leaving the page. */
+            const finished = finishedLine(job);
+
+            subtitle.textContent = '';
+
+            if (finished.url) {
+              subtitle.appendChild(document.createTextNode('Live at '));
+
+              const link = document.createElement('a');
+              link.href = finished.url;
+              link.target = '_blank';
+              link.rel = 'noopener';
+              link.className = 'link-light';
+              link.textContent = finished.host;
+              subtitle.appendChild(link);
+
+              if (finished.credits) {
+                subtitle.appendChild(document.createTextNode(' · ' + finished.credits));
+              }
+            } else {
+              subtitle.textContent = finished.credits;
+            }
             stage.textContent = '';
             detail.textContent = '';
             doneBox.classList.remove('d-none');
@@ -286,15 +438,54 @@ ${appSidebar('/jobs')}
              *
              * Not red, because nothing was lost — amber, because something
              * is owed. */
+            /* LIVE, AND SAY SO WITH THE ADDRESS.
+             *
+             * A Cloudflare build finishes on a hostname nobody has seen
+             * yet, and "See your website" pointing at the dashboard is the
+             * long way round to the one link that matters. The button
+             * becomes that link when the publish reported one. */
+            if (job.published && false !== job.published.ok && job.published.url) {
+              const go = doneBox.querySelector('a');
+              if (go) {
+                go.href = job.published.url;
+                go.target = '_blank';
+                go.rel = 'noopener';
+                go.textContent = 'See it live';
+              }
+            }
+
             if (job.published && false === job.published.ok) {
               bar.classList.remove('bg-success');
               bar.classList.add('bg-warning');
               title.textContent = 'Built, but not published';
+
+              /* THE DESTINATION IS NAMED BY THE JOB, NOT BY THIS SENTENCE.
+               * It used to read "pushed to GitHub" whatever had failed. */
+              const where = 'cloudflare' === job.publishedTo
+                ? 'put on its subdomain'
+                : 'pushed to GitHub';
+
               failBox.textContent =
                 'The pages were written and your credits were used, but the '
-                + 'site could not be pushed to GitHub: '
+                + 'site could not be ' + where + ': '
                 + (job.published.error || 'no reason given')
                 + ' — nothing is live yet.';
+
+              /* AND WHERE TO GO NEXT. The build is still on disk and the
+               * website row was created before the deploy was attempted,
+               * so this is one button away from done — see the note on the
+               * first-publish failure in routes/cloudflareSitesRoute.js.
+               * A link rather than innerHTML, so the error text above
+               * stays text. */
+              if ('cloudflare' === job.publishedTo) {
+                const again = document.createElement('a');
+                again.href = '/cloudflare-sites';
+                again.className = 'btn btn-sm btn-light mt-2 d-block';
+                again.style.width = 'fit-content';
+                again.textContent = 'Try publishing it again';
+                failBox.appendChild(again);
+              }
+
               failBox.classList.remove('d-none');
             }
 

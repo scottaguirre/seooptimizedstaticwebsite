@@ -22,7 +22,7 @@
  *   style2 hides .hero-container-for-style-and-style3-992px  -> uses standard
  *   style6 wants the two-column layout with the CTA inside   -> uses split
  *   style7 and style8 are the themes with .hero-spotlight CSS -> use spotlight
- *   style9 is the only theme with CSS for .hero-twocol        -> uses twocol
+ *   style5 and style9 both carry the .hero-twocol CSS         -> use twocol
  *   all others hide .hero-container                          -> use overlay
  *
  * A styleKey that is NOT listed keeps the standard and overlay blocks — see
@@ -42,7 +42,7 @@ const HERO_LAYOUT = {
   style2: 'standard',
   style3: 'overlay',
   style4: 'overlay',
-  style5: 'overlay',
+  style5: 'twocol',
   style6: 'split',
   style7: 'spotlight',
 
@@ -60,7 +60,12 @@ const HERO_LAYOUT = {
    * spotlight: two coloured columns, the photograph on a yellow field at
    * the left and the words on blue at the right. Nothing existing could be
    * reused — standard and split both put the image and the text in plain
-   * columns with no field behind either. */
+   * columns with no field behind either.
+   *
+   * TWO DESIGNS SHARE IT NOW. style5.css was replaced with a copy of
+   * style9.css on 15 November, so style5 above maps here as well. The
+   * layout being shared is fine; what is NOT fine is changing one
+   * stylesheet and assuming the other followed. They are separate files. */
   style9: 'twocol',
 };
 

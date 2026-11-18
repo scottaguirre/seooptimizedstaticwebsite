@@ -88,7 +88,11 @@ const THEME_INK = {
   style2: { ink: '#111111', tile: '#333333', halo: false, backdrop: '#d8d7d7' },
   style3: { ink: '#ffffff', tile: '#000000', halo: false, backdrop: '#000000' },
   style4: { ink: '#111111', tile: '#111111', halo: false, backdrop: '#ffffff' },
-  style5: { ink: '#111111', tile: '#111111', halo: false, backdrop: '#ffffff' },
+  /* WAS DARK INK ON WHITE, which was right for the design that used to be
+   * in style5.css. That file is now a copy of style9.css and its header
+   * is blue, so #111111 on #013cae would have been about 1.4:1 — a logo
+   * you cannot see, on every Design 5 site, with nothing reporting it. */
+  style5: { ink: '#ffffff', tile: '#013cae', halo: false, backdrop: '#013cae' },
   style6: { ink: '#ffffff', tile: '#122330', halo: false, backdrop: '#122330' },
   // style7's header is transparent over the hero photograph, so there is no
   // colour to show. A mid blue-grey stands in for an average photograph: dark
@@ -139,7 +143,7 @@ function inkFor(styleKey) {
  * styleKey at all — its Design step is hidden, and whichever of style1 to
  * style7 the wizard remembers is thrown away by runLocalOptions.js. What it
  * has instead is a STRUCTURE, resolved from the Design dropdown by
- * utils/localOptions/designs.js, and the three of them look nothing alike.
+ * utils/localOptions/designs.js, and no two of them look alike.
  *
  * Merging the two would mean one lookup where 'style3' and 'anvil' are
  * neighbours and nothing says which namespace a key belongs to. The first
@@ -151,6 +155,8 @@ function inkFor(styleKey) {
  *   ledger   .ledger-head      background --lg-card  #fff      white
  *   beacon   .beacon-masthead  background --bn-card  #fff      white
  *   anvil    .anvil-brand__plate          #fff                 white
+ *   quarry   .quarry-bar       background --qy-raise #f6f5f1   off-white
+ *   harbor   .harbor-mark__img background #fff                white
  *
  * ⚠️ ANVIL'S RAIL IS NEAR-BLACK AND THAT IS NOT WHAT THE LOGO SITS ON.
  * This table first read .anvil-rail (--av-raise, #1a212b) and gave the
@@ -183,6 +189,56 @@ const STRUCTURE_INK = {
    * letters is white. It ties the logo to the design rather than being a
    * neutral black that belongs to no part of it. */
   anvil:  { ink: '#1a212b', tile: '#1a212b', halo: false, backdrop: '#ffffff' },
+
+  /* QUARRY HAS NO PLATE, so the backdrop is the bar itself — --qy-raise,
+   * #f6f5f1 — and not the white Anvil's letters land on. The whole reason
+   * Anvil's row needed its warning is that the two are different elements;
+   * reading this one as #ffffff would be the same mistake with the error
+   * running the other way, and far quieter: near-white letters on a white
+   * card are obviously wrong, and ink mixed for white sitting on #f6f5f1 is
+   * merely slightly off.
+   *
+   * THE TILE IS QUARRY'S MOSS, --qy-accent, which is what .quarry-dial and
+   * .quarry-brand__glyph are filled with. */
+  quarry: { ink: '#1c1e1a', tile: '#3f5231', halo: false, backdrop: '#f6f5f1' },
+
+  /* HARBOR PUTS THE LOGO ON A WHITE PLATE OVER A NAVY RAIL, which is
+   * Anvil's situation and Anvil's answer: the rail is dark, so a wordmark
+   * drawn in dark ink on transparency would vanish on it. The ink is the
+   * rail's own navy, so the mark belongs to the design rather than being a
+   * neutral black. The tile is the brass the call button is filled with. */
+  harbor: { ink: '#15202b', tile: '#8a5f18', halo: false, backdrop: '#ffffff' },
+
+  /* ATLAS HAS NO PLATE AND NO BAR COLOUR, so the backdrop is the page —
+   * --at-page, #faf8f3 — which is Quarry's situation read one shade warmer.
+   * The bar on this structure has no background of its own at all: it is
+   * two lines of type and a double rule, sitting directly on the page.
+   *
+   *     READING THIS ONE AS #ffffff IS THE QUIET VERSION OF ANVIL'S
+   *     MISTAKE. Ink mixed for white on a warm off-white is not obviously
+   *     wrong, it is merely slightly dirty, which is the kind of thing
+   *     nobody reports and everybody notices.
+   *
+   * THE TILE IS ATLAS'S OWN ACCENT, --at-mark, which is what the phone
+   * number is underlined in and what the numerals in the margin are set
+   * in. */
+  atlas:  { ink: '#23201c', tile: '#8a6a2f', halo: false, backdrop: '#faf8f3' },
+
+  /* ORCHARD'S BAR IS WHITE AND THE PAGE BEHIND IT IS NOT, which is a third
+   * answer again. Anvil and Harbor draw on a dark rail, Quarry and Atlas on
+   * the page itself; this one has a white bar sitting on a warm cream page,
+   * so the backdrop is --oc-card and not --oc-page.
+   *
+   *     THE BACKDROP IS WHATEVER THE LOGO ACTUALLY SITS ON,
+   *     WHICH IS NOT ALWAYS THE PAGE AND NOT ALWAYS THE RAIL.
+   *
+   * Reading it as the page colour would mix the ink against #fbfaf6 and
+   * then paint it on #ffffff — the same class of mistake as Quarry's, one
+   * shade smaller and just as invisible.
+   *
+   * THE TILE IS ORCHARD'S LEAF GREEN, --oc-leaf, which the call button and
+   * the Send button are both filled with. */
+  orchard: { ink: '#20291f', tile: '#3d6b3a', halo: false, backdrop: '#ffffff' },
 };
 
 /**

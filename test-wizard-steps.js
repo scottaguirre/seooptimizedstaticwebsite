@@ -33,6 +33,15 @@ function test(name, fn) {
   catch (err) { console.log(`  FAIL  ${name}\n        ${err.message}`); failed++; }
 }
 
+/* The same, for a check that has to start a server. Separate rather than
+ * making test() async, because every other test in this file is
+ * synchronous and awaiting them all would be a change to ninety-odd
+ * callers for the sake of two. */
+async function asyncTest(name, fn) {
+  try { await fn(); console.log(`  ok    ${name}`); passed++; }
+  catch (err) { console.log(`  FAIL  ${name}\n        ${err.message}`); failed++; }
+}
+
 const RAW = fs.readFileSync(
   path.join(__dirname, 'public/js/generateDinamycForm.js'), 'utf8');
 
@@ -65,7 +74,14 @@ const JS = withoutComments(RAW);
  * template literal. If that stops being true this throws rather than
  * quietly measuring the wrong string.
  */
-function mainFormHtml(siteMode, businessType = 'Plumbing') {
+/* `target` JOINED THE SIGNATURE ON 17 NOVEMBER, with Cloudflare Local
+ * Automation. Step 3's domain control is no longer decided by the mode
+ * alone: that door locks `localoptions` AND a Cloudflare destination, and
+ * asks for no domain at all — the address is chosen in "Where it goes".
+ *
+ * DEFAULTS TO NO DESTINATION, so every existing call renders exactly the
+ * page it rendered before. */
+function mainFormHtml(siteMode, businessType = 'Plumbing', designs = null, target = '') {
   const from = RAW.indexOf('function renderMainForm(');
   assert.notStrictEqual(from, -1, 'renderMainForm() has been renamed or removed');
 
@@ -90,16 +106,46 @@ function mainFormHtml(siteMode, businessType = 'Plumbing') {
 
   assert.notStrictEqual(end, -1, 'the main form template literal is unterminated');
 
+  /* OFFERED_DESIGNS AND escapeHtml JOINED THE SCOPE ON 17 NOVEMBER, when the
+   * design dropdown stopped being three hand-typed <option> elements and
+   * became a list built from what the server hands the page. Nine tests in
+   * this file failed with "OFFERED_DESIGNS is not defined" — which is this
+   * helper working exactly as its note above says: a stub that goes missing
+   * THROWS rather than quietly measuring a shorter string.
+   *
+   * THE REAL LIST BY DEFAULT, read from designs.js rather than invented, so
+   * a test about the dropdown is a test about what the wizard offers. */
+  /* asksForDomain AND picksPoolDomain JOINED THE SCOPE ON 17 NOVEMBER, when
+   * step 3's domain control gained a third answer. Nine tests in this file
+   * failed with "asksForDomain is not defined" — which is this helper
+   * working exactly as its note above says: a stub that goes missing THROWS
+   * rather than quietly measuring a shorter string. */
   const render = new Function(
     'state', 'isLocalOptions', 'canHavePricingTable', 'canHaveBadges',
+    'OFFERED_DESIGNS', 'escapeHtml', 'asksForDomain', 'picksPoolDomain',
     `return ${RAW.slice(open, end + 1)};`
   );
+
+  const offered = designs || require('./utils/localOptions/designs')
+    .designsFor('localoptions')
+    .map(d => ({ id: d.id, label: d.label, note: d.note }));
 
   const html = render(
     { siteMode, businessType },
     () => siteMode === 'localoptions',
     () => true,
-    () => true
+    () => true,
+    siteMode === 'localoptions' ? offered : [],
+    (v) => String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
+
+    /* THE SAME TWO RULES THE FILE ITSELF DEFINES, not an approximation:
+     * neither field when the mode publishes itself AND the destination is
+     * Cloudflare, the picker when it publishes itself anywhere else, the
+     * text box otherwise. */
+    () => !(siteMode === 'localoptions' && target === 'cloudflare'),
+    () => siteMode === 'localoptions' && target !== 'cloudflare'
   );
 
   /* HTML COMMENTS STRIPPED, because they are part of the output string and
@@ -455,7 +501,23 @@ test('the wizard opens on the resumed step, and only when there is a draft', () 
   const boot = JS.slice(JS.indexOf("document.addEventListener('DOMContentLoaded'"));
 
   assert.ok(/let resumeAt = STEP\.MODE;/.test(boot), 'there is no default for a first visit');
-  assert.ok(/resumeAt = draftResumeStep\(draft\);/.test(boot), 'the draft never sets where to resume');
+
+  /* ⚠ THE RESUMED STEP GAINED A SECOND CASE ON 18 November, and this
+   * assertion reported it, which is what it is for.
+   *
+   * An ordinary restore still goes to the logo step — a browser will not
+   * let a page refill a file input, so it is the one answer a draft cannot
+   * carry. A BATCH ADD goes to the main form instead: "Add another site"
+   * reloads on purpose, a batch cannot contain an uploaded logo at all, and
+   * the logo step is three steps away from the two fields that differ
+   * between sites.
+   *
+   *     THE RIGHT PLACE TO COME BACK TO IS THE FIRST THING YOU HAVE TO
+   *     CHANGE, AND THAT IS NOT THE SAME PLACE FOR BOTH.
+   *
+   * Both halves are asserted, so neither can quietly become the other. */
+  assert.ok(/resumeAt = justAdded \? STEP\.MAIN : draftResumeStep\(draft\);/.test(boot),
+    'the draft never sets where to resume');
   assert.ok(/go\(resumeAt\);/.test(boot), 'the wizard still opens on step 1 regardless');
 });
 
@@ -570,16 +632,23 @@ function fnSource(name) {
 }
 
 /** stepNumber(), evaluated for a mode: { MODE: 1, TYPE: 2, ... }. */
-function stepNumbers(siteMode) {
+function stepNumbers(siteMode, lockedMode = '') {
   const STEP = {
     MODE: 0, TYPE: 1, LOGO: 2, DESIGN: 3,
     MAIN: 4, PAGES: 5, LOCATIONS: 6, REVIEW: 7,
   };
 
-  const make = new Function('STEP', 'isLocalOptions',
+  /* LOCKED_MODE JOINED hiddenSteps()'s SCOPE ON 16 NOVEMBER, and this
+   * helper went on handing it two arguments — so every caller failed with
+   * "LOCKED_MODE is not defined", which is the honest outcome: the helper
+   * builds the function out of the real source, so the source gaining a
+   * dependency SHOULD break it until the dependency is supplied. Defaulted
+   * to '' so the existing callers mean "the open wizard", which is what
+   * they were always testing. */
+  const make = new Function('STEP', 'isLocalOptions', 'LOCKED_MODE',
     `${fnSource('hiddenSteps')}\n${fnSource('stepNumber')}\nreturn stepNumber;`);
 
-  const stepNumber = make(STEP, () => siteMode === 'localoptions');
+  const stepNumber = make(STEP, () => siteMode === 'localoptions', lockedMode);
 
   return Object.fromEntries(Object.entries(STEP).map(([k, v]) => [k, stepNumber(v)]));
 }
@@ -766,6 +835,42 @@ test('THE DOMAIN IS PICKED FROM A LIST HERE, AND TYPED EVERYWHERE ELSE', () => {
 
   assert.ok(other.includes('name="global[domain]"'), 'the typed box went from every mode');
   assert.ok(!other.includes('name="global[domainId]"'), 'the picker leaked into another mode');
+});
+
+test('AND NEITHER, WHEN THE ADDRESS IS CHOSEN AT THE END', () => {
+  /* CLOUDFLARE LOCAL AUTOMATION — Edwin saw this in the browser on 17
+   * November: a GitHub pool dropdown (1r2.net, 8-i.net — Namecheap,
+   * Hostinger) in step 3 AND a Cloudflare address at the end. Two
+   * destinations, both required, one page.
+   *
+   * IT CAME FROM LOCKING THE MODE. The picker renders on `localoptions`,
+   * which that door locks, so it switched itself on. Nothing was written to
+   * turn it on and nothing failed.
+   *
+   *     A CONTROL THAT APPEARS BECAUSE OF A FLAG SET FOR ANOTHER REASON IS
+   *     A CONTROL NOBODY DECIDED TO SHOW.
+   *
+   * AND THE INVISIBLE HALF WAS WORSE. sitePlace() reads `domainId` first,
+   * so with both answered the site would have published to the Cloudflare
+   * address while every canonical, og:url, the sitemap and the CNAME named
+   * the GitHub host. See test-local-automation.js for that end of it. */
+  const auto = mainFormHtml('localoptions', 'Plumbing', null, 'cloudflare');
+
+  assert.ok(!auto.includes('name="global[domainId]"'),
+    'the GitHub pool picker is on the Cloudflare door');
+  assert.ok(!auto.includes('name="global[domain]"'),
+    'step 3 asks for a domain the address step is about to ask for again');
+
+  /* AND THE REST OF STEP 3 IS UNTOUCHED, so this removed a field rather
+   * than a section. */
+  assert.ok(auto.includes('name="global[businessName]"'), 'step 3 lost the business name');
+  assert.ok(auto.includes('name="global[street]"'), 'step 3 lost the address fields');
+
+  /* THE PAIR DOOR IS UNCHANGED, which is the half a one-sided assertion
+   * would miss: same mode, no destination, picker still there. */
+  const gh = mainFormHtml('localoptions');
+
+  assert.ok(gh.includes('name="global[domainId]"'), '/github-sites lost its picker');
 });
 
 test('and the picker is a select, not a text box with a datalist', () => {
@@ -1641,7 +1746,986 @@ test('the review step shows the address the customer actually typed', () => {
   assert.ok(/snapshotValue\('zip'\)/.test(body), 'the ZIP is not on the review step');
 });
 
-console.log('');
-console.log(`  ${passed} passed, ${failed} failed`);
-console.log('');
-process.exit(failed === 0 ? 0 : 1);
+/* -------------------------------------------------------------------------
+ * THE FILE HAS TO EVALUATE
+ *
+ * EVERY OTHER CHECK IN THIS SUITE LIFTS ONE FUNCTION OUT WITH `new Function`
+ * AND RUNS IT. That is useful and it is blind to the one failure that takes
+ * the whole wizard down: an error while the file is being evaluated.
+ *
+ * It happened on 16 November. LOCKED_MODE was declared a hundred lines below
+ * `state`, which initialises `siteMode: LOCKED_MODE || 'rankfast'` — and a
+ * `const` read before its declaration throws rather than reading undefined:
+ *
+ *     Cannot access 'LOCKED_MODE' before initialization
+ *
+ * The IIFE died on load. The header and sidebar are server-rendered, so the
+ * page looked entirely normal with a blank space where the wizard goes.
+ * Ninety-odd tests passed. Edwin found it by pressing the button.
+ *
+ *     A SUITE THAT ONLY EVER RUNS PIECES OF A FILE CANNOT TELL YOU THE FILE
+ *     RUNS.
+ *
+ * NO jsdom, following this project's rule — a dependency behind a deploy is
+ * the failure deploy.sh opens with a comment about. The shim below is a
+ * dozen stubs, which is all this file touches while it is evaluating.
+ * ---------------------------------------------------------------------- */
+
+const vm = require('vm');
+
+/** Run the whole wizard file the way a browser would. */
+function evaluateWizard({ siteMode = null, siteTarget = null } = {}) {
+  const noop = () => {};
+  const node = () => ({
+    style: {}, dataset: {}, innerHTML: '', textContent: '', content: '',
+    classList: { add: noop, remove: noop, contains: () => false },
+    appendChild: noop, addEventListener: noop, setAttribute: noop,
+    getAttribute: () => null, remove: noop,
+    querySelector: () => null, querySelectorAll: () => [],
+  });
+
+  /* THE TWO queries the file makes while evaluating: the mode meta tag and
+   * the destination one. Given a value here, each lock is exercised on the
+   * way through.
+   *
+   * THE SECOND ONE IS WHY THIS SHIM EXISTS AT ALL. LOCKED_TARGET is read by
+   * an IIFE at module scope exactly as LOCKED_MODE is, and it sits ABOVE
+   * `state` for exactly the same reason — the temporal dead zone that took
+   * the whole wizard down on 16 November. A new const in that region is the
+   * one change this suite has to keep watching. */
+  const document = {
+    readyState: 'loading',
+    body: node(),
+    documentElement: node(),
+    createElement: node,
+    addEventListener: noop,
+    getElementById: () => null,
+    querySelectorAll: () => [],
+    querySelector: (sel) => {
+      if (siteMode !== null && /meta\[name="site-mode"\]/.test(sel)) {
+        return { content: siteMode };
+      }
+      if (siteTarget !== null && /meta\[name="site-target"\]/.test(sel)) {
+        return { content: siteTarget };
+      }
+
+      return null;
+    },
+  };
+
+  const ctx = {
+    document,
+    window: { addEventListener: noop, location: { search: '', href: '' }, document },
+    sessionStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+    console, fetch: noop, setTimeout, clearTimeout, URLSearchParams,
+    FormData: class { append() {} },
+  };
+  ctx.globalThis = ctx;
+
+  vm.createContext(ctx);
+  vm.runInContext(WIZARD_SRC, ctx, { filename: 'generateDinamycForm.js' });
+
+  return ctx;
+}
+
+test('THE WIZARD FILE EVALUATES, WHICH IS NOT WHAT ANY OTHER TEST CHECKS', () => {
+  assert.doesNotThrow(() => evaluateWizard(),
+    'the wizard throws while loading — the page will render with no form on it');
+});
+
+test('and it evaluates on a locked page too', () => {
+  /* The locked path reads the meta tag during evaluation, so it is a
+   * different code path through the same load and deserves its own run. */
+  assert.doesNotThrow(() => evaluateWizard({ siteMode: 'localoptions' }),
+    '/github-sites throws while loading');
+});
+
+test('and it evaluates with a DESTINATION locked', () => {
+  /* /cloudflare-sites/new. A second const read at module scope, in the
+   * region that already killed this file once. */
+  assert.doesNotThrow(() => evaluateWizard({ siteTarget: 'cloudflare' }),
+    '/cloudflare-sites/new throws while loading');
+});
+
+test('and a nonsense destination is ignored rather than fatal', () => {
+  assert.doesNotThrow(() => evaluateWizard({ siteTarget: 'ftp' }),
+    'an unknown site-target kills the wizard rather than being ignored');
+});
+
+test('and a nonsense lock does not take the page down with it', () => {
+  /* The value comes from markup. Validation keeps it out of state; this
+   * checks it also cannot throw on the way. */
+  assert.doesNotThrow(() => evaluateWizard({ siteMode: 'not-a-mode' }),
+    'an unknown site-mode kills the wizard rather than being ignored');
+});
+
+/* -------------------------------------------------------------------------
+ * ONE PRODUCT, ONE DOOR — /github-sites and the mode it locks
+ * ---------------------------------------------------------------------- */
+
+const MODES_FIXTURE = [
+  { value: 'rankfast',    title: 'Rank Fast' },
+  { value: 'localoptions', title: 'Local Website Options' },
+  { value: 'sample',      title: 'One-Page Design' },
+  { value: 'lead',        title: 'Rank GBPs' },
+];
+
+/**
+ * The REAL LOCKED_AWAY, read out of the wizard rather than fixtured.
+ *
+ * THE FIRST VERSION OF THIS HELPER PASSED `new Set(['localoptions'])` IN,
+ * and a mutant emptying the real one passed every test below. Of course it
+ * did: the tests were exercising the fixture. The lock is the one value
+ * here that decides a product's entire entry point, and it was the one
+ * value not being read.
+ *
+ *     A FIXTURE STANDING IN FOR THE THING UNDER TEST TESTS THE FIXTURE.
+ */
+const LOCKED_AWAY_REAL = (() => {
+  const m = /const LOCKED_AWAY = new Set\(\[([^\]]*)\]\)/.exec(WIZARD_SRC);
+  assert.ok(m, 'LOCKED_AWAY has been renamed or reshaped');
+
+  const values = m[1].split(',').map(v => v.trim().replace(/^'|'$/g, '')).filter(Boolean);
+
+  return new Set(values);
+})();
+
+/** modesOnOffer(), run with a chosen lock and a chosen current state. */
+function offered({ locked = '', siteMode = 'rankfast' } = {}) {
+  const fn = extract('modesOnOffer', {
+    LOCKED_MODE: locked,
+    LOCKED_AWAY: LOCKED_AWAY_REAL,
+    SITE_MODES: MODES_FIXTURE,
+    state: { siteMode },
+  });
+
+  return fn().map(m => m.value);
+}
+
+test('LOCALOPTIONS IS THE MODE THAT HAS ITS OWN ROW', () => {
+  /* Read from the wizard, so the list below is exercising the real lock.
+   * If a second mode ever gets its own page this fails and the expected
+   * lists just below have to be rewritten — which is correct: they are a
+   * statement about what the open wizard offers. */
+  assert.deepStrictEqual([...LOCKED_AWAY_REAL], ['localoptions']);
+});
+
+test('A LOCKED PAGE SKIPS STEP 1 ENTIRELY, IT DOES NOT EMPTY IT', () => {
+  /* THE BUG THIS REPLACED, found by Edwin pressing the button.
+   *
+   * modesOnOffer() returning [] stopped the CARDS being drawn and nothing
+   * stopped the STEP. /github-sites opened on a heading reading "1. What
+   * are we building?", no options beneath it, and a Next button — so the
+   * first thing asked of the customer was to answer a blank question, on a
+   * screen indistinguishable from one that failed to load.
+   *
+   *     HIDING THE OPTIONS IS NOT SKIPPING THE STEP.
+   *
+   * hiddenSteps() is the mechanism that already existed for this: go()
+   * steps past anything in it, in whichever direction it was travelling,
+   * and stepNumber() renumbers what is left. */
+  const hidden = extract('hiddenSteps', {
+    STEP: STEP_FIXTURE,
+    LOCKED_MODE: 'localoptions',
+    isLocalOptions: () => true,
+  })();
+
+  assert.ok(hidden.includes(STEP_FIXTURE.MODE),
+    'the mode step is still rendered on a locked page, with nothing in it');
+});
+
+test('and the open wizard still shows it', () => {
+  const hidden = extract('hiddenSteps', {
+    STEP: STEP_FIXTURE,
+    LOCKED_MODE: '',
+    isLocalOptions: () => false,
+  })();
+
+  assert.deepStrictEqual(hidden, [],
+    'the open wizard is hiding steps it should be offering');
+});
+
+test('AND WHAT IS LEFT IS NUMBERED FROM 1, WITH NO GAP', () => {
+  /* The gap is the tell. stepNumber() subtracts the hidden steps below a
+   * step, so leaving MODE out of hiddenSteps() but not rendering it would
+   * have walked the customer 2, 3, 5, 8 — which reads as four steps that
+   * failed to load rather than one wizard with four steps. */
+  const scope = {
+    STEP: STEP_FIXTURE,
+    LOCKED_MODE: 'localoptions',
+    isLocalOptions: () => true,
+  };
+
+  const hidden = extract('hiddenSteps', scope)();
+  const stepNumber = extract('stepNumber', { ...scope, hiddenSteps: () => hidden });
+
+  const shown = Object.keys(STEP_FIXTURE)
+    .filter(k => !hidden.includes(STEP_FIXTURE[k]))
+    .map(k => stepNumber(STEP_FIXTURE[k]));
+
+  assert.deepStrictEqual(shown, [1, 2, 3, 4],
+    `the locked wizard numbers its steps ${shown.join(', ')}`);
+});
+
+test('A LOCKED PAGE OFFERS NO MODE CARDS AT ALL', () => {
+  /* The sidebar row made the choice. Offering it again would mean "GitHub
+   * Websites" led to a screen asking which kind of website — the confusion
+   * the whole change was meant to remove. */
+  assert.deepStrictEqual(offered({ locked: 'localoptions', siteMode: 'localoptions' }), []);
+});
+
+test('and the open wizard no longer offers the one that has its own row', () => {
+  assert.deepStrictEqual(offered(), ['rankfast', 'sample', 'lead']);
+});
+
+test('BUT A DRAFT SAVED BEFORE THAT ROW EXISTED IS NOT ORPHANED', () => {
+  /* THE BUG THIS PREVENTS, which costs nothing to describe and would have
+   * been very hard to recognise on screen.
+   *
+   * Drafts live in sessionStorage and hold siteMode. One saved while
+   * "Local Website Options" was still a card restores to siteMode
+   * 'localoptions' — and `/` no longer lists that value. Without this the
+   * wizard would run every localoptions branch (eleven fixed pages, six
+   * services, the domain dropdown) while step 1 showed four cards with
+   * NONE of them selected.
+   *
+   *     A VALUE REMOVED FROM A PICKER IS STILL IN EVERY DRAFT THAT HOLDS
+   *     IT. Hiding an option must not make the state unrepresentable.
+   *
+   * So the list is "what you may choose here" plus "what you already are". */
+  assert.deepStrictEqual(
+    offered({ siteMode: 'localoptions' }),
+    ['rankfast', 'sample', 'lead', 'localoptions'],
+  );
+});
+
+test('and nothing is added twice when the two agree', () => {
+  assert.deepStrictEqual(offered({ siteMode: 'sample' }), ['rankfast', 'sample', 'lead']);
+});
+
+test('THE LOCK IS CHECKED AGAINST THE LEGAL VALUES, NOT TRUSTED AS TYPED', () => {
+  /* The value arrives in markup. A typo would set state.siteMode to
+   * something no branch in the wizard tests for: every isLocalOptions()
+   * returns false and the thing runs as a fourth mode that does not
+   * exist — no error, just a site built by the wrong half of the code. */
+  const src = WIZARD_SRC;
+
+  assert.ok(/SITE_MODE_VALUES\.has\(\s*v\s*\)/.test(src),
+    'LOCKED_MODE no longer validates the meta tag against the legal values');
+
+  assert.ok(/new Set\(\['rankfast', 'localoptions', 'sample', 'lead'\]\)/.test(src),
+    'the legal site modes are no longer named in one place');
+});
+
+test('A DRAFT FROM ANOTHER MODE IS REFUSED ON A LOCKED PAGE', () => {
+  /* Arriving at /github-sites with a half-finished Rank Fast draft must
+   * not take its words and its nine pages and leave the mode locked to
+   * the eleven-page one. Half a draft is worse than none — and the words
+   * are still in sessionStorage, so going back to / resumes them intact. */
+  const src = WIZARD_SRC;
+  const fn = /function applyDraft\(draft\) \{([\s\S]*?)\n {2}\}/.exec(src);
+
+  assert.ok(fn, 'applyDraft() has been renamed or reshaped');
+
+  assert.ok(
+    /if \(LOCKED_MODE && draft\.siteMode && draft\.siteMode !== LOCKED_MODE\) return;/
+      .test(fn[1]),
+    'applyDraft no longer refuses a draft whose mode is not this page\'s');
+
+  /* AND THE GUARD IS FIRST. Below the assignments it would already have
+   * overwritten half the state before returning. */
+  const guard = fn[1].indexOf('!== LOCKED_MODE');
+  const first = fn[1].indexOf('state.');
+
+  assert.ok(guard !== -1 && guard < first,
+    'the mismatch guard runs after state has already been written');
+});
+
+/* -------------------------------------------------------------------------
+ * A DESTINATION IS NOT A MODE — /cloudflare-sites/new
+ *
+ * Edwin, 16 November: *"have you fixed the clouldflare 2 steps? that what i
+ * need"*. Building a website for a Cloudflare subdomain took two visits —
+ * build here, then go to /cloudflare-sites and publish "whatever was built
+ * last" — and the second screen silently depended on the first having been
+ * the last thing you did. Build two and publish once and you publish the
+ * wrong one.
+ *
+ * THE FIX IS A SECOND AXIS, NOT A FOURTH MODE. A mode decides WHAT gets
+ * built; a destination decides WHERE it lands. Cloudflare takes any mode, so
+ * it could never have been a card on step 1 without lying about what it is.
+ * ---------------------------------------------------------------------- */
+
+/** The REAL set of destinations, read out of the wizard. Same rule as
+ *  LOCKED_AWAY_REAL above: a fixture here would test the fixture. */
+const SITE_TARGETS_REAL = (() => {
+  const m = /const SITE_TARGETS = new Set\(\[([^\]]*)\]\)/.exec(WIZARD_SRC);
+  assert.ok(m, 'SITE_TARGETS has been renamed or reshaped');
+
+  const values = m[1].split(',').map(v => v.trim().replace(/^'|'$/g, '')).filter(Boolean);
+
+  return new Set(values);
+})();
+
+test('CLOUDFLARE IS A DESTINATION AND IT IS NOT IN THE MODE LIST', () => {
+  /* The whole design in one assertion. A mutant that "simplified" this by
+   * adding 'cloudflare' to SITE_MODE_VALUES, or to LOCKED_AWAY, would give
+   * step 1 a fifth card for something that is not a kind of website. */
+  assert.deepStrictEqual([...SITE_TARGETS_REAL], ['cloudflare']);
+
+  const modes = /const SITE_MODE_VALUES = new Set\(\[([^\]]*)\]\)/.exec(WIZARD_SRC);
+  assert.ok(modes, 'SITE_MODE_VALUES has been renamed or reshaped');
+  assert.ok(!/cloudflare/.test(modes[1]),
+    'a destination has been added to the list of modes');
+});
+
+test('A LOCKED DESTINATION HIDES NO STEPS AND LOCKS NO MODE', () => {
+  /* /cloudflare-sites/new is the open wizard with an address on the end.
+   * The mutant this catches is the obvious wrong turn — reusing
+   * /github-sites' lock, which would hide step 1 and silently build Rank
+   * Fast for somebody who wanted a one-page sample. */
+  const hidden = extract('hiddenSteps', {
+    STEP: STEP_FIXTURE,
+    LOCKED_MODE: '',
+    isLocalOptions: () => false,
+  })();
+
+  assert.deepStrictEqual(hidden, [],
+    'the Cloudflare door hides a step it has no business hiding');
+
+  assert.deepStrictEqual(offered({ locked: '' }),
+    ['rankfast', 'sample', 'lead'],
+    'the Cloudflare door changed what step 1 offers');
+});
+
+test('THE DESTINATION IS PUT INTO THE FORM, SO THE POST CARRIES IT', () => {
+  /* WITHOUT THIS THE WHOLE FEATURE IS A NO-OP THAT LOOKS FINE. The address
+   * fields render, the build runs, the credits are spent — and
+   * utils/jobGenerator.js reads `global.siteTarget` off a payload that
+   * never had it, so the site goes nowhere and nothing says so.
+   *
+   *     THE SILENT HALF-WORKING VERSION IS THE ONE WORTH A TEST. */
+  const made = [];
+  const appended = [];
+
+  const form = {
+    querySelectorAll: () => [],
+    appendChild: (n) => appended.push(n),
+  };
+
+  const fn = extract('injectSiteTarget', {
+    LOCKED_TARGET: 'cloudflare',
+    document: { createElement: () => { const n = { classList: { add: () => {} } }; made.push(n); return n; } },
+  });
+
+  fn(form);
+
+  assert.strictEqual(appended.length, 1, 'nothing was added to the form');
+  assert.strictEqual(appended[0].name, 'global[siteTarget]');
+  assert.strictEqual(appended[0].value, 'cloudflare');
+  assert.strictEqual(appended[0].type, 'hidden');
+});
+
+test('and an ordinary wizard puts nothing there at all', () => {
+  /* Not an empty string. generateRoute.js keeps the whole posted body as
+   * the job payload, and `siteTarget: ''` sitting in every job forever is
+   * a field that reads as meaningful and is not. */
+  const appended = [];
+
+  const fn = extract('injectSiteTarget', {
+    LOCKED_TARGET: '',
+    document: { createElement: () => ({ classList: { add: () => {} } }) },
+  });
+
+  fn({ querySelectorAll: () => [], appendChild: (n) => appended.push(n) });
+
+  assert.strictEqual(appended.length, 0,
+    'the open wizard posts a destination');
+});
+
+test('and it clears the old one first', () => {
+  /* The early pass runs again every time somebody walks back to step 4.
+   * Two inputs of the same name post both values, and the stale one can
+   * win — which is how picking style5 once generated style.css. */
+  const removed = [];
+
+  const fn = extract('injectSiteTarget', {
+    LOCKED_TARGET: 'cloudflare',
+    document: { createElement: () => ({ classList: { add: () => {} } }) },
+  });
+
+  fn({
+    querySelectorAll: (sel) => {
+      assert.match(sel, /global\[siteTarget\]/);
+
+      return [{ remove: () => removed.push(1) }];
+    },
+    appendChild: () => {},
+  });
+
+  assert.strictEqual(removed.length, 1, 'a stale destination is left in the form');
+});
+
+test('AND IT IS A STATE-OWNED FIELD, so the snapshot cannot re-inject a stale one', () => {
+  const m = /const STATE_OWNED_FIELDS = \[([\s\S]*?)\];/.exec(WIZARD_SRC);
+  assert.ok(m, 'STATE_OWNED_FIELDS has been renamed or reshaped');
+  assert.match(m[1], /global\[siteTarget\]/,
+    'the destination is not state-owned, so a snapshot can overwrite it');
+});
+
+test('BOTH INJECTION PASSES CALL IT, not just the one that happens to run', () => {
+  /* There are two: the early pass on the main-form step, so the review
+   * screen reflects what will be posted, and the one in the submit
+   * handler, which is the safety net for an Enter key. `global[styleKey]`
+   * has already been fixed in one of them and not the other once. */
+  const calls = (WIZARD_SRC.match(/^\s*injectSiteTarget\(form\);/gm) || []).length;
+
+  assert.strictEqual(calls, 2,
+    `injectSiteTarget is called ${calls} time(s); both passes need it`);
+});
+
+test('THE ADDRESS CARD CARRIES ITS OWN COLOUR', () => {
+  /* EDWIN, 17 November: *"This font should be white"* — "Where it goes"
+   * rendered near-black on navy while the labels beside it were white.
+   *
+   * WHY, AND IT IS WORTH WRITING DOWN. form.html whitens headings BY
+   * ELEMENT NAME (`h3, h4, label, p, strong, …`). This heading is
+   * `<h4 class="h5">`, and Bootstrap's `h5, .h5` rule sets
+   * `color: var(--bs-heading-color)`, which resolves to `inherit`. A class
+   * selector outranks an element selector, so the page's rule lost and the
+   * heading inherited `.card`'s own near-black `--bs-body-color`.
+   *
+   *     A STYLESHEET THAT COLOURS BY TAG NAME IS ONE BOOTSTRAP CLASS AWAY
+   *     FROM NOT APPLYING, AND NOTHING ANYWHERE SAYS SO.
+   *
+   * THE CARD, NOT THE HEADING, so anything added inside it later is covered
+   * too — the same fix the build card on /cloudflare-sites already carries,
+   * for the same reason, which is why this is asserted rather than left to
+   * be rediscovered a third time.
+   *
+   * RUN, NOT GREPPED. The function is lifted and executed against stubs, so
+   * what is asserted is the class the card is actually created with. */
+  const made = [];
+
+  const fn = extract('renderCloudflareFields', {
+    el: (tag, attrs) => {
+      const node = {
+        tag,
+        class: (attrs && attrs.class) || '',
+        innerHTML: '',
+        appendChild: () => {},
+        querySelector: () => ({ innerHTML: '' }),
+      };
+      made.push(node);
+
+      return node;
+    },
+    escapeHtml: (v) => String(v == null ? '' : v),
+    state: { mainFormSnapshot: { 'global[businessName]': 'Leander Chiropractor' } },
+    fetch: () => ({ then: () => ({ then: () => ({ catch: () => {} }) }) }),
+  });
+
+  /* THE PARENT ANSWERS querySelector NOW. Since 18 November the card lives
+   * on the main form and reads the business-name box out of its parent, so
+   * the subdomain can follow it as it is typed. A stub without it throws,
+   * which is how this test found out the function's reach had changed. */
+  fn({ appendChild: () => {}, querySelector: () => null });
+
+  const card = made[0];
+  assert.ok(card, 'renderCloudflareFields created no card');
+
+  assert.match(card.class, /\btext-white\b/,
+    'the address card does not set its own colour, so its heading inherits '
+    + "Bootstrap's near-black card text on a navy page");
+
+  /* AND THE HEADING IS STILL INSIDE IT, so the assertion above is about
+   * something. A card with text-white and no heading would pass. */
+  assert.match(card.innerHTML, /<h4[^>]*>\s*Where it goes/,
+    'the heading this is about is no longer in the card');
+});
+
+test('A DRAFT THAT PUBLISHES ITSELF IS REFUSED ON A PAGE THAT PUBLISHES ELSEWHERE', () => {
+  /* THE ONE COLLISION BETWEEN THE TWO AXES.
+   *
+   * Local Website Options pushes its own eleven pages to GitHub and
+   * reports back in `published` — and utils/jobGenerator.js returns on
+   * that report BEFORE it looks at the destination. So a localoptions
+   * build with a Cloudflare address would go to GitHub, drop the address,
+   * and say nothing.
+   *
+   * It cannot be CHOSEN on this page: modesOnOffer() filters it out of the
+   * open wizard. A resumed draft is the only way in. */
+  const state = { siteMode: 'rankfast', styleKey: 'style', logoType: 'text' };
+
+  const fn = extract('applyDraft', {
+    LOCKED_MODE: '',
+    LOCKED_TARGET: 'cloudflare',
+    LOCKED_AWAY: LOCKED_AWAY_REAL,
+    state,
+    businessTypeKey: () => '',
+  });
+
+  fn({ siteMode: 'localoptions', styleKey: 'style9' });
+
+  assert.strictEqual(state.siteMode, 'rankfast',
+    'a GitHub-publishing draft was restored onto the Cloudflare door');
+  assert.strictEqual(state.styleKey, 'style',
+    'the draft was half applied, which is worse than not applied');
+});
+
+test('and the same draft IS restored on the ordinary wizard', () => {
+  /* The guard is about the destination, not about the mode. On / there is
+   * nowhere else for the build to go, so the draft is the only thing that
+   * decided anything — see the note in modesOnOffer(). */
+  const state = { siteMode: 'rankfast', styleKey: 'style', logoType: 'text' };
+
+  const fn = extract('applyDraft', {
+    LOCKED_MODE: '',
+    LOCKED_TARGET: '',
+    LOCKED_AWAY: LOCKED_AWAY_REAL,
+    state,
+    businessTypeKey: () => '',
+  });
+
+  fn({ siteMode: 'localoptions', styleKey: 'style9' });
+
+  assert.strictEqual(state.siteMode, 'localoptions',
+    'the open wizard refuses a draft it should restore');
+});
+
+/* -------------------------------------------------------------------------
+ * A SECOND GENERATE WHILE THE FIRST IS STILL RUNNING
+ *
+ * Edwin, 17 November: *"How do we fix the problem of a user creating a site
+ * and while the site is being built he fills out the generator form again
+ * and presses generate for a second site?"*
+ *
+ * IT WAS ALREADY PREVENTED. routes/generateRoute.js refuses with a 409 when
+ * a queued or running job of theirs touches the build folder, so two builds
+ * cannot overlap. What was broken was everything after the refusal:
+ *
+ *   spinner.js followed data.redirect WITHOUT SHOWING THE MESSAGE, so
+ *   pressing Generate teleported them to a progress page for a different
+ *   website, already part way through. generateRoute.js's own comment
+ *   records Edwin hitting this and watching a bar fill for a build he had
+ *   not started.
+ *
+ *   And the review step called clearDraft() BEFORE submitting, so by the
+ *   time they landed there, the answers they had just typed were gone from
+ *   the screen AND from sessionStorage.
+ *
+ *     A REFUSAL THAT NAVIGATES INSTEAD OF SPEAKING IS INDISTINGUISHABLE
+ *     FROM A SUCCESS THAT WENT WRONG — and this one took the draft with it.
+ * ---------------------------------------------------------------------- */
+
+const SPINNER_SRC = fs.readFileSync(
+  path.join(__dirname, 'public', 'js', 'spinner.js'), 'utf8');
+
+/** Source with its comments removed, so a note explaining a change cannot
+ *  satisfy an assertion about the code that made it. Three mutants in this
+ *  project have hit prose instead of code. */
+const bare2 = (src) => String(src)
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+
+test('THE WIZARD DOES NOT THROW THE DRAFT AWAY BEFORE THE SUBMIT LANDS', () => {
+  /* The Generate button used to call clearDraft() and then fire the submit.
+   * Everything it had just saved was gone before the request was sent, so
+   * every refusal — 409, out of credits, a server-side validation the
+   * wizard does not run — lost the answers.
+   *
+   * COMMENTS STRIPPED, because the note explaining this change names the
+   * function it removed. */
+  const generate = /onNext: \(\) => \{[\s\S]*?requestSubmit[\s\S]*?\n      \}/.exec(bare2(WIZARD_SRC));
+
+  assert.ok(generate, 'the Generate button has been reshaped; this test cannot find it');
+  assert.ok(!/clearDraft\(\)/.test(generate[0]),
+    'the draft is still cleared before the submit is even sent');
+});
+
+test('and it hands the clearing to the code that sees the response', () => {
+  /* This file fires the submit and never learns what came back. spinner.js
+   * does, so it owns the decision — through a hook on window, the same way
+   * saveDraft is already shared with it for the credits modal. */
+  assert.match(bare2(WIZARD_SRC), /window\.ieClearDraft\s*=\s*clearDraft/,
+    'nothing exposes the draft clear, so a successful build never clears it');
+});
+
+test('AND spinner.js CLEARS IT ONLY ONCE THE BUILD IS ACCEPTED', () => {
+  /* POSITION, NOT PRESENCE. A clear sitting anywhere in that handler is
+   * "we cleared the draft"; only one sitting inside the success branch is
+   * "we cleared it because the build exists". */
+  const src = bare2(SPINNER_SRC);
+
+  const success = src.indexOf('response.ok && data.ok && data.redirect');
+  const clear = src.indexOf('ieClearDraft');
+  const credits = src.indexOf('data.creditsError');
+
+  assert.ok(success > -1, 'the success branch has moved; this test cannot place the clear');
+  assert.ok(clear > -1, 'spinner.js never clears the draft, so it comes back on the next visit');
+  assert.ok(clear > success && clear < credits,
+    'the draft is cleared outside the branch that knows the build was accepted');
+});
+
+test('A 409 IS SAID, NOT ACTED ON', () => {
+  /* The refusal used to navigate. Now it shows the message and offers the
+   * door, so leaving the page is the customer's decision and the form —
+   * with their answers still in it — stays where it is.
+   *
+   * ONE NAVIGATION IN THE WHOLE HANDLER, and that is the assertion: the
+   * success branch. A second one anywhere else is the old behaviour back. */
+  const src = bare2(SPINNER_SRC);
+
+  const jumps = (src.match(/window\.location\.href = data\.redirect/g) || []).length;
+  assert.strictEqual(jumps, 1,
+    `${jumps} places navigate to data.redirect; only the accepted build should`);
+
+  const branch = /if \(response\.status === 409\) \{[\s\S]*?\n          \}/.exec(src);
+  assert.ok(branch, 'the 409 branch has been removed or reshaped');
+
+  assert.match(branch[0], /showAlert\(/,
+    'a build already running is refused without a word to the customer');
+  assert.ok(!/window\.location/.test(branch[0]),
+    'the 409 still navigates, so the message it sets is never read');
+  assert.match(branch[0], /data\.redirect/,
+    'the message does not offer the running build, so it is a dead end');
+});
+
+/* -------------------------------------------------------------------------
+ * The two doors, served
+ * ---------------------------------------------------------------------- */
+
+async function render(routePath) {
+  const express = require('express');
+  const app = express();
+
+  app.use((req, res, next) => {
+    res.locals.csrfToken = 'T';
+    res.locals.csrfField = '<input name="_csrf">';
+    next();
+  });
+  app.use(require('./routes/formRoute'));
+
+  const srv = app.listen(0);
+  const { port } = srv.address();
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}${routePath}`);
+
+    return { status: res.status, html: await res.text() };
+  } finally {
+    srv.close();
+  }
+}
+
+(async () => {
+
+  await asyncTest('/github-sites SERVES THE WIZARD, LOCKED', async () => {
+    /* SERVED, NOT INSPECTED AS SOURCE. The mutant this catches is the
+     * route quietly dropping the meta tag: every unit test above still
+     * passes, because they hand LOCKED_MODE in directly. The page would
+     * render the four cards and the sidebar row would lead to the ordinary
+     * wizard, with nothing broken enough to notice. */
+    const { status, html } = await render('/github-sites');
+
+    assert.strictEqual(status, 200);
+    assert.ok(/<meta name="site-mode" content="localoptions">/.test(html),
+      'the page does not tell the wizard which mode it is for');
+    assert.ok(/href="\/github-sites"[^>]*app-sidebar-link-active/.test(html),
+      'the GitHub row is not marked as the current page');
+  });
+
+  await asyncTest('/cloudflare-sites/new SERVES THE WIZARD WITH A DESTINATION', async () => {
+    /* THE TWO-STEP FIX, END TO END AT THE DOOR. The mutant this catches is
+     * the route dropping the site-target meta tag: every unit test above
+     * still passes, because they hand LOCKED_TARGET in directly. The page
+     * would render the whole wizard, build the site, spend the credits —
+     * and publish nowhere, which is precisely the two-step this replaced,
+     * minus the second step. */
+    const { status, html } = await render('/cloudflare-sites/new');
+
+    assert.strictEqual(status, 200);
+    assert.ok(/<meta name="site-target" content="cloudflare">/.test(html),
+      'the page does not tell the wizard where to publish');
+
+    assert.ok(!/name="site-mode"/.test(html),
+      'the Cloudflare door locks a mode as well, which it has no business doing');
+
+    /* THE ROW IS THIS URL — CORRECTED 17 November. It was /cloudflare-sites
+     * for a day, on the reasoning that a product should be one place in the
+     * sidebar. But /cloudflare-sites is the LIST, so the BUILD WEBSITES row
+     * opened a table while GitHub's opened a wizard, and Edwin pressed it
+     * expecting the wizard. The list has its own MANAGE row now.
+     *
+     * AND THE LIST'S ROW MUST NOT LIGHT UP HERE, which is the half that
+     * would go unnoticed: appSidebar() matches the path exactly, so a
+     * careless `startsWith` would mark both rows on this page and neither
+     * would mean anything. */
+    assert.ok(/href="\/cloudflare-sites\/new"[^>]*app-sidebar-link-active/.test(html),
+      'the Cloudflare build row is not marked as the current page');
+
+    assert.ok(!/href="\/cloudflare-sites"[^>]*app-sidebar-link-active/.test(html),
+      'the Cloudflare LIST row is lit up on the wizard page as well');
+  });
+
+  await asyncTest('EVERY DOOR SAYS WHAT IT IS BUILDING', async () => {
+    /* EDWIN, 17 November: *"Please add a heading to the wizard showing the
+     * user if they are Building a Website, Building a Cloudflare Website,
+     * building a Github Website"*.
+     *
+     * The page had NO heading at all. All three routes opened on "1. What
+     * are we building?", and the only thing on screen that differed was
+     * which sidebar row was lit — at the far left, in a column people stop
+     * reading once they have clicked in it.
+     *
+     *     THE LIT ROW IS WHERE YOU CAME FROM. A HEADING IS WHERE YOU ARE,
+     *     AND ONLY ONE OF THOSE SURVIVES A BOOKMARK OR A RELOAD.
+     *
+     * THE THREE ARE ASSERTED TOGETHER AND AGAINST EACH OTHER: a mutant
+     * giving every door the same heading is the version of this bug that
+     * looks fixed. */
+    const seen = {};
+
+    for (const path of ['/', '/github-sites', '/cloudflare-sites/new']) {
+      const { status, html } = await render(path);
+
+      assert.strictEqual(status, 200, `${path} did not render`);
+
+      const m = /<h1 class="h3 mb-1">([^<]+)<\/h1>/.exec(html);
+      assert.ok(m, `${path} has no heading saying what it builds`);
+
+      seen[path] = m[1].trim();
+    }
+
+    assert.deepStrictEqual(seen, {
+      '/': 'Build a website',
+      '/github-sites': 'Build a GitHub website',
+      '/cloudflare-sites/new': 'Build a Cloudflare website',
+    });
+
+    const texts = Object.values(seen);
+    assert.strictEqual(new Set(texts).size, texts.length,
+      'two doors carry the same heading, so it cannot tell them apart');
+  });
+
+  await asyncTest('and each one says where the finished site ends up', async () => {
+    /* THE BLURB CARRIES WHAT A HEADING CANNOT: what happens when the build
+     * finishes. Those three endings — it waits here, it goes to GitHub
+     * Pages, it goes to a subdomain — are the actual difference between the
+     * doors, and before this nothing said them until the review step. On
+     * /github-sites, not even then. */
+    const blurb = async (path) => {
+      const { html } = await render(path);
+      const m = /<p class="text-white-50 mb-4">([\s\S]*?)<\/p>/.exec(html);
+
+      return m ? m[1].replace(/\s+/g, ' ').trim() : '';
+    };
+
+    assert.match(await blurb('/'), /waits here/i);
+    assert.match(await blurb('/github-sites'), /GitHub Pages/);
+    assert.match(await blurb('/cloudflare-sites/new'), /subdomain/i);
+  });
+
+  await asyncTest('AND THE HEADING IS VISIBLE, WHICH IS NOT THE SAME AS PRESENT', async () => {
+    /* EDWIN, 17 November: *"the headings should be white color"*. The
+     * heading shipped near-black on navy — present in the markup, readable
+     * by no one.
+     *
+     * THE SAME BUG TWICE IN TWO DAYS, and I wrote the note about the first
+     * one. form.html colours headings BY ELEMENT NAME. Bootstrap 5.3 sets
+     * `h1..h6, .h1..h6 { color: var(--bs-heading-color) }` and that token
+     * resolves to `inherit`, so a heading carrying a Bootstrap heading
+     * CLASS loses the page's rule — a class selector outranks an element
+     * one — and inherits `.card`'s near-black instead.
+     *
+     *   "Where it goes"            <h4 class="h5">   16 November
+     *   "Build a Cloudflare..."    <h1 class="h3">   17 November
+     *
+     *     COLOURING BY TAG NAME IS ONE BOOTSTRAP CLASS AWAY FROM NOT
+     *     APPLYING, AND NOTHING ANYWHERE SAYS SO.
+     *
+     * THE TEST IS THE PAIRING, not the list: whatever heading class the
+     * markup uses must be one the stylesheet also names. That is what makes
+     * this fail on the next `<h2 class="h4">` somebody writes, rather than
+     * on a change to a list of selectors. */
+    const { html } = await render('/cloudflare-sites/new');
+
+    const styles = (html.match(/<style>[\s\S]*?<\/style>/g) || []).join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+
+    const whitened = /([^{}]+)\{\s*color:\s*white;?\s*\}/g;
+
+    const named = new Set();
+    let rule;
+    while ((rule = whitened.exec(styles))) {
+      for (const sel of rule[1].split(',')) named.add(sel.trim());
+    }
+
+    const heading = /<h([1-6])([^>]*)>/g;
+    let tag;
+    let checked = 0;
+
+    while ((tag = heading.exec(html))) {
+      const level = `h${tag[1]}`;
+      const classes = (/class="([^"]*)"/.exec(tag[2]) || ['', ''])[1].split(/\s+/);
+      const bootstrap = classes.find(c => /^h[1-6]$/.test(c));
+
+      if (!bootstrap) continue;   // coloured by its own tag, already in the list
+
+      checked += 1;
+
+      assert.ok(named.has(`.${bootstrap}`),
+        `<${level} class="${bootstrap}"> is near-black on navy: the page `
+        + `whitens "${level}" by tag, and Bootstrap's ".${bootstrap}" rule `
+        + 'outranks it. Add the class to the stylesheet.');
+    }
+
+    assert.ok(checked > 0,
+      'no heading on this page carries a Bootstrap heading class, so this '
+      + 'test is asserting nothing — has the wizard heading been removed?');
+  });
+
+test('designsFor GIVES A MODE ITS OWN ROWS AND NOBODY ELSE ANYTHING', () => {
+  /* ASSERTED ON THE FUNCTION, NOT ONLY THROUGH THE PAGE, and two surviving
+   * mutants are why. Every design in the list belongs to `localoptions`
+   * today, so `return DESIGNS` — no filtering at all — produces the same
+   * answer as the real filter for the only mode that has any. Both mutants
+   * passed every test that went through the served page.
+   *
+   *     WHILE ONE MODE OWNS EVERYTHING, "FILTERED" AND "NOT FILTERED"
+   *     ARE THE SAME OUTPUT. The behaviour that distinguishes them is
+   *     what happens to every OTHER mode, and that has to be asked
+   *     directly.
+   *
+   * This stops being subtle the day design 4 exists; the point of writing
+   * it now is that the filter is proved before anything depends on it. */
+  const { DESIGNS, designsFor } = require('./utils/localOptions/designs');
+
+  const mine = DESIGNS.filter(d => d.modes.includes('localoptions'));
+
+  assert.deepStrictEqual(designsFor('localoptions'), mine,
+    'a mode is not given exactly its own designs');
+
+  /* A ROW NOW BELONGS TO A LIST OF DOORS — 18 November. `d.mode ===` was
+   * the filter here and it compared a string to an array: it matched
+   * nothing, so `mine` was empty and so was the assertion. An empty list
+   * compared against an empty list passes while proving nothing. */
+  assert.ok(mine.length, 'the GitHub door is being checked against nothing');
+
+  /* THE HALF THAT CATCHES AN UNFILTERED LIST. */
+  assert.deepStrictEqual(designsFor('cloudflareauto'), [],
+    'a mode with no designs of its own was handed somebody else\'s');
+
+  assert.deepStrictEqual(designsFor('nonsense'), [],
+    'an unknown mode was handed a list');
+
+  assert.deepStrictEqual(designsFor(''), [],
+    'the open wizard, which has no design step, was handed a list');
+
+  assert.deepStrictEqual(designsFor(null), [],
+    'a missing mode was handed a list');
+
+  /* AND EVERY ROW CLAIMS AT LEAST ONE DOOR. A design with none is offered
+   * nowhere and buildable everywhere — the quiet half of the same bug. */
+  for (const d of DESIGNS) {
+    assert.ok(Array.isArray(d.modes) && d.modes.length,
+      `design ${d.id} names no door, so none will offer it`);
+  }
+});
+
+  await asyncTest('EACH DOOR OFFERS ONLY ITS OWN DESIGNS', async () => {
+    /* EDWIN, 17 November, planning five NEW layouts for the automated
+     * Cloudflare mode that share nothing with GitHub's: *"can we just show
+     * each group of designs mapped out to either github/cloudflare so the
+     * user never has to worry about mixing them up?"*
+     *
+     * WHY NOT A WARNING. structureFor() FALLS BACK rather than throwing —
+     * deliberately, and its own note explains why: refusing to build a
+     * paid-for site over a typo in a layout name is the worse failure. So
+     * picking a Cloudflare layout on the GitHub wizard would not fail. It
+     * would quietly build Ledger, and the only sign would be that the site
+     * looked like the last one.
+     *
+     *     A WRONG CHOICE THAT STILL BUILDS SOMETHING IS WORSE THAN ONE
+     *     THAT REFUSES. The fix is not to warn about it; it is not to
+     *     offer it.
+     *
+     * FILTERED ON THE SERVER, so the browser on /github-sites is never told
+     * the others exist — which is why this is asserted on the SERVED page
+     * and not on the wizard's own filtering. */
+    const { html } = await render('/github-sites');
+
+    const tag = /<meta name="site-designs" content="([^"]*)">/.exec(html);
+    assert.ok(tag, '/github-sites is not told which designs it offers');
+
+    const offered = JSON.parse(tag[1]
+      .replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+
+    const { DESIGNS } = require('./utils/localOptions/designs');
+
+    const mine = DESIGNS.filter(d => d.modes.includes('localoptions')).map(d => d.id);
+    const theirs = DESIGNS.filter(d => !d.modes.includes('localoptions')).map(d => d.id);
+
+    assert.ok(mine.length && theirs.length,
+      'one of the two halves of this test is empty, so it proves nothing');
+
+    assert.deepStrictEqual(offered.map(d => d.id), mine,
+      'the GitHub door does not offer exactly its own designs');
+
+    for (const id of theirs) {
+      assert.ok(!offered.some(d => d.id === id),
+        `design ${id} belongs to another mode and is offered on /github-sites`);
+    }
+
+    /* AND EVERY ROW IN designs.js CLAIMS A MODE. One without is offered
+     * nowhere and buildable everywhere — the quiet half of this bug. */
+    for (const d of DESIGNS) {
+      assert.ok(Array.isArray(d.modes) && d.modes.length,
+        `design ${d.id} names no door, so none will offer it`);
+    }
+  });
+
+  await asyncTest('and a door with no designs of its own draws no dropdown', async () => {
+    /* The state the Cloudflare mode is in until its first layout exists,
+     * and the state the open wizard is in permanently — it has no design
+     * step at all. A control with nothing in it is worse than no control. */
+    for (const path of ['/', '/cloudflare-sites/new']) {
+      const { html } = await render(path);
+
+      assert.ok(!/name="site-designs"/.test(html),
+        `${path} is handed a design list it has no use for`);
+    }
+  });
+
+  await asyncTest('AND NO DOOR SHIPS AN UNFILLED PLACEHOLDER', async () => {
+    /* form.html substitutes with a GLOBAL regex and its own comment records
+     * the time a placeholder named inside a comment injected a second copy
+     * of the header. A marker that survives to the browser is the other
+     * half of that: it renders as literal braces on the page. */
+    for (const path of ['/', '/github-sites', '/cloudflare-sites/new']) {
+      const { html } = await render(path);
+
+      assert.ok(!/\{\{[A-Z_]+\}\}/.test(html),
+        `${path} ships an unfilled placeholder: ${(/\{\{[A-Z_]+\}\}/.exec(html) || [])[0]}`);
+    }
+  });
+
+  await asyncTest('and / serves the same wizard, deciding nothing', async () => {
+    const { status, html } = await render('/');
+
+    assert.strictEqual(status, 200);
+    assert.ok(!/name="site-mode"/.test(html),
+      'the open wizard is locked to a mode');
+    assert.ok(!/name="site-target"/.test(html),
+      'the open wizard publishes somewhere without being asked to');
+    assert.ok(/href="\/"[^>]*app-sidebar-link-active/.test(html),
+      'the Websites row is not marked on /');
+  });
+
+  console.log('');
+  console.log(`  ${passed} passed, ${failed} failed`);
+  console.log('');
+  process.exit(failed === 0 ? 0 : 1);
+
+})();

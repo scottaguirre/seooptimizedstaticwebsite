@@ -28,6 +28,20 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+
+/* THE SIDEBAR'S OWN LABELS, separate from the page titles since the rows
+ * took the verb on 17 November — see the note beside them in
+ * utils/pageTitle.js. Read here rather than typed, so a rename moves in one
+ * place instead of breaking a dozen assertions.
+ *
+ * AT THE TOP, NOT BESIDE THE TOOL_ NAMES FURTHER DOWN. This suite runs each
+ * test as it reads the file, and the first use of NAV_BUILD_SITE is three
+ * hundred lines above that import — a `const` read before its declaration
+ * THROWS. The wizard lost its whole IIFE to exactly this on 16 November;
+ * here it cost one test, which is the cheap version of the same lesson. */
+const {
+  NAV_BUILD_SITE, NAV_GH_SITES, NAV_CF_SITES, NAV_WP_BLOGS, NAV_CF_BLOGS,
+} = require('./utils/pageTitle');
 const {
   appHeader, appHeaderAssets, appHeaderScripts, appSidebar, appSidebarAssets,
 } = require('./utils/appHeader');
@@ -74,6 +88,15 @@ function renderFormPage() {
     .replace(/{{HEADER_SCRIPTS}}/g, appHeaderScripts())
     .replace(/{{HEADER}}/g, appHeader(CSRF))
     .replace(/{{SIDEBAR}}/g, appSidebar('/'))
+    /* The heading each door carries — added 17 November, and this line is
+     * here because its absence is what the test below caught. The comment
+     * on "the route fills every placeholder the page uses" already said a
+     * copy of formRoute's substitution list goes stale; it went stale again
+     * on the next placeholder added, which is the second time. THE COPY IS
+     * KEPT ANYWAY because this helper renders a page the real route cannot:
+     * one with no request behind it. The test that checks the page against
+     * the ROUTE is what makes the staleness loud. */
+    .replace(/{{WIZARD_TITLE}}/g, '<h1 class="h3 mb-1">Build a website</h1>')
     .replace(/{{CSRF}}/g, CSRF);
 }
 
@@ -120,14 +143,19 @@ test('the header offers exactly the destinations it should', () => {
   // sidebar on 23 September, because with a tools column on the page it was
   // the same action offered twice on one screen.
   //
-  // "/my-sites" ADDED 30 OCTOBER. The route had been mounted since the editor
-  // was built and nothing in the app linked to it, so the only way in was to
-  // type the URL — which Edwin had been doing all evening without saying so.
-  // A screen nobody can reach is a screen nobody has.
+  // "/my-sites" WAS ADDED 30 OCTOBER AND LEFT AGAIN ON 16 NOVEMBER. It went
+  // in because the route had been mounted since the editor was built with
+  // nothing linking to it, so the only way in was to type the URL. It came
+  // out because it is a sidebar row now, under Manage, and Edwin's call was
+  // that it should not be in both places — every other tool lives in one.
+  //
+  // THE LIST IS EXACT ON PURPOSE. A test that only checked the four it
+  // wants would not notice a fifth arriving, and the point of this one is
+  // that the header stays small.
   const html = appHeader(CSRF);
   assert.deepStrictEqual(
     [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]),
-    ['/', '/dashboard', '/my-sites', '/buy-credits']
+    ['/', '/dashboard', '/buy-credits']
   );
   assert.deepStrictEqual(
     [...html.matchAll(/action="([^"]+)"/g)].map(m => m[1]),
@@ -143,9 +171,30 @@ test('the sidebar shows a visible link to build a website', () => {
   // It used to be in the header. What has NOT changed is that the thing
   // customers came to do must be visible rather than hidden behind the
   // convention that a wordmark links home.
+  //
+  // THE LABEL HAS BEEN THREE THINGS AND THE TEST IS ABOUT NONE OF THEM.
+  // "Build a Website" in the header; "Websites" when the 16 November
+  // regrouping moved the verb up into the BUILD WEBSITES heading; "Build
+  // Website" on 17 November when Edwin asked for the verb on every row and
+  // the headings became WEBSITES and BLOGS. What this test is for is
+  // unchanged across all three: the row has to be THERE and VISIBLE.
+  //
+  // READ FROM pageTitle.js, not typed here, so the next rename moves it in
+  // one place rather than breaking this.
   const html = withoutComments(appSidebar('/dashboard'));
-  assert.ok(/<a href="\/"[\s\S]*?Build a Website[\s\S]*?<\/a>/.test(html),
-    'the "Build a Website" link is gone from the sidebar too');
+
+  assert.ok(new RegExp(`<a href="/"[\\s\\S]*?>${NAV_BUILD_SITE}<[\\s\\S]*?</a>`).test(html),
+    'the link to the wizard is gone from the sidebar');
+
+  // And it says what it does on the row itself, so the heading above is a
+  // filing label rather than the only thing supplying the verb.
+  //
+  // CONTAINS THE VERB, not starts with it. Edwin named this row "Click to
+  // Build Websites" on 17 November — the open generator, and the row that
+  // is also the page's primary action. An anchored test would have been a
+  // test of the word order rather than of the property.
+  assert.match(NAV_BUILD_SITE, /\bBuild\b/,
+    'the row no longer says what pressing it does');
 });
 
 test('the header no longer carries it as well', () => {
@@ -432,7 +481,9 @@ test('the header supplies its own colour, so both headers look the same', () => 
  * cheap to change; a path is not.
  * ===================================================================== */
 
-const { TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT } = require('./utils/pageTitle');
+const {
+  TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT, TOOL_MY_SITES, TOOL_GH_SITES,
+} = require('./utils/pageTitle');
 
 /**
  * A source file with its comments removed, for scanning the strings a
@@ -484,6 +535,414 @@ test('THE BLOG REPORT IS IN THE TOOLS COLUMN', () => {
 
   assert.ok(html.includes('href="/blog-report"'), 'the sidebar has no Blog Report');
   assert.ok(html.includes(TOOL_BLOG_REPORT), `the sidebar does not say "${TOOL_BLOG_REPORT}"`);
+});
+
+test('THE COLUMN IS GROUPED, AND EVERY ROW IS UNDER A HEADING', () => {
+  /* ADDED 16 NOVEMBER with the grouping itself. Edwin: *"the options to
+   * build websites or blogs are a little disorganized"*.
+   *
+   * THE WHOLE MAP, NOT A PROPERTY OF IT — and the first version of this
+   * test is why. It asserted that no row appears before the first heading,
+   * on the theory that a tool with no `group` would be stranded at the top.
+   * A mutant removing `group` from Static Blogs passed it.
+   *
+   * It passed because an ungrouped row is NOT stranded at the top: it is
+   * emitted wherever it falls in the array, which puts it under whichever
+   * heading happens to precede it. It looks filed. It is filed under
+   * something nobody chose.
+   *
+   *     THE FAILURE IS NOT A ROW WITHOUT A HEADING. IT IS A ROW UNDER THE
+   *     WRONG ONE, AND THAT IS INVISIBLE FROM ANY SINGLE PROPERTY.
+   *
+   * So this states the organisation outright. It IS a change-detector, on
+   * purpose: which row sits under which heading is the request, so moving
+   * one should require saying so here.
+   *
+   * ONE MUTATION SURVIVES THIS, DELIBERATELY. Deleting `group` from a row
+   * that already sits directly beneath the heading it would have joined
+   * renders BYTE-IDENTICAL HTML — checked, 1789 bytes, same sha256. The
+   * ungrouped row is emitted in place and falls under the heading above
+   * it, which is the heading it wanted.
+   *
+   * It is an equivalent mutant: the source differs, the output cannot.
+   * Killing it would mean exporting the tools array so a test could read
+   * `group` directly — asserting a field nobody can see, to catch a change
+   * nobody can see. What it leaves behind is a latent fragility rather
+   * than a defect: that row now depends on its POSITION for its heading,
+   * so reordering the array would move it silently. The map above is what
+   * catches that, the moment the order actually changes. */
+  const html = withoutComments(appSidebar('/'));
+
+  // Split on the headings, keeping them, so each chunk is one group.
+  const parts = html.split(/<div class="app-sidebar-group">([^<]+)<\/div>/);
+  const hrefs = (chunk) => [...chunk.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
+
+  assert.deepStrictEqual(hrefs(parts[0]), [],
+    'a row is rendered before the first heading, so it is in no group');
+
+  const map = {};
+  for (let i = 1; i < parts.length; i += 2) map[parts[i]] = hrefs(parts[i + 1]);
+
+  /* CORRECTED 17 NOVEMBER, and the correction is the point of having the
+   * whole map here rather than a property of it.
+   *
+   * `/cloudflare-sites` sat under BUILD WEBSITES for a day — and that URL
+   * is the LIST. So the row beside GitHub Websites opened a table of
+   * published sites while GitHub's opened a wizard, beneath a heading
+   * reading "Build websites". Edwin pressed it expecting the wizard:
+   *
+   *     *"The cloudflare website button takes me to the same old screen
+   *     that was before"*
+   *
+   *     A HEADING IS A PROMISE EVERY ROW BENEATH IT HAS TO KEEP, AND THE
+   *     ROW THAT BREAKS IT IS INVISIBLE FROM ANY ONE ROW.
+   *
+   * Both products now read down the column the same way: a BUILD row that
+   * opens a wizard, a MANAGE row that opens its list. */
+  /* THE HEADINGS LOST THE VERB ON 17 NOVEMBER, when the rows took it.
+   * Edwin asked for "Build" on every row; leaving it in the heading too
+   * would have read "Build websites -> Build Cloudflare Websites". A verb
+   * belongs where the click is. */
+  /* AND A FOURTH WEBSITES ROW ON 17 NOVEMBER — Cloudflare Local Automation,
+   * the eleven-page build published to Cloudflare. It is the PAIR of
+   * /github-sites rather than a second /cloudflare-sites/new: same builder,
+   * same eleven pages, a different destination and its own five layouts.
+   *
+   * NO MANAGE ROW OF ITS OWN, deliberately, and the rule asserted in the
+   * test below still holds because of where the sites go: they are
+   * Cloudflare sites and they are listed in My Cloudflare Websites with the
+   * rest. Edwin, the same afternoon: one list, one place to look. */
+  assert.deepStrictEqual(map, {
+    'Websites': ['/', '/github-sites', '/cloudflare-sites/new', '/local-automation'],
+    'Blogs':    ['/blog-sites', '/static-blogs'],
+    'Tools':    ['/keyword-research'],
+    'Manage':   ['/blog-report', '/my-sites', '/cloudflare-sites', '/dashboard'],
+  });
+});
+
+test('EVERY BUILD ROW OPENS A WIZARD AND EVERY LIST HAS A MANAGE ROW', () => {
+  /* THE PROPERTY THE MAP ABOVE ONLY STATES BY EXAMPLE.
+   *
+   * The map is a change-detector: rewrite it and it passes again, which is
+   * exactly what somebody repeating the 16 November mistake would do. This
+   * states the RULE, so moving a list back under a build heading fails for
+   * a reason rather than for a mismatch.
+   *
+   * THE TEST IS THE PAIRING. Every host that can build has two rows — one
+   * to make a website, one to see the ones it made — and they are not the
+   * same URL. */
+  const html = withoutComments(appSidebar('/'));
+
+  const parts = html.split(/<div class="app-sidebar-group">([^<]+)<\/div>/);
+  const hrefs = (chunk) => [...chunk.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
+
+  const map = {};
+  for (let i = 1; i < parts.length; i += 2) map[parts[i]] = hrefs(parts[i + 1]);
+
+  const building = map['Websites'] || [];
+  const managing = map['Manage'] || [];
+
+  for (const list of ['/cloudflare-sites', '/my-sites']) {
+    assert.ok(!building.includes(list),
+      `${list} is a list of published websites and it is under "Websites"`);
+    assert.ok(managing.includes(list),
+      `${list} is not under "Manage", so the list it shows has no row of its own`);
+  }
+
+  for (const wizard of ['/github-sites', '/cloudflare-sites/new']) {
+    assert.ok(building.includes(wizard),
+      `${wizard} opens a wizard and is not under "Websites"`);
+  }
+});
+
+test('EVERY BUILD ROW SAYS "BUILD", AND NO HEADING SAYS IT TWICE', () => {
+  /* EDWIN, 17 November: *"all the options on the sidebar should add the
+   * word Build"*.
+   *
+   * AND THE VERB MOVED RATHER THAN DOUBLED. The groups were "Build
+   * websites" and "Build blogs" — the 16 November regrouping put the verb
+   * in the heading precisely so it was not repeated down the column.
+   * Adding it to every row AND leaving it in the heading reads "Build
+   * websites -> Build Cloudflare Websites".
+   *
+   *     A VERB BELONGS WHERE THE CLICK IS. A heading is a filing label;
+   *     the row is the thing you do.
+   *
+   * BOTH HALVES ASSERTED TOGETHER, because either alone is satisfiable by
+   * the arrangement this replaced: rows with no verb under a heading that
+   * has one, or rows with a verb under a heading that also has one. */
+  const html = withoutComments(appSidebar('/dashboard'));
+
+  const parts = html.split(/<div class="app-sidebar-group">([^<]+)<\/div>/);
+  const labels = (chunk) => [...chunk.matchAll(/<span>([^<]+)<\/span>/g)].map(m => m[1]);
+
+  const map = {};
+  for (let i = 1; i < parts.length; i += 2) map[parts[i]] = labels(parts[i + 1]);
+
+  for (const heading of ['Websites', 'Blogs']) {
+    assert.ok(map[heading], `there is no "${heading}" group`);
+
+    assert.ok(!/build/i.test(heading),
+      `the "${heading}" heading says the verb the rows beneath it already say`);
+
+    for (const label of map[heading]) {
+      /* ⚠ ONE EXEMPTION, AND IT IS A NAME RATHER THAN AN OVERSIGHT.
+       *
+       * Edwin named this product on 17 November: *"this will be named
+       * Cloudflare Local Automation"*. Shown the clash with his own earlier
+       * *"all the options on the sidebar should add the word Build"*, and
+       * offered "Build Cloudflare Local Automation", he kept the name.
+       *
+       *     A HOUSE STYLE IS NOT A REASON TO RENAME SOMEBODY'S PRODUCT.
+       *     The later, specific instruction wins over the earlier, general
+       *     one — and the exemption is written here so the next person to
+       *     read this test finds a decision rather than a gap.
+       *
+       * NAMED EXACTLY, not matched by a pattern. "every row except the ones
+       * that look like product names" is not a rule; this is a list of one. */
+      if ('Cloudflare Local Automation' === label) continue;
+
+      /* THE VERB IS PRESENT, WHEREVER IT SITS IN THE PHRASE. Four rows read
+       * "Build <host> Websites" and one reads "Click to Build Websites";
+       * anchoring this to the start would make it a test of word order. */
+      assert.match(label, /\bBuild\b/,
+        `"${label}" is under ${heading} and does not say what pressing it does`);
+    }
+
+    /* AND THE EXEMPTION IS FOR ONE ROW, not a hole. If the name ever
+     * changes, or a second row is quietly slipped past the rule by being
+     * added to the `continue` above, this fails. */
+    const exempt = map[heading].filter(l => !/\bBuild\b/.test(l));
+
+    assert.ok(exempt.length <= 1,
+      `${exempt.length} rows under ${heading} skip the verb: ${exempt.join(', ')}`);
+  }
+
+  /* AND THE ROWS THAT DO NOT BUILD MUST NOT SAY IT. A rule stated only as
+   * "every label starts with Build" is satisfied by putting it on My
+   * Cloudflare Websites and the Dashboard too. */
+  for (const label of (map['Manage'] || []).concat(map['Tools'] || [])) {
+    assert.ok(!/\bBuild\b/.test(label),
+      `"${label}" is under a heading that makes nothing and claims to build`);
+  }
+});
+
+test('and the five labels are the five Edwin named', () => {
+  /* The map above proves the SHAPE. This pins the WORDS, because "Build
+   * Website" and "Click to Build Websites" are a choice somebody made —
+   * Edwin changed the first row to the latter on 17 November — and a silent
+   * change to any of them should be a visible change here. */
+  assert.deepStrictEqual(
+    [NAV_BUILD_SITE, NAV_GH_SITES, NAV_CF_SITES, NAV_WP_BLOGS, NAV_CF_BLOGS],
+    ['Click to Build Websites', 'Build GitHub Websites',
+     'Build Cloudflare Websites', 'Build WordPress Blogs',
+     'Build Cloudflare Blogs']);
+
+  /* AND THEY ARE NOT THE PAGE TITLES. This is the distinction the change
+   * turned up: TOOL_CF_BLOGS titles /static-blogs, which is a LIST of
+   * blogs, and TOOL_WP_BLOGS also labels a button on the blog report and a
+   * card on the dashboard. One string cannot be both once either grows a
+   * verb. */
+  assert.notStrictEqual(NAV_CF_BLOGS, TOOL_CF_BLOGS,
+    'the nav label and the page title are the same string again');
+  assert.ok(!/^Build /.test(TOOL_CF_BLOGS),
+    'the page that LISTS Cloudflare blogs is titled as if it built them');
+  assert.ok(!/^Build /.test(TOOL_WP_BLOGS),
+    'a page title grew a verb, and it labels a button on two other screens');
+});
+
+test('A CLICKED ROW SAYS SO UNTIL THE NEXT PAGE ARRIVES', () => {
+  /* EDWIN, 17 November: *"when I press Website and then go to Cloudflare
+   * websites the page refreshes and there is nothing telling the user that
+   * request has been sent"*.
+   *
+   * Every screen here is a full page load. The browser reports it in the
+   * tab — at the top of a window nobody is looking at while their eyes are
+   * on the row they just clicked. Inside the app nothing changed at all, so
+   * a slow response was indistinguishable from a click that missed.
+   *
+   *     THE PROBLEM IS NOT THE NAVIGATION. IT IS THAT THE PAGE SAYS
+   *     NOTHING WHILE IT HAPPENS.
+   *
+   * Ajax navigation would mean every screen rendering as a fragment and a
+   * client router, to buy exactly this. The script is a dozen lines. */
+  /* COMMENTS STRIPPED, AND THREE MUTANTS ARE WHY. The first draft of this
+   * test matched the raw output: deleting the <script> tag outright left it
+   * passing, because the HTML comment above the tag NAMES THE FILE. Same
+   * for the busy rules and the note above them.
+   *
+   *     A TEST THAT SEARCHES A FILE FOR A WORD FINDS THE SENTENCE
+   *     EXPLAINING THE CODE AS HAPPILY AS THE CODE.
+   *
+   * This project has now recorded that failure four times — the badges
+   * test, two sidebar mutants, and here. */
+  const css = withoutComments(appSidebarAssets());
+
+  assert.match(css, /\.app-sidebar-link-busy\s*\{[^}]*cursor:\s*progress/,
+    'the clicked row does not change at all, so it looks unclicked');
+  assert.match(css, /@keyframes app-sidebar-spin/,
+    'the busy row has no spinner');
+  assert.match(css, /prefers-reduced-motion/,
+    'the spinner ignores somebody who asked for less motion');
+
+  assert.match(withoutComments(appHeaderScripts()), /src="\/js\/sidebarBusy\.js"/,
+    'the busy-row script is not loaded, so the style is never applied');
+});
+
+test('AND A SPINNER COVERS THE SCREEN WHILE THE PAGE IS ON ITS WAY', () => {
+  /* EDWIN, 17 November, on top of the busy row. The row answers "did my
+   * click register"; this answers "the app is working and is not ready for
+   * you yet", which on a slow load is the part a single dimmed line in a
+   * column does not carry.
+   *
+   * NO DELAY AND NO TEXT, both his call — *"right now i just want the
+   * spinner, don't worry about the flashing"*. A plain navigation has
+   * nothing to report beyond "wait", which is what a spinner already
+   * means. */
+  const css = withoutComments(appSidebarAssets());
+
+  assert.match(css, /\.app-nav-overlay\s*\{[^}]*position:\s*fixed/,
+    'the overlay does not cover the page');
+  assert.match(css, /\.app-nav-overlay\s*\{[^}]*inset:\s*0/,
+    'the overlay does not reach the edges');
+  assert.match(css, /\.app-nav-overlay__spinner\s*\{[^}]*animation:/,
+    'the overlay has no spinner in it');
+
+  /* UNDER THE WIZARD'S OWN OVERLAY, which sits at 9999 while a site is
+   * generating. A navigation curtain on top of "Generating your website"
+   * would hide the one message that is actually worth reading. */
+  const z = /\.app-nav-overlay\s*\{[^}]*z-index:\s*(\d+)/.exec(css);
+  assert.ok(z, 'the overlay has no z-index, so it may sit under the page');
+  assert.ok(Number(z[1]) < 9999,
+    `the navigation curtain is at ${z[1]}, on top of the wizard's own overlay`);
+
+  /* THE CALL SITES, NOT THE DEFINITIONS — and two mutants are why. The
+   * first draft matched `showOverlay()` anywhere in the file, which the
+   * line `function showOverlay() {` satisfies on its own: deleting the
+   * CALL left both assertions passing over a feature that never fired.
+   *
+   *     A FUNCTION THAT EXISTS AND IS NEVER CALLED PASSES EVERY TEST
+   *     THAT LOOKS FOR ITS NAME.
+   *
+   * So each is asserted inside the handler that has to make it, which is
+   * the thing actually at stake. */
+  const script = codeOnly('public/js/sidebarBusy.js');
+
+  const onClick = /function onClick\(event\) \{[\s\S]*?\n  \}/.exec(script);
+  assert.ok(onClick, 'onClick has been renamed or reshaped');
+  assert.match(onClick[0], /showOverlay\(\);/,
+    'clicking a row does not raise the overlay');
+
+  const restored = /addEventListener\('pageshow'[\s\S]*?\n  \}\);/.exec(script);
+  assert.ok(restored, 'the pageshow handler has been renamed or reshaped');
+  assert.match(restored[0], /hideOverlay\(\);/,
+    'a page restored by the back button lands behind the curtain');
+});
+
+test('and the script is a FILE, not an inline handler', () => {
+  /* The CSP blocks inline handlers and test-inline-handlers.js enforces it.
+   * Stated here as well because the temptation on a one-line behaviour is
+   * an onclick, and the failure then is a silently dead feature rather than
+   * an error. */
+  // codeOnly, for the reason given in the test above: this file explains
+  // itself at length and every word asserted below appears in that prose.
+  const script = codeOnly('public/js/sidebarBusy.js');
+
+  assert.match(script, /addEventListener\('click'/,
+    'the busy row is not wired by a listener');
+
+  /* THE BACK BUTTON IS THE ONE THING THAT MUST CLEAR IT. A browser restores
+   * a page from the back/forward cache exactly as it was, frozen — so a row
+   * left spinning would still be spinning when somebody came back. Nothing
+   * else clears it on purpose: the document is replaced when the new page
+   * arrives, and a timeout would be a guess about how long a page takes. */
+  const restored = /addEventListener\('pageshow'[\s\S]*?\n  \}\);/.exec(script);
+
+  assert.ok(restored, 'there is no pageshow handler, so a restored row spins for ever');
+  assert.match(restored[0], /persisted/,
+    'the reset fires on every pageshow, so it clears the row it just set');
+
+  /* THE CALL, NOT THE HANDLER'S EXISTENCE. A mutant that emptied the
+   * handler passed the first draft of this: `pageshow` and `persisted`
+   * were both still there, guarding nothing. */
+  assert.match(restored[0], /clearBusy\(\);/,
+    'the handler exists and does not actually clear the row');
+});
+
+test('and it does not mark a click that leaves this page alone', () => {
+  /* Cmd-click and middle-click open a NEW tab: this page stays exactly
+   * where it is, so a busy row would spin for ever on a page that never
+   * navigated. Same for the row you are already on — a spinner there reads
+   * as "something is wrong with this page" rather than "going there". */
+  const script = codeOnly('public/js/sidebarBusy.js');
+
+  for (const guard of ['metaKey', 'ctrlKey', 'shiftKey', 'altKey',
+                       'event.button', 'app-sidebar-link-active']) {
+    assert.ok(script.includes(guard),
+      `a ${guard} click still marks the row, which then never clears`);
+  }
+});
+
+test('and the headings are the four we meant, in order', () => {
+  /* THE ORDER IS LOAD-BEARING, not taste: Tools sits above Manage so that
+   * Keyword Research remains the row immediately before Blog Report, which
+   * is what Edwin asked for on 23 October and what the test below still
+   * checks. Swap these two groups and that one fails — which is the point
+   * of asserting the sequence here rather than the set. */
+  const html = withoutComments(appSidebar('/'));
+  const groups = [...html.matchAll(/app-sidebar-group">([^<]+)</g)].map(m => m[1]);
+
+  assert.deepStrictEqual(groups,
+    ['Websites', 'Blogs', 'Tools', 'Manage']);
+});
+
+test('GITHUB HAS A ROW, AND IT NAMES THE HOST', () => {
+  /* ADDED 16 NOVEMBER. Until then the one host with no row was the one
+   * whose builder was a CARD — "Local Website Options", second of four on
+   * step 1, with the word GitHub nowhere on the screen. Cloudflare had two
+   * named rows and WordPress one.
+   *
+   *     FINDING IT REQUIRED KNOWING WHICH CAPTION MEANT IT. That is not a
+   *     discoverability problem about a screen; it is a whole host.
+   *
+   * The row sits beside Cloudflare Websites because the heading above both
+   * already says what is being built, so each row is free to name only
+   * where it lands. */
+  const html = withoutComments(appSidebar('/'));
+
+  assert.ok(html.includes('href="/github-sites"'), 'there is no GitHub row');
+  assert.ok(html.includes(NAV_GH_SITES), `the sidebar does not say "${NAV_GH_SITES}"`);
+});
+
+test('and it marks itself when you are on it', () => {
+  /* The row is the only thing on the page that says which of the three
+   * website builders you are in — the wizard itself looks the same. */
+  const html = withoutComments(appSidebar('/github-sites'));
+
+  assert.ok(/href="\/github-sites"[^>]*app-sidebar-link-active/.test(html)
+         || /app-sidebar-link-active[^>]*href="\/github-sites"/.test(html),
+    'the GitHub row does not mark itself on its own page');
+
+  assert.ok(!/href="\/"[^>]*app-sidebar-link-active/.test(html),
+    'Websites is marked as current while you are on /github-sites');
+});
+
+test('MY WEBSITES IS IN THE COLUMN AND NOT IN THE HEADER', () => {
+  /* BOTH HALVES, because the move is the request. Edwin, 16 November, asked
+   * for /my-sites to leave the account dropdown when it joined the sidebar:
+   * every other tool lives in exactly one place, and two entry points for
+   * one screen is two things to keep in step.
+   *
+   * Asserting only its arrival would pass with it in both. */
+  const side = withoutComments(appSidebar('/'));
+  const head = withoutComments(appHeader(CSRF));
+
+  assert.ok(side.includes('href="/my-sites"'),
+    'My Websites is not in the sidebar');
+  assert.ok(side.includes(TOOL_MY_SITES),
+    `the sidebar does not say "${TOOL_MY_SITES}"`);
+  assert.ok(!head.includes('/my-sites'),
+    'My Websites is in the header dropdown as well, so it is in two places');
 });
 
 test('AND IT SITS AFTER KEYWORD RESEARCH, WHERE EDWIN ASKED FOR IT', () => {
@@ -572,7 +1031,11 @@ test('AND THE NAMES COME FROM ONE PLACE, NOT EIGHT COPIES', () => {
                       'routes/staticBlogsRoute.js']) {
     const code = codeOnly(file);
 
-    assert.ok(/TOOL_(WP|CF)_BLOGS/.test(code),
+    /* EITHER CONSTANT COUNTS. utils/appHeader.js stopped importing the
+     * TOOL_ names on 17 November — the rows label themselves with NAV_ now
+     * — and that is the same property, not a weakening: the strings still
+     * live in pageTitle.js and nothing here types them out. */
+    assert.ok(/(TOOL|NAV)_(WP|CF)_BLOGS/.test(code),
       `${file} types a tool name out by hand instead of importing it`);
   }
 });

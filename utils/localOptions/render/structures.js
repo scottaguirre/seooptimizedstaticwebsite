@@ -3,7 +3,8 @@
 // Which markup, which stylesheet and which prompts go together.
 //
 // THE ONLY FILE THAT KNOWS ABOUT BOTH HALVES. theme.js holds the
-// stylesheets; ledger's pages.js and beacon/pages.js hold the markup. They
+// stylesheets; ledger's pages.js and each structure's own pages.js hold the
+// markup. They
 // cannot be joined in theme.js, because chrome.js imports CSS_PATH from it —
 // theme -> pages -> chrome -> theme is a require cycle, and Node resolves
 // one by handing somebody a half-built module rather than by failing.
@@ -33,16 +34,51 @@ const { STRUCTURES, DEFAULT_STRUCTURE, CSS_PATH } = require('./theme');
 const ledgerPages = require('./pages');
 const beaconPages = require('./beacon/pages');
 const anvilPages = require('./anvil/pages');
+const quarryPages = require('./quarry/pages');
+const harborPages = require('./harbor/pages');
+const atlasPages = require('./atlas/pages');
+const orchardPages = require('./orchard/pages');
 
 const ledgerPrompt = require('../prompt');
 const beaconPrompt = require('../prompt-beacon');
 const anvilPrompt = require('../prompt-anvil');
+const quarryPrompt = require('../prompt-quarry');
+const harborPrompt = require('../prompt-harbor');
+const atlasPrompt = require('../prompt-atlas');
+const orchardPrompt = require('../prompt-orchard');
 
 /** key -> the page builders and the prompts that belong to that stylesheet. */
 const PARTS = {
   ledger: { pages: ledgerPages, prompt: ledgerPrompt },
   beacon: { pages: beaconPages, prompt: beaconPrompt },
   anvil: { pages: anvilPages, prompt: anvilPrompt },
+  /* QUARRY IS REGISTERED AND NOT YET OFFERED, and those are two different
+   * files on purpose. Being in here means `structure: 'quarry'` builds a
+   * Quarry site — which is what makes it testable at all. What a human may
+   * PICK is decided in designs.js, where Quarry's row is tagged to a mode
+   * that has no wizard behind it yet.
+   *
+   *     A STRUCTURE NOBODY CAN RENDER IS A STRUCTURE NOBODY CAN TEST.
+   *     SO IT IS REGISTERED FIRST AND OFFERED LAST. */
+  quarry: { pages: quarryPages, prompt: quarryPrompt },
+
+  /* HARBOR — the second of the five, and the first that is not a stack of
+   * bands. Registered the same way and for the same reason: a structure
+   * nobody can render is a structure nobody can test. What a human may
+   * PICK is decided in designs.js. */
+  harbor: { pages: harborPages, prompt: harborPrompt },
+
+  /* ATLAS — the third of the five, and the first whose headings are not
+   * above anything. Registered the same way and for the same reason: a
+   * structure nobody can render is a structure nobody can test. What a
+   * human may PICK is decided in designs.js. */
+  atlas: { pages: atlasPages, prompt: atlasPrompt },
+
+  /* ORCHARD — the fourth of the five, and the first that does not run
+   * straight down the middle. Registered the same way and for the same
+   * reason: a structure nobody can render is a structure nobody can test.
+   * What a human may PICK is decided in designs.js. */
+  orchard: { pages: orchardPages, prompt: orchardPrompt },
 };
 
 /**

@@ -74,9 +74,14 @@ const { formatTime, ORDER, LONG } = require('./formatDaysAndHoursForDisplay');
 const { normalizeDomain } = require('./normalizeDomain');
 const { MODES, normalizeSiteMode, LOCAL_OPTIONS_SERVICE_PAGES, FIXED_PAGES } = require('./seoPresets');
 const { generateLocalOptionsSite } = require('./localOptions/generate');
-const { buildOptionsFor } = require('./localOptions/designs');
+const { buildOptionsFor, designsKeyFor } = require('./localOptions/designs');
 const { publishSite, repoNameFor } = require('./github/publishSite');
 const { socialUrl } = require('./localOptions/socialUrl');
+
+/* WHERE THIS SITE IS GOING, READ THE WAY EVERY OTHER GLOBAL IS READ. The
+ * wizard posts a nested body and a replayed job payload posts a flat one;
+ * siteTargetOf() handles both, and is the same function jobGenerator asks. */
+const { siteTargetOf } = require('./cloudflareSites/wanted');
 const { readSiteDir } = require('./github/readSite');
 
 /* THE SEARCH CONSOLE PARSER, FROM THE BLOG SIDE RATHER THAN A SECOND COPY.
@@ -456,7 +461,31 @@ async function placeLogo(files, assetsDir, opts = {}) {
  * @returns {Promise<{url, installationId, repo, domain}>}
  */
 async function sitePlace({ global = {}, business = {}, ctx = {} }) {
-  const chosen = String(global.domainId || '').trim();
+  /* A CLOUDFLARE SITE NEVER TAKES ITS ADDRESS FROM THE GITHUB POOL — 17
+   * November, and this is the half of that bug that nobody could see.
+   *
+   * Locking the Local Website Options mode on the Cloudflare door turned on
+   * the GitHub domain picker in step 3, so the form asked for two different
+   * destinations. Edwin saw the two dropdowns. What the screen could not
+   * show is what this function would then do with them: `domainId` wins
+   * below, so the site would have been PUBLISHED to the Cloudflare address
+   * and BUILT for the GitHub one — every canonical, every og:url, the
+   * sitemap and the CNAME naming a host the pages are not served from.
+   *
+   *     A PAGE WITH THE WRONG CANONICAL SERVES 200, LOOKS PERFECT, AND
+   *     IS INVISIBLE. It is the failure this file already carries a note
+   *     about from 27 October, arriving through a different gate.
+   *
+   * THE FIELD IS IGNORED RATHER THAN REFUSED. The wizard no longer renders
+   * that picker on this door, so a `domainId` can now only reach here in a
+   * job payload queued before this change — and refusing those would fail a
+   * build that is otherwise fine, over a field it should never have been
+   * asked for. `global.domain` holds the real hostname by this point:
+   * generateRoute.js writes it with setGlobalDomain() once checkWant() has
+   * proved the address. */
+  const target = siteTargetOf(ctx.body);
+
+  const chosen = 'cloudflare' === target ? '' : String(global.domainId || '').trim();
 
   if (!chosen) {
     /* `https://domain`, NO TRAILING SLASH. normalizeDomain() is the app's
@@ -571,6 +600,26 @@ async function runLocalOptions(ctx) {
 
   const siteMode = normalizeSiteMode(global.siteMode);
 
+  /* WHERE THIS BUILD IS GOING, AND WHICH LAYOUTS THAT MAKES AVAILABLE.
+   *
+   * RESOLVED HERE SINCE 17 NOVEMBER, and a shipped bug is why. The two
+   * buildOptionsFor() calls below passed `siteMode` — so a design picked on
+   * /local-automation, whose siteMode is `localoptions`, was looked up under
+   * `localoptions`, where it does not live. The mode guard refused it,
+   * buildOptionsFor returned the default, structureFor() fell back to
+   * Ledger, and Design 4 built Design 1. Edwin found it by looking at the
+   * site: *"but this is a copy of design 1. i thoght design 4 was
+   * different"*.
+   *
+   *     THE DOOR OFFERED A LAYOUT THE BUILD COULD NOT LOOK UP, and every
+   *     piece behaved as written: the guard refused, the fallback fell
+   *     back, nothing threw.
+   *
+   * routes/formRoute.js builds its dropdown from the same call, so the two
+   * ends cannot name different lists. */
+  const siteTarget = siteTargetOf(ctx.body);
+  const designsKey = designsKeyFor({ siteMode, siteTarget });
+
   /* REFUSED RATHER THAN BUILT ANYWAY. Nothing routes a job here except
    * jobGenerator's check on the same value, so this means the two disagree —
    * and building an eleven-page site for a customer who paid for a hundred
@@ -651,7 +700,11 @@ async function runLocalOptions(ctx) {
     wordmark: String(rawLogoSource || '').trim().toLowerCase() === 'wordmark',
     businessName: String(global.businessName || '').trim(),
     logoType: global.logoType,
-    structure: buildOptionsFor(global.design).structure,
+    /* THE MODE IS PASSED, so a design belonging to another mode resolves to
+     * the default instead of colouring this logo for a layout this build
+     * will not use. See the note in designs.js: filtering a dropdown is not
+     * validating a field. */
+    structure: buildOptionsFor(global.design, designsKey).structure,
   };
 
   /* THE LOGO'S NAME NOW, THE LOGO'S BYTES LATER — see the ordering note
@@ -752,7 +805,12 @@ async function runLocalOptions(ctx) {
      * hashes the business name, so one business rebuilt keeps its pictures.
      * That cannot promise two DIFFERENT businesses differ, which is exactly
      * why the dropdown exists. */
-    ...buildOptionsFor(global.design),
+    /* AND THE MODE IS PASSED HERE TOO — this is the call that decides what
+     * gets built. `design=4` posted at this wizard is a Cloudflare layout
+     * asked for in localoptions mode, and it now lands on Ledger with the
+     * automatic photo set rather than on a structure whose pictures do not
+     * exist. The siteMode guard above cannot see it: that value is valid. */
+    ...buildOptionsFor(global.design, designsKey),
 
     /* EACH SITE IS ITS OWN SEARCH CONSOLE PROPERTY, owned by the business it
      * belongs to. A site at acme.com/quality-plumbing/ is a URL-prefix
@@ -847,8 +905,25 @@ async function runLocalOptions(ctx) {
    * choice, not two, because the domain is served by that account's root
    * repository. User.githubInstallationId is what the first version used
    * and is kept for the case where somebody is testing without the pool. */
-  const installationId = place.installationId
-    || String(ctx.user.githubInstallationId || '').trim();
+  /* A DESTINATION IS A CHOICE, NOT A FALLBACK — 17 November, and this one
+   * line is most of what stood between Quarry and a real build.
+   *
+   * The fallback above exists so somebody testing without the domain pool
+   * still gets a published site. It reads the ACCOUNT, though, and an
+   * account that has ever installed the GitHub App has that id forever — so
+   * a site the customer asked to be put on Cloudflare would have been pushed
+   * to GitHub as well, quietly, because of a choice made weeks earlier about
+   * something else.
+   *
+   *     NOTHING HERE WAS WRONG UNTIL THERE WAS A SECOND PLACE TO PUT A
+   *     SITE. A fallback is only a fallback while there is one destination.
+   *
+   * The Cloudflare publish happens in jobGenerator, after this returns, by
+   * the same createAndPublish() the /cloudflare-sites form uses. This
+   * function's job is to build and to not publish. */
+  const installationId = 'cloudflare' === siteTarget
+    ? ''
+    : place.installationId || String(ctx.user.githubInstallationId || '').trim();
 
   if (installationId) {
     await report({

@@ -188,6 +188,7 @@ NODE_SUITES=( \
   test-site-store.js \
   test-safe-paragraph.js \
   test-editable-text.js \
+  test-edit-site.js \
   test-github-commit.js \
   test-github-publish.js \
   test-github-setup.js \
@@ -195,6 +196,13 @@ NODE_SUITES=( \
   test-my-sites.js \
   test-local-options-beacon.js \
   test-local-options-anvil.js \
+  test-local-options-quarry.js \
+  test-local-options-harbor.js \
+  test-local-options-atlas.js \
+  test-local-options-orchard.js \
+  test-local-options-services.js \
+  test-site-batch.js \
+  test-local-automation.js \
   test-local-options-industry.js \
   test-rich-text.js \
   test-wordmark-logo.js \

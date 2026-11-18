@@ -37,7 +37,7 @@ const assert = require('assert');
 const { renderSite } = require('./utils/localOptions/render/renderSite');
 const { structureFor, structureKeys } = require('./utils/localOptions/render/structures');
 const { STRUCTURES } = require('./utils/localOptions/render/theme');
-const { DESIGNS, designFor, buildOptionsFor } = require('./utils/localOptions/designs');
+const { DESIGNS, designFor, buildOptionsFor, CF_MODE } = require('./utils/localOptions/designs');
 
 const ledgerPrompt = require('./utils/localOptions/prompt');
 const beaconPrompt = require('./utils/localOptions/prompt-beacon');
@@ -185,7 +185,13 @@ test('A STYLESHEET NEVER ARRIVES WITHOUT ITS OWN MARKUP', () => {
     assert.ok(s.prompt && s.prompt.servicePagePrompt, `${key} has no prompts`);
   }
 
-  assert.deepStrictEqual(structureKeys(), ['ledger', 'beacon', 'anvil']);
+  /* THE LIST IS WRITTEN OUT RATHER THAN COUNTED, so a stylesheet added
+   * without its markup fails HERE instead of shipping a structure that
+   * renders as unstyled text. Quarry arrived on 17 November and this line
+   * was one of four things in the suites that had to change for it — which
+   * is the seam working, twice now. */
+  assert.deepStrictEqual(structureKeys(),
+    ['ledger', 'beacon', 'anvil', 'quarry', 'harbor', 'atlas', 'orchard']);
 });
 
 test('AND A TYPO IN THE STRUCTURE NAME FALLS BACK TO ALL THREE HALVES OF ONE', () => {
@@ -773,22 +779,76 @@ test('every design names a structure that exists, with its own photographs', () 
 });
 
 test('AND THE IDS ARE STRINGS THAT ARE NOT THE INDEX', () => {
-  /* '1', '2' and '3' are what a form posts and what an old job payload may
-   * already carry. Renumbering them because a design was removed would
-   * re-point every stored site. */
-  assert.deepStrictEqual(DESIGNS.map(d => d.id), ['1', '2', '3']);
+  /* '1' to '4' are what a form posts and what an old job payload may already
+   * carry. Renumbering them because a design was removed would re-point
+   * every stored site.
+   *
+   * AND THEY COUNT THROUGH BOTH MODES. Design 4 belongs to the Cloudflare
+   * mode and is still '4', not a second '1' — an id meaning Ledger on one
+   * wizard and Quarry on another is a stored source nobody can read back. */
+  assert.deepStrictEqual(DESIGNS.map(d => d.id), ['1', '2', '3', '4', '5', '6', '7']);
   assert.ok(DESIGNS.every(d => 'string' === typeof d.id));
+
+  assert.strictEqual(new Set(DESIGNS.map(d => d.id)).size, DESIGNS.length,
+    'two designs share an id');
 });
 
 test('AN UNKNOWN DESIGN IS THE DEFAULT, NOT A FAILED BUILD', () => {
   /* A stale form, an old job payload or a typed URL must not fail a build
    * that is otherwise fine. */
-  assert.strictEqual(designFor('4'), null);
+  assert.strictEqual(designFor('9'), null);
   assert.strictEqual(designFor(''), null);
 
-  assert.deepStrictEqual(buildOptionsFor('4'), {
+  assert.deepStrictEqual(buildOptionsFor('9'), {
     design: '', structure: 'ledger', imageSet: '',
   });
+});
+
+test('AND A DESIGN FROM ANOTHER MODE IS ALSO UNKNOWN', () => {
+  /* 17 November, found while registering Quarry. designsFor() filters what
+   * the DROPDOWN offers and formRoute.js does that on the server, so the
+   * GitHub wizard is never told the Cloudflare layouts exist — which is
+   * protection against a confused customer, not against a posted field.
+   *
+   *     FILTERING A DROPDOWN IS NOT VALIDATING A FIELD.
+   *     THE LIST THE FORM DREW IS NOT THE LIST THE SERVER WAS SENT.
+   *
+   * `design=4` typed into the request built a Quarry site in localoptions
+   * mode with a photo set that does not exist, and runLocalOptions.js would
+   * not have refused it: its own guard is about the siteMode, which was
+   * perfectly valid. */
+  assert.ok(designFor('4'), 'Design 4 does not exist at all');
+  assert.strictEqual(designFor('4').structure, 'quarry');
+
+  assert.strictEqual(designFor('4', 'localoptions'), null,
+    'a Cloudflare design is accepted by the GitHub wizard');
+
+  assert.deepStrictEqual(buildOptionsFor('4', 'localoptions'), {
+    design: '', structure: 'ledger', imageSet: '',
+  });
+
+  /* AND THE MODE IT BELONGS TO STILL GETS IT, so the guard above is not
+   * simply refusing everything. */
+  assert.deepStrictEqual(buildOptionsFor('4', CF_MODE), {
+    design: '4', structure: 'quarry', imageSet: 'set-4',
+  });
+
+  /* AND EVERY ROW AGAINST A BOGUS NEIGHBOUR OF ITS OWN MODE, which is what
+   * keeps this honest if all the rows ever land in one mode again — they did
+   * for an hour on 17 November, and two mutants survived that way once. */
+  for (const d of DESIGNS) {
+    for (const mode of d.modes) {
+      assert.ok(designFor(d.id, mode),
+        `${d.label} is refused by a door it is listed at`);
+
+      assert.strictEqual(designFor(d.id, `${mode}-nonesuch`), null,
+        `${d.label} is accepted by a mode that is not its own`);
+    }
+  }
+
+  /* OMITTING THE MODE MEANS ANY, not none — the logo preview resolves a
+   * structure for colouring and has no business knowing about modes. */
+  assert.strictEqual(buildOptionsFor('4').structure, 'quarry');
 });
 
 /* ---------------------------------------------------------------------- */

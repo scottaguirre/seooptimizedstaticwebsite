@@ -1,143 +1,1345 @@
+/* ==========================================================================
+   style5.css — Design 5
+   --------------------------------------------------------------------------
+   COPIED WHOLE FROM style9.css ON 15 NOVEMBER, at Edwin's request. The
+   design that was here before — a different hero, a different palette —
+   is gone; git is the only copy.
 
-/* Your custom styles below */
+   READ "style9" BELOW AS "THE FILE THIS CAME FROM". The comments argue
+   about decisions made while style9 was being built, and every one of
+   those arguments still applies to the rules underneath them, so they are
+   kept rather than rewritten into something vaguer. Where a note says
+   "style9's bar is blue", it is describing THESE rules.
+
+   WHAT HAD TO MOVE WITH IT, because a stylesheet is not the whole design:
+
+     utils/stripUnusedHero.js   style5 -> 'twocol', or the page ships an
+                                overlay hero this file has no CSS for
+     utils/wordmarkLogo.js      THEME_INK.style5, or the generated logo is
+                                near-black on a blue bar
+     test-nav-dropdown.js       style5 added to MARGIN_SCOPED and
+                                DARK_BAR_LIGHT_PANEL
+     public/previews/style5.png re-rendered
+
+   DESIGN 5 AND DESIGN 9 ARE NOW BYTE-FOR-BYTE THE SAME except for this
+   header. Change one and you have not changed the other.
+   ==========================================================================
+
+   HOW THIS FILE IS ORGANISED
+
+   Each component owns its own breakpoints. They sit directly under the rules
+   they modify, not in a block of media queries at the bottom.
+
+   That is not a filing preference. The hero's left padding drifted out of
+   alignment precisely because the headings were padded in one place and the
+   buttons in another, five hundred lines apart — nothing was wrong with
+   either rule, only with the distance between them. A component you can read
+   top to bottom is one whose breakpoints you cannot forget.
+
+   CONTENTS
+
+     1.  Palette
+     2.  Header and navigation
+     3.  Hero — two columns
+           3.1  the display face
+           3.2  the page behind the block
+           3.3  the yellow field and its photograph
+           3.4  the words
+           3.5  the two buttons
+           3.6  one column on a phone
+           3.7  name, address and phone bar
+           3.8  badges
+     4.  Hero blocks this design does not use
+     5.  Standalone call-to-action button
+     6.  Sections and typography
+     7.  Images
+     8.  Two-image text section
+     9.  NAP, map and "near me"
+     10. Footer
+     11. Contact form
+     12. FAQ — numbered Q and A
+     13. Services — one navy band, numbered
+     14. Pricing — price blocks
+     15. Trust points
+     16. About-us video
+     17. Brush-stroke divider
+     18. Reviews
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. PALETTE
+   --------------------------------------------------------------------------
+   The same four colours were being written six ways — `green`, `darkgreen`,
+   `#53d353`, `#3ebe3e`, `#082d5b`, `#08203d`. Naming them means changing the
+   brand is one edit rather than a search.
+
+   THIS IS THE PURPLE OF THE FIRST DRAFT, and it is seven lines rather than a
+   search-and-replace through four hundred rules — which is the whole return
+   on having named them. The green is kept beside each value: putting it back
+   is editing this block and nothing else.
+   ========================================================================== */
+
+:root {
+    /* PURPLE SINCE 15 NOVEMBER, at Edwin's request: the header, the hero's
+       background band and everything else --brand reaches. White on it is
+       8.67:1, down from the blue's 9.30 and still far clear. */
+    --brand:        #5629ba;      /* header, hero band, FAQ bars, card icons         */
+
+    /* THE HERO'S RIGHT COLUMN, also Edwin's, same day. It is not ONLY that
+       column: this token is the dark ink the mint controls are labelled
+       in — the CTA, the CONTACT button, the dropdown hover — so it was
+       measured against the mint as well as under the white headline.
+       --brand-dark on --cta is 9.03:1 and on --cta-dark is 6.64:1. */
+    --brand-dark:   #262450;      /* the hero's right column, and the mint's ink     */
+    --accent:       #51e5a5;      /* the mint — ON DARK ONLY, see --accent-ink       */
+    /* --navy IS NOT --brand-dark, THOUGH THEY AGREE AGAIN. Both were
+       #012B7F, which made them look like one value written twice. They are
+       two: --brand-dark went to #262450 first, leaving this blue, and the
+       page showed a purple header above a blue phone band until Edwin
+       asked for the band too.
+
+       ONE TOKEN, FOUR SURFACES. Changing this moved the phone band, the
+       "near me" block, the map section and the ink dropdown items are set
+       in — which is the point of the token and is why they stayed in step
+       without four edits. They remain two tokens, so setting one does not
+       set the other. */
+    --navy:         #262450;      /* phone band, dark sections, dropdown ink         */
+    /* THE LAST BLUE IN THIS FILE, CHANGED 15 NOVEMBER. --navy went to
+       #262450 and this did not, which left one #011E5C hairline behind —
+       the 2px border on .sub-menu, the WordPress dropdown panel. It never
+       shows on a static build, so nothing anyone looked at was wrong; it
+       would simply have been the only blue element on an exported theme.
+
+           A REPALETTE IS FINISHED WHEN THE TOKENS NOBODY CAN SEE HAVE
+           MOVED TOO.
+
+       #1b1938 is 54% of --navy's luminance. The blue pair it replaces was
+       52% — the relationship is what was copied, not a guessed shade. */
+    --navy-deep:    #1b1938;      /* sub-menu border, hero base                      */
+    --faq-grey:     #e2e3e5;
+
+    /* ---- THE ACCENT HAD TO BECOME TWO COLOURS ----
+
+       In style7 every surface the accent touched was dark, so one mid purple
+       worked everywhere. This header is WHITE, and the accent now lands on
+       two opposite backgrounds:
+
+         on white  the active nav underline, the CONTACT focus ring
+         on grey   the FAQ focus ring, on --faq-grey
+         on navy   the Services band's numerals and its hover rule
+
+       #8b63ff measured 3.94:1 on white and 4.47:1 on navy — weak at both
+       ends, because no single mid-tone is strong on both. Darkening it fixed
+       white and killed navy (2.44:1).
+
+       THE TWO NAMES NOW HOLD THE SAME VALUE, ON PURPOSE. Edwin's call is
+       one red, #b3121b, on every surface. What that costs is written down
+       here rather than discovered later:
+
+           on white / --faq-grey   6.96:1 and 5.42:1   fine
+           on the Services band    2.27:1              the numerals are dim
+           on the hero scrim       1.25–1.72:1         the divider barely reads
+
+       The two names are KEPT rather than collapsed into one. They are what
+       the light-surface rules and the dark-surface rules reach for, so if
+       the dark side ever needs lifting again it is one line here and not a
+       hunt through seven rules. #ef5a63 is the value that was measured to
+       work on dark: 4.74:1 on the band, 3.06:1 on the scrim.
+
+       --accent is reached by the dark surfaces, --accent-ink by the light
+       ones. That split is still true of the RULES; it is only the two
+       VALUES that currently agree. */
+    /* THE MINT CANNOT BE ONE VALUE EITHER, FOR THE SAME REASON THE YELLOW
+       COULD NOT. #51e5a5 replaced #FFDC4B on 15 November at Edwin's
+       request, and it is only a little darker — luminance 0.605 against
+       the yellow's 0.730 — so it sits in exactly the same place: 1.60:1 on
+       white, which is nowhere near type on a light surface and nowhere
+       near carrying light type.
+
+           A LIGHTER HUE SWAPPED FOR A LIGHTER HUE DOES NOT RETIRE THE
+           SPLIT. IT ONLY MOVES BOTH VALUES.
+
+       So --accent is the mint, for DARK surfaces only, and --accent-ink is
+       a deep green for white and for --faq-grey. */
+    --accent-ink:   #15744f;      /* ON LIGHT ONLY — 5.76 on white, 5.28 on faq-grey */
+
+    /* THE SAME NAVY, AS THREE NUMBERS, because `rgba()` cannot take a hex.
+       Eight rules want the panel colour at a partial opacity — the collapsed
+       menu's hairline, the dropdown border, the CONTACT button's current-page
+       halo, two card shadows, the pricing border and the reviews tint — and
+       writing the channels once is what keeps all eight in step with --navy.
+
+       The hero scrim is a ninth, but it reaches this through --scrim-rgb
+       rather than directly, so that flipping the hero light again is one
+       line and does not disturb the other eight. */
+    --navy-rgb:     38, 36, 80;
+
+    /* --navy-deep's channels, for the hero scrim. Same reason as the line
+       above: the hex and the channels are one colour written twice, and the
+       pair has to be changed together. */
+    --navy-deep-rgb: 27, 25, 56;
+
+    /* AND THE SAME FOR THE OTHER TWO. Three rules below reach for the brand
+       and the accent at partial opacity, and all three had the channels
+       written out by hand as literal numbers. That is a repalette which
+       silently leaves three hairlines behind in the OLD brand colour. */
+    --brand-rgb:    86, 41, 186;
+    --accent-rgb:   81, 229, 165;
+
+    /* THE HERO SCRIM, AS ITS OWN KNOB. It was --navy for a while, matching
+       the Services band exactly. It is --navy-deep now: deliberately DARKER
+       than the band, so the hero reads as the deepest thing on the page and
+       the band below it is a step up rather than the same note twice.
+
+       Pointing at the channel variable rather than repeating "6, 20, 58" is
+       what stops this drifting from --navy-deep, which the sub-menu border
+       and the hero base also use. */
+    --scrim-rgb:    var(--navy-deep-rgb);
+
+    /* THE HERO'S CALL-TO-ACTION, which cannot be --brand because on this one
+       surface --brand IS the background. See the button rule in section 3. */
+    /* THE CTA IS THE MINT, AND ITS LABEL IS STILL DARK BLUE. White on
+       #51e5a5 is 1.60:1; --brand-dark on it is 7.92:1, and the button's
+       EDGE against the column it sits on is the same 7.92:1, so this
+       control cannot vanish the way a blue button on a blue scrim did on
+       Design 8. Lower than the yellow's 9.43 and still far clear of 4.5.
+
+       THE HOVER IS THE MINT AT 86%, which is the same step the yellow took
+       to #F2CB2E: dark enough to register as a state change, light enough
+       that the dark label is still 5.83:1 on it. */
+    --cta:          #51e5a5;      /* label is var(--brand-dark), never white */
+    --cta-dark:     #46c58e;      /* hover — 5.83:1 for the label */
+
+    /* THE TRUST-POINT CIRCLES, AND THEY FOLLOW THE ACCENT NOW.
+
+       This was #17801a, held out of the first repalette on the argument that
+       a tick only reads as "verified" when it is green. That was a judgement
+       call about the design, not a fact about it. It then followed --brand
+       for a while, which made the circles the same blue as the panels and
+       the band around them; on --accent they are the one red thing in a
+       white section, which is what a tick is for.
+
+       NOT var(--cta). The two hold the same value today, but a tick is not
+       a thing you press, and the day the CTA changes colour these should
+       not follow it.
+
+       The green is kept here so putting it back is one edit, exactly as the
+       old palette values are. */
+    --tick:         var(--accent);   /* was var(--brand), before that #17801a */
+}
+
+
+/* ==========================================================================
+   2. HEADER AND NAVIGATION
+   --------------------------------------------------------------------------
+   THE HEADER IS A SOLID WHITE BAR ABOVE THE HERO — the one thing style8
+   changes from style7, and it changes five rules rather than one.
+
+   In style7 this header was ABSOLUTE and transparent, floating over the
+   hero photograph. Everything that followed from that is undone here, and
+   each piece is marked WAS FLOATING so the pair can still be read against
+   each other:
+
+     - the links were white with a text-shadow, because the pixels behind
+       them were an unknown photograph. On white they are dark and need no
+       shadow, and colour becomes usable again for the active state.
+     - the collapsed menu carried its own navy panel, because an absolute
+       header has nothing beneath it to borrow a background from. A static
+       header pushes the hero down instead, so the panel is not needed.
+     - the toggler was white, which on a white bar is nothing at all.
+     - the hero reserved 142/158px of padding-top for a header that is no
+       longer over it (see 3.2).
+
+   What stays: the logo cap in section 2. It was introduced to make the
+   hero's padding knowable, and that reason is gone — but a 170px badge
+   would still make this bar 216px tall at every width, which is its own
+   problem and the cap is still the answer to it.
+   ========================================================================== */
 
 #headerColor {
-    width:100%;
-    margin:0; 
+    width: 100%;
+
+    /* WAS FLOATING: position: absolute; z-index: 3. The bar now sits in
+       normal flow and the photograph starts beneath it. */
+    /* WAS WHITE on style8, which this file was copied from. style9's bar is
+       the brand blue, and the hero block below it sits on that same blue —
+       see section 3. If these two ever drift the card gains a seam along
+       its top edge. */
+    background-color: var(--brand);
 }
 
-
+/* The bar carries the colour; the navbar inside it stays transparent so
+   there is one surface rather than two that have to agree. */
 #headerColor .navbar {
-     background: transparent !important;
+    background-color: transparent !important;
 }
 
-.navbar-toggler {
-    background-color: white; 
-} 
-
-.navbar-nav {
-    margin-top: 25px;
-    width: 300px;
-    position: relative;
-    left: 0px;
+/* Air above the logo and below the links. Without it the logo sits flush
+   against the top edge of the photograph. */
+#headerColor .navbar {
+    padding-top: 18px;
+    padding-bottom: 18px;
 }
 
-.nav-link {
-    display: initial;
-}
+/* ---- THE LOGO IS CAPPED ----
 
-.nav-link, .menu-item a {
-    text-transform: uppercase;
-    padding: 10px;
-    color:#0a65fc;
-    font-size: 16px;
-    font-weight: 600;
-    background: none !important;
-    text-decoration: none;
-}
+   The template writes the logo at whatever width and height the wizard was
+   given: <img width="{{LOGO_WIDTH}}" height="{{LOGO_HEIGHT}}">. A wide
+   wordmark is 150x40. A circular badge is 260x170 — and that one made the
+   header 216px tall at EVERY width, not just on a phone.
 
-a.nav-link:hover, .menu-item a:hover {
-    color:rgb(117, 8, 156);
-}
+   WAS FLOATING: on style7 this cap is load-bearing, because that header is
+   absolute and the hero reserves room for it with a padding-top that cannot
+   be right for both a 40px logo and a 170px one — an uncapped badge printed
+   the headline through the logo. This header is in normal flow, so the hero
+   can no longer collide with it however tall it gets; the cap is kept because
+   a 216px bar is still a bad bar, not because anything underneath breaks.
 
-
-a.nav-link.active, .current-menu-item a {
-    color: black !important;
-    font-weight: bold;
-}
-
-a.nav-link.active:hover, .current-menu-item a:hover {
-    color: rgb(117, 8, 156) !important;
-}
-
-.nav-item, .menu-item {
-    font-size: 16px;
-    margin-bottom: 20px;
-    list-style: none;
-}
-
-.nav-item:has(a.active) {
-    margin-bottom: 30px;
-}
-
-
-.current-menu-item {
-    margin-bottom: 30px;
-}
-
-
-.navbar-nav .dropdown-menu, .sub-menu {
-    background: white;
-}
-
-
-.navbar-nav .dropdown-menu {
-    position: relative;
-    width: 250px;
-    left: 50px;
-    padding-top: 0;
-    padding-bottom: 0;
-    margin-top: 15px;
-}
-
-
-.menu-item-has-children {
-    position: relative;
-    z-index: 1;
-}
-
-.sub-menu {
-    margin-top: 15px;
-    border: 1px solid gray;
-    border-radius: 10px;
-    position: absolute;
-    width: 250px;
-    height: 100%;
-    display: none;
-    padding: 0;
-    left: 50px;
-    top: 10px;
-}
-
-.menu-item-has-children:hover .sub-menu {
-    position: relative;
-    z-index: 2;
-    display: block;
+   width: auto keeps the aspect ratio; the width attribute would otherwise
+   fight the capped height and squash wide logos. */
+#headerColor .navbar-brand img {
+    max-height: 72px;
+    width: auto;
     height: auto;
 }
 
-.dropdown-menu .nav-item, .sub-menu .menu-item {
-    border-bottom: solid gray 2px;
-    padding-top:15px;
-    padding-bottom:15px;
+@media (min-width: 992px) {
+    #headerColor .navbar-brand img {
+        max-height: 86px;
+    }
+}
+
+/* ---- THE COLLAPSED MENU IS A RULE, NOT A PANEL ----
+
+   WAS FLOATING: style7 gives the open menu a navy panel with a drop shadow,
+   and has to. That header is position: absolute, so opening the hamburger
+   does not push the hero down — the links print straight through the
+   headline, white on white, unless the menu brings its own background.
+
+   This header is in normal flow. Opening the menu pushes the hero down, so
+   there is nothing to print through and the panel has nothing to solve; a
+   navy block hanging off a white bar would read as a fault rather than as a
+   menu. A hairline below the links does the separating instead, without
+   introducing a second colour.
+
+   Bootstrap only adds .show when the menu is open and keeps the element
+   display: none otherwise, so these rules are inert until the menu is
+   needed — no extra rule required to hide them. */
+#headerColor .navbar-collapse {
+    padding: 8px 0 12px;
+    margin-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* FLEX-START, NOT CENTER. Centring is right for a horizontal bar and wrong
+   for a stacked column — it put the links down the middle of the panel. It
+   also makes each item shrink to its text, which is what keeps the active
+   underline the width of the word instead of the width of the panel. */
+#headerColor .navbar-nav {
+    align-items: flex-start;
+    gap: 4px;
+}
+
+@media (min-width: 992px) {
+    #headerColor .navbar-collapse {
+        padding: 0;
+        margin-top: 0;
+        border-top: 0;
+    }
+
+    /* Everything on one baseline. The items were sitting at different
+       heights because .nav-item carried a bottom margin meant for the
+       stacked menu. */
+    #headerColor .navbar-nav {
+        align-items: center;
+        gap: 0;
+    }
+}
+
+#headerColor .nav-item {
     margin-bottom: 0;
 }
 
-.dropdown-menu .nav-item:last-child, .sub-menu .menu-item:last-child  {
+/* WAS FLOATING: background #fff, so the hamburger could be seen against a
+   photograph. On a white bar that is invisible, so it takes a visible edge
+   and a dark icon instead. */
+.navbar-toggler {
+    background-color: transparent;
+    border-color: rgba(255, 255, 255, 0.45);
+}
+
+.navbar-toggler .navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255,255,255,0.9%29' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+/* ---- the links ----
+   They were at Bootstrap's default size against a 4rem headline, which read
+   as an afterthought. The text-shadow is what keeps them readable where the
+   photograph is pale. */
+/* WAS FLOATING: white with a text-shadow. Both were there to survive an
+   unknown photograph. The background is now a known colour, so the links are
+   dark and the shadow is gone. */
+/* WHITE AGAIN. style8's links went dark because its bar went white; this
+   bar is a solid blue, so dark links would be the invisible-dropdown bug
+   that shipped on Design 8 on 13 November, wearing the other hat. */
+#headerColor .nav-link,
+#headerColor .menu-item a {
+    color: #fff;
+    font-size: 16.5px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    text-decoration: none;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+/* ---- EVERY LINK IS WHITE. THE UNDERLINE DOES THE TALKING. ----
+
+   Colour alone is what the nav used to use: #3ebe3e first, then --accent.
+   Both failed for the same reason, which is worth writing down because it
+   will be tempting to put colour back.
+
+   THE HEADER IS TRANSPARENT AND SITS ON A PHOTOGRAPH THE GENERATOR CHOSE.
+   There is no background to tune the colour against — the pixels behind
+   ABOUT US are a bathroom wall on one build and a dark roof on the next, so
+   any single accent is unreadable on some of them. White with a shadow is
+   legible over all of them, which is why every link is white and stays
+   white, hover and active included.
+
+   So "which page am I on" is carried by a shape instead: a 3px purple bar
+   under the word. A shape keeps its meaning at any contrast, and it is not
+   the only cue — the browser's own focus ring still works on top of it.
+
+   ::before, NOT ::after, AND THAT IS NOT A STYLE CHOICE. Bootstrap draws the
+   dropdown caret with .dropdown-toggle::after. An underline on ::after would
+   have silently deleted the little triangle beside SERVICES and LOCATIONS. */
+
+/* WAS FLOATING: every state forced to #fff, because no single accent was
+   readable over every photograph the generator might pick. That argument is
+   spent — the bar is white and stays white — so hover and active can carry
+   colour again. The underline below is kept regardless: it is the cue that
+   survives at any contrast, and it is not the only one. */
+/* THE CONTACT BUTTON IS EXCLUDED FROM BOTH, and it has to be excluded
+   rather than overridden. Its own rule further down sets `color: #fff`
+   WITHOUT !important — which was fine in style7, where this base rule was
+   also !important white and the two agreed by accident. Turning the base
+   navy broke that silently: dark text on a filled purple block.
+
+   The same :not() the underline already uses, for the same reason. */
+/* WHITE, NOT --navy. This rule was style8's, where the bar is white and the
+   links had to go dark. Copied unchanged it printed --navy links on a --navy
+   blue bar — which is the invisible-dropdown bug of 13 November in a new
+   place, and it is why the earlier, less specific rule above was not enough
+   on its own: this one carries !important. */
+#headerColor a.nav-link:not([href$="contact.html"]),
+#headerColor .menu-item a {
+    color: #fff !important;
+    background: none;
+}
+
+#headerColor a.nav-link:not([href$="contact.html"]):hover,
+#headerColor .menu-item a:hover,
+#headerColor a.nav-link.active:not([href$="contact.html"]),
+#headerColor .current-menu-item a,
+#headerColor a.nav-link.active:not([href$="contact.html"]):hover,
+#headerColor .current-menu-item a:hover {
+    /* THE YELLOW, which on this bar is the only colour that reads as a
+       state change. --brand-dark on --brand is 1.37:1 — the hover would
+       have been indistinguishable from the resting link. */
+    color: var(--accent) !important;
+    background: none;
+}
+
+#headerColor .navbar-nav .nav-link,
+#headerColor .menu-item a {
+    position: relative;
+}
+
+/* THE CONTACT BUTTON IS EXCLUDED. It is a filled purple block and already
+   says it is current with a white ring; a purple bar inside it would be
+   invisible, and a bar under it would look like a fault. */
+#headerColor .navbar-nav .nav-link:not([href$="contact.html"])::before,
+#headerColor .menu-item a::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    border-radius: 2px;
+    /* THE LIGHT ACCENT, because this bar is dark. --accent-ink is for white
+       surfaces; on blue it is nearly invisible. */
+    background: var(--accent);
+    opacity: 0;
+    transform: scaleX(0.55);
+    transition: opacity .15s ease, transform .15s ease;
+}
+
+#headerColor .navbar-nav .nav-link:not([href$="contact.html"]):hover::before,
+#headerColor .menu-item a:hover::before {
+    opacity: 0.55;
+    transform: scaleX(1);
+}
+
+#headerColor .navbar-nav a.nav-link.active:not([href$="contact.html"])::before,
+#headerColor .current-menu-item a::before {
+    opacity: 1;
+    transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #headerColor .navbar-nav .nav-link::before,
+    #headerColor .menu-item a::before {
+        transition: none;
+    }
+}
+
+/* ---- CONTACT, as a button ----
+
+   SELECTED BY ITS href, NOT BY A CLASS, and that is the whole reason this is
+   possible without touching anything shared.
+
+   utils/buildNavMenu.js REPLACES the nav block in every template and writes
+   CONTACT last, as a plain .nav-link. Adding a class to it would mean editing
+   that file — which builds the nav for all seven designs, so Designs 1-6
+   would start carrying a class for a button only this stylesheet draws.
+
+       THE MARKUP ALREADY SAYS WHICH LINK THIS IS. It says it in the href.
+
+   `$=` matches the end of the attribute, so it holds whether the href is
+   "contact.html" or "../contact.html" on a nested page. Dropdown entries
+   cannot match: they are .dropdown-item inside .dropdown-menu, and none of
+   them point at the contact page. */
+
+/* BASE IS THE COLLAPSED MENU, where the links stack full width and a button
+   sitting in that column should not stretch across it. The inline placement
+   beside the other links is the enhancement, added at 992px with the rest of
+   the horizontal nav. */
+/* --cta, NOT --brand, AND NOT BECAUSE OF CONTRAST. #053389 is perfectly
+   readable here: 11.41:1 against the white bar, both for its edge and its
+   white label. The reason is that this button and the hero's BOOK
+   APPOINTMENT ask for the same thing, and two colours for one action means
+   neither colour means "press this".
+
+   --cta was introduced for the hero, where --brand was the background and
+   the button had no visible edge. It is the call-to-action colour now, so
+   every call to action takes it. */
+#headerColor .navbar-nav .nav-link[href$="contact.html"] {
+    display: inline-block;
+    background: var(--cta);
+    color: var(--brand-dark);
+    border-radius: 8px;
+    padding: 11px 24px;
+    margin-left: 0;
+    margin-top: 8px;
+    text-shadow: none;
+    transition: background-color .15s ease, transform .15s ease;
+}
+
+#headerColor .navbar-nav .nav-link[href$="contact.html"]:hover,
+#headerColor .navbar-nav .nav-link[href$="contact.html"]:focus {
+    background: var(--cta-dark);
+    color: var(--brand-dark);
+    transform: translateY(-1px);
+}
+
+/* ON THE CONTACT PAGE THE LINK ALSO CARRIES .active, which colours nav links
+   with the accent. On a filled button that is accent text on a solid fill —
+   unreadable whatever the fill happens to be. The button keeps white type
+   and marks itself as current with a ring instead. */
+/* WAS FLOATING: the ring was white, which showed against a photograph. On a
+   white bar a white ring is nothing, so the button marks itself current with
+   a dark halo instead — the same idea, inverted for the surface it is on. */
+#headerColor .navbar-nav a.nav-link.active[href$="contact.html"] {
+    color: var(--brand-dark) !important;
+    background: var(--cta);
+    box-shadow: 0 0 0 2px rgba(var(--navy-rgb), 0.35);
+}
+
+#headerColor .navbar-nav a.nav-link.active[href$="contact.html"]:hover {
+    color: var(--brand-dark) !important;
+    background: var(--cta-dark);
+}
+
+#headerColor .navbar-nav .nav-link[href$="contact.html"]:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #headerColor .navbar-nav .nav-link[href$="contact.html"] { transition: none; }
+    #headerColor .navbar-nav .nav-link[href$="contact.html"]:hover { transform: none; }
+}
+
+/* Collapsed menu: the links stack full width, and a button sitting in that
+   column should not stretch across it. */
+/* ---- dropdowns ---- */
+
+/* ---- THE PANEL IS WHITE, AND IT HAD TO BECOME WHITE ----
+
+   WAS FLOATING: a --navy panel, which was right while the links above it
+   were white over a photograph. The header is a white bar now and the links
+   went dark with it — and a dropdown ITEM is a .nav-link too, so it took
+   the same dark colour while this panel stayed dark behind it.
+
+       MEASURED: background rgb(10, 31, 82), text rgb(10, 31, 82).
+       The same colour. Twenty services, none of them visible.
+
+   Nothing failed, nothing logged, and the menu opened exactly as before —
+   it was simply blank. Caught by rendering the real nav with MAX_SERVICES
+   items rather than the four the preview ships with.
+
+   WHITE RATHER THAN RE-WHITENING THE TEXT, because this panel hangs off a
+   white bar and on a phone it opens INSIDE the collapsed menu, which is
+   also white since the panel there was dropped for a hairline. A dark block
+   in either place is the same fault in two sizes. */
+/* ---- THE ITEMS INSIDE THE PANEL ARE DARK, AND THIS IS THE SECOND TIME ----
+
+   style8 shipped a day with navy items on a navy panel: its header went
+   white, its nav links went dark with it, and dropdown entries are
+   `.nav-link` too. style9 reproduced the same bug from the other side —
+   this header is blue so the links went WHITE, and they inherited style8's
+   WHITE panel. Measured: background rgb(255,255,255), text rgb(255,255,255).
+
+       A LINK IN THE BAR AND A LINK IN THE PANEL ARE THE SAME SELECTOR
+       AND ALMOST NEVER THE SAME COLOUR.
+
+   The panel keeps its white, which hangs cleanly off a blue bar; the items
+   take the panel's ink instead of the bar's. !important because the rule
+   that whitens the bar carries it too. */
+#headerColor .dropdown-menu a.nav-link,
+#headerColor .dropdown-menu a.nav-link:not([href$="contact.html"]),
+#headerColor .sub-menu .menu-item a {
+    color: var(--navy) !important;
+}
+
+#headerColor .dropdown-menu a.nav-link:hover,
+#headerColor .dropdown-menu a.nav-link:focus-visible,
+#headerColor .sub-menu .menu-item a:hover {
+    color: var(--brand) !important;
+    background: rgba(var(--navy-rgb), 0.06);
+}
+
+.dropdown-menu,
+.sub-menu {
+    border: 1px solid rgba(var(--navy-rgb), 0.15);
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 10px 28px rgba(var(--navy-rgb), 0.16);
+    padding: 4px 0;
+}
+
+/* THE DIVIDERS GO WITH IT. `solid gray 1px` was a line for a dark panel; on
+   white it is the loudest thing in the menu. */
+.dropdown-menu .nav-item,
+.sub-menu .menu-item {
+    border-bottom: 1px solid rgba(var(--navy-rgb), 0.08);
+    padding-left: 10px;
+}
+
+/* A HOVER STATE, WHICH THE DARK PANEL NEVER HAD. On navy the items relied
+   on the browser's default link behaviour and there was nothing to see; on
+   white a row that lights up is what tells you the list is interactive. */
+#headerColor .dropdown-menu .nav-link:hover,
+#headerColor .dropdown-menu .nav-link:focus-visible,
+#headerColor .sub-menu .menu-item a:hover {
+    background: rgba(var(--navy-rgb), 0.06);
+    color: var(--brand-dark);
+}
+
+.dropdown-menu li:only-child,
+.sub-menu li:only-child,
+.dropdown-menu li:last-of-type,
+.sub-menu li:last-of-type {
     border-bottom: none;
 }
 
-.dropdown-menu .nav-item a:hover, .sub-menu .menu-item a:hover {
-    background: white;
-}
-
-.dropdown-menu .nav-item a {
-    overflow-wrap: break-word;
-}
-
 .dropdown-item {
-    padding:8px;
-    margin:0;
+    padding: 8px;
     white-space: initial;
 }
 
+/* ---- navigation: 992px and up ---- */
 
-/* === Hero, hero image ===*/
+@media (min-width: 992px) {
 
-.hero-img-tablet, .hero-img-desktop, .hero-img-large {
-    display: none;
+    /* Hover to open, matching .navbar-expand-lg */
+    .navbar .dropdown:hover > .dropdown-menu {
+        display: block;
+    }
+
+    /* ---- THE LIST IS CAPPED, AND SCROLLS ----
+
+       MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items draw
+       a 926px menu. Measured on the real nav:
+
+           1435x800   926px tall, 192px below the fold
+           1280x700   926px tall, 292px below the fold
+
+       overflow-y was `visible` and there was no max-height, so those items
+       were not merely off-screen — there was nothing to scroll. The menu
+       opens on HOVER up here, so reaching them by scrolling the page means
+       moving the pointer off the trigger, which closes it.
+
+       ONLY AT 992px AND UP, WHICH IS WHY THIS LIVES IN THIS BLOCK. Below
+       it the menu is `position: static` inside the collapsed panel — it is
+       in flow, the page grows, and the page's own scrollbar reaches every
+       item. A cap there would put a small scrolling box inside a scrolling
+       page, which is worse than the problem.
+
+       THE NUMBER IS THE VIEWPORT, NOT A GUESS. The menu's top edge sits at
+       65px; 90px leaves it ending a clear 25px above the bottom at any
+       window height, and it keeps working on a laptop where a fixed pixel
+       cap would not.
+
+       overscroll-behavior stops the page lurching when the list hits its
+       end under the pointer. */
+    .navbar .dropdown-menu,
+    .sub-menu {
+        margin-top: 0;
+        max-height: calc(100vh - 90px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    /* Hovering the dropdown trigger shows the same bar the links use, rather
+       than recolouring the word — see the note in section 2. */
+    #headerColor .navbar .dropdown:hover > .nav-link {
+        color: #fff;
+    }
+
+    #headerColor .navbar .dropdown:hover > .nav-link::before {
+        opacity: 0.55;
+        transform: scaleX(1);
+    }
+
+    /* MORE AIR BETWEEN THE ITEMS. 15px each side read as a dense block
+       against a 4rem headline; 22px lets them breathe without pushing the
+       CONTACT button off the end on a 1024px laptop. */
+    .nav-link,
+    .menu-item a {
+        margin-right: 22px;
+        margin-left: 22px;
+    }
+
+    /* The button brings its own padding, so it needs less margin than the
+       plain links or the gap beside it reads as a mistake. */
+    #headerColor .navbar-nav .nav-link[href$="contact.html"] {
+        margin-left: 10px;
+        margin-right: 0;
+        margin-top: 0;
+    }
+
+    .menu-item-has-children {
+        position: relative;
+        z-index: 1;
+        padding-bottom: 20px;
+    }
+
+    .sub-menu {
+        display: none;
+        position: absolute;
+        z-index: 3;
+        border: 2px solid var(--navy-deep);
+        border-radius: 10px;
+        padding: 0;
+        margin-top: 10px;
+    }
+
+    .menu-item-has-children:hover .sub-menu {
+        display: block;
+        -webkit-transition: all 1s ease;
+                transition: all 1s ease;
+    }
+
+    .sub-menu .menu-item {
+        padding: 10px;
+    }
+
+    .dropdown .dropdown-menu li,
+    .sub-menu .menu-item {
+        width: 250px;
+    }
+
+    /* ---- THE 22px IS FOR THE BAR, NOT FOR THE LIST ----
+
+       `.nav-link` above gives every link 22px of margin each side, which is
+       the air between ABOUT US and SERVICES along the horizontal bar.
+
+       buildNavMenu.js writes dropdown entries as
+       `class="dropdown-item nav-link"`, so they were taking that margin too
+       — 44px of it inside a 250px item. Measured: every anchor ended at
+       x=1025 against a panel edge at x=1004, overflowing by 21px. Short
+       items looked fine because their text stopped short of the edge; the
+       long ones were clipped mid-word.
+
+       IT WAS ALWAYS WRONG AND NEVER VISIBLE. While the panel was navy and
+       the text was navy there was nothing on screen to look wrong. Making
+       the items readable is what exposed it, which is the usual order. */
+    #headerColor .dropdown-menu .nav-link,
+    .sub-menu .menu-item a {
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    .nav-item.dropdown .dropdown-menu,
+    .sub-menu {
+        left: -100px !important;
+    }
+
+    .dropdown .dropdown-menu li a,
+    .sub-menu .menu-item a {
+        white-space: normal;
+    }
 }
 
+
+/* ==========================================================================
+   3. HERO — TWO COLUMNS
+   --------------------------------------------------------------------------
+   The one thing style9 does not inherit from style8. The markup is the
+   <!--HERO:twocol--> block in the four templates, mirrored by the `twocol`
+   branch of sectionRendererPhp.js; no other design styles it.
+
+   THE SHAPE, AND WHY EACH PIECE IS WHERE IT IS
+
+   An inset block of two columns. The photograph sits on a yellow field at
+   the left; the headline and the two buttons sit on --brand-dark at the
+   right. The page BEHIND the block is two-tone — the header's own blue for
+   the top half, white below — so the block reads as a card bridging the two
+   rather than a band stuck under the header.
+
+   THE TWO BLUES HAVE TO MATCH FOR THAT TO WORK. The top half of the page
+   behind the block is --brand, which is also #headerColor's background. If
+   those two ever drift the card gains a seam along its top edge.
+
+   THE SPLIT IS A HARD STOP, NOT A FADE. A gradient between the two would
+   read as a lighting effect; the reference has a clean line, and a clean
+   line is what makes the lower half look like the page rather than more
+   hero.
+
+   THE PHOTOGRAPH IS OVERSIZED AND ANCHORED INTO THE CORNER. The reference
+   this came from uses a cut-out subject, so its yellow shows all round. A
+   rectangular photograph at full size would cover the field completely and
+   there would be no yellow at all. Anchoring it bottom-right at 91% x 88%
+   leaves the yellow as an L along the left and top — the same effect from
+   the photographs this product actually has.
+   ========================================================================== */
+
+/* ---- 3.1 the display face ----
+
+   THE FIRST FONT IN THIS PRODUCT. No other theme sets font-family at all;
+   all eight run on Bootstrap's system stack, which is why they are
+   typographically identical.
+
+   BUNDLED, NOT LINKED FROM GOOGLE. buildAssets.js copies this file into
+   every build beside bootstrap.min.css, so a finished customer site makes
+   no third-party request, keeps working if fonts.googleapis.com is blocked
+   or slow, and does not hand a third party a log of every visitor.
+
+   font-display: swap, so the headline is readable in the fallback while the
+   18KB file arrives rather than invisible. The fallbacks are condensed on
+   purpose — Impact and Arial Narrow are the nearest things present on most
+   machines, so the reflow when Anton lands is small. */
+@font-face {
+    font-family: 'Anton';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('anton.woff2') format('woff2');
+}
+
+/* ---- 3.2 the page behind the block ----
+
+   THE BLUE IS AN ELEMENT NOW, NOT A GRADIENT STOP.
+
+   It used to be `linear-gradient(--brand 0%, --brand 52%, #fff 52%)`: two
+   flat bands meeting at a hard horizontal line, which is exactly what a
+   gradient is good at and exactly why the bottom edge could not be curved.
+   A colour stop has no corners to round.
+
+       A BACKGROUND CANNOT BE SHAPED. A BOX CAN.
+
+   So the blue became a box of its own — an absolutely positioned ::before
+   behind the hero — and its bottom edge is an ellipse. The page keeps the
+   white; the block is given a stacking position of its own below, because
+   an abspos ::before paints above static siblings otherwise and would
+   cover the photograph.
+
+   WHY THE SLAB IS FULL HEIGHT AND THE RADIUS ELLIPTICAL. Both were tried
+   the obvious way first and shown to Edwin on 14 November:
+
+     - A 52%-tall slab with `border-bottom-*-radius` curves only its two
+       far corners, and the hero block sits over the middle — so at 1435px
+       the curve showed as two blue ears in the 56px margins and read as a
+       rendering fault rather than a shape.
+     - `/ 0 0 Xpx Xpx` makes the HORIZONTAL radius 50% of the width and the
+       vertical radius X. That is one shallow arc spanning the whole
+       viewport instead of two corners, which is what "curved at the
+       bottom" means on a full-bleed band.
+
+   Full height puts the arc BELOW the block rather than through it, so the
+   curve is unobstructed across its whole span.
+
+   ONE PROPERTY, CHANGED IN ONE PLACE. --hero-curve is the depth of the
+   arc, set once here and stepped up twice as the viewport widens. */
+.hero-twocol {
+    /* THIRTY PER CENT OFF BOTH NUMBERS — Edwin, 14 November. The blue that
+       shows BELOW the block is the padding plus the arc, so taking one and
+       not the other would have changed the shape rather than the height.
+       70 -> 49 and 40 -> 28, and the two wider steps scale with them. */
+    --hero-curve: 28px;
+
+    position: relative;
+    background: #fff;
+    padding: 0 0 49px;
+}
+
+.hero-twocol::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+
+    /* 60% — Edwin, 14 November. It was 100%, which put the arc below the
+       whole hero; at 60% it crosses behind the block and the curve shows
+       in the margins down each side, which is the shape he asked for. */
+    height: 60%;
+    background: var(--brand);
+    border-radius: 0 0 50% 50% / 0 0 var(--hero-curve) var(--hero-curve);
+    z-index: 0;
+}
+
+/* THE STACK IS DECLARED, NOT ASSUMED — and it was assumed until 14
+   November. 3.6 below says "MOBILE FIRST ABOVE, WIDENED HERE. Everything
+   above this point describes the stacked layout", and the 992px block sets
+   `flex-direction: row` as the enhancement. Neither was true: the base rule
+   said `display: flex` and nothing else, so it took flex's own default of
+   `row` and the phone got the DESKTOP arrangement in 358px.
+
+   Measured at 390px before the fix: the photograph column was 140px wide,
+   BOOK APPOINTMENT broke over two lines and the phone number broke mid
+   number — "(512) 555-" / "0100".
+
+       A COMMENT DESCRIBING MOBILE-FIRST IS NOT MOBILE-FIRST. THE DEFAULT
+       VALUE OF flex-direction IS row, AND IT DOES NOT READ COMMENTS.
+
+   Nothing failed, because nothing measures a phone. */
+.hero-twocol__block {
+    position: relative;
+    z-index: 1;
+
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    margin: 0 16px;
+    min-height: 420px;
+
+    /* THE TOP CORNERS ARE SOFTENED AND THE BOTTOM ONES ARE NOT, because
+       the name/address/phone bar sits flush beneath and rounds the bottom
+       of the pair — block and bar read as one card, so the radius belongs
+       at the two ends of the stack and nowhere in the middle.
+
+       overflow: hidden IS LOAD-BEARING. The yellow field and the navy
+       column are backgrounds on the CHILDREN; a radius on the parent
+       alone leaves both of them square and the curve invisible. */
+    border-radius: 18px 18px 0 0;
+    overflow: hidden;
+}
+
+/* ---- 3.3 the yellow field and its photograph ---- */
+/* THE FIELD NEEDS A HEIGHT OF ITS OWN WHEN IT IS STACKED.
+
+   `picture` and `img` below are height: 100%, and a percentage height
+   resolves against the parent only when the parent's height is DEFINITE.
+   Stacked, this column's height came from `flex: 1 1 50%` in a column
+   container of indefinite height — so it was not definite, the image fell
+   back to its natural 600x350 ratio, and the yellow carried on for another
+   180px underneath it. A band of empty yellow that looked like a bug
+   because it was one.
+
+   aspect-ratio makes the height definite, so the photograph fills the
+   field and `object-fit: cover` does what it was asked to. Removed again
+   at 992px, where the row layout stretches the column to the block's
+   height and the inset photograph makes the L-shaped frame instead. */
+.hero-twocol__media {
+    flex: 1 1 50%;
+    background: var(--accent);
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+}
+
+.hero-twocol__media picture {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.hero-twocol__media img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+}
+
+/* ---- 3.4 the words ---- */
+.hero-twocol__copy {
+    flex: 1 1 50%;
+    background: var(--brand-dark);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 48px 28px;
+}
+
+/* THE HEADLINE IS UPPERCASE, AND THAT IS A DECISION ABOUT THE COPY.
+   The generator writes title case with full stops — "Roofing You Can Trust.
+   Service You Deserve." — and this prints it as capitals. Anton has no
+   lower case worth using at this size, and the reference is all caps. */
+.hero-twocol__title {
+    color: #fff;
+    font-family: 'Anton', Impact, 'Arial Narrow', sans-serif;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    line-height: .96;
+    font-size: clamp(2.1rem, 7.4vw, 2.9rem);
+    margin: 0 0 20px;
+}
+
+/* THE RULE BETWEEN THE HEADLINE AND THE LOCATION.
+
+   SOLID --accent, NOT .line-divider. The brush-stroke divider in section 17
+   is drawn in --brand, which is 1.37:1 on this column's --brand-dark — it
+   would be a divider nobody can see. The yellow bar is 9.43:1 there and
+   repeats the field and the button, which is the same reason the spotlight
+   hero switched its own mask off. */
+.hero-twocol__divider {
+    width: 72px;
+    height: 5px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--accent);
+    margin: 0 0 20px;
+}
+
+.hero-twocol__sub {
+    color: rgba(255, 255, 255, .86);
+    /* HALF AS BIG AGAIN — Edwin, 14 November, on top of the increase
+       earlier the same day. The three steps keep their ratio to each
+       other: 1.18 -> 1.77, 1.30 -> 1.95, 1.45 -> 2.18. */
+    font-size: 1.77rem;
+    line-height: 1.4;
+    margin: 0 0 28px;
+    max-width: 46ch;
+}
+
+/* ---- 3.5 the two buttons ---- */
+.hero-twocol__actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.hero-twocol__btn {
+    display: inline-block;
+    padding: 15px 30px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: .98rem;
+    text-decoration: none;
+    border: 2px solid transparent;
+    transition: background-color .15s ease, border-color .15s ease, transform .15s ease;
+}
+
+/* THE LABEL IS DARK, AND IT IS NOT A PREFERENCE. White on #51e5a5 measures
+   1.60:1 — about a third of what a label needs. --brand-dark on it is
+   7.92:1, and the button's EDGE against the column behind it is the same
+   7.92:1, so this control cannot disappear into its own background the way
+   a brand-coloured button did on Design 8's hero. */
+.hero-twocol__btn--solid {
+    background: var(--cta);
+    color: var(--brand-dark);
+    border-color: var(--cta);
+}
+
+.hero-twocol__btn--solid:hover {
+    background: var(--cta-dark);
+    border-color: var(--cta-dark);
+    color: var(--brand-dark);
+    transform: translateY(-1px);
+}
+
+.hero-twocol__btn--ghost {
+    background: transparent;
+    color: #fff;
+    border-color: rgba(255, 255, 255, .6);
+}
+
+.hero-twocol__btn--ghost:hover {
+    background: rgba(255, 255, 255, .12);
+    border-color: #fff;
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.hero-twocol__btn:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+}
+
+/* ---- 3.7 name, address and phone bar ----
+
+   ADDED 14 NOVEMBER, at Edwin's request, from the spotlight hero.
+
+   WITHOUT THESE RULES THE PAGE BREAKS, AND NOT SUBTLY. The markup puts
+   three inline <svg> icons in this bar with a viewBox and no width or
+   height. An SVG sized that way falls back to the replaced-element default
+   of 300x150 — in style8 that made the bar 4392px tall and the hero
+   5112px, with the headline centred somewhere around y=2350.
+
+       IF YOU DO NOT WANT THIS BAR, DELETING THIS SECTION IS NOT HOW TO
+       REMOVE IT. Take the .hero-twocol__nap block out of the four
+       templates and the PHP twin, and then this section can go.
+
+   IT IS THE WIDTH OF THE BLOCK, NOT OF THE PAGE. style8's bar is
+   full-bleed because its hero is; this block is inset by 16/32/56px, and a
+   bar running edge to edge under an inset block would read as a different
+   element rather than part of it. Same margins, flush beneath — the
+   block's bottom edge IS the bar's top edge, so there is no gap to style.
+
+   THE LABELS ARE IN THE MARKUP, not in ::before content. style8 records
+   why: generated content cannot be selected or copied, is invisible to
+   translation, never reaches the WordPress renderer, and was keyed to
+   nth-child — so reordering the three rows relabelled them in silence. */
+.hero-twocol__nap {
+    position: relative;
+    z-index: 1;
+
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    margin: 0 16px;
+    padding: 10px 18px;
+
+    background: #fff;
+    border-radius: 0 0 18px 18px;
+    box-shadow: 0 6px 18px rgba(var(--navy-rgb), 0.10);
+}
+
+.hero-twocol__nap-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 13px;
+    padding: 15px 6px;
+
+    color: #1b2340;
+    font-weight: 600;
+    font-size: 1.02rem;
+    line-height: 1.35;
+}
+
+.hero-twocol__nap-item + .hero-twocol__nap-item {
+    border-top: 1px solid #e8eaf2;
+}
+
+.hero-twocol__nap-item a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.hero-twocol__nap-item a:hover {
+    color: var(--brand);
+    text-decoration: underline;
+}
+
+.hero-twocol__nap-text  { display: inline; }
+.hero-twocol__nap-label { font-weight: 600; opacity: .55; margin-right: 2px; }
+.hero-twocol__nap-value { font-weight: 700; }
+
+/* The size that stops the 300x150 fallback. */
+.hero-twocol__nap-icon {
+    width: 25px;
+    height: 25px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: var(--brand);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+
+/* ---- 3.8 badges ----
+
+   IN FLOW, ON A ROW OF THEIR OWN. Nothing is positioned and nothing is
+   measured: .hero-twocol__actions already wraps, so `flex-basis: 100%`
+   drops the badges onto the line under the buttons and the column grows to
+   fit them.
+
+   STYLE 8 DID THIS WITH `position: absolute; top: calc(100% + 10px)` and
+   paid for it twice — the badges escaped their hero onto the white box
+   below when the markup differed, and every badge height needed a matching
+   `padding-bottom` shelf in 3.2, with a comment warning that changing one
+   without the other breaks it. None of that is needed here, because this
+   column is a flex container that can simply be told to make room.
+
+   buildBadgesHtml returns '' when a site has neither image, so the row
+   collapses to nothing rather than leaving a gap. */
+.hero-twocol__actions .badges {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    flex-basis: 100%;
+    margin-top: 16px;
+}
+
+.hero-twocol .award,
+.hero-twocol .licensed {
+    width: auto;
+    height: auto;
+    max-width: 92px;
+    max-height: 30px;
+}
+
+
+/* ---- 3.6 one column on a phone ----
+
+   MOBILE FIRST ABOVE, WIDENED HERE. Everything above this point describes
+   the stacked layout: the block is one column, the photograph is a band,
+   the words sit beneath it. The side-by-side arrangement is the
+   enhancement, added with the room to do it. */
+@media (min-width: 768px) {
+    .hero-twocol        { --hero-curve: 36px; padding-bottom: 49px; }
+    .hero-twocol__block { margin: 0 32px; min-height: 520px; }
+    .hero-twocol__nap   { margin: 0 32px; }
+    .hero-twocol__copy  { padding: 56px 44px; }
+    .hero-twocol__title { font-size: clamp(2.4rem, 5vw, 3.6rem); }
+    .hero-twocol__sub   { font-size: 1.95rem; }
+}
+
+@media (min-width: 992px) {
+    .hero-twocol        { --hero-curve: 45px; padding-bottom: 49px; }
+    .hero-twocol__block { flex-direction: row; margin: 0 56px; min-height: 500px; }
+
+    /* THREE ACROSS, AND THE DIVIDERS TURN WITH THEM. A border-top left on
+       a row would draw a line above the second and third columns. */
+    .hero-twocol__nap {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: stretch;
+        gap: 0;
+        margin: 0 56px;
+        padding: 14px 26px;
+    }
+
+    .hero-twocol__nap-item { flex: 1 1 0; padding: 26px 18px; font-size: 1.08rem; }
+    .hero-twocol__nap-icon { width: 28px; height: 28px; }
+
+    .hero-twocol__nap-item + .hero-twocol__nap-item {
+        border-top: 0;
+        border-left: 1px solid #e8eaf2;
+    }
+}
+
+@media (min-width: 992px) {
+
+    /* The photograph only needs anchoring once the field is beside it
+       rather than above it. Stacked, it is a band and fills its own width. */
+    /* min-width AND max-width, NOT JUST width.
+       The template writes <img class="hero-img img-fluid">, and section 4
+       below — inherited from style8, where it governs heroes this design
+       does not use — sets `.hero-img { min-width: 100%; max-width: 100% }`
+       at 1250px and up. A bare `width: 91%` loses to that: measured, the
+       image rendered 644px inside a 644px column and the yellow field was
+       completely hidden. */
+    .hero-twocol__media { aspect-ratio: auto; }
+
+    /* THE BOX IS SHAPED LIKE THE PHOTOGRAPH NOW — Edwin, 14 November:
+       "it looks cut off".
+
+       It was. Every hero image this product has is 1400x700, a ratio of
+       2.00, and `width: 91%; height: 88%` made a box of 637x493 — a ratio
+       of 1.29. `object-fit: cover` fills that by throwing away the sides,
+       so 36% of the width was simply not on the page, and on a photograph
+       whose subject stands to one side that is the subject.
+
+           A FIXED HEIGHT AND A FIXED WIDTH DECIDE THE CROP. ONLY ONE OF
+           THEM CAN BE A DESIGN DECISION.
+
+       So the width stays and the height follows from aspect-ratio: at 16/9
+       the box keeps 89% of the frame instead of 64%. Not 2/1 exactly —
+       some crop is what lets the picture fill the field rather than
+       letterbox inside it — but the difference is the whole complaint. */
+    /* FULL HEIGHT AGAIN, AND CENTRED — Edwin, 14 November: "i did not ask
+       to make it smaller in height I asked you to be center proportionally".
+
+       Fair. The previous answer shortened the box to 16/10 so that less of
+       the frame was discarded, which is not what was asked for and traded
+       one complaint for another. The height goes back to 88%.
+
+       THE NUMBERS BELOW ARE EDWIN'S, SET IN DEVTOOLS AGAINST A REAL BUILD
+       and copied here on 14 November: full width, 80% height, with the
+       block's minimum dropped from 560 to 500.
+
+       WHY THEY HELP, SINCE THE ARITHMETIC IS THE WHOLE STORY HERE. Every
+       hero image in this product is 1400x700 — a ratio of 2.00 — and
+       `object-fit: cover` throws away whatever the box cannot hold:
+
+           91% wide, 88% tall   ->  601x440, ratio 1.37  ->  68% kept
+           100% wide, 80% tall  ->  661x400, ratio 1.65  ->  83% kept
+
+       Widening the box and shortening it both move its ratio towards the
+       photograph's, and together they recover about fifteen points of
+       frame. `object-position: center` takes what still has to go off both
+       sides evenly rather than mostly off one.
+
+       WHAT IT COSTS: at 100% there is no yellow down the left any more, so
+       the field reads as a band under the photograph rather than an L.
+       That was the trade Edwin made looking at it.
+
+       TOP, NOT BOTTOM. Anchored to the top, the yellow that remains sits
+       along the bottom. */
+    .hero-twocol__media img {
+        position: absolute;
+        right: 0;
+        top: 0;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        height: 80%;
+    }
+
+    .hero-twocol__copy    { padding: 56px 68px; }
+    .hero-twocol__title   { font-size: clamp(2.6rem, 4.6vw, 4.6rem); max-width: 14ch; }
+    .hero-twocol__divider { width: 96px; height: 6px; margin-bottom: 26px; }
+    .hero-twocol__sub     { font-size: 2.18rem; margin-bottom: 36px; }
+    .hero-twocol__btn     { padding: 19px 40px; font-size: 1.02rem; }
+
+    .hero-twocol__actions .badges { margin-top: 22px; gap: 12px; }
+    .hero-twocol .award,
+    .hero-twocol .licensed        { max-width: 108px; max-height: 40px; }
+}
+
+
+/* ==========================================================================
+   4. HERO BLOCKS THIS DESIGN DOES NOT USE
+   --------------------------------------------------------------------------
+   stripUnusedHero removes the standard, overlay and split blocks from the
+   HTML for style7, so these never match anything in a real build. They stay
+   as a safety net: if the stripper is ever bypassed, the page shows ONE hero
+   rather than four stacked on top of each other.
+   ========================================================================== */
 
 .hero-container,
 .hero-container img,
@@ -145,379 +1347,369 @@ a.nav-link.active:hover, .current-menu-item a:hover {
     display: none;
 }
 
+.hero-img-tablet,
+.hero-img-desktop,
+.hero-img-large {
+    display: none;
+}
 
-.hero-container-for-style4 {
-    width:100%;
-    max-width: 100% !important;
-    padding:0px 0px;
-    margin: auto;
-    text-align: center;  
-    position: relative; 
-    z-index: -4;  
+@media (min-width: 601px) {
+    .hero-img-mobile { display: none; }
+    .hero-img-tablet { display: block; }
+}
+
+@media (min-width: 720px) {
+    .hero-img-tablet  { display: none; }
+    .hero-img-desktop { display: block; }
+}
+
+@media (min-width: 1250px) {
+    .hero-img-desktop { display: none; }
+
+    .hero-img {
+        display: block;
+        min-width: 100%;
+        max-width: 100%;
+    }
 }
 
 
-.hero-container-for-style4::before {
-    content: "";
-    position: absolute;
-    left:5%;
-    top:0;
-    width: 90%;
-    height:100%;
-    z-index: -4;
-    background: rgb(6, 18, 87);
-    border-radius: 20px 20px 0 0;
-} 
+/* ==========================================================================
+   5. STANDALONE CALL-TO-ACTION BUTTON
+   --------------------------------------------------------------------------
+   The phone button that sits below the hero on designs whose hero has no
+   button of its own. Spotlight carries its own pair, so stripUnusedHero
+   removes the FIRST of these for style7 (CTA_INSIDE_HERO) — but the second,
+   further down the page, still renders.
+   ========================================================================== */
 
-
-.hero-container-for-style4::after {
-    content: "";
-    position: absolute;
-    left:0;
-    bottom:0;
-    width: 10%;
-    left: 5%;
-    height: 100%;
-    background: transparent; 
-    border-top: 4px transparent solid;
-    z-index: -5;
-    border-top-left-radius: 20px;
-    border-bottom-left-radius: 20px;
-} 
-
-
-
-.style-4-image-wrap {
-    position: relative;
-    width: 90%;
-    margin: auto;
-    padding-top: 25px;
-    padding-bottom: 2%;
-    z-index: 4;
-}
-
-.style-4-image-wrap::before {
-    content: "";
-    position: absolute;
-    width: 50%;
-    height: 50%;
-    left: 0px;
-    top: 0;
-    z-index: -3;
-    background: #0d6efd;
-    border-bottom-left-radius: 0px;
-    border-top-left-radius: 20px;
- }
-
-
-.style-4-image-wrap::after {
-    content: "";
-    position: absolute;
-    bottom:0px;
-    right: 0px;
-    background: #0a65fc;
-    width: 80%;
-    height: 46%;
-    z-index: -3;
-    border-top-right-radius: 0px; 
-    border-bottom-left-radius: 0px;
-    border-bottom-right-radius: 20px;
-    
-}
-
-
-
-
-.style-4-image-wrap img {
-    width: 90%;
-    margin: auto;
-    padding:0;
-    border-radius: 60px;
-    margin-bottom: 25px;
-    box-shadow: 10px 0.5rem 5px black;   
-}
-
-
-.text-hero-for-style4 {
-    background: transparent;
-    width: 90%;
-    margin: auto;
-    padding-top: 0px;
-   /* background-image: linear-gradient(100deg, rgb(122, 117, 117) 20%, rgba(22, 24, 32, 0.6) 60%, rgba(15, 16, 20, 0.87) 75%, rgb(97, 92, 92) 100%) !important; */
-}
-
-.text-hero-for-style4 h1 {
-    color:white !important;
-    font-weight: bold;
-    font-size: 26px;;
-    margin:auto;
-    padding-top: 3%;
-    line-height: 1.2;
-}
-
-.text-hero-for-style4 h2 {
-    color:white;
-    font-size: 18px;
-    font-weight: bold;
-    line-height: 1.2;
-    margin: auto;
-    padding-bottom: 10%;
-}
-
-.text-hero-for-style4 .line-divider {
-    width: 130px;
-    margin: 10px auto;
-    border-bottom: white 2px solid;
-}
-
-.badges {
-    position: absolute;
-    left: 8%;
-    bottom: 5%;
-}
-
-img.award, img.licensed {
-    width: 15% !important;  
-    box-shadow: none;
-}
-
-
-.first-button-container {
-    position: relative;
-    z-index: 1;
+.btn-container {
     padding: 25px;
-    background: rgb(6, 18, 87);
-    width:90%;
-    margin: 2px auto;
-    z-index:6;
-    border-radius: 0 0 20px 20px;
+    background-color: var(--navy);
 }
 
-.first-button-container::before {
-    position: absolute;
-    content: "";
-    width: 50%;
-    height: 100%;
-    z-index: 2;
-    right: 0;
-    top: 0;
-    background: rgb(6, 18, 87);
-    border-top-right-radius: 20px;
-    border-bottom-right-radius: 20px;
-} 
-
-.second-button-container {
-    background:#0a65fc;
-    padding:40px 20px;
-    border-top: 4px white solid;
-    width: 90%;
-    margin: auto;
-    border-radius: 20px;
-}
-
-.cta-btn a p {
-    position: relative;
-    z-index: 3;
-    color:white;
-    padding: 10px;
-    font-size: 26px;
-    border: 2px solid white;
-    width: 270px;
-    margin: auto;
-    background: #0a65fc;
-    border-radius: 50px;
-    box-shadow: 2px 4px 5px black;
-}
-
-.cta-btn a p:hover {
-    background-color: rgb(6, 18, 87);
-    color:white;
+.btn-container-2 {
+    padding-top: 50px;
+    padding-bottom: 50px;
 }
 
 .cta-btn a {
-    text-decoration: none; 
+    text-decoration: none;
 }
 
+/* THE PHONE BAND'S BUTTON IS A CALL TO ACTION, so it takes --cta like the
+   hero's BOOK APPOINTMENT and the header's CONTACT. It was --brand, which
+   put a #053389 button on a band of --navy — 1.38:1 between the two.
 
-.section-1, .section-2, .section-3, .section-4 {
-    background-color: #ffffff !important;
-    color:rgb(0, 0, 0);
-}
-
-.section-2 {
-    background:rgb(6, 18, 87) !important;
-    color:white;
-    width: 90%;
+   THE WHITE BORDER IS WHY THAT WAS SURVIVABLE HERE and is not on the hero
+   button. The 2px #fff rule is the control's boundary, and it reads against
+   anything; the fill never had to carry the edge. It stays for the same
+   reason, now that the fill is red and 2.27:1 against the band. */
+/* THE SHAPE COMES FROM THE HERO — Edwin, 14 November. .hero-twocol__btn is
+   a 999px pill and this was a square-cornered box, so the same site showed
+   two different ideas of what a button is. The radius is the only thing
+   taken across: the width, the type size and the white rule are this
+   band's own and are left alone. */
+.cta-btn a p {
+    color: #fff;
+    padding: 20px;
+    font-size: 26px;
+    border: 2px solid #fff;
+    border-radius: 999px;
+    width: 270px;
     margin: auto;
-    border-radius: 20px;
+    background-color: var(--cta);
+    color: var(--brand-dark);
 }
 
-.section-3, .nearme {
-   border-bottom: 2px solid black;
+.cta-btn a p:hover {
+    background-color: var(--cta-dark);
 }
 
+@media (min-width: 720px) {
+    .btn-container {
+        padding-top: 40px;
+        padding-bottom: 40px;
+    }
+}
+
+
+/* ==========================================================================
+   6. SECTIONS AND TYPOGRAPHY
+   ========================================================================== */
 
 .section-padding {
-    padding-top:60px;
-    padding-bottom:60px;
-    padding-left:30px;
-    padding-right:30px;
+    padding-top: 60px;
+    padding-bottom: 60px;
+    padding-left: 30px;
+    padding-right: 30px;
 }
 
-
 .section-padding h2 {
-    padding-bottom:20px;
+    padding-bottom: 0;
     font-size: 28px;
     line-height: 1.5;
-
 }
 
 .section-padding h3 {
     font-size: 22px;
-    padding-bottom:20px;
+    padding-bottom: 20px;
     line-height: 1.5;
-
 }
 
-.section-padding p, .ul-second-section li {
+.section-padding p,
+.ul-second-section li {
     font-size: 19px;
     line-height: 1.6;
-
 }
 
 .section-padding p:last-child {
     margin-bottom: 0;
-
-}
-
-.text-two-images-section .col-lg-10 h2 {
-    padding-top: 60px;
-}
-
-.img-1-div, .img-2-div {
-    position: relative;
-    z-index: 4;
-    padding: 0;
-    margin-bottom: 10px;
-        
-}
-
-.img-1-div::before {
-    content: '';
-    position: absolute;
-    top:48%;
-    left:0;
-    width: 100%;
-    height: 10px;
-    z-index: 5;
-    background: rgba(6, 18, 87, 0); 
-        
-}
-
-.img-2-div::before {
-    content: '';
-    position: absolute;
-    top:48%;
-    left:0;
-    width: 100%;
-    height: 10px;
-    z-index: 5;
-    background: rgba(6, 18, 87, 0);
-    
-}
-
-.img-1-div img {
-    width:95%;
-   /* box-shadow: 7px 7px 1px #1a1a1a; */
-}
-
-.img-2-div  img {
-    width:95%;
-    /* box-shadow: -7px 7px 1px #1a1a1a; */
-}
-
-.img-1-div img, .img-2-div img {
-    border-radius: 50px;
-}
-
-.service-cards {
-    margin-top: 20px;
-}
-
-.service-card {
-    padding-bottom: 20px;;
-}
-
-.service-cards .col-md-6 {
-    margin-bottom: 1.5rem;
-  }
-
-.service-card-icon svg {
-    color: #0d6efd;
-}
-
-.section-5 .col-md-5 .img-fluid {
-    text-align: center;
-    box-shadow: 15px -15px 1px #0a65fc;
-    border-radius: 10px;
-    border: 2px solid rgb(6, 18, 87);
-
-}
-
-
-.row-first-section-2-img, .row-second-section-2-img {
-    position: relative;
-    overflow: hidden;
-    z-index: 20;
-    padding:0px;
-    
-}
-
-.row-first-section-2-img::before, .row-second-section-2-img::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 2; /* sits above the images */
-    pointer-events: none;
-  
-    /* Linear dark overlay: black -> transparent -> dark gray */
-   /*  background-image: linear-gradient(100deg, rgba(0, 0, 0, 0.96) 5%, rgba(0, 0, 0, 0.85) 10%, rgba(22, 24, 32, 0.3) 60%, rgba(15, 16, 20, 0.85) 75%, rgba(0, 0, 0, 0.88) 90%, rgba(0,0,0,1) 100%) !important; */
-}
-
-.row-first-section-2-img .img-1-div,
-.row-first-section-2-img .img-2-div,
-.row-second-section-2-img .img-1-div,
-.row-second-section-2-img .img-2-div {
-    position: relative;
-    z-index: 1;
-}
-
-
-.google-map iframe {
-    width: 100%; 
-}
-
-.btn-container-2 {
-    padding-top:50px;
-    padding-bottom:50px;
-}
-
-.div-text-padding-bottom, .image-padding-bottom {
-    padding-bottom:60px;
 }
 
 .section-padding a {
     text-decoration: none;
 }
 
+/* `.text-two-images-section .col-lg-10 h2 { padding-top: 60px }` LIVED HERE
+   and has moved to section 8, with the rest of that component. It was the
+   exact fault the note at the top of this file describes: one component's
+   spacing set in section 6, its images in section 7, and nothing wrong with
+   either rule except the distance between them. */
+
+.div-text-padding-bottom,
+.image-padding-bottom {
+    padding-bottom: 60px;
+}
+
+
+/* ==========================================================================
+   7. IMAGES
+   --------------------------------------------------------------------------
+   WHAT IS LEFT HERE IS THE ABOUT-PAGE MEDIA AND NOTHING ELSE.
+
+   This section used to read:
+
+       .col-md-6 img,
+       .col-md-5 img { box-shadow: 10px 10px 5px #aaa; border-radius: 10px; }
+
+   .col-md-6 img matched EVERY column-six image on the site, but there is
+   only one kind: the pair in .text-two-images-section, which the four
+   templates use and nothing else does. Checked, not assumed — twelve
+   matches across template.html, aboutUsTemplate.html and
+   locationPagesTemplate.html, all of them that pair. So the rule was
+   unscoped for no gain, and it has moved into section 8 where the pair is
+   now styled as one component.
+
+   .col-md-5 img is a different thing: {{ABOUT_MEDIA}} on the About page,
+   which is a single image or the intro video. It keeps its own rule.
+   ========================================================================== */
+
+/* THE SHADOW IS THE THEME'S OWN COLOUR, AND IT IS OFFSET — Edwin, 15
+   November, who sketched `4px 4px 10px` in DevTools against a purple he
+   picked by hand and asked for the theme's value in its place.
+
+   SO THE GEOMETRY IS HIS AND THE COLOUR IS THE TOKEN'S. A literal
+   rgb(177, 27, 218) would have looked right on this design and wrong the
+   next time the palette moved — which it has done three times in two days.
+   var(--brand) follows the header.
+
+   SOLID, NOT rgba. The first version of this rule was rgba(--navy-rgb,
+   .13), and at thirteen per cent any colour at all renders as a neutral
+   grey smudge — the picture looked like it had a browser default rather
+   than a shadow belonging to this design. At full strength the hue is the
+   point, which is what a 4px offset with a 10px blur is for. */
+.col-md-5 img {
+    border-radius: 10px;
+    box-shadow: 4px 4px 10px var(--brand);
+}
+
+
+/* ==========================================================================
+   8. TWO-IMAGE TEXT SECTION — TEXT BESIDE THE IMAGES
+   --------------------------------------------------------------------------
+   WAS A WIDE BAND OF TWO PHOTOGRAPHS WITH THE HEADING STRANDED UNDER IT.
+   From 992px the section is two columns instead: the words on the left, the
+   two photographs stacked on the right.
+
+   THE MARKUP IS UNTOUCHED. It is sibling rows inside the container:
+
+       .container.section-padding
+         .row.row-first-section-2-img      two .col-md-6, one image each
+         .row                              one .col-lg-10, h2 + two <p>
+         .row.service-cards                ON THE ABOUT PAGE ONLY
+
+   Two rows cannot sit side by side as rows. The CONTAINER becomes the grid
+   and the two that pair up are placed into cells of it — images in column
+   2, text in column 1, both on row 1. Below 992px no grid is declared at
+   all, so the rows stay rows and the section reads as it always did.
+
+   ---- THE THIRD ROW, AND THE BUG IT CAUSED ----
+
+   The first version of this said "the row that is NOT the image row", which
+   is true of the text — and equally true of anything else that ever lands
+   in this section. aboutUsTemplate.html puts {{SERVICE_CARDS}} inside
+   section-2, so the services band matched too: it was placed in the same
+   cell as the paragraphs and crushed into half the page, on top of them.
+
+       AN EXCLUSION SELECTOR DOES NOT SAY WHICH ROW YOU MEAN. IT SAYS
+       "EVERYTHING ELSE", AND IT SILENTLY ADOPTS THE NEXT THING ADDED.
+
+   So the rules below are the other way round. Every direct .row child
+   defaults to spanning BOTH columns on a row of its own — which is how the
+   section already looked — and exactly two of them opt in to the side-by-
+   side pair:
+
+       the picture row   by its own [class*="section-2-img"]
+       the prose row     by :has(> .col-lg-10) — what it HOLDS, not what
+                         it is not
+
+   Anything added to this section later lands on the default and keeps
+   working. Where :has() is unsupported the prose row also keeps the
+   default, so the section degrades to the stack it is today rather than
+   to a broken layout.
+
+   THE PHOTOGRAPHS ARE CROPPED TO 2:1, AND THAT NUMBER IS LOAD-BEARING. At
+   their natural 16:10 two stacked frames are far taller than the paragraphs
+   beside them, so the section came out TALLER than the stacked version it
+   was meant to shorten — measured, not assumed. 2:1 brings the picture
+   column to roughly the height of the words. object-fit: cover does the
+   cropping, so no photograph is ever distorted to fit.
+   ========================================================================== */
+
+.text-two-images-section {
+    --tti-gap:     52px;    /* between the words and the pictures */
+    --tti-stack:   18px;    /* between the two pictures           */
+    --tti-radius:  14px;
+}
+
+/* NARROW FIRST: one image, then the other, then the text — the order the
+   markup is already in. */
+.text-two-images-section .img-1-div {
+    margin-bottom: var(--tti-stack);
+}
+
+/* SCOPED TO THE PICTURE ROW, not to the section. The old rule this replaces
+   was `.col-md-6 img` — unscoped — and scoping it to `.text-two-images-section
+   img` would have been the same mistake one level in: the About page has the
+   services band inside this section too. Naming the picture row means these
+   rules reach the two photographs and nothing else, whatever else arrives.
+   The old hard grey offset shadow (10px 10px 5px #aaa) goes with it. */
+.text-two-images-section [class*="section-2-img"] img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    aspect-ratio: 16 / 10;
+    border-radius: var(--tti-radius);
+    box-shadow: none;
+}
+
+/* The heading's old 60px top padding was for the stacked layout, where it
+   followed a wide band of pictures. 60px was too much even there; stacked
+   it needs air, and beside the pictures it needs none at all. */
+.text-two-images-section .col-lg-10 h2 {
+    padding-top: 0;
+    margin-top: 22px;
+}
+
+@media (min-width: 992px) {
+    /* THE CONTAINER IS THE GRID. align-items: center keeps the words
+       vertically centred against the picture column, which is still the
+       taller of the two by a little. */
+    .text-two-images-section .section-padding {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 var(--tti-gap);
+        align-items: center;
+    }
+
+    /* ---- THE DEFAULT: full width, own row. ----
+       Everything in this section behaves as it does today unless it opts
+       in below. This is the rule that keeps the services band — and
+       anything added later — out of the two-column pair. */
+    .text-two-images-section .section-padding > .row {
+        grid-column: 1 / -1;
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    /* ---- OPT-IN 1: the pictures, right-hand column. ---- */
+    .text-two-images-section .section-padding > [class*="section-2-img"] {
+        grid-column: 2;
+        grid-row: 1;
+        margin: 0;
+    }
+
+    /* ---- OPT-IN 2: the prose, left-hand column. ----
+       Selected by what it HOLDS. The row has no class of its own, and the
+       templates use row-first-section-2-img on one section and
+       row-second-section-2-img on the other, so there was nothing on the
+       row itself to name. .col-lg-10 is the prose column in all six
+       occurrences across the four templates — checked, not assumed. */
+    .text-two-images-section .section-padding > .row:has(> .col-lg-10) {
+        grid-column: 1;
+        grid-row: 1;
+        margin: 0;
+    }
+
+    /* FULL WIDTH ONLY INSIDE THE TWO ROWS THAT PAIRED UP. Applying this to
+       every .row was the other half of the services bug: it forced that
+       band's three columns to 100% and collapsed it to a single column. */
+    .text-two-images-section .section-padding > [class*="section-2-img"] > [class*="col-"],
+    .text-two-images-section .section-padding > .row:has(> .col-lg-10) > [class*="col-"] {
+        flex: 0 0 100%;
+        max-width: 100%;
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    /* Beside the pictures rather than under them, so the air above the
+       heading would be a gap against nothing. */
+    .text-two-images-section .col-lg-10 h2 {
+        margin-top: 0;
+    }
+
+    /* 2:1 — see the note above. This is the number that decides whether the
+       section is shorter than the stacked version or taller than it. */
+    .text-two-images-section [class*="section-2-img"] img {
+        aspect-ratio: 2 / 1;
+    }
+}
+
+
+/* ==========================================================================
+   9. NAP, MAP AND "NEAR ME"
+   ========================================================================== */
+
+.nearme {
+    border-bottom: 1px solid #000;
+    background: var(--navy);
+    color: #fff;
+}
+
 .nap-map-section {
-    background: rgb(6, 18, 87);
-    color:white;
+    background: var(--navy);
+    color: #fff;
 }
 
 .nap p {
     font-size: 20px;
-    padding-bottom:10px;
+    padding-bottom: 10px;
+}
+
+.google-map iframe {
+    width: 100%;
+}
+
+
+/* ==========================================================================
+   10. FOOTER
+   ========================================================================== */
+
+footer a {
+    text-decoration: none;
+    font-size: 18px;
+    color: darkblue;
 }
 
 a svg {
@@ -526,38 +1718,40 @@ a svg {
     margin-right: 10px;
     transition: fill 0.3s ease;
 }
-  
+
 a:hover svg {
-    fill: #0d6efd; /* Change to brand color or theme */
-}
-  
-
-footer a {
-    text-decoration: none;
-    font-size: 18px;
-    color:darkblue;
+    fill: #0d6efd;
 }
 
 
-/* Form container */
+/* ==========================================================================
+   11. CONTACT FORM
+   --------------------------------------------------------------------------
+   Two selector sets throughout: the generated static form (.contact-form,
+   .form-group) and Contact Form 7 on the WordPress export (.wpcf7).
+   ========================================================================== */
+
 .form-container {
     overflow: hidden;
     width: 90%;
-    margin:auto;
-    margin-bottom: 60px;
+    margin: auto auto 60px;
     border-radius: 16px;
 }
 
-
-/* Form styles */
-.contact-form {
-    padding: 50px;
-    padding-bottom:60px;
+.contact-form,
+.wpcf7 {
+    padding: 50px 50px 60px;
     max-width: 700px;
     margin: auto;
 }
 
-.contact-form h2 {
+.wpcf7 {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+.contact-form h2,
+.wpcf7 h2 {
     font-size: 1.75rem;
     font-weight: 700;
     color: #2d3748;
@@ -573,8 +1767,11 @@ footer a {
     font-size: 0.95rem;
 }
 
-/* Form groups */
-.form-group {
+/* ---- fields ---- */
+
+.form-group,
+.wpcf7 p {
+    font-size: 1rem;
     margin-bottom: 20px;
     position: relative;
 }
@@ -582,18 +1779,23 @@ footer a {
 .form-group label {
     display: block;
     margin-bottom: 8px;
-    font-weight: 600;
     color: #4a5568;
-    font-size: 0.9rem;
 }
 
-/* Input and textarea styles */
+.wpcf7 label {
+    text-align: left;
+    font-size: 1rem;
+    margin-bottom: 8px;
+}
+
 .form-group input,
-.form-group textarea {
+.form-group textarea,
+.wpcf7 input,
+.wpcf7-textarea {
     width: 100%;
     padding: 14px 0;
     border: none;
-    border-bottom: 1px solid transparent;
+    border-bottom: 1px solid var(--navy);
     border-radius: 0;
     font-size: 1rem;
     font-family: inherit;
@@ -601,31 +1803,47 @@ footer a {
     resize: vertical;
 }
 
-.form-group input:focus,
-.form-group textarea:focus {
-    outline: none;
-    border-bottom-color: #667eea;
-    box-shadow: 0 2px 0 0 green;
-    transform: translateY(-2px);
-}
-
 .form-group input:hover,
 .form-group textarea:hover {
     border-bottom-color: #cbd5e0;
 }
 
-/* Textarea specific */
-.form-group textarea {
+.form-group input:focus,
+.form-group textarea:focus,
+.wpcf7 input:focus,
+.wpcf7-textarea:focus {
+    outline: none;
+    border-bottom-color: #667eea;
+    box-shadow: 0 2px 0 0 var(--brand);
+    transform: translateY(-2px);
+}
+
+.form-group textarea,
+.wpcf7-textarea {
     height: 80px;
     min-height: 80px;
     resize: vertical;
 }
 
-/* Submit button */
-.submit-btn {
+/* ---- validation ---- */
+
+.form-group input:invalid:not(:focus):not(:placeholder-shown),
+.form-group textarea:invalid:not(:focus):not(:placeholder-shown) {
+    border-bottom-color: var(--navy);
+}
+
+.form-group input:valid:not(:focus):not(:placeholder-shown),
+.form-group textarea:valid:not(:focus):not(:placeholder-shown) {
+    border-bottom-color: red;
+}
+
+/* ---- submit ---- */
+
+.submit-btn,
+.wpcf7-submit {
     width: 100%;
-    background: rgb(6, 18, 87);
-    color: white;
+    background: var(--brand) !important;
+    color: #fff;
     border: none;
     padding: 16px 24px;
     font-size: 1.1rem;
@@ -640,7 +1858,13 @@ footer a {
     overflow: hidden;
 }
 
-.submit-btn::before {
+.wpcf7-submit {
+    border-radius: 8px !important;
+}
+
+/* The sweep of light that crosses the button on hover */
+.submit-btn::before,
+.wpcf7-submit::before {
     content: '';
     position: absolute;
     top: 0;
@@ -651,17 +1875,37 @@ footer a {
     transition: left 0.6s ease;
 }
 
-.submit-btn:hover::before {
+.submit-btn:hover::before,
+.wpcf7-submit:hover::before {
     left: 100%;
 }
 
-.submit-btn:hover {
+.submit-btn:hover,
+.wpcf7-submit:hover {
     transform: translateY(-2px);
     box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
 }
 
-.submit-btn:active {
+.submit-btn:active,
+.wpcf7-submit:active {
     transform: translateY(0);
+}
+
+.submit-btn:focus,
+.wpcf7-submit:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.4);
+}
+
+.submit-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.submit-btn:disabled:hover {
+    transform: none;
+    box-shadow: none;
 }
 
 .btn-text {
@@ -680,351 +1924,56 @@ footer a {
 }
 
 
-/* Focus styles for accessibility */
-.submit-btn:focus {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.4);
-}
-
-/* Form validation styles */
-.form-group input:invalid:not(:focus):not(:placeholder-shown),
-.form-group textarea:invalid:not(:focus):not(:placeholder-shown) {
-    border-bottom-color: #082d5b;
-    /* box-shadow: 0 2px 0 0 rgba(198, 191, 191, 0.2); */
-}
-
-.form-group input:valid:not(:focus):not(:placeholder-shown),
-.form-group textarea:valid:not(:focus):not(:placeholder-shown) {
-    border-bottom-color: red;
-}
-
-/* Loading state for button */
-.submit-btn:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.submit-btn:disabled:hover {
-    transform: none;
-    box-shadow: none;
-}
-
-
-
-/* 400px */
-@media (min-width: 400px) {
-
-
-    
-}
-
-
-  /* 550px */
-@media (min-width: 550px) {
-
-    .text-hero-for-style4 h1 {
-        font-size: 2rem;
-        width: 70%;
-    }
-
-    .text-hero-for-style4 h2 {
-        font-size: 1.75rem;
-        width: 70%;
-    } 
-}
-
-
-/* 601 */
-@media (min-width: 601px) {
-
-    .navbar-nav {
-        width: 60%; 
-    }
-    
-    .navbar-nav .dropdown-menu {
-        left: 25px;
-    }
-
-    .style-4-image-wrap {
-        width: 80%;
-    }
-
-    .badges {
-        position: absolute;
-        left: 8%;
-        bottom: 5%;
-    }
-    
-    .award, .licensed {
-        width: 15%;  
-    }
-
-    
-
-    .hero-img-mobile {
-        display: none;
-    }
-
-    .hero-img-tablet {
-        display: block;
-    }
-
-    .text-hero-for-style4 h1 {
-        width:90%;
-       
-    }
-
-    .text-hero-for-style4 h2 {
-        width:90%;
-    }
-
- 
-    .text-hero-for-style4 .line-divider {
-        width: 200px;
-        margin: 15px auto;
-    }
-    
-  }
-
-
-/* 720 */
-@media (min-width: 720px) {
-
-    .style-4-image-wrap::before {
-        border-top-left-radius: 60px;
-     }
-
-    .style-4-image-wrap::after {
-        border-bottom-right-radius: 60px;   
-    }
-
-    .style-4-image-wrap {
-        padding-top: 30px;
-    } 
-  
-
-    .hero-img-tablet {
-        display: none;
-    }
-
-    .hero-img-desktop {
-        display:block;
-    }
-
-    .btn-container {
-        padding-top: 40px;
-        padding-bottom: 40px;
-    }
-    
-}
-
-/* 766 */
-@media (min-width: 766px) {
-
-    .style-4-image-wrap {
-        padding-top: 35px;
-    }
-
-    .text-hero-for-style4 h1 {
-        font-size: 2.5rem;
-        padding-top: 12%;
-    }
-
-    .text-hero-for-style4 h2 {
-        font-size: 2rem;
-    }
-    
-
-    .img-1-div {
-        margin-bottom: auto;
-    }
-
-
-}
-
-
-/* Hover-to-open dropdowns on desktop */
-@media (min-width: 992px) { /* matches .navbar-expand-lg breakpoint */
-    .navbar .dropdown:hover > .dropdown-menu {
-      display: block;
-    }
-
-    .navbar-nav {
-        width: initial; 
-        margin-top: 0;
-    }
-
-    .nav-item:has(a.active) { 
-        margin-bottom: 0;
-    }
-
-    .current-menu-item {
-        margin-bottom: 0;
-    }
-
-    .navbar-nav li a {
-        margin-left: 10px;
-        margin-right: 10px;
-    }
-
-    /* Keep tight alignment under the trigger */
-    .navbar .dropdown-menu {
-      margin-top: 0;
-
-      /* ---- THE LIST IS CAPPED, AND SCROLLS — 14 November ----
-
-         MAX_SERVICES is 20 (utils/suggestServices.js), and twenty items
-         draw a 1144px menu here. Measured on the real nav:
-
-             1435x800   1144px tall, 391px below the fold
-             1280x700   1144px tall, 491px below the fold
-
-         overflow-y was `visible` with no max-height, so those items were
-         not merely off-screen — there was nothing to scroll. The menu
-         opens on HOVER up here, so reaching them by scrolling the page
-         means moving the pointer off the trigger, which closes it.
-
-         72px, AND THE NUMBER IS THIS DESIGN'S OWN. style6 uses 70 and
-         style7/style8 use 90. This header is 70px with its menu starting
-         at y=47; 72 is what leaves it ending a clear 25px above the
-         bottom. The three differ because the headers do, and copying one
-         into another is how a cap ends up slightly wrong everywhere.
-
-         ONLY AT 992px AND UP, which is why this sits in this block. Below
-         it the menu is in flow inside the collapsed panel — the header
-         grows to 1474px and the page's own scrollbar reaches every item.
-
-         NOTHING ELSE WAS CHANGED HERE. style7 and style8 also needed their
-         dropdown entries' 22px side margins zeroed; this design does not —
-         its items measured 0px of overflow. Its blue-on-white entries
-         (#0a65fc on #fff) measure 4.91:1, which passes, and were left
-         alone. */
-      max-height: calc(100vh - 72px);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-    }
-   
-
-    .nav-item {
-        padding-left: 0 !important;
-    }
-
-    .nav-item, .menu-item{
-        margin-bottom: 0;
-    }
-    
-    .menu-item-has-children:hover .sub-menu {
-        position: absolute;
-        left: -100px;
-        background: white;
-    }
-
-    .style-4-image-wrap {
-        width: 70%; 
-    }
-
-    .text-hero-for-style4 h1 { 
-        font-size: 3.5rem;
-       
-    }
-
-    .text-hero-for-style4 h2 {
-        font-size: 3rem;
-    }
-
-    .badges { 
-        bottom: 10%;
-    }
-
-}
-  
-
-
-    /* 1250 */
-@media (min-width: 1250px) {
-
-    .nav-item.dropdown .dropdown-menu{
-        left: -70px !important;
-    }
-
- 
-    .dropdown .dropdown-menu li a {
-        white-space: normal;
-    }
-
-    .hero-img-desktop {
-        display: none;
-    }
-
-    .style-4-image-wrap {
-        width: 70%; 
-        padding-top: 45px;    
-    }
-
-
-    .hero-img-large {
-        display: block;
-        max-width: 100%;
-    }
-
-
-    .text-hero-for-style4 h1 {
-        padding-top: 2.5%;
-
-    }
-
-    .text-hero-for-style4 h2 {
-        font-size: 3rem;
-        padding-bottom: 2.5%;
-    }
-
-    .text-hero-for-style4 .line-divider {
-        width: 20%;
-    }
-
-
-    .cta-btn a p {
-        padding:20px;
-    } 
-
-}
-  
- 
 /* ==========================================================================
-   FAQ accordion
+   12. FAQ — NUMBERED Q AND A
    --------------------------------------------------------------------------
-   Append this to each theme you want it on:
-     src/css/themes/style.css
-     src/css/themes/style2.css   ... and so on
+   WAS EIGHT PURPLE BARS. Every question was a filled brand-coloured block
+   whether anyone had opened it or not, so the loudest thing on the page was
+   a list of questions nobody had asked yet. This keeps the accordion and
+   drops the bars: a numeral, the question as a heading, and the answer
+   indented behind a purple rule.
 
-   It deliberately inherits rather than hardcoding colours, so the same block
-   works on every theme:
+   THE MARKUP IS BOOTSTRAP'S AND IS NOT TOUCHED. utils/buildFaqSection.js
+   emits .accordion-item / .accordion-button / .accordion-collapse and the
+   collapse plugin drives them; sectionRendererPhp.js mirrors it for the
+   WordPress export, and buildFaqSchema() emits the FAQPage JSON-LD from the
+   same answers. Nothing here changes any of that — only how it looks.
 
-     - question text uses the theme's body colour (inherit)
-     - the +/x icon uses currentColor, so it matches that text
-     - the bar tint is a translucent black, which reads as a subtle shade of
-       whatever background sits behind it
+   THE NUMERALS ARE A CSS COUNTER, and the reset is on .faq-section ON
+   PURPOSE. buildFaqSection() emits TWO .accordion elements, one per column,
+   with the first half of the questions on the left and the second half on
+   the right. Resetting on .accordion — which is the obvious place — numbers
+   each column from one, so the page shows 01-04 twice. Resetting on the
+   SECTION numbers straight through, 01-04 down the left and 05-08 down the
+   right, which is also the order the two columns read in when they stack on
+   a phone.
 
-   Typography already follows the theme, because the FAQ sits inside
-   .container.section-padding — so .section-padding h2 and
-   .section-padding p rules apply to the heading and answers.
+       THE COUNTER HAS TO RESET WHERE THE SEQUENCE STARTS, NOT WHERE THE
+       MARKUP HAPPENS TO BE NESTED.
 
-   To tune one theme, override just the variables at the top:
-
-     .faq-section { --faq-accent: #ff3f34; --faq-bar-bg: rgba(0,0,0,.06); }
+   ::before IS THE NUMERAL AND ::after IS THE CHEVRON, and they cannot swap.
+   Bootstrap draws its own chevron with .accordion-button::after and a
+   background image; that image is turned off below and the element reused
+   for a chevron drawn from two borders, so it follows the brand colour
+   instead of being a baked-in SVG.
    ========================================================================== */
 
-   .faq-section {
-    --faq-bar-bg:        rgba(0, 0, 0, .04);
-    --faq-bar-bg-hover:  rgba(0, 0, 0, .07);
-    --faq-bar-bg-open:   rgba(0, 0, 0, .07);
-    --faq-accent:        currentColor;   /* +/x icon */
-    --faq-gap:           10px;
-    --faq-radius:        6px;
+.faq-section {
+    --faq-num:        var(--brand);        /* the numeral and the chevron  */
+    --faq-rule:       rgba(var(--brand-rgb), .30);   /* the answer's left rule */
+    --faq-q:          var(--navy);         /* a closed question            */
+    --faq-q-open:     var(--brand);        /* the one that is open         */
+    --faq-a:          #4e5564;             /* answer text                  */
+    --faq-gap:        14px;
+
+    background: var(--faq-grey);
+
+    /* Across BOTH columns. See the note above — this is the whole reason
+       the numbering is right. */
+    counter-reset: faq;
 }
 
-/* Strip Bootstrap's card chrome so the bars sit on the page cleanly */
+/* Strip Bootstrap's card chrome so the questions sit on the page cleanly */
 .faq-section .accordion,
 .faq-section .accordion-item {
     background: transparent;
@@ -1032,6 +1981,7 @@ footer a {
 }
 
 .faq-section .accordion-item {
+    counter-increment: faq;
     margin-bottom: var(--faq-gap);
 }
 
@@ -1039,232 +1989,441 @@ footer a {
     margin-bottom: 0;
 }
 
-/* ---- the question bar ---- */
+/* THE HEADER IS AN <h3>, AND THE SECTION STYLES h3 FOR PROSE.
 
+   buildFaqSection() wraps each button in <h3 class="accordion-header">, and
+   that h3 sits inside .container.section-padding — so section 6's
+   `.section-padding h3 { font-size: 22px; padding-bottom: 20px }` applies
+   to it. The padding opened a 20px hole between every question and its own
+   answer, measured, and the line-height made the header box taller than the
+   button inside it.
+
+   Two classes beat one class and a type, so this wins without !important.
+   The same reset is in section 13 for the service titles, for the same
+   reason: a heading inside a component is not a heading in prose. */
+.faq-section .accordion-header {
+    margin: 0;
+    padding: 0;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* ---- the question ----
+   position: relative is what the numeral and the chevron are placed
+   against. The left padding is the gutter the numeral sits in; the right
+   padding keeps a long question clear of the chevron. */
 .faq-section .accordion-button {
-    background: var(--faq-bar-bg);
-    color: inherit;
-    font-size: 17px;
-    line-height: 1.4;
-    font-weight: 500;
-    padding: 14px 18px 14px 46px;   /* left room for the icon */
+    position: relative;
+    width: 100%;
+    text-align: left;
+    background: none;
     border: 0;
-    border-radius: var(--faq-radius) !important;
+    border-radius: 0;
     box-shadow: none;
-    transition: background-color .2s ease;
+    padding: 4px 34px 4px 46px;
+
+    font-size: 16.5px;
+    font-weight: 700;
+    line-height: 1.4;
+    color: var(--faq-q);
+    transition: color .15s ease;
 }
 
 .faq-section .accordion-button:hover {
-    background: var(--faq-bar-bg-hover);
+    color: var(--faq-q-open);
 }
 
+/* OPEN. Bootstrap also sets its own background and box-shadow on this
+   state, so both are cleared here or a pale blue block appears behind the
+   question the moment it is opened. */
 .faq-section .accordion-button:not(.collapsed) {
-    background: var(--faq-bar-bg-open);
-    color: inherit;
+    background: none;
     box-shadow: none;
-    border-bottom-left-radius: 0 !important;
-    border-bottom-right-radius: 0 !important;
+    color: var(--faq-q-open);
 }
 
-/* Keyboard focus stays visible, but without Bootstrap's heavy blue ring */
+/* The photograph-and-colour tricks elsewhere in this file do not apply
+   here, but the focus ring still has to be visible on the grey panel. */
 .faq-section .accordion-button:focus {
     box-shadow: none;
-    outline: 2px solid var(--faq-accent);
+}
+
+.faq-section .accordion-button:focus-visible {
+    outline: 3px solid var(--accent-ink);
     outline-offset: 2px;
 }
 
-/* ---- the +/x icon ---- */
+/* ---- the numeral ----
+   decimal-leading-zero gives 01 rather than 1: a bare digit beside a bold
+   question reads as a stray list marker. It is generated content, so it is
+   decoration — the question itself carries the meaning. */
+.faq-section .accordion-button::before {
+    content: counter(faq, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 3px;
+    width: 34px;
+    text-align: left;
 
-/* Bootstrap draws a chevron via a background image; remove it */
-.faq-section .accordion-button::after {
-    display: none;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: .02em;
+    color: var(--faq-num);
+    opacity: .75;
 }
 
-.faq-section .accordion-button::before {
+/* ---- the chevron ----
+   Bootstrap's ::after is a background-image chevron that bakes in its own
+   colour. Clearing the image and drawing the arrowhead from two borders
+   means it inherits --faq-num and follows the brand. */
+.faq-section .accordion-button::after {
     content: "";
+    display: block;
     position: absolute;
-    left: 18px;
+    right: 6px;
     top: 50%;
-    width: 14px;
-    height: 14px;
-    margin-top: -7px;
+    width: 9px;
+    height: 9px;
+    margin-top: -6px;
 
-    /* a plus sign drawn from two gradients, so it inherits currentColor */
-    background:
-        linear-gradient(var(--faq-accent), var(--faq-accent)) center / 100% 2px no-repeat,
-        linear-gradient(var(--faq-accent), var(--faq-accent)) center / 2px 100% no-repeat;
-
+    background-image: none;
+    border-right: 2px solid var(--faq-num);
+    border-bottom: 2px solid var(--faq-num);
+    transform: rotate(45deg);
     transition: transform .25s ease;
 }
 
-/* open: rotate the plus into a cross */
-.faq-section .accordion-button:not(.collapsed)::before {
-    transform: rotate(45deg);
+/* Pointing up when the answer is showing. The extra margin re-centres it:
+   rotating a right-angle about its own box moves the visual centre. */
+.faq-section .accordion-button:not(.collapsed)::after {
+    transform: rotate(-135deg);
+    margin-top: -2px;
 }
 
-/* ---- the answer ---- */
-
-.faq-section .accordion-body {
-    background: var(--faq-bar-bg);
-    padding: 4px 18px 18px 46px;
-    border-radius: 0 0 var(--faq-radius) var(--faq-radius);
-}
-
-.faq-section .accordion-body p {
-    margin-bottom: 0;
-}
-
-/* ---- columns ---- */
-
-/* Below lg the two columns stack, so give the first one breathing room */
-@media (max-width: 991.98px) {
-    .faq-section .col-lg-6:not(:last-child) {
-        margin-bottom: var(--faq-gap);
+@media (prefers-reduced-motion: reduce) {
+    .faq-section .accordion-button,
+    .faq-section .accordion-button::after {
+        transition: none;
     }
 }
 
+/* ---- the answer ----
+   Indented to the same 46px gutter as the question, so the numeral column
+   runs unbroken down the page. */
+.faq-section .accordion-body {
+    background: none;
+    border-radius: 0;
+    padding: 10px 18px 4px 46px;
+}
+
+.faq-section .accordion-body p {
+    margin: 0;
+    padding: 2px 0 2px 16px;
+    font-size: 15.5px;
+    line-height: 1.7;
+    color: var(--faq-a);
+    border-left: 3px solid var(--faq-rule);
+}
+
+/* The two columns stack until lg, so the first one needs breathing room.
+   From 992px Bootstrap puts them side by side and the gap is the grid's. */
+.faq-section .col-lg-6:not(:last-child) {
+    margin-bottom: var(--faq-gap);
+}
+
+@media (min-width: 992px) {
+    .faq-section .col-lg-6:not(:last-child) {
+        margin-bottom: 0;
+    }
+}
+
+
 /* ==========================================================================
-   Pricing table — style4 (white page / navy panels / blue accents)
+   13. SERVICES — ONE NAVY BAND, NUMBERED
    --------------------------------------------------------------------------
-   REPLACES the previous pricing block in this one theme file.
+   WAS SIX CARDS. Six navy tiles outweighed the hero and read as six buttons
+   that cannot be clicked. This is the same six services as ONE band: a
+   purple rule and a large numeral carry each item, and no item has a box.
 
-   CSS only, same markup.
+   NOTHING OUTSIDE THIS FILE CHANGED, AND THAT IS THE POINT.
 
-   THE SHAPE IS BORROWED, NOT INVENTED
+   utils/buildServiceCards.js builds this markup for ALL SEVEN designs, and
+   sectionRendererPhp.js mirrors it for the WordPress export. Editing either
+   one to suit this design would have handed Designs 1-6 markup their
+   stylesheets do not style. So the markup stays exactly as it is:
 
-   This theme's rhythm is white sections interrupted by a rounded panel:
+       .service-cards      the Bootstrap row   -> becomes the band
+       .col-md-6.col-lg-4  the column          -> carries the counter
+       .service-card       the tile            -> becomes a rule + text
+       .service-card-icon  the purple circle   -> hidden
+       .service-card-title / -text             -> recoloured
 
-       .section-2               { background: rgb(6,18,87); width: 90%;
-                                  margin: auto; border-radius: 20px; }
-       .second-button-container { background: #0a65fc;      width: 90%;
-                                  margin: auto; border-radius: 20px; }
+   THE NUMERALS ARE A CSS COUNTER, not text in the HTML, and that is a real
+   decision rather than a shortcut. "01" through "06" tell a reader nothing
+   the heading beneath them does not already say — they are ordinal
+   decoration, so generating them is correct and they are correctly absent
+   from the accessibility tree. (Contrast the NAP labels in 3.6, which ARE
+   content and are in CSS only until they move into the markup.)
 
-   The pricing section takes exactly that shape. It is a feature block — the
-   one place on the page with hard numbers — so it earns a panel rather than
-   sitting flat on white like sections 1, 3 and 4.
+   It also means the WordPress export gets them for free: the exported theme
+   ships this stylesheet and emits the same classes, so the band renders
+   there without a line of PHP changing.
 
-   THE PRICE COLOUR IS NOT #0a65fc, AND THAT IS DELIBERATE
-
-   The obvious move is to reuse the theme's blue for the figures. Measured
-   against the navy panel it does not hold up:
-
-       #0a65fc on rgb(6,18,87)   3.47:1   large text only, and muddy
-       #8ec5ff on rgb(6,18,87)   9.40:1   clean
-
-   Blue on blue at 3.5:1 is legible in the sense that you can make it out, not
-   in the sense that a price list should be. #8ec5ff is the same hue family,
-   lightened until it actually reads.
-
-   To port to another theme, change the six variables below.
+   THE ICONS ARE HIDDEN, NOT DELETED. ICONS[] in buildServiceCards.js still
+   emits all six. Putting them back is deleting one `display: none`.
    ========================================================================== */
 
-   .pricing-section {
-    --price-panel:  rgb(6, 18, 87);        /* .section-2 */
-    --price-ink:    #ffffff;
-    --price-accent: #8ec5ff;               /* the figures */
-    --price-soft:   rgba(255, 255, 255, .65);
-    --price-faint:  rgba(255, 255, 255, .45);
-    --price-rule:   rgba(255, 255, 255, .22);
+.service-cards {
+    --band-bg:      var(--navy);
+    --band-radius:  16px;
+    --rule:         rgba(var(--accent-rgb), .45);   /* --accent, held back */
+    --rule-hover:   var(--accent);
 
-    /* the panel — same three values as .section-2 */
-    background: var(--price-panel);
-    color: var(--price-ink);
-    width: 90%;
-    margin: 0 auto;
-    margin-top: 60px;
-    border-radius: 20px;
+    margin-top: 40px;
+
+    /* THE ROW IS THE BAND. A .row carries negative side margins so its
+       columns' gutters line up with the container; zeroing them is what
+       turns it from a grid into a panel with an edge of its own. The gutter
+       survives as padding INSIDE each column, which is where the space
+       between the three items comes from. */
+    margin-left: 0;
+    margin-right: 0;
+    padding: 30px 18px 6px;
+
+    background: var(--band-bg);
+    border-radius: var(--band-radius);
+
+    counter-reset: svc;
 }
 
-/* The hero's .line-divider, reused: 130px, 2px, white. Left-aligned here
-   because body headings in this theme are left-aligned — only the hero
-   centres. */
-.pricing-section h2 {
-    position: relative;
-    color: var(--price-ink);
-    padding-bottom: 26px;
+/* EVERY COLUMN, not .col-md-6 alone. The attribute selector catches whatever
+   column classes buildServiceCards() emits, so renumbering survives a change
+   from col-lg-4 to col-lg-6. The old rule's 1.5rem bottom margin is gone —
+   the spacing between rules is the item's own padding now, so the gap above
+   a rule equals the gap below the one before it. */
+.service-cards > [class*="col-"] {
+    counter-increment: svc;
+    margin-bottom: 0;
 }
 
-.pricing-section h2::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    width: 130px;
-    height: 2px;
-    background: var(--price-ink);
+/* NOT A CARD ANY MORE. Background, radius and box padding all go; what is
+   left is a rule across the top and the text under it. height: 100% stays —
+   it is what keeps the three rules in a row on one line when one service
+   has a longer description than its neighbours. */
+.service-card {
+    height: 100%;
+    background: none;
+    border: 0;
+    border-top: 2px solid var(--rule);
+    border-radius: 0;
+    padding: 24px 0 26px;
+    transition: border-color .2s ease;
 }
 
-/* --------------------------------------------------------------------------
-   The table
-   -------------------------------------------------------------------------- */
+@media (hover: hover) {
+    .service-card:hover {
+        border-top-color: var(--rule-hover);
+    }
+}
+
+/* THE NUMERAL. decimal-leading-zero is what gives 01 rather than 1 — six
+   single digits read as a stray list marker, "01" reads as a label.
+   aria-hidden is not needed: generated content is not exposed by name here,
+   and the heading below carries the meaning. */
+.service-card::before {
+    content: counter(svc, decimal-leading-zero);
+    display: block;
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -.03em;
+    color: var(--accent);
+    margin-bottom: 12px;
+}
+
+/* HIDDEN, NOT REMOVED — see the note at the top of this section. */
+.service-card-icon {
+    display: none;
+}
+
+.service-card-title {
+    color: #fff;
+    font-size: 19px;
+    line-height: 1.3;
+    margin: 0 0 7px;
+    padding: 0;   /* the section's h3 padding would be far too much here */
+}
+
+.service-card-text {
+    color: #fff;
+    font-size: 15.5px;
+    line-height: 1.6;
+    margin: 0;
+    opacity: .72;
+}
+
+/* The band sits inside .section-padding, which styles headings and prose for
+   full-width text. Reset the parts that do not suit an item in a list. */
+.section-padding .service-card-title,
+.section-padding .service-card-text {
+    padding-bottom: 0;
+}
+
+@media (min-width: 768px) {
+    .service-cards {
+        padding: 38px 26px 10px;
+    }
+}
+
+@media (min-width: 992px) {
+    .service-cards {
+        padding: 46px 38px 16px;
+    }
+
+    .service-card {
+        padding: 26px 0 30px;
+    }
+
+    .service-card::before {
+        font-size: 40px;
+        margin-bottom: 14px;
+    }
+}
+
+
+/* ==========================================================================
+   14. PRICING — PRICE BLOCKS
+   --------------------------------------------------------------------------
+   WAS A TWO-COLUMN TABLE, zebra-striped, service on the left and range on
+   the right. This is the same six rows as six blocks: the figure large at
+   the top of each one, the service named underneath it.
+
+   THE MARKUP IS STILL A <table>, AND NOTHING OUTSIDE THIS FILE CHANGED.
+
+   utils/buildPricingTable.js emits a real table on purpose — it is tabular
+   data, screen readers announce the column header with each cell, and it
+   survives with no CSS at all. That file serves all seven designs and
+   sectionRendererPhp.js mirrors it for the WordPress export, so the markup
+   is not ours to rearrange. Only its `display` is:
+
+       table   -> block
+       thead   -> none        (the column headings have no place in a block)
+       tbody   -> grid        (1 column, 2 from 576px)
+       tr      -> flex column (one block)
+       th, td  -> block
+
+   THE PRICE IS SHOWN FIRST BUT IS NOT WRITTEN FIRST. `order` moves the
+   cells on screen only; the DOM keeps service-then-range, so the table is
+   still read in its proper order by a screen reader and by anything parsing
+   the page. Reversing it in the generator would have changed the meaning of
+   the markup to get a visual effect.
+
+   READ THE NOTE ON SPECIFICITY BELOW BEFORE ADDING ANYTHING HERE.
+   ========================================================================== */
+
+.pricing-section {
+    --price-card-bg:     #ffffff;
+    --price-card-border: rgba(var(--navy-rgb), .13);
+    --price-accent:      var(--brand);
+    --price-rule:        rgba(var(--brand-rgb), .25);   /* --brand, held back */
+    --price-gap:         14px;
+}
 
 .pricing-table {
+    display: block;
     width: 100%;
-    margin: 30px 0 0;
+    margin: 28px 0 0;
     border-collapse: separate;
     border-spacing: 0;
 }
 
-/* The 2px white rule under the header is the same device as
-   .second-button-container's `border-top: 4px white solid` — a white edge
-   dividing two areas of colour. */
-.pricing-table thead th {
-    text-align: left;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .14em;
-    text-transform: uppercase;          /* matches the nav */
-    color: var(--price-ink);
-    padding: 0 16px 12px;
-    border-bottom: 2px solid var(--price-ink);
+/* SERVICE / TYPICAL RANGE have nothing to label once the rows are blocks —
+   each block carries its own figure and name. The <caption> in the markup
+   is still there and still read aloud, so nothing is lost. */
+.pricing-table thead {
+    display: none;
 }
 
-.pricing-table thead th:first-child { padding-left: 0; }
-
-.pricing-table thead th:last-child {
-    text-align: right;
-    padding-right: 0;
+/* NARROW FIRST: one block per row. Two from 576px, below. */
+.pricing-table tbody {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--price-gap);
 }
 
-/* Row rules: a flat translucent white, not a gradient.
-   The dark theme fades its rules because it has a coloured accent to fade
-   FROM. Here the panel is already the accent, so a plain white hairline is
-   the honest version — a gradient would be decoration for its own sake. */
 .pricing-table tbody tr {
-    transition: background-color .18s ease;
+    display: flex;
+    flex-direction: column;
+
+    background: var(--price-card-bg);
+    border: 1px solid var(--price-card-border);
+    border-radius: 12px;
+    padding: 20px 22px 18px;
 }
 
+/* ---- THE SPECIFICITY NOTE, AND IT IS NOT HISTORICAL ----
+
+   `.pricing-table tbody th` is (0,1,2). `.pricing-service` is (0,1,0), so
+   anything set on the shared cell rule below SILENTLY BEATS a rule written
+   against the class alone — no warning, no error, the declaration simply
+   never applies.
+
+   That has now bitten twice. First the prices went left-aligned at every
+   width when `text-align` was set here. Then the price-block layout failed
+   outright, because `display: flex` on `.pricing-service` lost to the
+   `display: block` three lines down and the cell never became a flex box.
+
+       EVERY RULE IN THIS SECTION THAT TARGETS A CELL IS QUALIFIED WITH
+       `.pricing-table tbody`, INCLUDING ONES THAT LOOK LIKE THEY DO NOT
+       NEED IT. Add the next one the same way.
+
+   This rule holds ONLY what is true of both cells. Anything either one has
+   an opinion about belongs in its own qualified rule. */
 .pricing-table tbody th,
 .pricing-table tbody td {
-    padding: 20px 16px;
-    vertical-align: baseline;
+    display: block;
+    padding: 0;
     border: 0;
-    border-bottom: 1px solid var(--price-rule);
+    background: none;
 }
 
-.pricing-table tbody tr:last-child th,
-.pricing-table tbody tr:last-child td { border-bottom: 0; }
-
-.pricing-table tbody th:first-child { padding-left: 0; }
-.pricing-table tbody td:last-child { padding-right: 0; }
-
-/* Hover: a white wash and the figure goes to full white. No glow — this
-   theme's shadows are hard black (box-shadow: 2px 4px 5px black), which is
-   invisible on navy. */
-.pricing-table tbody tr:hover { background-color: rgba(255, 255, 255, .06); }
-
-.pricing-table tbody tr:hover .pricing-amount { color: var(--price-ink); }
-
-/* --------------------------------------------------------------------------
-   Cells
-   -------------------------------------------------------------------------- */
-
-.pricing-service {
-    font-weight: 600;
-    font-size: 17px;
-    line-height: 1.35;
+/* ---- the figure, shown first ---- */
+.pricing-table tbody td.pricing-range {
+    order: 1;
     text-align: left;
-    color: var(--price-ink);
+    white-space: nowrap;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--price-rule);
+}
+
+.pricing-amount {
+    display: block;
+    font-weight: 800;
+    font-size: 25px;
+    line-height: 1.1;
+    letter-spacing: -.02em;
+    color: var(--price-accent);
+}
+
+/* "PER SQ FT" rather than "per sq ft": at this size beneath a large figure
+   the lower case read as part of the price. */
+.pricing-unit {
+    display: block;
+    font-size: 12.5px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    opacity: .55;
+    margin-top: 5px;
+}
+
+/* ---- the service, underneath ---- */
+.pricing-table tbody th.pricing-service {
+    order: 2;
+    text-align: left;
+    font-weight: 700;
+    font-size: 16.5px;
+    line-height: 1.35;
+    margin-top: 12px;
 }
 
 .pricing-note {
@@ -1272,219 +2431,71 @@ footer a {
     font-weight: 400;
     font-size: 14px;
     line-height: 1.45;
-    color: var(--price-soft);
+    opacity: .66;
     margin-top: 5px;
 }
 
-.pricing-range {
-    text-align: right;
-    white-space: nowrap;
-}
-
-.pricing-amount {
-    display: block;
-    font-weight: 700;
-    font-size: 20px;
-    letter-spacing: -.01em;
-    color: var(--price-accent);
-    /* the figures form a column, so the digits must share a width */
-    font-variant-numeric: tabular-nums;
-    transition: color .18s ease;
-}
-
-.pricing-unit {
-    display: block;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-    color: var(--price-faint);
-    margin-top: 6px;
-}
-
-/* --------------------------------------------------------------------------
-   The estimate notice
-   --------------------------------------------------------------------------
-   NOTE THE SELECTOR. `.pricing-disclaimer` on its own loses to this theme's
-   `.section-padding p` rule — same class count, but that one also names an
-   element, so it is more specific and the notice renders at 19px rather than
-   the 14px intended. Two classes takes it back.
-
-   Rounded, because everything in this theme is: 20px panels, 50px buttons,
-   50px images. A square-cornered box here would be the one hard edge on the
-   page.
-   -------------------------------------------------------------------------- */
-
-.pricing-section .pricing-disclaimer {
-    margin-top: 28px;
-    padding: 16px 20px;
+/* The estimate notice. Understated but not hidden — it is what keeps the
+   figures honest. */
+.pricing-disclaimer {
+    margin-top: 20px;
     font-size: 14px;
-    line-height: 1.65;
-    color: var(--price-soft);
-    background: rgba(255, 255, 255, .07);
-    border-left: 3px solid var(--price-ink);
-    border-radius: 0 12px 12px 0;
+    line-height: 1.6;
+    opacity: .8;
+    padding: 14px 16px;
+    border-left: 3px solid var(--price-rule);
+    background: rgba(var(--navy-rgb), .035);
 }
 
-.pricing-section .pricing-disclaimer strong {
-    color: var(--price-ink);
-    font-weight: 700;
-}
-
-/* --------------------------------------------------------------------------
-   Narrow screens
-   --------------------------------------------------------------------------
-   Each row stacks so the figure sits under the service rather than being
-   squeezed against it.
-   -------------------------------------------------------------------------- */
-
-@media (max-width: 575.98px) {
-    .pricing-table thead {
-        /* clipped, not display:none — the column headers stay in the
-           accessibility tree even though nothing shows */
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        white-space: nowrap;
+/* TWO ACROSS. 576px rather than 768 because the blocks are shallow — the
+   figure, a rule, a name and a line of detail — so two of them fit a tablet
+   comfortably and six stacked would be a long scroll for no reason. */
+@media (min-width: 576px) {
+    .pricing-table tbody {
+        grid-template-columns: 1fr 1fr;
     }
+}
 
-    .pricing-table,
-    .pricing-table tbody,
-    .pricing-table tbody tr,
-    .pricing-table tbody th,
-    .pricing-table tbody td {
-        display: block;
-        width: 100%;
+@media (min-width: 992px) {
+    .pricing-table tbody {
+        gap: 16px;
     }
 
     .pricing-table tbody tr {
-        padding: 16px 0;
-        border-bottom: 1px solid var(--price-rule);
+        padding: 22px 24px 20px;
     }
 
-    .pricing-table tbody tr:last-child { border-bottom: 0; }
-
-    /* the rule moves to the row; the cells inside must not draw their own */
-    .pricing-table tbody th,
-    .pricing-table tbody td {
-        padding: 0;
-        border-bottom: 0;
+    .pricing-amount {
+        font-size: 28px;
     }
-
-    .pricing-range {
-        text-align: left;
-        margin-top: 10px;
-    }
-
-    .pricing-amount,
-    .pricing-unit { display: inline-block; }
-
-    .pricing-unit { margin-left: 10px; }
 }
 
 
 /* ==========================================================================
-   Reviews — "What Customers Are Saying"
+   15. TRUST POINTS (About Us, section 1)
    --------------------------------------------------------------------------
-   Appended to every theme: style.css ... style6.css
+   A check inside a filled circle, drawn in CSS: no extra request, and it
+   scales with the text.
 
-   Inherits rather than hardcoding, the same way the pricing table does, so one
-   snippet suits all six themes:
-     - text uses the theme's body colour
-     - the card tint is a translucent black, reading as a shade of whatever
-       background sits behind it
-     - the stars are the ONE hard-coded colour. Everything else inherits,
-       but a star only reads as a rating when it is amber; in the body text
-       colour it reads as an icon. #f5a623 holds its contrast on a white
-       card and on a navy one, which plain yellow does not.
-
-   To tune one theme:
-     .reviews-section { --review-star: #e8b004; }
-
-   THE NOTE ABOVE THE CARDS IS NOT DECORATION. It says the reviews are a sample
-   and have to be replaced. It is deliberately legible rather than a whisper of
-   grey fine print — see utils/generateSampleReviews.js for why.
-   ========================================================================== */
-
-.reviews-section {
-    --review-card-bg:   rgba(0, 0, 0, .03);
-    --review-border:    rgba(0, 0, 0, .10);
-    --review-star:      #f5a623;
-    --review-radius:    10px;
-}
-
-.reviews-section .reviews-note {
-    margin: 6px 0 28px;
-    font-size: 15px;
-    opacity: .75;
-}
-
-.review-card {
-    height: 100%;
-    padding: 22px;
-    background: var(--review-card-bg);
-    border: 1px solid var(--review-border);
-    border-radius: var(--review-radius);
-    /* Cards in a row are only as tall as their content unless told otherwise,
-       and four reviews are never the same length. */
-    display: flex;
-    flex-direction: column;
-}
-
-.review-stars {
-    display: flex;
-    gap: 2px;
-    margin-bottom: 12px;
-    color: var(--review-star);
-}
-
-.review-star {
-    /* fill, not stroke: the path in buildStars() is a solid star. */
-    fill: currentColor;
-    flex: 0 0 auto;
-}
-
-.review-text {
-    margin: 0 0 16px;
-    font-size: 15px;
-    line-height: 1.6;
-    /* Pushes the author line to the bottom of the card so the four names sit
-       on one line across the row regardless of review length. */
-    flex: 1 1 auto;
-}
-
-.review-author {
-    margin: 0;
-    font-weight: 600;
-    font-size: 14px;
-    opacity: .85;
-}
-
-@media (max-width: 575.98px) {
-    .review-card {
-        padding: 18px;
-    }
-}
-
-/* ==========================================================================
-   Trust points (About Us, Section 1)
-   --------------------------------------------------------------------------
-   The same component style.css, style2.css, style4.css and style6.css carry.
-   Markup is buildTrustList() in utils/buildAboutUsPage.js:
-
-     <ul class="trust-points"><li>Licensed, insured and bonded</li>…</ul>
-
-   Up to eight points, two columns from 576px up, one below that.
-
-   This theme's blue, the .nav-link colour and the accent it uses most.
-   White on it is 4.91:1, comfortably enough for a 2px tick.
+   WAS GREEN, THEN RED, THEN A YELLOW CIRCLE WITH A WHITE TICK. The note
+   that used to sit here argued a tick has to be green to read as
+   "verified"; the palette in section 1 keeps the old values. What has
+   survived every one of those changes is the ratio — the tick has never
+   been allowed below 4.5:1 on its circle, nor the circle below 3:1 on the
+   page behind it, and the numbers for the current pair are on the rule.
    ========================================================================== */
 
 .trust-points {
-    --trust-bg: #0a65fc;
-    --trust-tick: #ffffff;    /* the check inside it */
+    /* BLUE CIRCLE, YELLOW CHECK — Edwin, 14 November. It was the other way
+       round: a --accent circle with a white tick. Yellow on blue is 6.90:1,
+       and the circle is 9.30:1 against the white page and 8.52:1 against
+       --faq-grey, so the marker reads on both surfaces it lands on. */
+    --trust-bg:   var(--brand);
+
+    /* WHITE, NOT --accent — Edwin, 15 November. The mint on the purple disc
+       was 5.41:1 and perfectly legible; this is a taste call, not a repair.
+       White on --brand is 8.67:1, so it is also the safer of the two. */
+    --trust-tick: #ffffff;
 
     list-style: none;
     padding: 0;
@@ -1498,9 +2509,7 @@ footer a {
 }
 
 @media (min-width: 576px) {
-    .trust-points {
-        grid-template-columns: 1fr 1fr;
-    }
+    .trust-points { grid-template-columns: 1fr 1fr; }
 }
 
 .trust-points li {
@@ -1513,8 +2522,6 @@ footer a {
     font-weight: 500;
 }
 
-/* The circle. Drawn in CSS rather than as an icon: no extra request, and it
-   scales with the text. */
 .trust-points li::before {
     content: "";
     position: absolute;
@@ -1527,7 +2534,7 @@ footer a {
     background: var(--trust-bg);
 }
 
-/* The tick itself: two borders rotated into a check, sitting on the circle. */
+/* The tick: two borders rotated into a check, sitting on the circle. */
 .trust-points li::after {
     content: "";
     position: absolute;
@@ -1539,4 +2546,169 @@ footer a {
     border-left: 2px solid var(--trust-tick);
     border-bottom: 2px solid var(--trust-tick);
     transform: rotate(-45deg);
+}
+
+
+/* ==========================================================================
+   16. ABOUT-US INTRO VIDEO
+   --------------------------------------------------------------------------
+   The markup uses Bootstrap's .ratio helper, which is not in the PurgeCSS
+   safelist. These rules make the sizing self-contained, so the video renders
+   correctly whether or not .ratio survives the build — without them a bare
+   <iframe> falls back to the browser default of 300x150.
+   ========================================================================== */
+
+.about-video-wrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 8px;
+}
+
+.about-video-wrapper iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+/* Stacked below the text under 768px, so give it room to breathe */
+/* Stacked below the text until 768px, so it needs room above it. Side by
+   side from there, where the margin would be a gap nobody asked for. */
+.about-video-section {
+    margin-top: 24px;
+}
+
+@media (min-width: 768px) {
+    .about-video-section { margin-top: 0; }
+}
+
+
+/* ==========================================================================
+   17. BRUSH-STROKE DIVIDER
+   --------------------------------------------------------------------------
+   Restyles the .line-divider elements OUTSIDE the hero — the one under the
+   H2 in section 1, and any others the templates place.
+
+   HOW IT WORKS. The SVG is a CSS *mask*, not a background image. A background
+   image bakes its colour into the SVG; as a mask it only defines the SHAPE
+   and background-color fills it, so the stroke can follow the theme.
+
+   THE HERO IS DELIBERATELY EXCLUDED. Section 3.4 is two classes deep and
+   switches the mask off, so the hero keeps its solid --accent bar. If you ever
+   want the brush stroke up there instead, delete the three `none` lines in
+   3.4 rather than changing anything here.
+   ========================================================================== */
+
+.line-divider {
+    --divider-color: var(--brand);
+    --divider-width: 190px;   /* 250px from 576px up */
+    --divider-height: 25px;
+
+    /* Reset whatever the straight-line version set */
+    border: 0;
+    background-image: none;
+
+    width: var(--divider-width);
+    height: var(--divider-height);
+    margin: 10px 0;
+
+    /* The colour; the mask decides which parts of it show through */
+    background-color: var(--divider-color);
+
+    -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/><path d='M222,9 C226,8 230,10 233,9 L233,13 C230,14 226,12 222,13 Z'/><path d='M239,10 C241,9 243,11 245,10 L245,13 C243,14 241,12 239,13 Z'/></svg>");
+            mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 248 24' preserveAspectRatio='none'><path d='M6,13 C40,8 72,7 112,9 C152,11 182,5 214,8 L215,15 C182,18 152,13 112,16 C72,19 40,17 6,17 Z'/><path d='M222,9 C226,8 230,10 233,9 L233,13 C230,14 226,12 222,13 Z'/><path d='M239,10 C241,9 243,11 245,10 L245,13 C243,14 241,12 239,13 Z'/></svg>");
+
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+            mask-size: 100% 100%;
+}
+
+/* Centred headings want a centred stroke */
+.text-center .line-divider,
+.text-center > .line-divider {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+@media (min-width: 576px) {
+    .line-divider {
+        --divider-width: 250px;
+    }
+}
+
+
+/* ==========================================================================
+   18. REVIEWS — "What Customers Are Saying"
+   --------------------------------------------------------------------------
+   The stars are the one hard-coded colour here. Everything else inherits,
+   but a star only reads as a rating when it is amber; in the body text
+   colour it reads as an icon. #f5a623 holds its contrast on a white card and
+   on a navy one, which plain yellow does not.
+
+   THE NOTE ABOVE THE CARDS IS NOT DECORATION. It says the reviews are
+   examples and have to be replaced — see utils/generateSampleReviews.js.
+   ========================================================================== */
+
+.reviews-section {
+    --review-card-bg: rgba(0, 0, 0, .03);
+    --review-border:  rgba(0, 0, 0, .10);
+    --review-star:    #f5a623;
+    --review-radius:  10px;
+}
+
+.reviews-section .reviews-note {
+    margin: 6px 0 28px;
+    font-size: 15px;
+    opacity: .75;
+}
+
+.review-card {
+    height: 100%;
+    padding: 18px;   /* 22px from 576px up */
+    background: var(--review-card-bg);
+    border: 1px solid var(--review-border);
+    border-radius: var(--review-radius);
+
+    /* Cards in a row are only as tall as their content unless told
+       otherwise, and four reviews are never the same length. */
+    display: flex;
+    flex-direction: column;
+}
+
+.review-stars {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 12px;
+    color: var(--review-star);
+}
+
+.review-star {
+    /* fill, not stroke: the path in buildStars() is a solid star */
+    fill: currentColor;
+    flex: 0 0 auto;
+}
+
+.review-text {
+    margin: 0 0 16px;
+    font-size: 15px;
+    line-height: 1.6;
+
+    /* Pushes the author line to the bottom of the card so the four names sit
+       on one line across the row regardless of review length. */
+    flex: 1 1 auto;
+}
+
+.review-author {
+    margin: 0;
+    font-weight: 600;
+    font-size: 14px;
+    opacity: .85;
+}
+
+@media (min-width: 576px) {
+    .review-card { padding: 22px; }
 }
