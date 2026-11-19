@@ -22,6 +22,7 @@
 // read the same object.
 
 const { slugify } = require('./slugify');
+const { titleFor } = require('./businessShape');
 
 const MODES = {
   RANK_FAST: 'rankfast',
@@ -168,6 +169,46 @@ function serviceNoun(businessType = '') {
  *
  *   Contact 24/7 Emergency Plumber Austin in Austin, TX - Call 5125551234
  */
+/**
+ * The "near me" term for this site, or '' when the box was not ticked.
+ *
+ * ⚠ ONE DEFINITION, AND IT USED TO BE TWO. Edwin, 19 November: *"if I press
+ * the tick for the term near me it should add it to the meta description and
+ * at the end of the seo title"*. Until today the term existed only inside
+ * buildAboutUsPage.js, which built it from `titleFor()` and used it for the
+ * image filenames, the alt attributes and the About page's fifth section —
+ * and the page meta never saw it.
+ *
+ *     A TERM THE PAGE IS OPTIMISED FOR AND THE TITLE DOES NOT SAY IS A
+ *     TERM THE SEARCH RESULT DOES NOT CARRY.
+ *
+ * Putting the derivation here rather than passing a string in means the
+ * title, the description, the filenames and the alt text cannot come to
+ * disagree about what the term is — which is the failure the comment on
+ * imageAlt() below is already about, one layer up.
+ *
+ * THE NOUN IS titleFor()'s, NOT THE RAW BUSINESS TYPE. The form posts
+ * "Plumbing" and the search is for a PLUMBER; businessShape.js already keeps
+ * that mapping for headings and prompts, so it is read rather than copied.
+ * It gives "Roofing Contractor" for roofing and "HVAC Technician" for HVAC,
+ * which is the same noun those sites use everywhere else.
+ */
+function nearMeTermFor(globalValues = {}) {
+  if ('true' !== String(globalValues && globalValues.useNearMe)) return '';
+
+  /* ⚠ THE TYPE IS CHECKED BEFORE titleFor(), NOT AFTER IT. That function
+   * falls back to "Local Business" for anything it does not recognise —
+   * right for a heading, and "Local Business near me" in a title is a
+   * search term nobody has ever typed. A replayed payload from before the
+   * business-type field existed is the way in. Found by a test, not by a
+   * site: the title would have shipped and read almost plausibly. */
+  if (!clean(globalValues.businessType)) return '';
+
+  const noun = clean(titleFor(globalValues.businessType));
+
+  return noun ? `${noun} near me` : '';
+}
+
 function leadIndexMeta(globalValues = {}) {
   const name = clean(globalValues.businessName);
   const location = clean(globalValues.location);
@@ -176,17 +217,36 @@ function leadIndexMeta(globalValues = {}) {
   const parts = [`Contact ${emergencyPrefix(name)}${name}`];
   if (location) parts.push(`in ${location}`);
 
-  let title = parts.join(' ');
-  if (phone) title += ` - Call ${phone}`;
+  const head = parts.join(' ');
+  const tail = phone ? ` - Call ${phone}` : '';
 
-  // The description extends the title rather than repeating it exactly.
-  // A description has roughly 160 characters against a title's 60, so an
-  // identical one wastes most of the space.
+  /* THE TERM GOES BEFORE THE PHONE — Edwin, 19 November: *"the term near me
+   * goes first and then the phone number"*. It was appended on the end for a
+   * few hours and he moved it: a title is truncated from the right at about
+   * sixty characters, so whatever sits last is what the search result drops.
+   *
+   *     THE ORDER OF A TITLE IS THE ORDER THINGS GET CUT IN.
+   *
+   * The phone survives truncation least well and loses least by it — it is
+   * on every page and in the schema — so it goes last. */
+  const term = nearMeTermFor(globalValues);
+  const title = term ? `${head} | ${term}${tail}` : `${head}${tail}`;
+
+  /* THE DESCRIPTION IS COMPOSED WITHOUT THE TERM AND TAKES IT AT THE END.
+   * Built from the title it would read "...| Plumber near me - Call (512)
+   * 894-6167 to get a free quote" — the term inside a sentence, which is
+   * what moving it in the title would otherwise have done here too.
+   *
+   * A description has roughly 160 characters against a title's 60, so it
+   * extends the title rather than repeating it. */
+  const plain = `${head}${tail}`;
   const description = phone
-    ? `${title} to get a free quote. Available Now.`
-    : title;
+    ? `${plain} to get a free quote. Available Now.`
+    : plain;
 
-  return { title, description };
+  return term
+    ? { title, description: `${description} ${term}.` }
+    : { title, description };
 }
 
 /**
@@ -241,14 +301,21 @@ function rankFastIndexMeta(globalValues = {}) {
   // name or where it is.
   const subject = place ? `${name} in ${place}` : name;
 
-  const title = phone ? `${subject} | Call ${phone}` : subject;
+  /* THE TERM GOES BEFORE THE PHONE. See the note in leadIndexMeta(): a
+   * title is cut from the right, so the phone — the part that survives
+   * truncation least well and is on every other page anyway — goes last. */
+  const term = nearMeTermFor(globalValues);
+  const middle = term ? `${subject} | ${term}` : subject;
+  const title = phone ? `${middle} | Call ${phone}` : middle;
 
   const services = serviceNoun(globalValues.businessType);
   const description = phone
     ? `Call ${subject} at ${phone} to get ${services}.`
     : `${subject} — ${services}.`;
 
-  return { title, description };
+  return term
+    ? { title, description: `${description} ${term}.` }
+    : { title, description };
 }
 
 // ---------------------------------------------------------------------------
@@ -622,6 +689,7 @@ module.exports = {
   assetPath,
   imageAlt,
   serviceNoun,
+  nearMeTermFor,
   splitLocation,
   emergencyPrefix,
   clean,

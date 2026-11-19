@@ -81,6 +81,12 @@ router.get('/logo-preview', logoPreviewLimiter, async (req, res) => {
       logoType: req.query.shape,
       styleKey: req.query.theme,
       structure,
+
+      /* THE TRADE, SO THE PREVIEW SHOWS THE MARK THE BUILD WILL DRAW. A
+       * preview that omits it is a preview of a different logo, which is
+       * the one defect a preview exists to prevent — the same argument the
+       * note on logoSizes.js makes about the box. */
+      trade: req.query.trade,
       withBackdrop: true,
     });
 

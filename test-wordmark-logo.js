@@ -39,6 +39,7 @@ const {
 } = require('./utils/wordmarkLogo');
 
 const { LOGO_SIZES, logoSize } = require('./utils/logoSizes');
+const { MARKS, FOR_TRADE, markKeyFor } = require('./utils/localOptions/tradeMarks');
 const CM = require('./utils/contentModel');
 
 let passed = 0, failed = 0;
@@ -672,6 +673,231 @@ test('the favicon is initials on a tile, not the wordmark shrunk', () => {
 });
 
 /* ===================================================================== */
+section('The trade mark beside the name');
+
+test('A TRADE WITH A MARK GETS IT, AND A TRADE WITHOUT GETS THE OLD LOGO', () => {
+  /* Edwin, 18 November, having had twenty-three marks drawn: *"wire the
+   * logo plumbing"*.
+   *
+   * THE FALLBACK IS THE WHOLE SAFETY OF THIS CHANGE. Every wordmark drawn
+   * before today was drawn with no trade at all, and three different kinds
+   * of caller still pass none: the GitHub builder for a business type with
+   * no mark, a replayed job payload written before the field existed, and a
+   * preview URL without the parameter. All three must produce the logo this
+   * function has always produced — not a smaller one with a gap where a
+   * mark would have gone. */
+  const base = { businessName: 'Austin Drain Pros', logoType: 'wide', structure: 'orchard' };
+
+  const plain = wordmarkSvg(base);
+  const marked = wordmarkSvg({ ...base, trade: 'Plumbing' });
+
+  assert.notStrictEqual(plain, marked, 'the trade changes nothing, so no mark is drawn');
+  assert.ok(marked.length > plain.length, 'the marked logo is not bigger');
+
+  /* AND AN UNKNOWN TRADE IS BYTE-FOR-BYTE THE OLD LOGO. Not "similar": a
+   * single different attribute here would mean the no-mark path had
+   * silently moved, and every site built before today would redraw
+   * differently on its next rebuild. */
+  assert.strictEqual(wordmarkSvg({ ...base, trade: 'Llama Grooming' }), plain,
+    'an unknown trade does not fall back to exactly the old drawing');
+  assert.strictEqual(wordmarkSvg({ ...base, trade: '' }), plain);
+  assert.strictEqual(wordmarkSvg({ ...base, trade: '   ' }), plain);
+});
+
+test('AND THE MARK IS THE SAME COLOUR AS THE LETTERS, NECESSARILY', () => {
+  /* The mark sits INSIDE the group that carries the ink, so the two cannot
+   * disagree — which is the whole reason these are paths and not PNG files.
+   * A `fill` of its own anywhere in the mark would be a second colour that
+   * no table chose, on a header whose colour this file works hard to get
+   * right.
+   *
+   * ASSERTED ON THE RENDERED STRING rather than on the mark source, because
+   * the fill could be introduced by either of them. */
+  const svg = wordmarkSvg({
+    businessName: 'Austin Drain Pros', logoType: 'wide',
+    structure: 'orchard', trade: 'Plumbing',
+  });
+
+  const fills = [...svg.matchAll(/fill="([^"]+)"/g)].map(m => m[1]);
+
+  assert.deepStrictEqual([...new Set(fills)], [STRUCTURE_INK.orchard.ink],
+    'the logo carries a colour that is not the structure ink');
+
+  /* AND THE MARK IS INSIDE THAT GROUP, not beside it. */
+  const body = svg.slice(svg.indexOf(`<g fill="${STRUCTURE_INK.orchard.ink}">`));
+
+  assert.ok(body.includes('rotate(-42)'), 'the wrench is not inside the inked group');
+});
+
+test('AND THE HALO COPIES THE MARK TOO, OR IT VANISHES OVER A BRIGHT SKY', () => {
+  /* style7's header is a photograph and the halo is the only thing keeping
+   * white ink off a cloud. A mark left out of it would be the one piece of
+   * the logo that disappears — and only on one theme, only over some
+   * photographs, which is the kind of fault nobody can reproduce. */
+  const svg = wordmarkSvg({
+    businessName: 'Austin Drain Pros', logoType: 'wide',
+    styleKey: 'style7', trade: 'Plumbing',
+  });
+
+  const halo = svg.slice(svg.indexOf('<g fill="#000000"'), svg.indexOf('</g>', svg.indexOf('<g fill="#000000"')));
+
+  assert.ok(halo.includes('rotate(-42)'), 'the halo does not carry the mark');
+});
+
+test('THE SHAPE DECIDES THE ARRANGEMENT: beside on wide, above on the others', () => {
+  /* Edwin chose this: a 250x100 box has room for a mark and a line of type
+   * side by side; a 120x120 box does not, and a name squeezed into what is
+   * left wraps a two-word business onto three lines. */
+  const of = (shape) => {
+    const svg = wordmarkSvg({
+      businessName: 'Austin Drain Pros', logoType: shape,
+      structure: 'orchard', trade: 'Plumbing',
+    });
+    const mark = /translate\(([\d.]+) ([\d.]+)\) scale/.exec(svg);
+    const text = /<g transform="translate\(([\d.]+) ([\d.]+)\)">/.exec(svg);
+
+    assert.ok(mark, `${shape}: no mark was placed`);
+    assert.ok(text, `${shape}: the letters were not offset`);
+
+    return {
+      mark: { x: Number(mark[1]), y: Number(mark[2]) },
+      text: { x: Number(text[1]), y: Number(text[2]) },
+    };
+  };
+
+  const wide = of('wide');
+
+  assert.ok(wide.text.x > wide.mark.x, 'on the wide box the letters are not to the right of the mark');
+  assert.strictEqual(wide.text.y, 0, 'on the wide box the letters were pushed down as well');
+
+  for (const shape of ['square', 'rect']) {
+    const put = of(shape);
+
+    assert.ok(put.text.y > put.mark.y, `on ${shape} the letters are not below the mark`);
+    assert.strictEqual(put.text.x, 0, `on ${shape} the letters were pushed sideways as well`);
+  }
+});
+
+test('AND THE NAME KEEPS MORE OF THE BOX THAN THE MARK DOES', () => {
+  /* ⚠ THE MARK WAS 0.78 OF THE HEIGHT FIRST, which left the letters 279 of
+   * 500 units on the wide box and set "Hill Country Roofing" on three lines
+   * in small type beside a large wrench.
+   *
+   *     THE NAME IS THE LOGO. THE MARK IS THE ADJECTIVE.
+   *
+   * Pinned as a ratio rather than a pixel count so it survives SCALE and any
+   * box size added later. */
+  const { width } = logoSize('wide');
+  const svg = wordmarkSvg({
+    businessName: 'Hill Country Roofing', logoType: 'wide',
+    structure: 'harbor', trade: 'Roofing',
+  });
+
+  /* ⚠ THE REGEX MUST NOT MATCH THE MARK'S OWN GROUP. Both are written
+   * `<g transform="translate(x y)…`; only the letters' group ends there,
+   * because the mark's carries a scale as well. Without the closing `)">`
+   * this read the mark's x, measured 96% of the box for the letters and
+   * passed while proving nothing. */
+  const offset = Number(/<g transform="translate\(([\d.]+) ([\d.]+)\)">/.exec(svg)[1]);
+  const forLetters = width * SCALE - offset;
+
+  assert.ok(forLetters / (width * SCALE) > 0.55,
+    `the letters get ${Math.round(100 * forLetters / (width * SCALE))}% of the wide box, which is less than the mark`);
+
+  /* AND IT STILL SETS ON TWO LINES, which is what that share buys. */
+  assert.strictEqual((svg.match(/<path transform="translate/g) || []).length, 2,
+    'the name no longer sets on two lines in the wide box');
+});
+
+section('The favicon carries the mark too');
+
+test('THE MARK WINS, AND INITIALS REMAIN THE FALLBACK', () => {
+  /* Edwin, 18 November: *"fix the favicon"*, on being told the logo would
+   * carry a wrench and the browser tab would carry "AD". Two different
+   * marks for one business, eighteen pixels apart. */
+  const base = { businessName: 'Austin Drain Pros', structure: 'orchard' };
+
+  const initials = faviconSvg(base);
+  const marked = faviconSvg({ ...base, trade: 'Plumbing' });
+
+  assert.ok(marked.includes('rotate(-42)'), 'the favicon does not carry the trade mark');
+  assert.ok(!marked.includes('<path transform="translate'), 'the favicon still draws initials as well');
+
+  assert.strictEqual(faviconSvg({ ...base, trade: 'Llama Grooming' }), initials,
+    'a trade with no mark does not fall back to initials');
+
+  /* THE TILE IS THE BRAND COLOUR EITHER WAY. It is not the ink: a favicon is
+   * a shape in browser chrome and has to read against a light tab and a dark
+   * one, which is what the tile is for. */
+  assert.ok(marked.includes(STRUCTURE_INK.orchard.tile), 'the marked favicon lost its tile');
+  assert.ok(marked.includes('fill="#ffffff"'), 'the mark is not reversed out of the tile');
+});
+
+section('The marks themselves');
+
+test('EVERY TRADE THE WIZARD OFFERS HAS A MARK', () => {
+  /* ⚠ THIS WILL REPORT THE DAY A BUSINESS TYPE IS ADDED, which is the point
+   * of it. A trade with no mark is not broken — it draws the wordmark alone,
+   * exactly as before — but it is the only one of the twenty-five that looks
+   * different, and nothing else would say so. */
+  const src = fs.readFileSync(
+    path.join(__dirname, 'public', 'js', 'generateDinamycForm.js'), 'utf8');
+
+  const list = /var BUSINESS_TYPE_LABELS = \[([\s\S]*?)\];/.exec(src);
+
+  assert.ok(list, 'the wizard no longer carries a list of business types');
+
+  const labels = [...list[1].matchAll(/"([^"]+)"/g)].map(m => m[1]);
+
+  assert.ok(labels.length > 20, `only ${labels.length} business types were found`);
+
+  const missing = labels.filter(l => !markKeyFor(l));
+
+  assert.deepStrictEqual(missing, [],
+    `these trades have no mark: ${missing.join(', ')}`);
+});
+
+test('AND EVERY MAPPED MARK EXISTS, AND EVERY DRAWN MARK RENDERS', () => {
+  /* A FOR_TRADE row naming a mark that is not in MARKS resolves to '' and
+   * draws nothing — the same outcome as a trade nobody mapped, reached by a
+   * typo instead of an omission. */
+  for (const [trade, key] of Object.entries(FOR_TRADE)) {
+    assert.ok(MARKS[key], `${trade} is mapped to ${key}, which does not exist`);
+  }
+
+  /* AND NOTHING HERE IS EMPTY. A mark function that returns no paths is a
+   * blank square in a logo, and the fallback cannot catch it because the
+   * trade IS mapped. */
+  for (const key of Object.keys(MARKS)) {
+    const made = MARKS[key]();
+    const count = (made.paths || []).length
+      + (made.groups || []).reduce((n, g) => n + g.paths.length, 0);
+
+    assert.ok(count > 0, `the ${key} mark draws nothing at all`);
+  }
+});
+
+test('AND THE MARKS LIVE WHERE THE SERVER CAN SEE THEM', () => {
+  /* ⚠ THEY WERE WRITTEN UNDER tools/, WHICH IS IN .rsync-exclude. That was
+   * right while they were only being looked at; the moment wordmarkLogo.js
+   * imported them it would have been a build that works on the Mac and
+   * throws on the VPS — at require time, so every job, not just the ones
+   * drawing a logo. */
+  const excl = fs.readFileSync(path.join(__dirname, '.rsync-exclude'), 'utf8');
+
+  assert.ok(/^tools\/$/m.test(excl), 'tools/ is no longer excluded, so this test is about nothing');
+
+  const src = fs.readFileSync(path.join(__dirname, 'utils', 'wordmarkLogo.js'), 'utf8');
+  const req = /require\('([^']*tradeMarks[^']*)'\)/.exec(src);
+
+  assert.ok(req, 'wordmarkLogo.js no longer imports the marks');
+  assert.ok(!req[1].includes('tools/'),
+    `wordmarkLogo.js imports the marks from ${req[1]}, which is not deployed`);
+
+  assert.ok(fs.existsSync(path.join(__dirname, 'utils', 'localOptions', 'tradeMarks.js')),
+    'the deployed copy of the marks is gone');
+});
+
 section('The stored model');
 
 test('logoSource survives createModel, which is a whitelist', () => {
@@ -888,6 +1114,62 @@ test('and the radio is set from code, not only read', () => {
       });
     }
   }
+
+  /* ⚠ THE SAME LOOP AGAIN WITH A MARK, AND A MUTANT IS WHY. Fitting the
+   * letters to the whole box instead of to what is left of it — one
+   * argument, `box` for `textBox` — passed every structural assertion
+   * above: the mark was placed, the offset was written, the colours were
+   * right. The letters simply ran off the right-hand edge, which only
+   * pixels can see.
+   *
+   *     A LAYOUT ASSERTED IN NUMBERS IS A LAYOUT NOBODY HAS LOOKED AT. */
+  for (const shape of ['square', 'rect', 'wide']) {
+    for (const [name, trade] of [
+      ['Round Rock Plumbing', 'Plumbing'],
+      ['CT Plumbing and Air Conditioning of Austin', 'Air Conditioning'],
+      ['Benson & Hale', 'Lemon Law'],
+    ]) {
+      await atest(`"${name}" in ${shape} with its mark: nothing touches an edge`, async () => {
+        const svg = wordmarkSvg({ businessName: name, logoType: shape, styleKey: 'style', trade });
+        const { rows, cols, info } = await inkMap(svg);
+
+        assert.ok(rows.some(Boolean), 'nothing was drawn at all');
+
+        assert.strictEqual(rows[0], false, 'ink on the top row');
+        assert.strictEqual(rows[info.height - 1], false, 'ink on the bottom row');
+        assert.strictEqual(cols[0], false, 'ink on the left edge');
+        assert.strictEqual(cols[info.width - 1], false,
+          'ink on the right edge — the letters were sized for a box the mark is using');
+      });
+    }
+  }
+
+  await atest('and the mark and the letters do not sit on top of each other', async () => {
+    /* THE GAP BETWEEN THEM IS EMPTY, asserted where the code says it put
+     * it. Counting runs of blank columns would have been fragile — a wide
+     * word space looks the same — so this reads the two placements out of
+     * the SVG and checks the strip between them. */
+    const svg = wordmarkSvg({
+      businessName: 'Round Rock Plumbing', logoType: 'wide',
+      styleKey: 'style', trade: 'Plumbing',
+    });
+
+    const mark = /translate\(([\d.]+) ([\d.]+)\) scale\(([\d.]+)\)/.exec(svg);
+    const offset = Number(/<g transform="translate\(([\d.]+) ([\d.]+)\)">/.exec(svg)[1]);
+    const right = Number(mark[1]) + 100 * Number(mark[3]);
+
+    const { cols } = await inkMap(svg);
+
+    assert.ok(right < offset, 'the mark box reaches past where the letters begin');
+
+    for (let x = Math.ceil(right) + 1; x < Math.floor(offset) - 1; x += 1) {
+      assert.strictEqual(cols[x], false,
+        `ink at column ${x}, which is between the mark and the name`);
+    }
+
+    assert.ok(cols.slice(0, Math.floor(right)).some(Boolean), 'the mark drew nothing');
+    assert.ok(cols.slice(Math.ceil(offset)).some(Boolean), 'the letters drew nothing');
+  });
 
   await atest('the drawing is vertically centred, not merely inside', async () => {
     // The clipping bug sat the whole block one cap-height too high. Inside

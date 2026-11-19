@@ -5993,7 +5993,191 @@ back when disputing a bill. Now covered, and the mutation is caught.
 
 ## Outstanding
 
-### SMALL — the Cloudflare domain dropdown should name the registrar too
+### "NEAR ME" NOW REACHES THE TITLE AND THE META — 19 November
+
+**Edwin:** *"I clicked the near me term but the meta description and the seo
+title are not showing the term"*, then, when told it never had: *"if I press
+the tick for the term near me it should add it to the meta description and at
+the end of the seo title like so | Plumber near me"*.
+
+**IT WAS NOT A REGRESSION, AND THAT IS WORTH RECORDING.** He was sure Rank
+Fast used to do it. `useNearMe` had exactly four readers — the About-page
+prompt, the About-page builder, the People Also Ask keyword in
+`runGeneration.js`, and `contentModel.js` — and none of them was the meta.
+What the term DID reach was the image filenames
+(`…-plumber-near-me-in-leander-tx-section2Img1.webp`) and **every alt
+attribute on the page**, which is visible in the source and is almost
+certainly the memory. `reuseModel.js` aliases `nearMe: 'section5'`; the term
+has always meant the About page's fifth section.
+
+    A TERM THE PAGE IS OPTIMISED FOR AND THE TITLE DOES NOT SAY IS A TERM
+    THE SEARCH RESULT DOES NOT CARRY.
+
+**ONE DEFINITION, IN `seoPresets.js`.** `nearMeTermFor(globalValues)` is new
+and `buildAboutUsPage.js` now calls it instead of composing its own string.
+Both index presets append ` | <Term>` to the title and `<Term>.` to the
+description. The noun comes from `businessShape.js`'s `titleFor()` — the form
+posts "Plumbing" and the search is for a **Plumber** — so the term in the
+title is the same term in the filenames and the alt text, which is the whole
+reason it moved.
+
+**THE TERM GOES BEFORE THE PHONE IN THE TITLE.** It was appended on the end
+for a few hours and Edwin moved it: *"the term near me goes first and then
+the phone number ... | plumber near me | call 789900088"*.
+
+    THE ORDER OF A TITLE IS THE ORDER THINGS GET CUT IN. A title is
+    truncated from the right at about sixty characters, so whatever sits
+    last is what the search result drops. The phone loses least by being
+    dropped — it is on every other page and in the schema.
+
+    rankfast   Quality Plumbing in Leander, TX | Plumber near me | Call (512) 894-6167
+    lead       Contact Quality Plumbing in Leander, TX | Plumber near me - Call (512) 894-6167
+
+Each preset keeps its own punctuation before the phone — a pipe on Rank Fast,
+a dash on Rank GBPs — because that is what those titles already used.
+
+**THE DESCRIPTION IS COMPOSED WITHOUT THE TERM AND TAKES IT AT THE END**, or
+it reads "…| Plumber near me - Call (512) 894-6167 to get a free quote" — the
+term inside a sentence. Moving it in the title would have done that here too,
+so the description is built from a `plain` string that never has it.
+
+**TWO THINGS THE TESTS CAUGHT, AND ONE WAS A TEST BEING WRONG.**
+
+  - **`Local Business near me`.** `titleFor()` falls back to "Local Business"
+    for an unrecognised type — right for a heading, and a search term nobody
+    has ever typed. A replayed payload from before the business-type field
+    existed is the way in, and the title would have shipped reading almost
+    plausibly. The type is now checked BEFORE `titleFor()`, not after.
+  - **A boolean `true` must tick the box, and my first test said it must
+    not.** The form posts the string, so asserting "string only" looked like
+    tightening — but `contentModel.js` STORES `useNearMe` as a boolean, so a
+    site rebuilt from its stored model comes back with `true`. That test
+    would have quietly dropped the term from every edited site.
+    `String(x) === 'true'` is the one check that takes both, and three files
+    already rely on it. Now pinned, with the reason.
+
+**⚠ AND I ALMOST OVERWROTE A 16KB SUITE.** `test-page-meta.js` already
+exists — 34 tests, since 20 September — and my copy of the repo does not have
+it. I wrote a new file of that name, and only noticed because `deploy.sh`
+already listed it and my edit produced a DUPLICATE line.
+
+    MY COPY OF THIS REPO IS PARTIAL, AND "THE FILE IS NOT HERE" IS NOT
+    EVIDENCE THAT IT DOES NOT EXIST. Before creating any file, list the
+    directory ON THE MAC.
+
+Nothing was committed; the new tests were merged into the real suite instead,
+which also caught that its `serviceMeta(name, globalValues)` takes the name
+FIRST — my version had the arguments the other way round and would have
+passed while testing nothing.
+
+`test-page-meta.js` — **43 passed**, 7 mutants, all killed. Full sweep clean.
+
+**NOT TOUCHED: the service, location and contact pages.** The box says "near
+me", singular, and the home page is the page that competes for it. Stamping
+one phrase on all eleven is how a site reads as written for a search engine.
+
+**NOT OFFERED ON LOCAL WEBSITE OPTIONS**, unchanged: that generator renders
+eleven pages from its own prompt files and the string "near me" appears
+nowhere in it. The box is not rendered there at all — a ticked box that
+changes nothing is worse than no box.
+
+**⚠ LENGTH.** With the term, a Rank Fast title is 71 characters and a Rank
+GBPs one is 79; Google truncates around 60. The term is at the END, as asked,
+so it is the part that gets cut in the result. Dropping the phone from the
+title would buy ~20 characters — not done, because Edwin asked for the phone
+there and has not been shown this trade-off.
+
+
+
+### THE LOGO CARRIES THE TRADE'S MARK — 18 November
+
+**Edwin, having had twenty-three marks drawn:** *"wire the logo plumbing"*,
+then *"fix the favicon"* on being told the logo would carry a wrench and the
+browser tab would carry "AD".
+
+**THE FORMAT DID NOT CHANGE, AND THAT WAS THE QUESTION HE ASKED FIRST.** The
+logo still ships as `assets/<prefix>-logo.png`. `wordmarkSvg()` has always
+built an SVG and sharp has always rasterised it — the SVG is the source, the
+PNG is the delivery, and the marks are simply more paths in the source.
+Shipping SVG instead would mean teaching the `<img>`, the JSON-LD `image`,
+the favicon `<link>`, the WordPress exporter's `logo_width` and the site
+store about a second kind of logo, for no gain: `SCALE = 2` already means a
+250×100 logo is a 500×200 PNG, and search and social want raster anyway.
+
+**WHERE THE MARK SITS IS DECIDED BY THE SHAPE.** Beside the name on the wide
+250×100 box; above it on the 120×120 square and the 150×100 rect, where a
+name beside a mark would have about 60px of width. `MARK_LAYOUT` holds the
+two arrangements as FRACTIONS of the box, so they survive SCALE and any box
+size added later.
+
+**⚠ THE MARK WAS 0.78 OF THE HEIGHT FIRST AND IT COST THE NAME A LINE.**
+That left the letters 279 of 500 units and set "Hill Country Roofing" on
+three lines in small type beside a large wrench.
+
+    THE NAME IS THE LOGO. THE MARK IS THE ADJECTIVE. Whatever is left
+    after the mark has had its share is what the business is called,
+    which is the wrong way round to allocate a box.
+
+At 0.66 with tighter gaps the letters get 313 units and the same name sets
+on two.
+
+**THE FALLBACK IS THE WHOLE SAFETY OF THE CHANGE.** Every wordmark drawn
+before today was drawn with no trade, and three kinds of caller still pass
+none: a business type with no mark, a replayed job payload written before
+the field existed, and a preview URL without the parameter. All three
+produce the logo byte for byte as before — `markPlacement()` returns null
+and nothing moves. A test asserts the bytes, not a resemblance: a single
+changed attribute would mean every existing site redraws differently on its
+next rebuild.
+
+**THE FAVICON TAKES THE MARK TOO, and initials remain the fallback.** Two
+different marks for one business, eighteen pixels apart, is the kind of
+thing nobody reports and everybody notices. The mark is drawn at 0.74 of the
+tile against the letters' 0.62: two capitals need air to read as letters, a
+single silhouette does not.
+
+**THE MARKS MOVED OUT OF `tools/`.** They were written at
+`tools/trade-marks/`, which is in `.rsync-exclude` — right while they were
+only being looked at, and a build that works on the Mac and throws on the
+VPS the moment `wordmarkLogo.js` imports them. At require time, so every
+job, not only the ones drawing a logo. They now live at
+`utils/localOptions/tradeMarks.js`; `tools/trade-marks/` keeps the preview
+and export scripts and the notes on how each mark was arrived at. A test
+reads `.rsync-exclude` and the import path together.
+
+**THE INK CANNOT DISAGREE.** The mark sits inside the group that carries the
+colour, so it takes whatever `THEME_INK` or `STRUCTURE_INK` chose for the
+letters — and it is inside the style7 halo as well, or it would be the one
+piece of the logo that vanishes over a bright sky. A test asserts the whole
+SVG carries exactly ONE fill colour.
+
+**ONE MUTANT SURVIVED AND IT TOOK PIXELS TO KILL IT.** Fitting the letters
+to the whole box instead of to what is left of it — `box` for `textBox`, one
+argument — passed every structural assertion: the mark was placed, the
+offset was written, the colours were right. The letters simply ran off the
+right-hand edge.
+
+    A LAYOUT ASSERTED IN NUMBERS IS A LAYOUT NOBODY HAS LOOKED AT.
+
+The existing `inkMap()` edge test now runs a second time with a mark, and a
+third test reads both placements out of the SVG and checks the strip between
+them is empty.
+
+**AND A REGEX THAT MATCHED THE WRONG GROUP.** `<g transform="translate(` is
+how both groups start; only the letters' ends there, because the mark's
+carries a scale. Without the closing `)">` the test read the mark's own x,
+measured 96% of the box for the letters, and passed while proving nothing.
+
+`test-wordmark-logo.js` — **115 passed**, 12 mutants, all killed. Full sweep
+clean.
+
+**STILL THE INITIALS FOR ANY TRADE WITHOUT A MARK**, which is none of the
+twenty-five today and will be the twenty-sixth the day one is added. The
+suite reports it.
+
+
+
+### ~~SMALL~~ CLOSED 19 November 2026 — the Cloudflare domain dropdown names the registrar
 
 **Edwin, 18 November**, right after "Where it goes" moved onto step 3:
 *"those domains should also show the registrar."*
@@ -6019,6 +6203,108 @@ OPTION TEXT changes.
 selects `domain label registrar` and maps all three into the response, so
 this is a CLIENT-ONLY change: three lines in `renderCloudflareFields()`,
 plus a test, plus the note that the VALUE must not change with the text.
+
+**SHIPPED 19 November.** One line of real change in
+`renderCloudflareFields()` — the label became
+`` `${d.domain} — ${d.registrar}` `` and the value stayed
+`escapeHtml(d.domain)`. Six tests added, `test-wizard-steps.js` at **141
+passed**, four mutants, all killed.
+
+**THE TESTS RUN THE CODE RATHER THAN READING IT, and the reason is a trap
+worth keeping.** Both pickers open on the identical string
+`'<option value="">Choose a domain…'`, and the GitHub one is written first
+in the file — so **every `indexOf()` in the five older registrar tests
+lands on the GitHub picker**. The Cloudflare block could have been deleted
+outright and all five would still have passed. The new ones anchor on
+`fetch('/api/cloudflare-domains'`, lift the real `.map()` out with
+`new Function`, and assert on its output.
+
+    TWO CALL SITES THAT OPEN ON THE SAME STRING ARE ONE CALL SITE
+    AS FAR AS indexOf() IS CONCERNED.
+
+**NOTHING SHOWS UNTIL THE ROWS ARE FILLED IN.** The registrar is per-row
+free text on `/admin/blog-domains` (the "Registrar ›" disclosure, which
+renders for EVERY row because the listing at line 218 is an unfiltered
+`Domain.find()`). The `cf-site-domains` batch form still has no registrar
+box and deliberately does not need one — one label cannot describe a batch.
+
+### NEXT — verify the first seven-site batch
+
+**Edwin, 19 November:** *"it worked. 7 websites published"* — the first
+batch through the Cloudflare door, and the first real build of ANY kind
+since the trade marks went into the logo on 17 November.
+
+**THE POINT OF THIS ITEM IS THAT 115 UNIT TESTS ARE NOT A BUILD.**
+`test-wordmark-logo.js` proves the SVG is well-formed and the mark is
+placed; it has never proved that a published page serves it. Four checks,
+and he has the URLs:
+
+1. **The logo** — does each site carry its trade mark beside the name, at
+   `MARK_LAYOUT.beside` on wide and `.above` on square? A trade with no
+   mark falls back to initials SILENTLY, which is correct behaviour and
+   indistinguishable from the wiring being broken.
+2. **The favicon** — `faviconSvg()` draws the mark at 0.74 of the tile and
+   falls back to initials the same way. Same ambiguity.
+3. **"near me"** — the title should read
+   `… | Plumber near me | Call (512) …` and the term should also be in the
+   meta description. Shipped 18 November, never seen on a live page.
+4. **Seven layouts, seven image sets** — did all seven rows actually get
+   DIFFERENT structures and different `set-N` folders, or did any collide?
+   This is the whole of Way A and it has never been observed at seven.
+
+**AND THE FIFTH, WHICH IS REALLY THE PROMPTS ITEM BELOW.** Seven sites,
+same trade, same city, different business names. If the copy reads
+near-identical across all seven, that is the confusing-prompts item with a
+much better reproduction than the three sites it was raised on.
+
+### NEXT — build seven sites from one CSV instead of seven forms
+
+**Edwin, 19 November:** *"is there a way that instead of filling each form
+we can upload a csv file with the 7 business name, addresses, phone
+numbers, make it default that they all will be 24 hours and the first site
+will get the first domain assigned, the second site will get the second
+domain assigned and so on"*
+
+**DECIDED WITH HIM, 19 November:**
+
+- **Positional domain pairing, WITH a preview table before anything
+  builds.** Row 1 → first domain, row 2 → second, as he asked.
+- **Row N gets layout N**, through the seven Cloudflare designs, each with
+  its own image set. This is what Way A was built for.
+- 24-hour opening times as the default for every row.
+
+**THE CSV CARRIES ONLY WHAT VARIES** — business name, address, phone. Trade,
+city and anything else shared is taken ONCE from the form above the upload.
+The subdomain prefix is derived from the business name, exactly as step 3
+derives it now.
+
+**SEQUENTIAL. NEVER PARALLEL.** `resetUserDirs()` wipes `dist/user_<id>`,
+which is ONE FOLDER PER USER, and `runLocalOptions.js` deliberately calls it
+BETWEEN generating and writing so a failure leaves the previous site
+standing. Seven builds at once would wipe each other's folder mid-write.
+
+    ONE BATCH JOB, NOT SEVEN JOBS.
+
+**IT IS A BACKGROUND JOB, NOT A REQUEST HE WAITS ON.** The note in
+`runLocalOptions.js` puts the writing alone at ~170 seconds; seven rows is
+twenty to twenty-five minutes. It needs a progress table and a per-row
+result, because row 4 failing leaves rows 1–3 LIVE and rows 5–7 never
+started — and the natural instinct, re-running the whole CSV, would rebuild
+three sites that were already fine.
+
+**WHY THE PREVIEW TABLE IS NOT OPTIONAL.** `/api/cloudflare-domains` sorts
+`{ domain: 1 }`, so the pairing is alphabetical. Add a domain, or disable
+one, and EVERY ROW SHIFTS — row 3 lands on a domain meant for row 4, the
+build succeeds, and nothing on any screen says it went to the wrong place.
+
+    POSITIONAL PAIRING IS A PROMISE ABOUT A LIST THAT NOBODY
+    PROMISED TO KEEP IN ORDER.
+
+The table resolves row → domain → prefix → layout and makes him confirm it
+before the first build starts. He chose this over bare positional and over
+a `domain` column in the CSV.
+
+**A PARSER ALREADY EXISTS TO BORROW:** `utils/blog/csvTopics.js`.
 
 ### NEXT — the Cloudflare prompts: the copy reads as confusing
 

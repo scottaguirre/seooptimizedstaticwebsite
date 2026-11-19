@@ -21,7 +21,7 @@ const { buildPricingTable } = require('./buildPricingTable');
 const { copyBadgeImages, buildBadgesHtml } = require('./copyBadgeImages');
 const { keptOn } = require('./sectionToggle');
 const { copyPageImage, buildContactFormHtml } = require('./pageParts');
-const { getPreset, assetPath, imageAlt } = require('./seoPresets');
+const { getPreset, assetPath, imageAlt, nearMeTermFor } = require('./seoPresets');
 const { canonicalTag } = require('./canonicalUrl');
 const { titleFor, capabilities, imageFolderFor, displayTrustPoint } = require('./businessShape');
 const { buildCaseStudySection } = require('./generateCaseStudy');
@@ -152,14 +152,14 @@ const  buildAboutUsPage =  async function (
         // Creating Section Content
 
        // Near Me Term Logic
+       //
+       // DERIVED IN seoPresets.js SINCE 19 NOVEMBER, not here. The same term
+       // now goes into the page title and the meta description as well as
+       // into these filenames and alt attributes, and two places building
+       // one string is how the title comes to say "Plumber near me" while
+       // the images say something else.
        const useNearMe = String(globalValues.useNearMe) === 'true';
-        let nearMeTerm;
-
-        if(useNearMe){
-            nearMeTerm = `${category} near me`;
-        } else{
-            nearMeTerm = "";
-        }
+       const nearMeTerm = nearMeTermFor(globalValues);
 
 
         // seoPrefix for this page's image filenames.

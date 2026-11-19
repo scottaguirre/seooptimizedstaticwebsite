@@ -4780,9 +4780,38 @@
          *
          * It also makes `required` mean something: an untouched box is now
          * empty, so the step refuses to continue and says which field. */
+        /* THE REGISTRAR IS IN THE LABEL AND NEVER IN THE VALUE.
+         *
+         * Edwin, 19 November: "i want to show the registrar in the dropdown
+         * in step 3". The GitHub picker has printed `domain — registrar`
+         * since 14 November and this one did not, which is the whole of
+         * what he is asking for.
+         *
+         * BUT THE TWO PICKERS DO NOT POST THE SAME THING, and that is the
+         * trap waiting here. The GitHub picker's value is a ROW ID, so its
+         * label is free to say anything. This one posts the DOMAIN ITSELF —
+         * `global[cloudflare][domain]` is read straight back as a hostname —
+         * so the moment the registrar reaches the value, every build on a
+         * row with a registrar set tries to publish to
+         *
+         *     quality-plumbing.1b-0.com — GoDaddy
+         *
+         * which is not a hostname. It would fail at the zone lookup with a
+         * message about a domain nobody typed.
+         *
+         *     A LABEL IS FOR READING. A VALUE IS FOR SENDING.
+         *     THE REGISTRAR IS NEVER PART OF THE ADDRESS.
+         *
+         * Hence two separate escapeHtml() calls over two separate strings,
+         * rather than one `describe(d)` used for both. The same reason
+         * `chosen` below still compares against the bare domain. */
         select.innerHTML = '<option value="">Choose a domain…</option>'
           + domains
-            .map(d => `<option value="${escapeHtml(d.domain)}">${escapeHtml(d.domain)}</option>`)
+            .map((d) => {
+              const label = d.registrar ? `${d.domain} — ${d.registrar}` : d.domain;
+
+              return `<option value="${escapeHtml(d.domain)}">${escapeHtml(label)}</option>`;
+            })
             .join('');
 
         const chosen = (state.mainFormSnapshot || {})['global[cloudflare][domain]'] || '';

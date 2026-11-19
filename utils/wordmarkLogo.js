@@ -43,6 +43,7 @@ const opentype = require('opentype.js');
 const sharp = require('sharp');
 
 const { logoSize } = require('./logoSizes');
+const { markKeyFor, markGroup } = require('./localOptions/tradeMarks');
 
 // ---------------------------------------------------------------------------
 // COLOUR
@@ -530,7 +531,79 @@ function linePath(font, line, size) {
  * Pure: no filesystem, no sharp, no clock. The tests assert on this rather
  * than on a PNG, because a PNG tells you only that something was drawn.
  */
-function wordmarkSvg({ businessName, logoType, styleKey, structure, font = loadFont(), withBackdrop = false }) {
+/**
+ * How much of the box the trade mark takes, and where.
+ *
+ * TWO ARRANGEMENTS, NOT ONE — Edwin, 18 November, choosing between them:
+ * beside the name on the wide shape, above it on the other two. A 250x100
+ * box has room for a mark and a line of type side by side; a 120x120 box
+ * does not, and a name squeezed into the 60px left over wraps a two-word
+ * business onto three lines.
+ *
+ *     THE SHAPE DECIDES THE ARRANGEMENT. It is the only thing that knows
+ *     how much room there is.
+ *
+ * The numbers are fractions of the box rather than pixels, so they hold at
+ * SCALE 1 and SCALE 2 and at any size added later.
+ */
+const MARK_LAYOUT = {
+  /* ⚠ THE MARK WAS 0.78 OF THE HEIGHT AND IT COST THE NAME A LINE. On the
+   * 250x100 box that left the letters 279 of 500 units, and "Hill Country
+   * Roofing" came out on THREE lines in small type beside a large wrench.
+   *
+   *     THE NAME IS THE LOGO. The mark is the adjective. Whatever is left
+   *     after the mark has had its share is what the business is called,
+   *     and that is the wrong way round to allocate the box.
+   *
+   * At 0.66, with the gaps tightened, the letters get 313 units and the
+   * same name sets on two. */
+  beside: { mark: 0.66, gap: 0.04, pad: 0.035 },  // of the box HEIGHT / WIDTH
+  above: { mark: 0.46, gap: 0.05, pad: 0.06 },    // of the box HEIGHT
+};
+
+/**
+ * Where the mark goes and what is left for the letters.
+ *
+ * RETURNS null WHEN THERE IS NO MARK, and every caller treats that as "draw
+ * the wordmark exactly as it was drawn before". A trade with no mark, a
+ * build that passes no trade at all, and a typo in the trade name all land
+ * here — and all three must produce the logo this function has always
+ * produced rather than a gap where a mark would have been.
+ */
+function markPlacement({ box, logoType, trade }) {
+  const key = markKeyFor(trade);
+
+  if (!key) return null;
+
+  if ('wide' === String(logoType || '').trim().toLowerCase()) {
+    const L = MARK_LAYOUT.beside;
+    const side = box.height * L.mark;
+    const pad = box.width * L.pad;
+    const gap = box.width * L.gap;
+
+    return {
+      key,
+      mark: { x: pad, y: (box.height - side) / 2, size: side },
+      text: { width: box.width - pad * 2 - side - gap, height: box.height },
+      offset: { x: pad + side + gap, y: 0 },
+    };
+  }
+
+  const L = MARK_LAYOUT.above;
+  const side = box.height * L.mark;
+  const pad = box.height * L.pad;
+  const gap = box.height * L.gap;
+
+  return {
+    key,
+    mark: { x: (box.width - side) / 2, y: pad, size: side },
+    text: { width: box.width, height: box.height - pad - side - gap },
+    offset: { x: 0, y: pad + side + gap },
+  };
+}
+
+function wordmarkSvg({ businessName, logoType, styleKey, structure, trade = '',
+                       font = loadFont(), withBackdrop = false }) {
   const name = sanitizeName(businessName);
   if (!name) {
     throw new Error(
@@ -542,7 +615,13 @@ function wordmarkSvg({ businessName, logoType, styleKey, structure, font = loadF
   const base = logoSize(logoType);
   const box = { width: base.width * SCALE, height: base.height * SCALE };
 
-  const { lines, size } = planLines(font, name, box);
+  /* THE LETTERS ARE FITTED TO WHAT IS LEFT, not to the whole box. Laying
+   * them out first and then putting a mark beside them is how a logo ends
+   * up with the name running under its own symbol. */
+  const placed = markPlacement({ box, logoType, trade });
+  const textBox = placed ? placed.text : box;
+
+  const { lines, size } = planLines(font, name, textBox);
   const colours = paletteFor({ styleKey, structure });
 
   const drawn = lines.map(line => linePath(font, line, size));
@@ -572,13 +651,23 @@ function wordmarkSvg({ businessName, logoType, styleKey, structure, font = loadF
     inkBottom = Math.max(inkBottom, line.bbox.y2 + i * leading);
   });
 
-  const firstBaseline = (box.height - (inkBottom - inkTop)) / 2 - inkTop;
+  const firstBaseline = (textBox.height - (inkBottom - inkTop)) / 2 - inkTop;
 
-  const body = drawn.map((line, i) => {
-    const x = (box.width - line.width) / 2;
+  const letters = drawn.map((line, i) => {
+    const x = (textBox.width - line.width) / 2;
     const y = firstBaseline + i * leading;
     return `<path transform="translate(${x.toFixed(2)} ${y.toFixed(2)})" d="${line.d}"/>`;
   }).join('');
+
+  /* THE MARK IS PART OF `body`, WHICH IS WHAT THE HALO COPIES. On style7 the
+   * header is a photograph and the halo is the only thing keeping white ink
+   * off a bright sky — a mark left out of it would be the one piece of the
+   * logo that disappears over clouds. */
+  const text = placed
+    ? `<g transform="translate(${placed.offset.x.toFixed(2)} ${placed.offset.y.toFixed(2)})">${letters}</g>`
+    : letters;
+
+  const body = (placed ? markGroup(placed.key, placed.mark) : '') + text;
 
   // On style7 the header is transparent over a photograph, so white letters
   // can land on a bright sky. The same glyphs are drawn once in black at a
@@ -608,18 +697,55 @@ function wordmarkSvg({ businessName, logoType, styleKey, structure, font = loadF
 }
 
 /**
- * The favicon as an SVG string: initials reversed out of a rounded tile.
+ * The favicon as an SVG string: the trade's mark, or the business's
+ * initials, reversed out of a rounded tile.
  *
  * NOT THE WORDMARK SHRUNK. The upload path makes the favicon by resizing the
  * logo to 42x42, which is right for a logo and wrong for a line of text — a
  * 250px-wide wordmark squeezed into 42px is an illegible grey smear. Two
- * letters at 42px are two letters.
+ * letters at 42px are two letters, and a single flat symbol is better than
+ * either.
+ *
+ * ⚠ THE MARK WINS WHERE THERE IS ONE — 18 November, Edwin: *"fix the
+ * favicon"*, on being told the logo would carry a wrench and the browser tab
+ * would carry "AD". Two different marks for one business, eighteen pixels
+ * apart, is the kind of thing nobody reports and everybody notices.
+ *
+ * INITIALS REMAIN THE FALLBACK, and they are not a legacy path: a trade with
+ * no mark drawn yet, a build that passes no trade, and a typo in the trade
+ * name all land there, and all three have to produce the favicon this
+ * function has always produced.
+ *
+ * THE MARK IS DRAWN BIGGER THAN THE LETTERS WERE — 0.74 of the tile against
+ * 0.62. Two capitals need air around them to read as letters; a single
+ * silhouette does not, and at 42px it needs every pixel it can have.
  *
  * The tile is always dark, so the favicon reads as a shape against a light
- * browser tab and against a dark one. White letters on it, whatever the
- * theme's ink is, for the same reason.
+ * browser tab and against a dark one. White on it, whatever the theme's ink
+ * is, for the same reason.
  */
-function faviconSvg({ businessName, styleKey, structure, font = loadFont(), size = 42 }) {
+function faviconSvg({ businessName, styleKey, structure, trade = '',
+                      font = loadFont(), size = 42 }) {
+  const colours = paletteFor({ styleKey, structure });
+  const px = size * SCALE;
+  const tile = `<rect width="${px}" height="${px}" rx="${(px * 0.2).toFixed(2)}" `
+    + `fill="${colours.tile}"/>`;
+
+  const key = markKeyFor(trade);
+
+  if (key) {
+    const side = px * 0.74;
+
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" `
+      + `viewBox="0 0 ${px} ${px}">`
+      + tile
+      + `<g fill="#ffffff">`
+      + markGroup(key, { x: (px - side) / 2, y: (px - side) / 2, size: side })
+      + '</g></svg>'
+    );
+  }
+
   const initials = initialsFor(businessName);
   if (!initials) {
     throw new Error(
@@ -627,9 +753,6 @@ function faviconSvg({ businessName, styleKey, structure, font = loadFont(), size
       'details step, or upload a logo instead.'
     );
   }
-
-  const colours = paletteFor({ styleKey, structure });
-  const px = size * SCALE;
 
   const inner = px * 0.62;
   const fitted = Math.min(
@@ -649,7 +772,7 @@ function faviconSvg({ businessName, styleKey, structure, font = loadFont(), size
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" ` +
     `viewBox="0 0 ${px} ${px}">` +
-    `<rect width="${px}" height="${px}" rx="${(px * 0.2).toFixed(2)}" fill="${colours.tile}"/>` +
+    tile +
     `<g fill="#ffffff"><path transform="translate(${x.toFixed(2)} ${y.toFixed(2)})" d="${line.d}"/></g>` +
     '</svg>'
   );
@@ -672,15 +795,16 @@ async function wordmarkPng(options) {
  * exporter, the published site's own store — learns that a second kind of
  * logo exists.
  */
-async function writeWordmark({ businessName, logoType, styleKey, structure, assetsDir, logoFilename, faviconFilename }) {
+async function writeWordmark({ businessName, logoType, styleKey, structure, trade = '',
+                               assetsDir, logoFilename, faviconFilename }) {
   const font = loadFont();
 
   const logoBuf = await sharp(
-    Buffer.from(wordmarkSvg({ businessName, logoType, styleKey, structure, font }))
+    Buffer.from(wordmarkSvg({ businessName, logoType, styleKey, structure, trade, font }))
   ).png().toBuffer();
 
   const faviconBuf = await sharp(
-    Buffer.from(faviconSvg({ businessName, styleKey, structure, font }))
+    Buffer.from(faviconSvg({ businessName, styleKey, structure, trade, font }))
   ).resize(42, 42).png().toBuffer();
 
   await fs.promises.writeFile(path.join(assetsDir, logoFilename), logoBuf);

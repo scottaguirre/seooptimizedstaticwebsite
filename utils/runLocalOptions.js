@@ -412,6 +412,13 @@ async function placeLogo(files, assetsDir, opts = {}) {
     businessName: opts.businessName,
     logoType: opts.logoType,
     structure: opts.structure,
+
+    /* THE TRADE, SO THE LOGO CAN CARRY ITS SYMBOL — 18 November. An unknown
+     * trade, or a trade with no mark drawn yet, draws the wordmark exactly
+     * as it did before: markPlacement() returns null and nothing changes.
+     * There is no branch here for that, deliberately, because a branch is
+     * a second place for the two to disagree. */
+    trade: opts.businessType,
   });
 
   await fsp.writeFile(path.join(assetsDir, path.basename(rel)), png);
@@ -705,6 +712,11 @@ async function runLocalOptions(ctx) {
      * will not use. See the note in designs.js: filtering a dropdown is not
      * validating a field. */
     structure: buildOptionsFor(global.design, designsKey).structure,
+
+    /* THE TRADE, FOR THE MARK BESIDE THE NAME. Read here with the rest of
+     * the logo's options so placeLogo() takes one object and nothing else
+     * has to reach back into `global`. */
+    businessType: String(global.businessType || '').trim(),
   };
 
   /* THE LOGO'S NAME NOW, THE LOGO'S BYTES LATER — see the ordering note

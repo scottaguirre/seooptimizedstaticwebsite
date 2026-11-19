@@ -372,6 +372,189 @@ test('businessNoun strips markup on its unmatched branch', () => {
   }
 });
 
+/* -------------------------------------------------------------------------
+ * The "near me" term — 19 November
+ * ---------------------------------------------------------------------- */
+
+test('the near-me tick puts the term in the title, BEFORE the phone', () => {
+  // Edwin: "if I press the tick for the term near me it should add it to the
+  // meta description and at the end of the seo title", then, a few hours
+  // later: "the term near me goes first and then the phone number ...
+  // | plumber near me | call 789900088".
+  //
+  // ⚠ IT NEVER DID ANY OF THIS BEFORE TODAY, AND THAT WAS NOT A REGRESSION.
+  // `useNearMe` had four readers — the About-page prompt, the About-page
+  // builder, the People Also Ask keyword and the content model — and none of
+  // them was the meta. The term DID reach the image filenames and every alt
+  // attribute on the page, which is why it looked as though it had once been
+  // here.
+  //
+  //     THE ORDER OF A TITLE IS THE ORDER THINGS GET CUT IN. A title is
+  //     truncated from the right at about sixty characters, so whatever
+  //     sits last is what the search result drops. The phone loses least
+  //     by being dropped — it is on every page and in the schema.
+  const expected = {
+    rankfast: 'Emergency Plumber Round Rock in Round Rock, TX | Plumber near me'
+      + ' | Call (512) 894-6167',
+    // "24/7 " is emergencyPrefix(), which fires on a name containing
+    // "Emergency" — part of this fixture since long before the term existed.
+    lead: 'Contact 24/7 Emergency Plumber Round Rock in Round Rock, TX'
+      + ' | Plumber near me - Call (512) 894-6167',
+  };
+
+  for (const mode of ['rankfast', 'lead']) {
+    const on = home({ useNearMe: 'true' }, mode);
+
+    assert.strictEqual(on.title, expected[mode], `${mode} title`);
+    assert.ok(on.description.includes('Plumber near me'), `${mode}: ${on.description}`);
+
+    // AND THE PHONE IS STILL LAST, asserted separately so a reordering that
+    // happens to match the string above by accident cannot pass.
+    assert.ok(on.title.indexOf('Plumber near me') < on.title.indexOf('(512)'),
+      `${mode}: the phone comes before the term`);
+  }
+});
+
+test('and the term keeps its place when there is no phone to follow it', () => {
+  // The phone is optional on both presets, and a term written as "term then
+  // phone" is easy to write in a way that leaves a dangling separator when
+  // the phone is absent.
+  for (const mode of ['rankfast', 'lead']) {
+    const on = home({ useNearMe: 'true', phone: '' }, mode);
+
+    assert.ok(on.title.endsWith('| Plumber near me'), `${mode}: ${on.title}`);
+    assert.ok(!/[|-]\s*$/.test(on.title), `${mode}: dangling separator in "${on.title}"`);
+  }
+});
+
+test('and the description is composed before the term is appended', () => {
+  // Both presets build the description out of the title. Appending the term
+  // first gives "...Call (512) 894-6167 | Plumber near me to get a free
+  // quote" — the term wedged into the middle of a sentence.
+  for (const mode of ['rankfast', 'lead']) {
+    const on = home({ useNearMe: 'true' }, mode);
+
+    assert.ok(!/near me (to|at|-) /.test(on.description), `${mode}: ${on.description}`);
+    assert.ok(on.description.trim().endsWith('Plumber near me.'), `${mode}: ${on.description}`);
+  }
+});
+
+test('and an unticked box leaves the meta byte for byte as it was', () => {
+  // Every site built before this change was built with the box off, and a
+  // stray pipe or space would redraw all of their meta on the next rebuild.
+  for (const mode of ['rankfast', 'lead']) {
+    const none = home({}, mode);
+
+    assert.deepStrictEqual(home({ useNearMe: 'false' }, mode), none);
+    assert.deepStrictEqual(home({ useNearMe: '' }, mode), none);
+    assert.deepStrictEqual(home({ useNearMe: 'yes' }, mode), none);
+  }
+});
+
+test('and a STORED BOOLEAN ticks it, because that is what gets stored', () => {
+  // ⚠ THIS TEST WAS FIRST WRITTEN THE OTHER WAY ROUND and the code was right.
+  // The form posts the string "true", so asserting that only a string counts
+  // looked like tightening — but contentModel.js stores
+  // `useNearMe: String(...) === 'true'`, a BOOLEAN, so a site rebuilt from its
+  // stored model comes back with `true`. Refusing it would have quietly
+  // dropped the term from every edited site.
+  //
+  //     `String(x) === 'true'` IS NOT SLOPPINESS HERE. It is the one test that
+  //     accepts both the form's string and the model's boolean, and three
+  //     other files already depend on it.
+  for (const mode of ['rankfast', 'lead']) {
+    assert.deepStrictEqual(home({ useNearMe: true }, mode), home({ useNearMe: 'true' }, mode));
+  }
+
+  const fs = require('fs');
+  const path = require('path');
+
+  for (const file of ['utils/buildAboutUsPage.js', 'utils/contentModel.js']) {
+    assert.ok(/String\((globalValues\.)?useNearMe\) === 'true'/
+      .test(fs.readFileSync(path.join(__dirname, file), 'utf8')),
+    `${file} no longer reads useNearMe the same way`);
+  }
+});
+
+test('the noun is the practitioner, not the business type', () => {
+  // The form posts "Plumbing" and the search is for a PLUMBER.
+  // businessShape.js already keeps that mapping for headings and prompts, so
+  // it is read rather than copied — a second table would be a second answer
+  // to "what is one of these people called".
+  const { nearMeTermFor } = require('./utils/seoPresets');
+  const { titleFor } = require('./utils/businessShape');
+
+  assert.strictEqual(nearMeTermFor({ useNearMe: 'true', businessType: 'Plumbing' }),
+    'Plumber near me');
+
+  // ASSERTED AGAINST businessShape RATHER THAN AGAINST A WORD, so renaming a
+  // type there cannot split the term from the headings on the same page.
+  for (const type of ['Roofing', 'HVAC', 'Concrete Contractor', 'Lemon Law']) {
+    assert.strictEqual(nearMeTermFor({ useNearMe: 'true', businessType: type }),
+      `${titleFor(type)} near me`, type);
+  }
+});
+
+test('and a site with no business type gets no term at all', () => {
+  // ⚠ FOUND BY THIS TEST, NOT BY A SITE. titleFor() falls back to "Local
+  // Business" for anything it does not recognise — right for a heading, and
+  // "Local Business near me" is a search term nobody has ever typed. A
+  // replayed payload from before the business-type field existed is the way
+  // in, and the title would have shipped reading almost plausibly.
+  const { nearMeTermFor } = require('./utils/seoPresets');
+
+  assert.strictEqual(nearMeTermFor({ useNearMe: 'true', businessType: '' }), '');
+  assert.strictEqual(nearMeTermFor({ useNearMe: 'true' }), '');
+
+  const bare = home({ businessType: '', useNearMe: 'true' });
+
+  assert.ok(!bare.title.includes('near me'), bare.title);
+});
+
+test('and only the home page carries the term', () => {
+  // The box says "near me", singular, and the home page is the page that
+  // competes for it. A service page is aimed at its own service, a location
+  // page at its town. Stamping one phrase on all eleven is how a site reads
+  // as written for a search engine rather than for a person.
+  const on = { ...BASE, useNearMe: 'true' };
+
+  const others = [
+    ['service', serviceMeta('Water Heater Repair', on)],
+    ['location', locationMeta('Austin, TX', on, SERVICE_PAGES(3))],
+    ['contact', contactMeta(on)],
+  ];
+
+  for (const [label, meta] of others) {
+    assert.ok(!/near me/i.test(meta.title), `${label} title: ${meta.title}`);
+    assert.ok(!/near me/i.test(meta.description), `${label} description`);
+  }
+});
+
+test('and the About page reads the same helper rather than building its own', () => {
+  // ⚠ IT DID BUILD ITS OWN UNTIL TODAY. The string was composed inside
+  // buildAboutUsPage.js and used for the image filenames, the alt attributes
+  // and the fifth section. Now that the title carries it too, two builders
+  // would be two answers — and the wrong one is the one nobody looks at,
+  // because an alt attribute is invisible.
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, 'utils', 'buildAboutUsPage.js'), 'utf8');
+
+  assert.ok(/nearMeTerm = nearMeTermFor\(globalValues\)/.test(src),
+    'the About page no longer takes the term from seoPresets');
+  assert.ok(!/nearMeTerm = `\$\{category\} near me`/.test(src),
+    'the About page is building the term itself again');
+});
+
+test('and the term survives the markup invariants like everything else', () => {
+  // clean() runs on the noun, so a business type with a quote in it cannot
+  // end the <title> attribute early through this new path either.
+  const meta = home({ businessType: 'Plumb<ing>"', useNearMe: 'true' });
+
+  assert.ok(!/["<>]/.test(meta.title), meta.title);
+  assert.ok(!/["<>]/.test(meta.description), meta.description);
+});
+
 console.log('');
 console.log(`  ${passed} passed, ${failed} failed`);
 console.log('');

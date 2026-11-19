@@ -988,6 +988,144 @@ test('AND THE API USES githubDomains(), NOT ITS OWN COPY OF THE FILTER', () => {
 });
 
 /* -------------------------------------------------------------------------
+ * The registrar in the CLOUDFLARE picker on step 3
+ *
+ * THE SECOND PICKER, AND THE CHECKS ABOVE DO NOT COVER IT. Both dropdowns
+ * open on the same string — `'<option value="">Choose a domain…'` — and the
+ * GitHub one is written first in the file, so every indexOf() above lands
+ * on it. The Cloudflare block could be deleted outright and those five
+ * tests would still pass. These anchor on the fetch instead.
+ *
+ * AND THEY RUN THE CODE RATHER THAN READING IT. A regex looking for
+ * `d.registrar` near the options is satisfied by the registrar appearing
+ * ANYWHERE in that block — including inside the value, which is the one
+ * place it must never be. See the note on the code itself: this picker
+ * posts the domain, not a row id.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The real `.map()` from the Cloudflare picker, lifted out and runnable.
+ *
+ * Takes the rows the API sends and returns the <option> markup, exactly as
+ * the browser would build it.
+ */
+function cloudflareOptions() {
+  const at = JS.indexOf("fetch('/api/cloudflare-domains'");
+
+  assert.notStrictEqual(at, -1,
+    'the Cloudflare domain picker no longer fetches /api/cloudflare-domains');
+
+  const block = JS.slice(at, at + 1600);
+  const from = block.indexOf('.map(');
+  const to = block.indexOf(".join('')");
+
+  assert.ok(from !== -1 && to > from,
+    'the Cloudflare picker no longer maps its rows into options');
+
+  /* escapeHtml is a closure in the real file, so it is passed in. The stub
+   * escapes the four characters that matter here and nothing else — if the
+   * real one ever stops escaping quotes, that is its own suite's problem,
+   * not this one's. */
+  const make = new Function('escapeHtml',
+    `return (rows) => rows${block.slice(from, to)}.join('');`);
+
+  return make(s => String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;'));
+}
+
+test('THE CLOUDFLARE PICKER PRINTS THE REGISTRAR BESIDE THE DOMAIN', () => {
+  /* Edwin, 19 November: "i want to show the registrar in the dropdown in
+   * step 3". 1b-0.com and 1-1b.com are both at GoDaddy; 3-ro.com is at
+   * Cloudflare. Three identical-looking domains is exactly the case the
+   * registrar is for. */
+  const build = cloudflareOptions();
+  const html = build([{ domain: '1b-0.com', registrar: 'GoDaddy' }]);
+
+  assert.match(html, />1b-0\.com — GoDaddy</,
+    'the dropdown still shows the bare domain with no registrar');
+});
+
+test('AND THE VALUE STAYS THE BARE DOMAIN', () => {
+  /* THE ONE THAT MATTERS. `global[cloudflare][domain]` is read back as a
+   * hostname — the zone lookup and the DNS record are both built from it.
+   * A value of "1b-0.com — GoDaddy" fails at the zone lookup complaining
+   * about a domain the customer never typed.
+   *
+   * The GitHub picker is free of this because its value is a row id. */
+  const build = cloudflareOptions();
+  const html = build([{ domain: '1b-0.com', registrar: 'GoDaddy' }]);
+
+  assert.match(html, /value="1b-0\.com"/,
+    'the registrar has leaked into the option value, which is the hostname');
+
+  assert.ok(!/value="[^"]*GoDaddy/.test(html),
+    'the option value carries the registrar and will not resolve');
+});
+
+test('AND A ROW WITH NO REGISTRAR IS UNCHANGED', () => {
+  /* Every cfsite row has a blank registrar until somebody fills it in on
+   * /admin/blog-domains. If a blank produced "1-1o.com — " or "1-1o.com —
+   * undefined", the feature would look broken on the rows that outnumber
+   * the ones it was asked for. */
+  const build = cloudflareOptions();
+
+  assert.strictEqual(
+    build([{ domain: '1-1o.com', registrar: '' }]),
+    '<option value="1-1o.com">1-1o.com</option>',
+    'a row with no registrar no longer renders as the domain alone');
+
+  assert.strictEqual(
+    build([{ domain: '1-1o.com' }]),
+    '<option value="1-1o.com">1-1o.com</option>',
+    'a row whose registrar key is missing renders a dash or an undefined');
+});
+
+test('AND THE REGISTRAR IS ESCAPED, NOT PASTED IN', () => {
+  /* The registrar is free text typed into an admin box with maxlength 60
+   * and a datalist that accepts anything. It reaches a customer's screen,
+   * so it goes through escapeHtml like everything else does. */
+  const build = cloudflareOptions();
+  const html = build([{ domain: 'x.com', registrar: '<b>&"' }]);
+
+  assert.ok(!/<b>/.test(html),
+    'the registrar is written into the option without being escaped');
+
+  assert.match(html, /&lt;b&gt;&amp;&quot;/,
+    'the registrar is not escaped the way the rest of the option is');
+});
+
+test('AND THE PICKER STILL OPENS ON "CHOOSE A DOMAIN…"', () => {
+  /* The guard the whole block exists for. Without a valueless first option
+   * the customer is handed whichever domain the pool listed first, and
+   * `required` stops meaning anything. Adding a label format is not a
+   * reason for it to move. */
+  const at = JS.indexOf("fetch('/api/cloudflare-domains'");
+  const block = JS.slice(at, at + 1600);
+
+  assert.match(block, /select\.innerHTML\s*=\s*'<option value="">Choose a domain/,
+    'the Cloudflare picker no longer opens on a valueless first option');
+});
+
+test('AND THE SAVED CHOICE IS STILL MATCHED ON THE BARE DOMAIN', () => {
+  /* A <select> cannot hold a value for an option it has not got, so the
+   * saved answer is reapplied after the rows land. It is compared against
+   * the VALUE, which is the domain — so a label change must not reach it.
+   * If `chosen` were ever built from the label, coming back to step 3 would
+   * silently clear a domain the customer had already picked. */
+  const at = JS.indexOf("fetch('/api/cloudflare-domains'");
+  const block = JS.slice(at, at + 2000);
+
+  assert.match(block, /mainFormSnapshot[^;]*global\[cloudflare\]\[domain\]/,
+    'the saved domain is no longer restored from the snapshot');
+
+  assert.ok(!/select\.value\s*=\s*[^;]*registrar/.test(block),
+    'the saved choice is being matched against the label, not the domain');
+});
+
+/* -------------------------------------------------------------------------
  * The price range table checkbox
  * ---------------------------------------------------------------------- */
 

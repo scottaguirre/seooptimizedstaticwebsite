@@ -484,6 +484,11 @@ async function runGeneration(ctx) {
         businessName: global.businessName,
         logoType: global.logoType,
         styleKey: global.styleKey,
+
+        /* THE TRADE, SO THE LOGO CAN CARRY ITS SYMBOL — 18 November. A
+         * trade with no mark drawn yet produces exactly the wordmark this
+         * call has always produced. */
+        trade: global.businessType,
         assetsDir,
         logoFilename: assetFile(seoPrefix, 'logo', '.png'),
         faviconFilename: assetFile(seoPrefix, 'favicon-42x42', '.png'),
