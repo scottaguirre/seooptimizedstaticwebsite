@@ -61,8 +61,8 @@ const {
   PAGE_TITLES,
 } = require('../shape');
 
-const { CSS_PATH } = require('../theme');
-const { SOCIAL, initials, addressLine, addressQuery } = require('../common');
+const { CSS_PATH, FAVICON_PATH } = require('../theme');
+const { SOCIAL, initials, addressLine, addressQuery, alwaysOpen } = require('../common');
 
 /** Quarry's own ids, in one place so nothing collides with the other three. */
 /* 'read', NOT 'content', AND THAT WAS A COLLISION FOR AN HOUR.
@@ -381,7 +381,7 @@ function hours({ hours: rows = [] } = {}) {
     <dl class="quarry-hours__col">${week.map(cell).join('')}</dl>
     ${rest.length ? `<dl class="quarry-hours__col">${rest.map(cell).join('')}</dl>` : ''}
   </div>
-  <p class="quarry-hours__note">Outside these hours, leave a message and we will call back.</p>
+  ${alwaysOpen(list) ? '' : '<p class="quarry-hours__note">Outside these hours, leave a message and we will call back.</p>'}
 </div>`;
 }
 
@@ -505,7 +505,8 @@ function document({
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${esc(canonical)}">
-<link rel="stylesheet" href="${assetTo(CSS_PATH, depth)}">${verify}${head}${ld}
+<link rel="stylesheet" href="${assetTo(CSS_PATH, depth)}">
+<link rel="icon" href="${assetTo(FAVICON_PATH, depth)}" type="image/png">${verify}${head}${ld}
 </head>
 <body>
 ${body}

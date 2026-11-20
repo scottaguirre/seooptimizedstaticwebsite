@@ -1034,26 +1034,79 @@ test('THE SPOKEN RULE NAMES THE WORDS IT FORBIDS', () => {
   assert.match(text, /twenty-five words/, 'there is no cap on a sentence');
 });
 
-test('THE TITLE IS A QUESTION, AND THE DESCRIPTION ANSWERS IT', () => {
+test('THE TITLE LEADS WITH THE NEXT STEP, AND THE DESCRIPTION SAYS WHAT FOLLOWS', () => {
   /* Ledger leads with the business name, Beacon the kind of work, Anvil the
    * place, Quarry the problem, Harbor the outcome, Atlas the thing worked
-   * on. A question is not another slot — it is a different sentence, which
-   * is why it is still available after six. */
+   * on. Every one of those names a THING; this one names an ACTION, which
+   * is why the slot is still free after six. */
   const { ORCHARD_VOICE } = orchardPrompt;
 
-  assert.match(ORCHARD_VOICE.title, /MUST be a question/, 'the title is not a question');
-  assert.match(ORCHARD_VOICE.title, /end with a question mark/,
-    'nothing makes the question a question');
-  assert.match(ORCHARD_VOICE.meta, /MUST answer the question asked in the title/,
-    'the description does not answer the title');
+  assert.match(ORCHARD_VOICE.title, /NEXT STEP/, 'the title does not lead with the next step');
+  assert.match(ORCHARD_VOICE.title, /plain action/,
+    'nothing says the step is named as an action');
+  assert.match(ORCHARD_VOICE.meta, /what happens when the reader takes the step/,
+    'the description no longer follows on from the title');
+});
 
-  /* AND THE QUESTION MAY NOT BE ABOUT PRICE. It is the question most often
-   * typed and the one this site cannot answer — a page that asks it and
-   * then does not say is worse than one that never asked. */
-  assert.match(ORCHARD_VOICE.title, /NOT be about price/, 'the title may ask about price');
-  assert.match(ORCHARD_VOICE.meta, /do not mention price/, 'the description may discuss price');
-  assert.match(ORCHARD_VOICE.meta, /do not ask another question/,
-    'the description may ask instead of answer');
+test('AND IT IS NO LONGER A QUESTION, WHICH IS THE WHOLE OF THE 19 NOVEMBER CHANGE', () => {
+  /* THE BRIEF CONTRADICTED ITSELF. "MUST end with a question mark" and "put
+   * the business name last, after the question" cannot both hold, and the
+   * model satisfied both with a second question mark after the name:
+   *
+   *     Need AC help in Austin, TX? Cold Air Conditioning Austin?
+   *
+   * Edwin, 19 November: "for Orchard don't make it a question in the seo
+   * title." A BAN THAT IS ONLY THE ABSENCE OF THE OLD RULE IS NOT A BAN —
+   * nothing would stop a later edit, or the model's own instinct for the
+   * oldest shape in local search, putting it back. So it is stated. */
+  const { ORCHARD_VOICE } = orchardPrompt;
+
+  assert.match(ORCHARD_VOICE.title, /must NOT be a question/,
+    'the title brief does not forbid a question');
+  assert.match(ORCHARD_VOICE.title, /must NOT end\s+with a question mark/,
+    'the title brief does not forbid the trailing question mark');
+  assert.match(ORCHARD_VOICE.meta, /do not ask a question/,
+    'the description may ask a question');
+
+  /* AND NEITHER BRIEF MAY STILL POINT AT A QUESTION THAT IS NOT THERE. The
+   * meta brief read "It MUST answer the question asked in the title" — left
+   * alone, it would have survived the title rewrite and gone on referring
+   * to something no longer in the title. */
+  assert.ok(!/answer the question asked in the title/.test(ORCHARD_VOICE.meta),
+    'the description still answers a question the title no longer asks');
+
+  /* THE BRIEF MAY NOT DEMAND AND FORBID THE SAME THING, WHICH IS THE WHOLE
+   * LESSON AND NOT A SECOND CHECK ON THE FIRST.
+   *
+   * A MUTANT FOUND THIS. Everything above asserts a phrase is PRESENT, so a
+   * brief that added "It MUST be a question" back while keeping "must NOT
+   * be a question" six words later passed all of it — a brief in exactly
+   * the self-contradicting state that put two question marks on every live
+   * Orchard page.
+   *
+   *     A TEST THAT ONLY ASKS WHETHER THE RULE IS THERE CANNOT SEE
+   *     THE OPPOSITE RULE SITTING BESIDE IT.
+   *
+   * `must NOT be a question` does not match /MUST be a question/, and
+   * `must NOT end with a question mark` does not match the second — the
+   * NOT is inside the span, so these read the positive demands only. */
+  assert.ok(!/MUST be a question/.test(ORCHARD_VOICE.title),
+    'the title brief demands a question and forbids one at the same time');
+  assert.ok(!/MUST end with a question mark/.test(ORCHARD_VOICE.title),
+    'the title brief demands the question mark it also bans');
+});
+
+test('AND THE PRICE FLOOR SURVIVED THE REWRITE', () => {
+  /* IT WAS CARRIED BY THE QUESTION. The old brief said "the question must
+   * NOT be about price", so deleting the question deleted the rule with it
+   * — the quietest way a rewrite loses a guard. Price, time and guarantee
+   * are now named in the brief directly. */
+  const { ORCHARD_VOICE } = orchardPrompt;
+
+  assert.match(ORCHARD_VOICE.title, /not put a price, a time or a guarantee in it/,
+    'the title may carry a price, a time or a guarantee');
+  assert.match(ORCHARD_VOICE.meta, /do not mention price/,
+    'the description may discuss price');
 });
 
 test('THE BUSINESS NAME IS IN BOTH, AND IS NEVER SHORTENED OR DROPPED', () => {
@@ -1375,6 +1428,84 @@ test('AND THE WORDMARK SITS ON WHAT THE BAR IS, NOT ON WHAT THE PAGE IS', () => 
     assert.ok(!seen.has(sig), `${key} and ${seen.get(sig)} share a wordmark palette`);
     seen.set(sig, key);
   }
+});
+
+/* -------------------------------------------------------------------------
+ * THE FAVICON, WHICH NO STRUCTURE HAD UNTIL 19 NOVEMBER
+ *
+ * Edwin, looking at a live site: *"I dont see any favicon"*. There was
+ * none, on any site this mode has ever built, and the two halves of the
+ * omission each cited the other:
+ *
+ *   render/chrome.js  emitted no <link rel="icon">
+ *   placeLogo()       wrote no file, "because a favicon would be a file
+ *                     nothing references"
+ *
+ *     TWO HALVES THAT EACH CITE THE OTHER AS THE REASON ARE NOT
+ *     A DECISION. THEY ARE A DECISION NOBODY EVER MADE.
+ * ---------------------------------------------------------------------- */
+
+test('EVERY STRUCTURE PUTS AN ICON IN THE TAB, NOT JUST THE ONE I CHECKED', () => {
+  /* SEVEN FILES, SEVEN HEAD BLOCKS. There is no shared <head> builder in
+   * this mode — each structure writes its own — so "it works in Orchard" is
+   * evidence about Orchard. The suites are per structure, which is exactly
+   * how six of them would keep a gap nobody is looking at. */
+  for (const key of structureKeys()) {
+    const home = renderSite(SITE({ structure: key }))['index.html'];
+
+    assert.match(home, /<link rel="icon" href="assets\/favicon\.png" type="image\/png">/,
+      `${key} draws no favicon link`);
+  }
+});
+
+test('AND IT IS RELATIVE TO THE PAGE, LIKE EVERY OTHER ASSET', () => {
+  /* `assets/favicon.png` IS CORRECT AT THE ROOT AND WRONG EVERYWHERE ELSE —
+   * the same sentence chrome.js already carries about the logo. From
+   * /drain-cleaning/ it asks for /drain-cleaning/assets/favicon.png, which
+   * is a 404 on ten of the eleven pages.
+   *
+   * It goes through assetTo(), which is why this passes — and why it would
+   * not have, had the href been typed. */
+  for (const key of structureKeys()) {
+    const files = renderSite(SITE({ structure: key }));
+    const deep = files[`${SLUGS[0]}/index.html`];
+
+    assert.ok(deep, `${key} did not render a service page`);
+    assert.match(deep, /<link rel="icon" href="\.\.\/assets\/favicon\.png"/,
+      `${key} points a sub-page at the wrong favicon path`);
+  }
+});
+
+test('AND THE NAME COMES FROM theme.js, NOT FROM SEVEN TYPED STRINGS', () => {
+  /* A filename written in eight places is how the tag and the file come to
+   * disagree — the warning placeLogo() already carries about the logo's own
+   * name. runLocalOptions imports the same constant to write the file. */
+  const { FAVICON_PATH } = require('./utils/localOptions/render/theme');
+
+  assert.strictEqual(FAVICON_PATH, 'assets/favicon.png');
+
+  for (const key of structureKeys()) {
+    assert.ok(renderSite(SITE({ structure: key }))['index.html'].includes(FAVICON_PATH),
+      `${key} does not link the path theme.js declares`);
+  }
+});
+
+test('AND THE ICON CARRIES THE TRADE MARK, NOT THE INITIALS, WHERE ONE EXISTS', () => {
+  /* faviconSvg() falls back to two letters for a trade with no mark drawn
+   * yet, and that fallback is SILENT — indistinguishable from the wiring
+   * being broken, which is the note test-wordmark-logo.js already carries.
+   * So the two are compared rather than one being inspected. */
+  const { faviconSvg, loadFont } = require('./utils/wordmarkLogo');
+  const font = loadFont();
+
+  const withTrade = faviconSvg({
+    businessName: 'The Chicago Plumber', structure: 'orchard', trade: 'plumbing', font });
+
+  const without = faviconSvg({
+    businessName: 'The Chicago Plumber', structure: 'orchard', trade: '', font });
+
+  assert.notStrictEqual(withTrade, without,
+    'the trade makes no difference to the icon, so the mark is not reaching it');
 });
 
 /* ---------------------------------------------------------------------- */

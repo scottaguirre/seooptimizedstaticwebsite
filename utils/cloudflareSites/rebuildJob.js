@@ -39,12 +39,87 @@
 //
 // So this job starts from the model that is ALREADY on the row. It takes no
 // words in its payload, which also means a payload that cannot be stale.
+//
+//
+// TWO BUILDERS, AND UNTIL 19 NOVEMBER THIS FILE KNEW ABOUT ONE
+//
+// It required runGeneration and nothing else, so even once capture() and the
+// editable check learned about Local Website Options there would have been
+// nowhere for a save to go: `site.buildRecipe.body` is null for that mode and
+// the job would have thrown on the first property read.
+//
+//     A RE-RENDER THAT ONLY KNOWS ONE RENDERER IS NOT A GENERAL
+//     RE-RENDER WITH A GAP. IT IS THE OTHER MODE'S SAVE BUTTON
+//     WIRED TO A CRASH.
+//
+// The second path is far cheaper than the first. runGeneration re-runs the
+// model for reviews — one call per service page, minutes of wall clock — and
+// renderSite() runs no model calls at all. The words are already written; an
+// edit is template work and costs nothing.
 
 'use strict';
 
 const CloudflareSite = require('../../models/CloudflareSite');
 const siteStore = require('./siteStore');
+const localOptionsText = require('./localOptionsText');
 const { log } = require('../logger');
+
+/**
+ * Re-render a Local Website Options site from its stored source.
+ *
+ * NO MODEL CALLS, NO CREDITS, AND THE RETURN SHAPE MATCHES runGeneration's
+ * so the caller branches once rather than everywhere after.
+ *
+ * `renderSite(stored)` IS THE WHOLE RE-RENDER. generate.js stores the same
+ * object it rendered from — "not a copy of its interesting parts" — which is
+ * what makes this three lines instead of a second generator.
+ *
+ * @param {object} site  a CloudflareSite row whose contentModel is a source
+ * @returns {Promise<{distDir: string, creditsCharged: number}>}
+ */
+async function rerenderLocalOptions(site) {
+  /* REQUIRED INSIDE, FOR THE REASON BELOW. runLocalOptions is the generator:
+   * it reaches the model, the credit ledger and Cloudflare, and this module
+   * is required by server.js at startup. Only the path that needs it pays
+   * for loading it. */
+  const { renderSite } = require('../localOptions/render/renderSite');
+  const { getUserDirs } = require('../buildAssets');
+  const { resetUserDirs } = require('../helpers');
+  const { SOURCE_PATH, sourceOf, writeFiles } = require('../runLocalOptions');
+  const { baseDistDir } = require('../../routes/cloudflareSitesRoute');
+
+  /* `now` COMES BACK FROM JSON AS A STRING AND THE RENDERER WANTS A DATE.
+   * The revival lives in localOptionsText.js beside the rest of what this
+   * shape needs, where it can be tested without a database — see
+   * sourceForRender() and the note on it, which names the line that throws. */
+  const ready = localOptionsText.sourceForRender(site.contentModel);
+
+  const userId = String(site.user);
+  const dirs = getUserDirs(baseDistDir, userId);
+
+  /* THE WIPE, AND IT IS THE SAME ONE runLocalOptions DOES, in the same
+   * place: after everything that could fail, immediately before bytes are
+   * written. renderSite() is synchronous and throws on a structure it does
+   * not know, so by this line there is nothing left to go wrong. */
+  const files = renderSite(ready);
+
+  resetUserDirs(dirs);
+
+  /* THE SOURCE GOES BACK DOWN BESIDE THE PAGES, or the NEXT edit would find
+   * no localoptions.json in the rebuilt folder and capture() would refuse
+   * the republish — turning the site uneditable again one save after it
+   * became editable.
+   *
+   * sourceOf() IS SAFE TO RUN TWICE: it spreads the source over its own
+   * mode and version, both of which the stored object already carries with
+   * the same values, and converts `now` back to the string it came from. */
+  await writeFiles(dirs.distDir, {
+    ...files,
+    [SOURCE_PATH]: sourceOf(ready),
+  });
+
+  return { distDir: dirs.distDir, creditsCharged: 0 };
+}
 
 /**
  * @param {object} job                the Job row, with `payload.siteId`
@@ -90,18 +165,32 @@ async function rebuildForJob(job, { onProgress } = {}) {
     await onProgress({ stage: 'rebuilding', current: site.siteUrl, done: 0, total: 0 });
   }
 
-  /* `files: []` — NO UPLOADS, DELIBERATELY. The images are not regenerated;
-   * they are copied back out of the site's own store below. runGeneration
-   * takes the logo and favicon paths off the stored model when `reuse` is
-   * set — see the note beside its required-files guard, which used to refuse
-   * this call outright. */
-  const built = await runGeneration({
-    body: site.buildRecipe.body,
-    files: [],
-    user: { _id: site.user },
-    requestId: jobId,
-    reuse: site.contentModel,
-  });
+  /* WHICH BUILDER, ASKED OF THE STORED WORDS RATHER THAN OF THE ROW.
+   *
+   * siteStore.isLocalOptions() is the one reading of this question — the
+   * same one capture() used to decide what it had and the editable check
+   * used to decide whether to draw the button. A fourth place asking it by
+   * hand is how one of them ends up interrogating the wrong object and
+   * being quietly always false.
+   *
+   * NOT `site.buildRecipe` AS THE TEST, which would be the obvious shortcut
+   * and is wrong twice over: a generator site published before build.json
+   * existed also has none, and it is not the question being asked. */
+  const built = siteStore.isLocalOptions(site.contentModel)
+    ? await rerenderLocalOptions(site)
+
+    /* `files: []` — NO UPLOADS, DELIBERATELY. The images are not regenerated;
+     * they are copied back out of the site's own store below. runGeneration
+     * takes the logo and favicon paths off the stored model when `reuse` is
+     * set — see the note beside its required-files guard, which used to refuse
+     * this call outright. */
+    : await runGeneration({
+      body: site.buildRecipe.body,
+      files: [],
+      user: { _id: site.user },
+      requestId: jobId,
+      reuse: site.contentModel,
+    });
 
   /* THE IMAGES, PUT BACK BEFORE ANYTHING IS READ FOR DEPLOY.
    *

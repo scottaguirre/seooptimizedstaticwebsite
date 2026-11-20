@@ -5993,6 +5993,160 @@ back when disputing a bill. Now covered, and the mutation is caught.
 
 ## Outstanding
 
+### ~~BUG~~ CLOSED 20 November 2026 — a deleted site kept its hostname for ever
+
+**THE FAILURE.** Seven sites in one batch, six live. The seventh:
+
+    "event":"jobs.cloudflarePublish","ok":false,"code":"raced","siteId":""
+
+`raced` means a duplicate-key error, which `createAndPublish()` reads as two
+requests colliding. **Nothing collided.** A batch builds one site at a time,
+and the row that refused it had been torn down cleanly forty-five minutes
+earlier:
+
+    6afe9db0ecc9acc86cbbfd46  removed
+    released {"domain":true,"dns":true,"project":true,"at":"…T01:16:18Z"}
+
+**THE CAUSE: ONE RULE, TWO ENFORCERS, ONE OF THEM TAUGHT.** On 17 November
+`checkWant()` learned that a fully released row does not reserve its name —
+`$nor: [RELEASED]`. `unique: true` on `siteUrl` learned nothing, because an
+index cannot be told that some rows do not count:
+
+    checkWant  →  "free"              (the row is excluded)
+    create()   →  E11000 duplicate    (the index sees every row)
+
+The build had already run. **The credits were already spent.**
+
+    THE FILE ALREADY SAID SO. createAndPublish(), nine lines above the
+    create: "The unique index on siteUrl means that claim cannot be given
+    back without deleting the row." One half of the file knew; the other
+    half was fixed without it.
+
+**WHY ONLY ONE OF SEVEN FAILED, which is the part that nearly hid it.** Six
+of tonight's businesses landed on a DIFFERENT pool domain than last time —
+the CSV paired them in a new order. Only `pt-air-conditioning-austin` +
+`2-r2.com` repeated an address exactly. The other six deleted addresses were
+just as stuck; nothing had asked for them yet.
+
+    A BUG THAT NEEDS A COINCIDENCE TO SHOW ITSELF IS NOT A RARE BUG. IT IS
+    A BUG WITH A QUIET PERIOD.
+
+**THE FIX — `utils/cloudflareSites/releasedHostname.js`.** When a teardown
+releases all three, the row HANDS THE NAME BACK: `siteUrl` becomes
+`released:<id>` — a value with a colon in it, which no hostname can contain
+— and the address moves to a new `releasedUrl` field. The index then has
+nothing to hold. Called from `removeFromCloudflare()`, in the same two lines
+that decide the name is free.
+
+**NOT A DELETE**, because the row is the only record the site existed. **NOT
+A PARTIAL INDEX**, which was the alternative: expressing "unique unless
+three booleans are all true" is awkward, and rebuilding a live unique index
+opens a window where two rows can take one hostname.
+
+**THREE SCREENS PRINT A REMOVED ROW'S ADDRESS AFTER THE TEARDOWN** — the
+delete result, the finish-removing result, the republish refusal. All three
+now read `hostnameOf()`, or they would show a customer a database id.
+
+**AND A ONE-OFF SWEEP IN `server.js`**, for the rows deleted before this
+shipped. On Edwin's data: `freed: 8, failed: 0`. It runs on every boot and
+the second run finds nothing — the query cannot match a row it has freed.
+A sweep rather than a script somebody has to remember, for the reason
+`cleanupScheduler.js` carries: a job nobody runs and a job with nothing to
+do look identical from outside.
+
+**TESTS:** `test-released-hostname.js`, 18, with 10/10 mutants killed. The
+two that matter: a freed row must no longer MATCH A HOSTNAME QUERY (not
+"the field is set" — that is the test agreeing with itself), and two rows
+that held the same address must end up different, or the duplicate-key
+error just moves one column to the left.
+
+**STILL OPEN:** `models/BlogSite.js` has the same plain unique `siteUrl`.
+See the NEXT section below.
+
+### ~~NEXT~~ CLOSED 20 November 2026 — seven sites from one CSV
+
+**Edwin, 19 November:** *"is there a way that instead of filling each form
+we can upload a csv file with the 7 business name, addresses, phone
+numbers, make it default that they all will be 24 hours and the first site
+will get the first domain assigned, the second site will get the second
+domain assigned and so on"*, then the scope on the 20th: *"these sites is
+just for cloudflare sites, that means there are not 'near me' button, no
+legal ticks, not trust badges… The logo, 24 hours are default. The city,
+trade should be a column in the csv… Each websites is just for one city"*.
+
+**`/batch-sites`, A SIDEBAR ROW, AND NO FORM BEHIND IT.** Seven columns:
+trade, city and state, zip, business name, address, phone, email. The screen
+takes the file, validates every row, shows what it will build, and the
+button queues one job that builds them back to back.
+
+**EVERY BAD ROW IS REPORTED, NOT THE FIRST ONE.** Somebody who pasted a
+spreadsheet wants to fix the file once; a parser that stops at the first
+fault makes that seven round trips. And a batch with ANY bad row is not
+built.
+
+**THE ROW THIS VALIDATES AGAINST.** Only three trades have photographs for
+this mode. A build for any other one DOES NOT FAIL — it logs
+`localOptions.heroesMissing … found: 0` and publishes a site with four
+missing heroes, after the credits are spent. So the trade column is checked
+against what is on disk, before anything is queued.
+
+**A DOWNLOADABLE TEMPLATE**, Edwin's ask: *"is there a template in the
+screen so the user can download it and just fill it up?"* — served with a
+BOM, because Excel reads a plain UTF-8 CSV as Latin-1. `String.trim()`
+treats U+FEFF as whitespace, so the parser needs no special case for it.
+
+**WHAT IT SHIPPED WITH, WRONG, AND WAS FIXED THE SAME NIGHT:**
+
+- **The entry carried no destination.** `siteMode: localoptions` was set and
+  `siteTarget` was not — and CLOUDFLARE IS A DESTINATION, NOT A MODE, so
+  `vetOne()` passed the mode check and failed the next line with *"Site 1 is
+  not addressed to Cloudflare."* It also lacked
+  `global[cloudflare][name]`, which `checkWant()` refuses without.
+- **The preview table drew white.** Removing `table-dark` to meet the theme
+  left a plain Bootstrap `table`; the Row and Layout cells were
+  `text-white-50`, so they were white on white. REMOVING THE WRONG THING IS
+  NOT THE SAME AS USING THE RIGHT ONE — `appHeader.js` already had
+  `.table-navy` and `.rownum` for exactly this.
+
+**FIRST REAL RUN:** 7 queued, 6 live, 5,600 credits. The seventh is the
+hostname bug above.
+
+### ~~SMALL~~ CLOSED 20 November 2026 — "open 24 hours" and "outside these hours"
+
+**Edwin had ticked 24 hours and the pages still carried a note about calling
+outside opening hours.** Both statements were generated and neither knew
+about the other.
+
+**THE TEST IS THE DATA, NOT THE TICKBOX.** `alwaysOpen(rows)` in
+`render/common.js` asks whether every row reads `Open 24 hours`, and the
+three structures with that note — quarry, anvil, beacon — drop it when it
+does. Reading the form field instead would have been a fourth place that
+has to agree with `hoursFrom()`.
+
+**`ALL_DAY` IS A FORMAT, NOT A CONSTANT.** It is written into stored
+opening-hours rows, so changing its value does not change what old rows
+say. The test asserts the LITERAL `'Open 24 hours'`, deliberately — a test
+importing the constant at both ends passes however it is edited.
+
+### ~~SMALL~~ CLOSED 20 November 2026 — favicons on Local Website Options sites
+
+**Edwin:** *"This is the logo of the one i just updated… but I dont see any
+favicon"*. There was none: the mode's seven `chrome.js` head blocks linked
+a stylesheet and nothing else.
+
+**DRAWN FROM THE SAME WORDMARK SOURCE**, resized to 42×42 with sharp, in
+`runLocalOptions.writeFavicon()`.
+
+**CALLED BEFORE `placeLogo`'s EARLY RETURN, AND THAT IS THE WHOLE BUG.**
+`placeLogo` returns early for a generated wordmark — nothing to upload — so
+a favicon written after it never ran for exactly the sites this mode builds.
+
+**IT NEVER FAILS A BUILD.** A favicon that cannot be drawn is logged and
+skipped; eleven paid-for pages are not lost over an icon.
+
+**PROVEN ACROSS ALL SEVEN STRUCTURES** by the batch of 20 November, which
+built one site on each layout.
+
 ### "NEAR ME" NOW REACHES THE TITLE AND THE META — 19 November
 
 **Edwin:** *"I clicked the near me term but the meta description and the seo
@@ -6228,6 +6382,312 @@ renders for EVERY row because the listing at line 218 is an unfiltered
 `Domain.find()`). The `cf-site-domains` batch form still has no registrar
 box and deliberately does not need one — one label cannot describe a batch.
 
+### ~~NEXT~~ CLOSED 19 November 2026 — Local Website Options sites could never be edited
+
+**Edwin, 19 November, looking at the seven live sites:** *"these 7 sites
+have no way to update the content, no edit button."*
+
+**NOT THE BATCH, AND NOT A RACE.** The first theory was that seven builds
+back to back had lost a race against `resetUserDirs()`, which wipes the one
+`dist/user_<id>` every build shares. Reading the code killed that in one
+line. `siteStore.capture()` read `_src/content.json`, and
+`runLocalOptions.js` says at the top of itself:
+
+>   contentModel     **no content.json is written**, and therefore
+>   checkStructureParity  no parity check runs
+
+It writes `_src/localoptions.json` instead, deliberately, because
+`utils/contentModel.js` owns the other filename and a different shape at the
+same path would be a file that lies about what it describes.
+
+**SO EVERY LOCAL WEBSITE OPTIONS SITE EVER BUILT WAS UNEDITABLE** — on the
+Cloudflare door AND the GitHub one, from the day the edit screen shipped.
+Seven went live before anybody noticed, and nothing anywhere said why: the
+capture failed, the publish succeeded and reported success, the row got
+`editable: false`, and the list screen simply drew no button.
+
+    A FUNCTION THAT HANDLES ONE OF TWO FORMATS AND REPORTS
+    "NO CONTENT" FOR THE OTHER IS NOT MISSING A FEATURE.
+    IT IS WRONG ABOUT WHAT IT WAS GIVEN.
+
+**WHAT PROVED IT WAS THE MODE AND NOT THE BATCH.** Rows 11 and 12, built
+individually on 17 November, had no button either; rows 13–15 did. Fetching
+`the-plano-plumber.my-sites.net` settled it — an FAQ section, customer
+reviews, a **PLUMBER NEAR ME** H2, seven service pages and a
+`rankFastIndexMeta`-shaped title. A Rank Fast site. The dividing line is the
+BUILDER, not how many were built at once.
+
+**THE FOUR PIECES, AND WHY IT WAS NOT A ONE-LINER**
+
+1. **`siteStore.capture()`** falls back to `_src/localoptions.json`, and
+   `isLocalOptions(model)` is the ONE reading of that question — three
+   callers ask it. It asks the DATA: `sourceOf()` stamps
+   `mode: 'localoptions'` into the file, so the stored words say what they
+   are. A column on the row would have been a second place for the same
+   fact, wrong for every site captured before it existed.
+2. **`utils/cloudflareSites/localOptionsText.js`**, a second reader
+   returning the same slot shape, so the form is the same form.
+3. **`rebuildJob.js`** branches to `renderSite(stored)` — no model calls,
+   no credits, seconds instead of the minutes `runGeneration` costs for
+   reviews.
+4. **`renderSections(model, esc, collect)`** takes the reader as an
+   argument, defaulting to `editableText.collect`, so no Rank Fast caller
+   changed.
+
+**NO RECIPE IS REQUIRED OF THIS MODE, AND THAT IS THE SUBTLE PART.** For a
+generator build, model AND recipe or it is not editable — the words and the
+decisions, and a re-render from one without the other builds a site from
+half an answer. A Local Website Options source is BOTH HALVES: generate.js
+stores "the same object, not a copy of its interesting parts", so
+`renderSite(stored)` IS the re-render. An absent recipe means "published
+before build.json existed" in one format and "correct" in the other.
+
+**SEO TITLE AND META ARE EDITABLE HERE AND NOT ON RANK FAST** — Edwin asked
+on the same day. `rankFastIndexMeta()` BUILDS those from the business name
+and the phone, so an edit there would be overwritten by the next render. In
+this mode they are model-written and stored, so an edit sticks. They are a
+property of the PAGE rather than of a section, which is the one shape the
+form did not already have.
+
+**THREE TRAPS, EACH FOUND BY RUNNING SOMETHING RATHER THAN READING IT**
+
+**`now` COMES BACK FROM JSON AS A STRING.** `sourceOf()` converts the Date
+on the way to disk, correctly — JSON has no date type. `contextFor()` then
+does `site.now || new Date()`, so the string sails past the fallback and the
+footer's `now.getFullYear()` throws. Every save would have failed.
+
+    THE FALLBACK ONLY CATCHES A MISSING VALUE. A PRESENT ONE OF
+    THE WRONG TYPE SAILS PAST IT AND THROWS LATER, IN ANOTHER
+    FILE, ON A LINE THAT LOOKS FINE.
+
+`sourceForRender()` revives it rather than using `new Date()`: renderSite is
+deliberately deterministic, and today's date would change the footer year
+and the sitemap lastmod on every save — a diff on every page for a one-line
+edit.
+
+**THE FORM NAMED THE BOXES ITSELF.** `renderSections()` computed every
+paragraph name as `fieldName(pageSlug, sectionKey, i)`, which is right for
+the other reader, whose paragraphs are always a contiguous array. A
+localoptions block can be ONE STRING FROM A NAMED KEY — a divider line, the
+services lede, a meta description. The description box would have posted as
+`p::index::seo::0`, `apply()` would have rejected a name it never offered,
+and the screen would have said "nothing changed" to somebody who had just
+rewritten every title on the site.
+
+    NEITHER SIDE THROWS. ONE INVENTS A NAME AND THE OTHER
+    POLITELY IGNORES IT.
+
+**THE RETURN SHAPE WAS A NEAR MISS.** `editableText.apply` returns `model`
+and ARRAYS of field names. The new one returned `source` and NUMBERS.
+`applied.changed.length` on a number is `0`, with no error anywhere — a save
+that worked, reported as a save that did nothing.
+
+    A NEAR-MISS SHAPE IS WORSE THAN A DIFFERENT ONE.
+    IT FAILS QUIETLY AND IN THE RIGHT-LOOKING DIRECTION.
+
+**ESCAPING RUNS THE OPPOSITE WAY FROM editableText.js, AND THIS IS THE RULE
+A LATER EDIT IS MOST LIKELY TO BREAK.** Every renderer in
+`utils/localOptions/render/` escapes on the way OUT — `esc(title)`,
+`richText(p)` which escapes before it linkifies — so the stored words are
+RAW. The other reader stores escaped text and decodes it for the box,
+because the generator's templates write their values out raw. Copying that
+pair into this file would escape an already-raw string once per save until
+the published page showed `I&#39;m` to visitors. There is a test that does
+nothing else, and a second one that asserts on the RENDERED OUTPUT rather
+than on the renderer's source.
+
+**TESTS: `test-local-options-text.js` (28), `test-site-store.js` 17 → 25.**
+Seventeen mutants killed across the three files; **three of them found real
+test gaps**:
+
+- the bounds check exists twice — service sections and the home `about`
+  array — and only the first had a test. *Two branches that do the same job
+  need two tests.*
+- `readRecipe()` returns null when there is no build.json, so "do not call
+  it" and "call it and get null" were the same assertion on an empty folder.
+  The case that tells them apart is a STALE `_src/build.json` left in the
+  shared user folder by an earlier Rank Fast build — adopting it would store
+  another site's decisions against this one.
+- the fixture was stamped with the day it was written, so replacing the
+  stored date with `new Date()` produced an identical sitemap. *A fixture
+  dated today agrees with both answers.*
+
+**WHAT IT DOES NOT DO.** The seven live sites stay uneditable until each is
+republished once — nothing was captured for them, and a re-render from
+nothing would generate a different site and charge for it. The business
+details, the images and every H1 stay out, for the reason the other reader
+already gives: the H1 is computed by `homeHeading(business)` and a box for
+it would accept an edit and lose it on the next render.
+
+**`deploy.sh` GAINED `test-local-options-text.js` AND WAS EDITED FROM A
+SESSION — the executable bit needs restoring.**
+
+**PROVEN ON A LIVE SITE, 19 November.** Deployed, republished
+`cold-air-conditioning-austin.u-sites.com`, which captured its words and
+grew an Edit words button. Edwin then used it to delete the Orchard double
+question mark, and the live page came back:
+
+    <title>Need AC help in Austin, TX | Cold Air Conditioning Austin</title>
+
+Capture, reader, form, apply, re-render, deploy — the whole chain, on a real
+site, with no model call and no credits. **The first content fault fixed by
+typing rather than by rebuilding.**
+
+### ~~SMALL~~ CLOSED 19 November 2026 — "Publish again" deployed whichever site was built last
+
+**FOUND WHILE ADVISING EDWIN TO PRESS IT SEVEN TIMES.** With seven sites
+live and no Edit button on any of them, the obvious repair was "Publish
+again" on each row. It would have published the WRONG SITE to six of them.
+
+    publishNow() reads buildDirFor(userId).
+    dist/user_<id> is ONE FOLDER PER USER.
+    THE ROW DECIDES WHERE. THE FOLDER DECIDES WHAT.
+
+Nothing had ever compared the two. The result would have been a complete,
+well-formed, correctly-certificated website about the wrong business,
+reported as a successful publish — the fault `routes/formRoute.js` records
+about the old two-screen flow ("the second step was not a step. It was the
+first step's output, re-entered by hand"), still living in this one button.
+
+**THE CHECK READS THE CANONICAL OUT OF index.html.** Both builders write it
+from the site's own domain — `chrome.js` here, `utils/canonicalUrl.js` for
+the generator — so `siteFiles.whoseBuild()` reads WHAT IS ABOUT TO BE
+UPLOADED rather than a manifest beside it. A manifest can be right about a
+folder whose pages are wrong; the pages cannot be wrong about themselves.
+It also needs no knowledge of which builder made the folder, which is what
+keeps it correct for the eighth one.
+
+**A BUILD WITH NO CANONICAL IS LET THROUGH.** `canonicalTag()` returns ''
+when there is no usable domain, deliberately — an empty canonical tells a
+crawler to canonicalise the page to nothing. So a build without one cannot
+be judged, and every build made before this check existed is one of them.
+
+    A CHECK THAT CANNOT SEE THE ANSWER HAS NOT FOUND A MISMATCH.
+
+**A MUTANT FOUND A GUARD THAT WOULD HAVE BLOCKED CORRECT PUBLISHES.**
+Dropping the lowercasing in `hostOf()` changed nothing, because every host
+in the tests was already lower case. But `new URL().host` lowercases for
+free while the stored `siteUrl` is whatever was saved, so one capital letter
+would have made every republish of that site look like somebody else's
+build.
+
+    A COMPARISON BETWEEN A NORMALISED VALUE AND AN UNNORMALISED
+    ONE IS NOT A COMPARISON. IT IS A TEST OF WHERE THE DATA
+    HAPPENED TO COME FROM.
+
+**CONFIRMED LIVE.** Row 1 matched and published; row 2 refused by name.
+`test-cloudflare-sites.js` 108 → 113, five mutants, all killed.
+
+**STILL OPEN FROM IT: the refusal tells sites 2–7 to open an Edit words
+screen they do not have.** Their words were never captured, so the advice is
+circular. The message should branch on `whyNotEditable(site)` and say what
+is actually true of a site with nothing stored.
+
+### SMALL — the dashboard build card undercounts this mode by nine
+
+**"Your latest build — 2 pages", for an eleven-page site.** `getCurrentSite()`
+counts `.html` files ONE LEVEL DEEP:
+
+    fs.readdirSync(distDir).filter(f => f.endsWith('.html'))
+
+Local Website Options writes its pages into subfolders —
+`air-conditioner-repair/index.html` — so the top level holds `index.html`
+and `404.html`. Two. The deploy itself walks recursively, which is why all
+eleven pages go up; only the card is wrong.
+
+**SAME ROOT AS THE EDIT BUG, ONE SCREEN OVER.** It also reads
+`_src/content.json` for the business name and date, which this mode does not
+write, so the card shows no name and falls back to a file mtime. A third
+place that assumes one builder.
+
+### ~~NEXT~~ CLOSED 20 November 2026 — blogs do NOT hold their hostnames the same way
+
+**ASKED AND ANSWERED THE SAME NIGHT**, out of the batch that lost site 4.
+The question was whether `BlogSite` repeats the website bug: a deleted row
+keeping its hostname because a unique index could not be told that released
+rows do not count.
+
+**IT DOES NOT, AND SOMEBODY ALREADY SOLVED IT THE OTHER WAY.**
+
+- `BlogSite.siteUrl` is **not** plain-unique — it is `index: true` only.
+- The unique index is COMPOUND AND PARTIAL: `{ user: 1, siteUrl: 1 }`, named
+  `user_siteUrl_unique`, with
+  `partialFilterExpression: { siteUrl: { $gt: '' }, status: { $in:
+  ['active','suspended'] } }`.
+- So a **revoked** row is outside the index and reserves nothing — which is
+  the websites fix arrived at from the other direction, and the comment
+  beside it explains why: revoking a licence is how an owner frees a domain
+  for a new key, and a plain unique index would have made that remedy
+  impossible. It was found by the index REFUSING TO BUILD against live data
+  (a duplicate on hilltophomeloans.net).
+- A **Cloudflare blog delete is a hard delete** —
+  `routes/staticBlogsRoute.js:3220`, `BlogSite.deleteOne` — with its posts
+  and campaigns. No row survives, so no row can hold a name.
+
+    THE TWO PRODUCTS SOLVED ONE PROBLEM IN TWO WAYS, AND BOTH ARE
+    DEFENSIBLE. The website side keeps the row and frees the name;
+    the blogs side drops the row entirely.
+
+**DO NOT "UNIFY" THEM.** `releasedHostname.js` has nothing to do here: there
+is no BlogSite row to free. A migration of the blogs index to match the
+websites one would buy nothing and risks a window where two blogs can take
+one domain.
+
+### SMALL — a blog whose Cloudflare teardown FAILED is still hard-deleted
+
+**THE MIRROR OF THE WEBSITE BUG, FOUND WHILE ANSWERING THE SECTION ABOVE.**
+`routes/staticBlogsRoute.js` tears down at Cloudflare and then deletes the
+row **whatever the teardown returned** — including the `released = { skipped:
+true }` path, where the credentials could not be read and NOTHING was
+touched up there.
+
+So the app lets go of a hostname while a Pages project, a custom domain and
+a DNS record may still be serving it. `models/CloudflareSite.js` describes
+precisely this and is the reason websites keep the row:
+
+> 'removed' RATHER THAN A DELETE … A hard delete frees the subdomain for
+> somebody else while Cloudflare may still hold the project and the DNS
+> record, and the next publish on that name would collide with a leftover
+> nobody can see.
+
+**AND THERE IS NO RETRY.** With the row gone there is nothing for a "Finish
+removing" button to act on — the remedy the websites screen gained on 17
+November cannot exist here.
+
+**NOT URGENT, AND SAY WHY.** The delete page already prints each of the
+three outcomes WITH CLOUDFLARE'S OWN REASON, so the owner is told at the
+moment it happens and can clear it in the dashboard. The failure is loud;
+it is the recovery that is missing.
+
+**IF IT IS EVER BUILT**, the cost is the awkward part: `BlogSite.status` is
+`active | suspended | revoked` with no 'removed', the partial index would
+need to exclude the new state, and the delete takes `BlogPost` and
+`BlogCampaign` with it — so a row kept for a retry is a row whose children
+are already gone.
+
+### WORTH DOING FIRST — the websites removal page names what failed and not why
+
+**THE GAP THE BLOG PAGE DOES NOT HAVE**, and the reason
+`the-san-antonio-plumber.1-1o.com` was a dead end on 20 November. Pressing
+"Finish removing" reported:
+
+    The custom domain could not be taken off the project.
+    The Pages project could not be deleted.
+
+`troubleWith()` in `routes/cloudflareSitesRoute.js` writes those two
+sentences from booleans and **drops the error string entirely** — while
+`staticBlogsRoute.js` prints `no — <Cloudflare's own words>` for each of the
+same three calls.
+
+    A FAILURE THAT CANNOT SAY WHY IT FAILED TURNS A BUTTON INTO A
+    COIN TOSS. Edwin pressed it repeatedly and learned nothing each time.
+
+**AND THE SUSPECTED CAUSE IS ITS OWN BUG.** If the Pages project was deleted
+by hand in the Cloudflare dashboard, `detachDomain()` and `deleteProject()`
+both answer 404 and both report failure — so the row keeps its hostname for
+ever behind a retry that can never win. `removeDnsRecord()` already gets
+this right and says so: **"A MISSING RECORD IS A SUCCESS."** The other two
+never learned it.
 ### NEXT — verify the first seven-site batch
 
 **Edwin, 19 November:** *"it worked. 7 websites published"* — the first
@@ -6256,6 +6716,36 @@ and he has the URLs:
 same trade, same city, different business names. If the copy reads
 near-identical across all seven, that is the confusing-prompts item with a
 much better reproduction than the three sites it was raised on.
+
+### NEXT — show the domain order on the batch screen
+
+**Edwin, 20 November:** *"The next update we need to add a dropdown showing
+in the screen the domain names."*
+
+**IT PICKS NOTHING, AND THAT IS THE WHOLE SPECIFICATION.** His choice when
+asked: a list of the pool's domains in the order rows will take them, so a
+CSV can be ORDERED TO MATCH before it is uploaded. Not a starting point,
+not a set of tickboxes — the pairing stays positional and automatic.
+
+    A CONTROL THAT SELECTS NOTHING IS A LABEL. CALLING IT A
+    DROPDOWN DESCRIBES THE SHAPE, NOT THE JOB.
+
+**WHY IT IS WORTH ANYTHING AT ALL.** The preview table already shows the
+full address per row — but only AFTER the file is uploaded, by which point
+the order is decided. The thing somebody needs before writing the file is
+which business will land on which domain, and today the only way to know is
+to upload, read the table and re-order the spreadsheet.
+
+**THE ORDER IS `{ domain: 1 }`, THE SAME SORT `/api/cloudflare-domains`
+USES.** poolFor() in routes/csvBatchRoute.js already returns it; this is the
+same list, drawn. It MUST NOT re-sort — test-csv-batch-route.js asserts the
+route hands back what the query ordered, because the wizard's own dropdown
+shows the same list and "the first domain" has to mean one thing.
+
+**ONE THING TO DECIDE WHEN IT IS BUILT:** whether a domain already carrying
+a published site is marked. The pairing does not skip them — checkWant()
+refuses a taken hostname at enqueue time, which is correct but arrives as a
+row-by-row refusal after the file is written.
 
 ### NEXT — build seven sites from one CSV instead of seven forms
 
@@ -7816,6 +8306,17 @@ page's own layout.
 `${appHeaderAssets()}`. There is a test listing every such page.
 
 ## Deliberately dropped — do not re-propose
+
+**The furnace photographs in `air-conditioning/set-1` and `set-2`.** Dropped
+20 November 2026: *"forget about the furnace in sets 1 and 2."*
+
+Raised because `set-1` image 3 and `set-2` images 1 and 2 show furnaces, and
+the trade is named `air-conditioning` — so a site for a cooling-only business
+carries heating photographs. The question put to Edwin was whether the trade
+means AC-only or HVAC. **He closed it rather than answering, which settles
+it: the images stay as they are.** Do not raise the AC-vs-HVAC distinction
+again, and do not quietly swap the files — seven sites are live on these
+sets and a changed photograph is a changed page.
 
 **Matching "Click to" across all five build rows.** Dropped 17 November
 2026: *"forget about this one."*

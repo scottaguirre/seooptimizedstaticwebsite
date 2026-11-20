@@ -203,6 +203,79 @@ function readSite(dir) {
   return { ok: true, files, count: found.length, bytes, skipped };
 }
 
+/**
+ * Which hostname a build was rendered FOR, or '' when it does not say.
+ *
+ * WHY THIS EXISTS — Edwin, 19 November, with seven sites live and no Edit
+ * button on any of them: the obvious repair was to press "Publish again" on
+ * each row. It would have published the WRONG SITE to six of the seven.
+ *
+ *     publishNow() reads buildDirFor(userId).
+ *     dist/user_<id> is ONE FOLDER PER USER.
+ *     THE ROW DECIDES WHERE. THE FOLDER DECIDES WHAT.
+ *
+ * After a seven-site batch that folder holds the SEVENTH site, so pressing
+ * the first row's button would deploy site seven's pages onto site one's
+ * domain — a complete, well-formed, correctly-certificated website about
+ * the wrong business. Nothing in the result would have said so.
+ *
+ * It is the fault routes/formRoute.js records about the old two-screen flow
+ * — "the second step was not a step. It was the first step's output,
+ * re-entered by hand" — still living in this one button. The wizard grew out
+ * of that; the republish never did.
+ *
+ * THE CANONICAL, NOT A SIDECAR FILE, AND THAT IS THE POINT. Both builders
+ * write `<link rel="canonical">` from the site's own domain — chrome.js for
+ * Local Website Options, utils/canonicalUrl.js for the generator — so this
+ * reads what is ACTUALLY ABOUT TO BE UPLOADED rather than a manifest beside
+ * it. A manifest can be right about a folder whose pages are wrong; the
+ * pages cannot be wrong about themselves.
+ *
+ * It also needs no knowledge of WHICH builder made the folder, which is the
+ * property that keeps it correct for the eighth one.
+ *
+ * '' MEANS "IT DOES NOT SAY", AND THE CALLER MUST TREAT THAT AS PERMISSION.
+ * canonicalTag() returns '' when there is no usable domain, deliberately —
+ * an empty canonical tells a crawler to canonicalise the page to nothing. So
+ * a build without one is a build this cannot judge, and refusing on it would
+ * block correct publishes to prove a point.
+ *
+ *     A CHECK THAT CANNOT SEE THE ANSWER HAS NOT FOUND A MISMATCH.
+ */
+function whoseBuild(files = {}) {
+  const index = files['index.html'];
+
+  if (!index) return '';
+
+  /* FROM index.html ALONE. Every other page carries its own canonical
+   * pointing at itself; the home page's is the site root, which names the
+   * host with no path to strip. */
+  const found = /<link\s+rel="canonical"\s+href="([^"]+)"/i.exec(String(index));
+
+  if (!found) return '';
+
+  try {
+    /* &amp; UNDONE BECAUSE canonicalTag() ESCAPES IT GOING IN. An ampersand
+     * in a hostname is not a thing, but this value is read out of an HTML
+     * attribute and reading one correctly costs a replace. */
+    return new URL(found[1].replace(/&amp;/g, '&')).host.toLowerCase();
+  } catch {
+    /* NOT A URL IS NOT A MISMATCH. The same rule as a missing tag: this
+     * function reports what it can read and the caller decides. */
+    return '';
+  }
+}
+
+/** `https://X.test/page.html` and `x.test` both come back as `x.test`. */
+function hostOf(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '');
+}
+
 module.exports = {
-  readSite, walk, SKIP_DIRS, SKIP_FILES, MAX_FILES, MAX_FILE_BYTES,
+  readSite, walk, whoseBuild, hostOf,
+  SKIP_DIRS, SKIP_FILES, MAX_FILES, MAX_FILE_BYTES,
 };

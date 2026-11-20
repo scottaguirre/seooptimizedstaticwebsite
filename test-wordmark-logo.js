@@ -1361,10 +1361,22 @@ test('and the radio is set from code, not only read', () => {
     assert.strictEqual(await png({ design: '3', theme: 'style4' }), await png({ design: '3' }));
   });
 
-  await atest('a wordmark is DRAWN for that mode, and no favicon with it', async () => {
-    /* render/chrome.js's document() emits no <link rel="icon">, so a favicon
-     * here would be a file nothing references — which is why placeLogo calls
-     * wordmarkPng rather than writeWordmark. */
+  await atest('a wordmark is DRAWN for that mode, AND a favicon with it', async () => {
+    /* THIS TEST PINNED THE OPPOSITE UNTIL 19 NOVEMBER, and it was right to:
+     * render/chrome.js's document() emitted no <link rel="icon">, so a
+     * favicon would have been a file nothing references.
+     *
+     * The link was also absent BECAUSE there was no file. Each half cited
+     * the other, and the result was a blank tab icon on every site this
+     * mode has ever built — found by Edwin from the outside, on a live
+     * site, rather than by any of the one hundred and fifteen tests here.
+     *
+     *     A TEST THAT PINS AN ABSENCE IS ONLY AS GOOD AS THE
+     *     REASON FOR THE ABSENCE. IT CANNOT NOTICE WHEN THE
+     *     REASON STOPS BEING TRUE.
+     *
+     * All seven chrome.js files emit the link now, so the file is written
+     * and this asserts both. */
     const os = require('os');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wm-lo-'));
 
@@ -1376,8 +1388,8 @@ test('and the radio is set from code, not only read', () => {
     });
 
     assert.strictEqual(rel, 'assets/logo.png');
-    assert.deepStrictEqual(fs.readdirSync(dir), ['logo.png'],
-      'something other than the logo was written');
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['favicon.png', 'logo.png'],
+      'the logo and its favicon are not the two files written');
 
     const png = fs.readFileSync(path.join(dir, 'logo.png'));
     const meta = await sharp(png).metadata();
@@ -1390,8 +1402,14 @@ test('and the radio is set from code, not only read', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wm-lo-'));
 
     assert.strictEqual(await LO.placeLogo([], dir, {}), '');
+
+    /* STILL NOTHING AT ALL, FAVICON INCLUDED. placeLogo() returns before it
+     * writes anything when there is no logo to place, and the favicon call
+     * sits after that guard rather than before it — a tab icon for a site
+     * whose header shows initials would be a mark nothing on the page
+     * repeats. */
     assert.deepStrictEqual(fs.readdirSync(dir), [],
-      'a logo was drawn for a customer who did not ask for one');
+      'something was drawn for a customer who asked for no logo');
   });
 
   await atest('the route is mounted behind requireAuth', async () => {
@@ -1399,6 +1417,152 @@ test('and the radio is set from code, not only read', () => {
     assert.match(server, /app\.use\('\/', requireAuth, logoPreviewRoute\)/,
       'the preview is reachable without signing in');
   });
+
+  /* -----------------------------------------------------------------
+   * THE FAVICON FILE, WHICH THE LINK IS USELESS WITHOUT
+   *
+   * Seven chrome.js files now emit <link rel="icon" href="assets/
+   * favicon.png">. A link to a file nobody writes is the same bug as a
+   * file nobody links to, pointing the other way.
+   * ----------------------------------------------------------------- */
+
+  const os = require('os');
+  const { placeLogo } = require('./utils/runLocalOptions');
+
+  const scratch = [];
+
+  function tempAssets() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'favicon-'));
+    scratch.push(dir);
+    return dir;
+  }
+
+  const DRAWN = {
+    wordmark: true,
+    businessName: 'Cold Air Conditioning Austin',
+    logoType: 'wordmark',
+    structure: 'orchard',
+    businessType: 'air-conditioning',
+  };
+
+  await atest('placeLogo WRITES THE FAVICON THE PAGES LINK TO', async () => {
+    const dir = tempAssets();
+
+    await placeLogo([], dir, DRAWN);
+
+    assert.ok(fs.existsSync(path.join(dir, 'favicon.png')),
+      'the pages link to assets/favicon.png and nothing wrote it');
+  });
+
+  await atest('AND IT IS 42x42, THE SIZE runGeneration ALREADY USES', async () => {
+    const dir = tempAssets();
+
+    await placeLogo([], dir, DRAWN);
+
+    const meta = await sharp(path.join(dir, 'favicon.png')).metadata();
+
+    assert.strictEqual(meta.width, 42);
+    assert.strictEqual(meta.height, 42);
+    assert.strictEqual(meta.format, 'png');
+  });
+
+  await atest('AND AN UPLOADED LOGO GETS ONE TOO, DESPITE THE EARLY RETURN', async () => {
+    /* placeLogo() RETURNS THE MOMENT AN UPLOAD IS IN PLACE. A favicon
+     * written after that line would exist for drawn logos only — which is
+     * the shape of the bug this whole change is repairing, reproduced one
+     * function lower down. */
+    const dir = tempAssets();
+    const from = tempAssets();
+    const upload = path.join(from, 'theirs.png');
+
+    await sharp({ create: { width: 8, height: 8, channels: 3, background: '#fff' } })
+      .png().toFile(upload);
+
+    const rel = await placeLogo(
+      [{ fieldname: 'global[logo]', path: upload }], dir, DRAWN);
+
+    assert.strictEqual(rel, 'assets/logo.png', 'the upload did not land where it was promised');
+    assert.ok(fs.existsSync(path.join(dir, 'logo.png')), 'the uploaded logo is missing');
+    assert.ok(fs.existsSync(path.join(dir, 'favicon.png')),
+      'a site with an uploaded logo got no favicon');
+  });
+
+  await atest('AND A FAVICON THAT CANNOT BE DRAWN DOES NOT FAIL A PAID BUILD', async () => {
+    /* A missing tab icon is a blemish. A build that threw AFTER seven model
+     * calls and a credit charge is not, and runLocalOptions writes both
+     * images at the very end, past everything that was allowed to fail.
+     *
+     * TESTED ON writeFavicon DIRECTLY, AND THE FIRST ATTEMPT EXPLAINS WHY.
+     * It drove placeLogo with an empty business name expecting the favicon
+     * to be the thing that failed — but wordmarkSvg refuses an empty name
+     * with a message written for the customer, so placeLogo rejected for
+     * the LOGO and the favicon's own guarantee was never reached.
+     *
+     *     A TEST THAT BREAKS THE WHOLE FUNCTION TO EXERCISE ONE
+     *     LINE OF IT IS TESTING WHATEVER FAILS FIRST. */
+    const { writeFavicon } = require('./utils/runLocalOptions');
+    const dir = tempAssets();
+
+    /* NO NAME **AND** NO TRADE. With a trade it draws the mark and never
+     * looks at the name, so an empty name alone fails nothing — which is
+     * what the second attempt at this test discovered. The refusal comes
+     * from the initials path, and the initials path is only reached when
+     * there is no mark. */
+    let out;
+    await assert.doesNotReject(async () => {
+      out = await writeFavicon(dir, { ...DRAWN, businessName: '', businessType: '' });
+    });
+
+    assert.strictEqual(out, '', 'a favicon it could not draw was reported as written');
+    assert.ok(!fs.existsSync(path.join(dir, 'favicon.png')), 'a broken favicon was left behind');
+  });
+
+  await atest('AND NOTHING IS DRAWN FOR A SITE THAT ASKED FOR NO LOGO', async () => {
+    /* A MUTANT PUT writeFavicon ABOVE placeLogo'S `if (!rel) return` GUARD
+     * and every test here still passed, because the only case being
+     * exercised had no business name — so the mutant's extra call failed
+     * quietly and wrote nothing either way.
+     *
+     *     TWO CODE PATHS THAT BOTH PRODUCE NOTHING ARE NOT
+     *     DISTINGUISHED BY A TEST THAT CHECKS FOR NOTHING.
+     *
+     * A name the icon COULD be drawn from is what tells them apart: a tab
+     * icon on a site whose header shows initials would be a mark nothing on
+     * the page repeats. */
+    const dir = tempAssets();
+
+    const rel = await placeLogo([], dir, {
+      businessName: 'Cold Air Conditioning Austin',
+      structure: 'orchard',
+      businessType: 'air-conditioning',
+      /* wordmark not set, and no upload: there is no logo to place. */
+    });
+
+    assert.strictEqual(rel, '');
+    assert.deepStrictEqual(fs.readdirSync(dir), [],
+      'a favicon was drawn for a site that has no logo');
+  });
+
+  await atest('AND THE TRADE REACHES THE ICON THROUGH placeLogo, NOT JUST IN ISOLATION', async () => {
+    /* THE MARK IS WIRED IN TWO PLACES AND ONLY ONE WAS TESTED. The Orchard
+     * suite compares faviconSvg() with and without a trade, which proves
+     * the drawing. It says nothing about whether placeLogo PASSES one —
+     * a mutant that hard-coded `trade: ''` here survived it. */
+    const withTrade = tempAssets();
+    const without = tempAssets();
+
+    await placeLogo([], withTrade, DRAWN);
+    await placeLogo([], without, { ...DRAWN, businessType: '' });
+
+    assert.notDeepStrictEqual(
+      fs.readFileSync(path.join(withTrade, 'favicon.png')),
+      fs.readFileSync(path.join(without, 'favicon.png')),
+      'the trade makes no difference to the file placeLogo writes');
+  });
+
+  for (const dir of scratch) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
 
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed ? 1 : 0);

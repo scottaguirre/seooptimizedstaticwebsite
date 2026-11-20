@@ -1882,6 +1882,28 @@ function structureFor(key) {
  */
 const CSS_PATH = 'assets/site.css';
 
+/**
+ * The 42x42 icon in the browser tab.
+ *
+ * THIS MODE HAD NONE AT ALL UNTIL 19 NOVEMBER, and the omission was
+ * deliberate at both ends: document() emitted no <link rel="icon">, so
+ * placeLogo() did not write the file, "because a favicon would be a file
+ * nothing references". Each half was correct given the other, and together
+ * they were a tab with a blank page icon on every site this mode built.
+ *
+ *     TWO HALVES THAT EACH CITE THE OTHER AS THE REASON ARE NOT
+ *     A DECISION. THEY ARE A DECISION NOBODY EVER MADE.
+ *
+ * Edwin, 19 November, looking at a live site: *"I dont see any favicon"*.
+ *
+ * A CONSTANT RATHER THAN A FIELD ON THE SOURCE, which is what the logo is.
+ * The logo can be an upload, so its filename varies and the source has to
+ * carry it. This one is always drawn by faviconSvg() — the trade mark where
+ * there is one, the business's initials where there is not — so the name
+ * never varies and seven chrome.js files can name it without being told.
+ */
+const FAVICON_PATH = 'assets/favicon.png';
+
 module.exports = {
   LEDGER,
   BEACON,
@@ -1892,4 +1914,5 @@ module.exports = {
   DEFAULT_STRUCTURE,
   structureFor,
   CSS_PATH,
+  FAVICON_PATH,
 };

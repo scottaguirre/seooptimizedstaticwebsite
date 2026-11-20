@@ -372,33 +372,50 @@ const ORCHARD_VOICE = {
    *   Quarry   leads with the problem
    *   Harbor   leads with the outcome
    *   Atlas    leads with the thing worked on
-   *   Orchard  IS A QUESTION
+   *   Orchard  LEADS WITH THE NEXT STEP
    *
    * Two structures leading with the same slot produce two titles of the
    * same shape with a different noun in it, which is what prompted the
-   * Beacon rule on 30 October. A question is not another slot — it is a
-   * different sentence altogether, which is why it is still available after
-   * six.
+   * Beacon rule on 30 October. The next step is a slot none of the other
+   * six occupies: every one of them names a THING, and this one names an
+   * ACTION.
    *
-   * IT IS ALSO A REAL PATTERN, not a novelty: a service page titled as the
-   * question somebody typed is the oldest shape in local search. And it
-   * suits this voice exactly — the page is written as a conversation, and
-   * this is the other person's half of it.
+   * IT WAS A QUESTION UNTIL 19 NOVEMBER, AND THE BRIEF CONTRADICTED ITSELF.
+   * It asked for two things that cannot both be true:
+   *
+   *     MUST end with a question mark
+   *     put the business name last, AFTER the question
+   *
+   * If the name comes after the question, the title does not end with a
+   * question mark. The model resolved it the only way left — a second one,
+   * after the name — and every Orchard page on the live site carries it:
+   *
+   *     Need AC help in Austin, TX? Cold Air Conditioning Austin?
+   *                               ok                        wrong ^
+   *
+   *     TWO INSTRUCTIONS THAT CANNOT BOTH HOLD DO NOT PRODUCE
+   *     A COMPROMISE. THEY PRODUCE WHATEVER THE MODEL INVENTS
+   *     TO SATISFY BOTH.
+   *
+   * Edwin saw it on the first batch and ruled on the shape rather than the
+   * punctuation — 19 November: *"for Orchard don't make it a question in
+   * the seo title."* So the question is gone rather than repaired, and the
+   * ban is written into the brief so nothing drifts back to it.
    *
    * THE NAME IS STILL IN THERE — Edwin, 30 October: "it should always
-   * appear in the title and meta description." The name goes last, after
-   * the question, which is where a title with a pipe in it puts a brand.
+   * appear in the title and meta description." The name goes last, which is
+   * where a title with a pipe in it puts a brand.
    *
-   * AND THE QUESTION MAY NOT BE ABOUT PRICE. "How much does X cost in
-   * <town>?" is the question most often typed and the one this site cannot
-   * answer — a page that asks it and then does not say is worse than one
-   * that never asked. */
-  title: 'the <title>, under 60 characters if you can. It MUST be a '
-    + 'question and MUST end with a question mark — the question somebody '
-    + 'would type before hiring for this. Name the town in it, and put the '
-    + 'business name last, after the question, exactly as it was given. The '
-    + 'question must NOT be about price, cost or how much anything is, and '
-    + 'must not ask how long something takes',
+   * AND THE PRICE FLOOR SURVIVES THE REWRITE. It was carried by the old
+   * brief's "the question must NOT be about price" and would have been lost
+   * with the question. Price, time and guarantees are the three things this
+   * page cannot promise, so they are named here directly. */
+  title: 'the <title>, under 60 characters if you can. Lead with the NEXT '
+    + 'STEP the reader takes — booking, scheduling or arranging the work — '
+    + 'named as a plain action, then the town, then the business name last, '
+    + 'exactly as it was given. It must NOT be a question and must NOT end '
+    + 'with a question mark. Do not begin with the business name, and do '
+    + 'not put a price, a time or a guarantee in it',
 
   /* AND THE DESCRIPTION ANSWERS IT, WHICH IS THE SEVENTH SHAPE.
    *
@@ -408,21 +425,33 @@ const ORCHARD_VOICE = {
    *   Quarry   opens on the symptom and names no service
    *   Harbor   one sentence, the result first
    *   Atlas    says what is ON the page
-   *   Orchard  ANSWERS THE TITLE'S QUESTION
+   *   Orchard  SAYS WHAT HAPPENS WHEN THEY TAKE THAT STEP
    *
    * Edwin's complaint on 30 October was that both descriptions were the six
    * services comma-listed and then the four towns: 160 characters of
    * keywords, truncated in a result anyway. A description that has to
-   * answer a specific question cannot be a keyword list, which is the one
-   * shape the other six can each still produce by accident.
+   * describe one specific sequence cannot be a keyword list, which is the
+   * one shape the other six can each still produce by accident.
    *
-   * AND A QUESTION TITLE WITH A DESCRIPTION THAT IGNORES IT IS THE WORST OF
-   * BOTH: a result that asks something and then changes the subject. */
-  meta: 'the meta description, 140-160 characters. It MUST answer the '
-    + 'question asked in the title, plainly, in the first sentence. Name '
-    + 'the town and the state once, and no other town. The business name '
-    + 'must appear, exactly as it was given. Do not list services, do not '
-    + 'ask another question, and do not mention price',
+   * IT ANSWERED THE TITLE'S QUESTION UNTIL 19 NOVEMBER, and this brief had
+   * to change the same day the title did. The old wording — "It MUST answer
+   * the question asked in the title" — would have gone on pointing at a
+   * question that is no longer there, and a brief whose subject does not
+   * exist is not a weaker brief, it is an arbitrary one.
+   *
+   *     A BRIEF THAT REFERS TO ANOTHER BRIEF DIES WHEN THAT ONE CHANGES.
+   *     THE TWO ARE ONE EDIT, NOT TWO.
+   *
+   * SO THE PAIRING IS KEPT, with the step in place of the question: the
+   * title says what to do, the description says what follows from doing it.
+   * A title that asks for a booking and a description that changes the
+   * subject is the same failure the question version was warned about. */
+  meta: 'the meta description, 140-160 characters. It MUST say plainly, in '
+    + 'the first sentence, what happens when the reader takes the step the '
+    + 'title names — who they reach and what gets arranged. Name the town '
+    + 'and the state once, and no other town. The business name must '
+    + 'appear, exactly as it was given. Do not list services, do not ask a '
+    + 'question, and do not mention price',
 };
 
 /**

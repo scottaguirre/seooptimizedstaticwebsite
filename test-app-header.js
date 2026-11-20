@@ -612,8 +612,28 @@ test('THE COLUMN IS GROUPED, AND EVERY ROW IS UNDER A HEADING', () => {
    * test below still holds because of where the sites go: they are
    * Cloudflare sites and they are listed in My Cloudflare Websites with the
    * rest. Edwin, the same afternoon: one list, one place to look. */
+  /* AND A FIFTH WEBSITES ROW ON 20 NOVEMBER — Build a Batch of 7 Sites,
+   * which takes a CSV instead of a form. Edwin: *"I want it on the sidebar
+   * and it should say build a batch of 7 sites."*
+   *
+   * THIS TEST FAILING IS THIS TEST WORKING. The row was added, the suite
+   * went red on the deploy gate, and the only way through is to write the
+   * new arrangement down here — which is what the note at the top of this
+   * test says it is for. A map that quietly absorbed a new row would not
+   * be a change-detector; it would be a list that agrees with whatever it
+   * is shown.
+   *
+   * LAST AMONG THE BUILD ROWS, AND THAT IS THE ORDER THE COLUMN READS IN:
+   * a site, a site on GitHub, a site on Cloudflare, eleven pages on
+   * Cloudflare, and then seven of them at once. The newest and the
+   * least-used goes at the end of its group.
+   *
+   * NO MANAGE ROW, for the reason Local Automation has none: these are
+   * Cloudflare sites and they are listed in My Cloudflare Websites with
+   * the rest. One list, one place to look. */
   assert.deepStrictEqual(map, {
-    'Websites': ['/', '/github-sites', '/cloudflare-sites/new', '/local-automation'],
+    'Websites': ['/', '/github-sites', '/cloudflare-sites/new', '/local-automation',
+      '/batch-sites'],
     'Blogs':    ['/blog-sites', '/static-blogs'],
     'Tools':    ['/keyword-research'],
     'Manage':   ['/blog-report', '/my-sites', '/cloudflare-sites', '/dashboard'],

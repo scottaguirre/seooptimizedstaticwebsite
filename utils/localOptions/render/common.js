@@ -207,7 +207,56 @@ function contextFor(site) {
   };
 }
 
+/**
+ * What hoursFrom() writes for a business that never closes.
+ *
+ * A STRING, AND IT IS SHARED RATHER THAN MATCHED TWICE. The hours rows
+ * carry a display label — `7:00 AM – 6:00 PM`, `Open 24 hours`, or null for
+ * Closed — and there is no flag beside it saying which kind it is. The
+ * renderers need to know, so either they compare against this word or
+ * somebody types it a second time.
+ *
+ * WHY NOT A `allDay: true` FIELD ON THE ROW, which is the cleaner shape and
+ * was the first instinct: the rows are STORED, in _src/localoptions.json,
+ * for every site already published. A new field would be absent from all of
+ * them, so a re-render of a 24-hour site would go on printing the line this
+ * exists to suppress — the fix would skip exactly the sites that have the
+ * bug. The string is already in that stored data.
+ *
+ *     A FLAG IS BETTER DATA THAN A LABEL, AND WORSE THAN A LABEL
+ *     THAT IS ALREADY WRITTEN DOWN IN EVERY RECORD YOU HAVE.
+ */
+const ALL_DAY = 'Open 24 hours';
+
+/**
+ * Whether there is any hour of the week this business is shut.
+ *
+ * THE QUESTION THREE STRUCTURES PRINT A SENTENCE ABOUT. Quarry, Anvil and
+ * Beacon each end their hours block with
+ *
+ *     Outside these hours, leave a message and we will call back.
+ *
+ * printed unconditionally. For a business open 24 hours a day, seven days a
+ * week, there are no outside hours — the page states a fact and then denies
+ * it two lines later. Edwin's whole first batch was built that way, because
+ * 24 hours is what the Cloudflare wizard defaults to.
+ *
+ * NO ROWS IS NOT ALWAYS OPEN. An empty list means nobody said, and the
+ * hours block is not drawn at all in that case — but a caller reaching here
+ * with one must not be told the business never closes.
+ *
+ * A CLOSED DAY COUNTS AS CLOSED, obviously, and so does any day with a time
+ * range on it. Only a week of nothing but ALL_DAY is always open.
+ */
+function alwaysOpen(rows = []) {
+  const list = (rows || []).filter(Boolean);
+
+  return list.length > 0 && list.every(row => ALL_DAY === String(row.open || '').trim());
+}
+
 module.exports = {
+  ALL_DAY,
+  alwaysOpen,
   SOCIAL,
   homeHeading,
   initials,

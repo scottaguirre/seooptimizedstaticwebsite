@@ -69,7 +69,19 @@ const { nearbyPlaces } = require('./nearbyPlaces');
 const { getUserDirs } = require('./buildAssets');
 const { createBuildRecord } = require('./buildRegistry');
 const { imageExtension } = require('./uploadExtension');
-const { wordmarkPng } = require('./wordmarkLogo');
+const sharp = require('sharp');
+const { wordmarkPng, faviconSvg, loadFont } = require('./wordmarkLogo');
+
+/* THE NAME THE SEVEN chrome.js FILES LINK TO. Imported rather than typed so
+ * the tag and the file cannot disagree — see writeFavicon() below. */
+const { FAVICON_PATH } = require('./localOptions/render/theme');
+
+/* THE LABEL FOR A BUSINESS THAT NEVER CLOSES. Shared with the renderers
+ * rather than typed at both ends: three of them decide whether to print
+ * "Outside these hours, leave a message" by comparing against it, and a
+ * word spelled differently in the two files is a sentence that contradicts
+ * the table above it. See alwaysOpen() in render/common.js. */
+const { ALL_DAY } = require('./localOptions/render/common');
 const { formatTime, ORDER, LONG } = require('./formatDaysAndHoursForDisplay');
 const { normalizeDomain } = require('./normalizeDomain');
 const { MODES, normalizeSiteMode, LOCAL_OPTIONS_SERVICE_PAGES, FIXED_PAGES } = require('./seoPresets');
@@ -135,7 +147,7 @@ const TOTAL_PAGES = 1 + LOCAL_OPTIONS_SERVICE_PAGES + FIXED_PAGES.length;
  */
 function hoursFrom(global = {}) {
   if (truthy(global.is24Hours)) {
-    return ORDER.map(day => ({ day: LONG[day], open: 'Open 24 hours' }));
+    return ORDER.map(day => ({ day: LONG[day], open: ALL_DAY }));
   }
 
   const hours = global.hours || {};
@@ -376,11 +388,63 @@ function logoPathFor(files, opts = {}) {
  * than passed in — two call sites deriving one filename is how the <img src>
  * and the file on disk come to disagree.
  *
- * NO FAVICON, UNLIKE runGeneration. That file generates a 42x42 PNG from the
- * logo with sharp, and it is right to. This mode's render/chrome.js
- * document() emits no <link rel="icon"> at all, so a favicon would be a file
- * nothing references. One change, in one place, when that link is added.
+ * THE FAVICON IS WRITTEN HERE TOO, SINCE 19 NOVEMBER.
+ *
+ * It was not, and the reason given was that "render/chrome.js document()
+ * emits no <link rel="icon"> at all, so a favicon would be a file nothing
+ * references". That was true. The link was also absent BECAUSE there was no
+ * file, and each half cited the other.
+ *
+ *     TWO HALVES THAT EACH CITE THE OTHER AS THE REASON ARE NOT
+ *     A DECISION. THEY ARE A DECISION NOBODY EVER MADE.
+ *
+ * Edwin found it from the outside, on a live site: *"I dont see any
+ * favicon"*. All seven chrome.js files now emit the link; this writes what
+ * they point at.
+ *
+ * DRAWN EVEN WHEN THE LOGO IS AN UPLOAD, and that is the one judgement
+ * here. Resizing somebody's own logo to 42x42 is one sharp call away and
+ * sounds more correct — but most trade logos are a wide lockup, and a wide
+ * lockup at 42 pixels is a grey smudge. faviconSvg() exists for this size:
+ * the trade's mark where there is one, two letters where there is not.
  */
+/**
+ * The 42x42 tab icon, drawn from the same mark the logo carries.
+ *
+ * ITS OWN FUNCTION BECAUSE placeLogo() RETURNS EARLY. The upload branch
+ * returns the moment the file is in place; a favicon written below that
+ * line would exist for drawn logos only.
+ *
+ * THE NAME IS theme.js's CONSTANT, NOT A STRING TYPED HERE. Seven chrome.js
+ * files emit `<link rel="icon" href="assets/favicon.png">` from that same
+ * constant, and a filename typed twice is how the tag and the file come to
+ * disagree — which is the exact warning placeLogo() already carries about
+ * the logo's own name.
+ *
+ * IT NEVER FAILS THE BUILD. A missing tab icon is a blemish; a paid build
+ * that threw after the words were written is not. Nothing else in this
+ * function can fail this way, which is why only this call is wrapped.
+ */
+async function writeFavicon(assetsDir, opts = {}) {
+  try {
+    const svg = faviconSvg({
+      businessName: opts.businessName,
+      structure: opts.structure,
+      trade: opts.businessType,
+      font: loadFont(),
+    });
+
+    const png = await sharp(Buffer.from(svg)).resize(42, 42).png().toBuffer();
+
+    await fsp.writeFile(path.join(assetsDir, path.basename(FAVICON_PATH)), png);
+
+    return FAVICON_PATH;
+  } catch (err) {
+    log.info('localOptions.favicon.failed', { reason: err.message });
+    return '';
+  }
+}
+
 async function placeLogo(files, assetsDir, opts = {}) {
   const logo = logoUpload(files);
   const rel = logoPathFor(files, opts);
@@ -388,6 +452,12 @@ async function placeLogo(files, assetsDir, opts = {}) {
   if (!rel) return '';
 
   await fsp.mkdir(assetsDir, { recursive: true });
+
+  /* BEFORE THE EARLY RETURN BELOW, so an uploaded logo gets one too. The
+   * upload path returns as soon as the file is in place, and a favicon
+   * written after that line would exist for drawn logos only — which is the
+   * shape of bug this whole change is repairing. */
+  await writeFavicon(assetsDir, opts);
 
   if (logo) {
     await moveOrCopyThenDelete(logo.path, path.join(assetsDir, path.basename(rel)));
@@ -1115,5 +1185,6 @@ module.exports = {
   logoPathFor,
   writeFiles,
   placeLogo,
+  writeFavicon,
   TOTAL_PAGES,
 };

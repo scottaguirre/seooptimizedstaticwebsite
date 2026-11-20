@@ -41,6 +41,7 @@
 const assert = require('assert');
 
 const { renderSite } = require('./utils/localOptions/render/renderSite');
+const { ALL_DAY, alwaysOpen } = require('./utils/localOptions/render/common');
 const { structureFor, structureKeys } = require('./utils/localOptions/render/structures');
 const { STRUCTURES } = require('./utils/localOptions/render/theme');
 const {
@@ -668,6 +669,110 @@ test('and the split is by POSITION, not by the English word for a day', () => {
   assert.ok(!/Saturday|Sunday|weekend/i.test(code),
     'the hours split on the name of a day');
   assert.ok(/slice\(0, 5\)|slice\(0,5\)/.test(code), 'the split is not at five');
+});
+
+test('A BUSINESS OPEN 24 HOURS IS NOT TOLD TO LEAVE A MESSAGE AFTER HOURS', () => {
+  /* THE WHOLE OF EDWIN'S FIRST BATCH WAS BUILT THIS WAY. The Cloudflare
+   * wizard defaults to 24 hours, three structures printed
+   *
+   *     Outside these hours, leave a message and we will call back.
+   *
+   * under the table unconditionally, and the page stated a fact and denied
+   * it two lines later. Three of the seven live sites carry it.
+   *
+   *     A SENTENCE THAT IS TRUE OF MOST SITES IS NOT A SENTENCE
+   *     THAT CAN BE PRINTED ON ALL OF THEM.
+   *
+   * ALL THREE ARE CHECKED HERE because all three had it and each has its
+   * own hours block with its own class name — Quarry splits the week into
+   * two columns, Anvil runs a seven-column band, Beacon stacks a slate.
+   * Fixing the one whose suite you happen to be in is how the other two
+   * keep the bug. */
+  const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const roundTheClock = DAYS.map(day => ({ day, open: ALL_DAY }));
+
+  for (const key of ['quarry', 'anvil', 'beacon']) {
+    const page = renderSite(SITE({ structure: key, hours: roundTheClock }))['index.html'];
+
+    assert.ok(page.includes('When we are open'), `${key} stopped drawing its hours`);
+    assert.ok(!/Outside these hours/.test(page),
+      `${key} tells a business that never closes about its closing time`);
+  }
+});
+
+test('AND A BUSINESS THAT DOES CLOSE IS STILL TOLD', () => {
+  /* The line is correct for every other site, which is why it was written.
+   * Suppressing it everywhere would trade one wrong page for another. */
+  for (const key of ['quarry', 'anvil', 'beacon']) {
+    const page = renderSite(SITE({ structure: key }))['index.html'];
+
+    assert.match(page, /Outside these hours/,
+      `${key} dropped the line from a site that has closing times`);
+  }
+});
+
+test('AND ONE LATE-NIGHT DAY DOES NOT MAKE A WEEK ROUND-THE-CLOCK', () => {
+  /* The predicate is `every`, not `some`. A week of 24-hour days with one
+   * ordinary Sunday still has hours outside which nobody answers, and that
+   * Sunday is exactly when somebody would ring. */
+  const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  const nearly = DAYS.map((day, i) => ({
+    day,
+    open: i === 6 ? '9:00 AM – 2:00 PM' : ALL_DAY,
+  }));
+
+  const shut = DAYS.map((day, i) => ({ day, open: i === 6 ? null : ALL_DAY }));
+
+  for (const hours of [nearly, shut]) {
+    assert.match(renderSite(SITE({ structure: 'quarry', hours }))['index.html'],
+      /Outside these hours/, 'a week with one closing day was read as always open');
+  }
+});
+
+test('AND THE LABEL IS SHARED, NOT SPELLED OUT IN EACH FILE', () => {
+  /* hoursFrom() WRITES THE STRING AND THE RENDERERS MATCH IT. There is no
+   * flag on an hours row saying which kind it is — only the display label —
+   * so either both ends import one constant or somebody types it twice and
+   * the sentence comes back on the day a capital letter moves.
+   *
+   * A FIELD WOULD BE BETTER DATA AND WORSE HERE: the rows are STORED, in
+   * _src/localoptions.json, for every site already published. A new field
+   * would be absent from all of them, so a re-render of a 24-hour site
+   * would go on printing the line — the fix would skip exactly the sites
+   * that have the bug. */
+  const { hoursFrom } = require('./utils/runLocalOptions');
+  const rows = hoursFrom({ is24Hours: true });
+
+  /* AND THE VALUE IS FROZEN, NOT JUST SHARED — a mutant made the point.
+   * Changing it in common.js changes it at BOTH ends at once, so every
+   * check above still passed: the generator and the renderers agreed
+   * perfectly on a new word.
+   *
+   * What they would no longer agree with is the PAST. Those rows are
+   * stored verbatim in _src/localoptions.json for every site already
+   * published, and a re-render reads them back. A capital H here and every
+   * live 24-hour site starts printing the line again on its next edit —
+   * silently, and only on the sites that already had the bug.
+   *
+   *     A CONSTANT THAT APPEARS IN STORED DATA IS NOT A CONSTANT
+   *     YOU OWN. IT IS A FORMAT. */
+  assert.strictEqual(ALL_DAY, 'Open 24 hours',
+    'the stored hours of every published site say "Open 24 hours"');
+
+  assert.strictEqual(rows.length, 7);
+  assert.strictEqual(rows[0].open, ALL_DAY,
+    'the generator and the renderers disagree about what a 24-hour day says');
+  assert.ok(alwaysOpen(rows), 'a week hoursFrom() calls 24-hour is not read as always open');
+});
+
+test('AND NO HOURS AT ALL IS NOT "ALWAYS OPEN"', () => {
+  /* An empty list means nobody said. The hours block is not drawn at all in
+   * that case, but a caller reaching the predicate with one must not be
+   * told the business never closes. */
+  assert.strictEqual(alwaysOpen([]), false);
+  assert.strictEqual(alwaysOpen(), false);
+  assert.strictEqual(alwaysOpen([null, undefined]), false);
 });
 
 test('AND A SHORT WEEK IS NOT SPLIT AT ALL', () => {

@@ -436,7 +436,28 @@ test('AND EVERY RELATIVE ONE RESOLVES TO SOMETHING THAT IS ACTUALLY THERE', () =
    * So this resolves each one the way a browser would, against the directory
    * the page is served from, and asks whether the file is in the site. That
    * catches too few `../` and too many, which no prefix check can. */
-  const assets = ['assets/logo.png'].concat(
+  /* THE FAVICON JOINED THIS LIST ON 19 NOVEMBER, and the failure that put
+   * it here was this test working exactly as designed.
+   *
+   * Seven chrome.js files started emitting <link rel="icon">, and this
+   * suite went red on the first run with
+   *
+   *     "assets/favicon.png" resolves to assets/favicon.png,
+   *     which the site does not have
+   *
+   * — which was TRUE OF renderSite's OUTPUT and false of the published
+   * site. Like the logo and the heroes, the file is bytes written beside
+   * the pages by runLocalOptions, not markup this renderer returns.
+   *
+   *     A RENDERER'S OUTPUT IS NOT THE SITE. THIS LIST IS THE
+   *     DIFFERENCE, AND IT HAS TO BE MAINTAINED BY HAND —
+   *     WHICH IS THE PRICE OF CATCHING A ../ THAT IS WRONG.
+   *
+   * ADDING A NAME HERE IS NOT A WAY TO SILENCE THIS TEST. It is a claim
+   * that something writes the file. writeFavicon() in runLocalOptions.js
+   * does, before placeLogo()'s early return so an uploaded logo gets one
+   * too, and test-wordmark-logo.js asserts the bytes land. */
+  const assets = ['assets/logo.png', 'assets/favicon.png'].concat(
     [1, 2, 3, 4].map(n => `assets/hero-${n}.webp`)
   );
 

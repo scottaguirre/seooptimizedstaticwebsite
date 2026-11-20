@@ -93,12 +93,23 @@ const currentSite = require('../utils/currentSite');
  * when an edit never touches them. */
 const siteStore = require('../utils/cloudflareSites/siteStore');
 
+/* WHO OWNS A HOSTNAME AFTER THE SITE IS DELETED — 20 November. The rule was
+ * split between checkWant()'s query and a unique index that cannot be told
+ * about it, and the two disagreed in the middle of a paid batch. The module
+ * header has the whole account. */
+const releasedHostname = require('../utils/cloudflareSites/releasedHostname');
+
 /* WHICH PARAGRAPHS AN OWNER MAY CHANGE, AND PUTTING THEIR EDITS BACK. Every
  * paragraph goes through safeParagraph() in there — runGeneration writes
  * these into the template unescaped, which is fine while the only writer is
  * the generator and is a script tag on a published page the moment it is
  * not. */
 const editableText = require('../utils/cloudflareSites/editableText');
+
+/* THE SECOND READER, FOR THE SECOND FORMAT. Neither can read the other's
+ * shape, so the pair of them is the whole of what the edit screen knows
+ * about which builder made a site. */
+const localOptionsText = require('../utils/cloudflareSites/localOptionsText');
 const { renderSections } = require('../utils/editForm');
 
 
@@ -237,6 +248,70 @@ async function publishNow({ userId, requestId, site }) {
   const read = siteFiles.readSite(buildDirFor(userId));
   if (!read.ok) return { ok: false, error: read.error };
 
+  /* IS THIS FOLDER THIS SITE? — 19 November, and the answer was "not
+   * necessarily" for the whole life of this function.
+   *
+   * dist/user_<id> is ONE FOLDER PER USER and holds whatever that user
+   * built last. The row decides WHERE to deploy; the folder decides WHAT.
+   * Nothing had ever compared the two. After Edwin's seven-site batch the
+   * folder held site SEVEN, so pressing "Publish again" on row one would
+   * have put site seven's pages on site one's domain — a complete,
+   * well-formed, correctly-certificated website about the wrong business,
+   * reported as a successful publish.
+   *
+   *     IT IS THE FAULT formRoute.js RECORDS ABOUT THE OLD
+   *     TWO-SCREEN FLOW, STILL LIVING IN THIS ONE BUTTON.
+   *
+   * THE EDIT REBUILD IS NOT AT RISK and is still checked. rebuildJob
+   * renders the site's own stored words INTO this folder and then calls
+   * here, so the bytes always match the row — which is exactly why the
+   * check is cheap to add: the path that is already correct pays one regex
+   * on one file and goes through.
+   *
+   * REFUSED, NOT REBUILT. This function uploads; it does not render, and
+   * quietly rendering the right site here would hide a wrong button behind
+   * a helpful one. The message says what to press instead. */
+  const built = siteFiles.whoseBuild(read.files);
+  const wanted = siteFiles.hostOf(site.siteUrl);
+
+  if (built && wanted && built !== wanted) {
+    /* WHAT TO DO INSTEAD DEPENDS ON WHETHER THIS SITE HAS ANY WORDS KEPT,
+     * AND THE FIRST VERSION OF THIS MESSAGE DID NOT ASK.
+     *
+     * It told everybody to "open this website's Edit words screen and
+     * save" — which is right for a site that has one, and CIRCULAR for the
+     * six that do not. Those are exactly the sites somebody is pressing
+     * this button on: the button is what they reached for BECAUSE there
+     * was no Edit words screen.
+     *
+     *     ADVICE THAT ASSUMES THE THING THE READER CAME HERE
+     *     WITHOUT IS NOT ADVICE. IT IS THE PROBLEM, RESTATED.
+     *
+     * ASKED OF whyNotEditable(), WHICH IS THE ONE READING OF THAT QUESTION
+     * — the same one the list screen uses to decide whether to draw the
+     * button and the edit handler uses to decide whether to accept a save.
+     * A fourth opinion here could disagree with the screen the sentence is
+     * pointing at.
+     *
+     * ITS OWN WORDS ARE NOT REUSED, DELIBERATELY. They are written for
+     * somebody who opened the edit screen, and they end by suggesting a
+     * publish — which is the thing that has just been refused. */
+    const unavailable = whyNotEditable(site);
+
+    return {
+      ok: false,
+      error: `The build folder currently holds ${built}, not ${wanted}. `
+        + 'Publishing it would put that website on this address. '
+        + (unavailable
+          ? 'This website has no stored words, so there is nothing here to '
+            + 'rebuild it from. Build it again from the wizard — that build '
+            + 'becomes the one in the folder, and it will be editable from '
+            + 'then on.'
+          : 'Open this website\'s Edit words screen and save, which rebuilds '
+            + 'it from its own stored words before publishing.'),
+    };
+  }
+
   /* THE SEARCH CONSOLE TAGS GO IN HERE, which is the only place they can go
    * in once. This function is what BOTH the first publish and the edit
    * rebuild call, so a tag added here reaches a site however it got built —
@@ -326,10 +401,28 @@ async function publishNow({ userId, requestId, site }) {
       site.contentModel = kept.model;
       site.buildRecipe = kept.recipe;
 
-      /* BOTH, OR IT IS NOT EDITABLE. The model is the words and the recipe
-       * is the decisions; a re-render with one and not the other builds a
-       * site from half an answer. See models/CloudflareSite.js. */
-      site.editable = Boolean(kept.model && kept.recipe);
+      /* BOTH, OR IT IS NOT EDITABLE — FOR A GENERATOR BUILD. The model is
+       * the words and the recipe is the decisions; a re-render with one and
+       * not the other builds a site from half an answer. See
+       * models/CloudflareSite.js.
+       *
+       * A LOCAL WEBSITE OPTIONS SOURCE IS BOTH HALVES IN ONE FILE, so the
+       * same test applied to it refuses a site that is perfectly editable.
+       * `renderSite(stored)` IS the re-render — generate.js stores the
+       * object it rendered from, not a copy of its interesting parts — and
+       * that mode writes no build.json at all.
+       *
+       *     THE RECIPE BEING ABSENT MEANS TWO DIFFERENT THINGS
+       *     IN THE TWO FORMATS: "published before build.json
+       *     existed" in one, and "correct" in the other.
+       *
+       * ASKED OF siteStore, NOT WRITTEN OUT HERE. whyNotEditable() carries
+       * the note about what two readings of the same fields cost — a screen
+       * offering a button the handler behind it refuses — and this is that
+       * risk one layer down, with a third caller in the rebuild. */
+      site.editable = siteStore.isLocalOptions(kept.model)
+        ? Boolean(kept.model)
+        : Boolean(kept.model && kept.recipe);
 
       log.info('cfSites.captured', {
         requestId,
@@ -576,7 +669,7 @@ router.get('/cloudflare-sites', requireAuth, async (req, res) => {
     const unfinishedRows = unfinished.map(s => `
       <tr>
         <td>${esc(s.name || 'Untitled')}</td>
-        <td>${esc(s.siteUrl)}
+        <td>${esc(releasedHostname.hostnameOf(s))}
           <div class="small text-white-50">Still at Cloudflare: ${esc(stillThere(s.released))}</div>
         </td>
         <td class="text-end">
@@ -1211,7 +1304,7 @@ router.post('/cloudflare-sites/:id/publish', requireAuth, async (req, res) => {
       return send(res, page({
         status: 400,
         title: 'That website was deleted',
-        body: `<h1 class="h3">${esc(site.siteUrl)} was deleted</h1>
+        body: `<h1 class="h3">${esc(releasedHostname.hostnameOf(site))} was deleted</h1>
                <p class="lead">Publish it again as a new website.</p>
                <a href="/cloudflare-sites" class="btn btn-primary mt-3">Back</a>`,
       }));
@@ -1262,7 +1355,17 @@ function whyNotEditable(site) {
          + 'Publish it first.';
   }
 
-  if (!site.editable || !site.contentModel || !site.buildRecipe) {
+  /* THE RECIPE IS NOT REQUIRED OF A LOCAL WEBSITE OPTIONS SITE, and asking
+   * for it here would undo the capture fix one line before the form draws.
+   * That mode writes no build.json; its stored source is the whole input to
+   * renderSite(). See the note beside site.editable above.
+   *
+   * THE SAME THREE FIELDS, READ THE SAME WAY AS THE LIST SCREEN — which is
+   * the whole reason this function exists rather than each handler deciding
+   * for itself. */
+  const needsRecipe = !siteStore.isLocalOptions(site.contentModel);
+
+  if (!site.editable || !site.contentModel || (needsRecipe && !site.buildRecipe)) {
     /* PUBLISHED BEFORE ANY OF THIS EXISTED, most likely. The words were
      * never kept, so there is nothing to load — and re-rendering from
      * nothing would generate a different site and charge for it. */
@@ -1294,8 +1397,17 @@ router.get('/cloudflare-sites/:id/edit', requireAuth, async (req, res) => {
     /* THE BOXES COME FROM utils/editForm.js — moved out on 17 November so
      * the Rank Fast edit screen draws the same controls rather than a
      * second copy of them. The rule for WHICH controls a block gets lives
-     * one layer further down, in editableText.collect(). */
-    const sections = renderSections(site.contentModel, esc);
+     * one layer further down, in the reader.
+     *
+     * WHICH READER, FROM THE STORED WORDS. A Local Website Options source
+     * and a content.json are different shapes written by different
+     * builders; handing either to the wrong one produces an empty form
+     * rather than an error, which is the silent half of the bug this whole
+     * change exists to fix. See siteStore.isLocalOptions(). */
+    const lwo = siteStore.isLocalOptions(site.contentModel);
+
+    const sections = renderSections(
+      site.contentModel, esc, lwo ? localOptionsText.collect : undefined);
 
     send(res, page({
       title: 'Edit the words',
@@ -1471,7 +1583,14 @@ router.post('/cloudflare-sites/:id/edit', requireAuth, async (req, res) => {
       }));
     }
 
-    const applied = editableText.apply(site.contentModel, req.body);
+    /* THE SAME CHOICE THE GET MADE, MADE THE SAME WAY. If these two ever
+     * disagreed, the screen would draw one reader's boxes and the handler
+     * would hand them to the other — and because both readers REJECT names
+     * they do not recognise rather than throwing, the save would report
+     * "nothing changed" for a form the owner had just filled in. */
+    const applied = siteStore.isLocalOptions(site.contentModel)
+      ? localOptionsText.apply(site.contentModel, req.body)
+      : editableText.apply(site.contentModel, req.body);
 
     if (!applied.changed.length) {
       return send(res, page({
@@ -1688,12 +1807,47 @@ router.get('/cloudflare-sites/:id/delete', requireAuth, async (req, res) => {
  * EMPTY MEANS NOTHING WAS LEFT, which both callers test rather than
  * printing an empty list.
  */
+/* WHY IT FAILED, NOT MERELY THAT IT DID — 20 November.
+ *
+ * Edwin pressed "Finish removing" four times on
+ * the-san-antonio-plumber.1-1o.com and read the same two sentences each
+ * time:
+ *
+ *     The custom domain could not be taken off the project.
+ *     The Pages project could not be deleted.
+ *
+ * Both written from a boolean, with Cloudflare's own explanation sitting
+ * unread in the result. An hour went into logs that could not answer it
+ * either, because the log line records the booleans too.
+ *
+ *     A FAILURE THAT CANNOT SAY WHY IT FAILED TURNS A BUTTON INTO A
+ *     COIN TOSS.
+ *
+ * routes/staticBlogsRoute.js has printed `no — <reason>` for these same
+ * three calls since it was written. This is that, one screen over.
+ *
+ * TRUNCATED, because a wrangler failure is a page of output and this is a
+ * bullet in an alert box. Nothing is lost: the caller logs the whole of it.
+ *
+ * `error` OR `output` — the REST calls carry `error`, deleteProject carries
+ * wrangler's `output`, and a function that knew which was which would have
+ * to be told again every time a step changes shape. */
+function reasonFrom(step, label) {
+  const said = String((step && (step.error || step.output)) || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!said) return `${label} no reason given.`;
+
+  return `${label} ${said.length > 200 ? `${said.slice(0, 200)}…` : said}`;
+}
+
 function troubleWith(released, project) {
   const trouble = [];
 
   if (released && released.skipped) {
-    trouble.push('Its Cloudflare account could not be read, so nothing was '
-               + 'removed there.');
+    trouble.push(reasonFrom(released,
+      'Its Cloudflare account could not be read, so nothing was removed there.'));
 
     return trouble;
   }
@@ -1701,15 +1855,16 @@ function troubleWith(released, project) {
   if (!released) return trouble;
 
   if (released.detached && !released.detached.ok) {
-    trouble.push('The custom domain could not be taken off the project.');
+    trouble.push(reasonFrom(released.detached,
+      'The custom domain could not be taken off the project:'));
   }
 
   if (released.dns && !released.dns.ok) {
-    trouble.push('The DNS record could not be removed.');
+    trouble.push(reasonFrom(released.dns, 'The DNS record could not be removed:'));
   }
 
   if (project && !project.ok) {
-    trouble.push('The Pages project could not be deleted.');
+    trouble.push(reasonFrom(project, 'The Pages project could not be deleted:'));
   }
 
   return trouble;
@@ -1794,6 +1949,17 @@ async function removeFromCloudflare(site, { drop = true, requestId = '' } = {}) 
       domainDetached: Boolean(released.detached && released.detached.ok),
       dnsRemoved: Boolean(released.dns && released.dns.ok && released.dns.removed),
       projectDeleted: Boolean(project && project.ok),
+
+      /* AND WHY NOT, WHICH THIS LINE USED TO LEAVE OUT — 20 November.
+       *
+       * Three booleans is a log that can say a teardown failed and never
+       * what Cloudflare answered, so an hour went into reading it for a
+       * cause it never held. staticBlogsRoute.js logs `dnsError` for the
+       * same reason and has since it was written.
+       *
+       * EMPTY ON SUCCESS, so a clean teardown does not carry three empty
+       * strings' worth of noise into every log line. */
+      trouble: troubleWith(released, project).join(' | '),
     });
 
     /* AND WRITTEN DOWN, NOT ONLY LOGGED — 17 November.
@@ -1806,11 +1972,32 @@ async function removeFromCloudflare(site, { drop = true, requestId = '' } = {}) 
      *     A LOG IS WHAT HAPPENED. A FIELD IS WHAT IS STILL TRUE.
      *     Only the second one can answer a question asked later.
      *
-     * Computed from the same expressions as the log above rather than
-     * near them, so the two cannot describe different outcomes. */
+     * ⚠ `dns` ASKS A DIFFERENT QUESTION FROM THE LOG LINE ABOVE, AND THE
+     * FIRST VERSION OF THIS ASKED THE LOG'S — corrected 20 November.
+     *
+     * The log records what the call DID: `dnsRemoved` is true only when a
+     * record was found and deleted. This field records what is STILL TRUE:
+     * whether anything is pointing at the deleted site. removeDnsRecord()
+     * returns `{ ok: true, removed: false }` when there was no record to
+     * remove — a success, and it says so in its own header: "A MISSING
+     * RECORD IS A SUCCESS."
+     *
+     * Reading `removed` here made a clean teardown with nothing to clean
+     * record its DNS as UNRELEASED. The row then sat in "Deleted, but not
+     * finished" claiming the DNS record was still at Cloudflare, while the
+     * result page — which asks `dns.ok` — reported no DNS problem at all.
+     * Two screens, one teardown, disagreeing. Both of Edwin's screenshots
+     * on 20 November show it.
+     *
+     *     TWO QUESTIONS THAT SOUND ALIKE: "did we remove it" and "is it
+     *     gone". A RESERVATION IS OWED THE SECOND ONE.
+     *
+     * So this is deliberately NO LONGER the log's expression, which the
+     * note above used to insist on. The two answer different questions now
+     * and this comment is the record of why. */
     site.released = {
       domain: Boolean(released.detached && released.detached.ok),
-      dns: Boolean(released.dns && released.dns.ok && released.dns.removed),
+      dns: Boolean(released.dns && released.dns.ok),
       project: Boolean(project && project.ok),
       at: new Date(),
     };
@@ -1830,6 +2017,22 @@ async function removeFromCloudflare(site, { drop = true, requestId = '' } = {}) 
   if (!site.project) {
     site.released = { domain: true, dns: true, project: true, at: new Date() };
   }
+
+  /* AND THE HOSTNAME GOES BACK, HERE, WHERE `released` IS DECIDED.
+   *
+   * Writing the three facts down was only half of the 17 November fix.
+   * checkWant() reads them and says the name is free; `unique: true` on
+   * siteUrl reads nothing and refuses anyway — so a batch built site 4,
+   * charged for it, and could not create its row. See the header of
+   * utils/cloudflareSites/releasedHostname.js.
+   *
+   *     THE SAME TWO LINES THAT DECIDE THE NAME IS FREE MUST BE THE ONES
+   *     THAT FREE IT. Any gap between them is a window where the app and
+   *     its own database disagree, and the database wins.
+   *
+   * NOT SAVED HERE, like everything else in this function — both callers
+   * save, at different points, and one of them also sets `status`. */
+  releasedHostname.freeHostname(site);
 
   return { released, project };
 }
@@ -1896,7 +2099,7 @@ router.post('/cloudflare-sites/:id/finish-removing', requireAuth, async (req, re
 
     return send(res, page({
       title: freed ? 'Removed' : 'Still not clear',
-      body: `<h1 class="h2">${esc(site.siteUrl)}</h1>
+      body: `<h1 class="h2">${esc(releasedHostname.hostnameOf(site))}</h1>
 
              ${freed
                ? `<p class="lead">
@@ -2006,14 +2209,19 @@ router.post('/cloudflare-sites/:id/delete', requireAuth, async (req, res) => {
       requestId: req.id,
       userId: String(req.user._id),
       siteId: String(site._id),
-      domain: site.siteUrl,
+
+      /* READ THROUGH hostnameOf, BECAUSE BY HERE THE ROW MAY HAVE GIVEN THE
+       * NAME BACK. `site.siteUrl` is `released:<id>` on a clean teardown,
+       * and a delete log that records an id instead of the address it
+       * deleted is a log that cannot answer "when did that name go?". */
+      domain: releasedHostname.hostnameOf(site),
     });
 
     const trouble = troubleWith(released, project);
 
     return send(res, page({
       title: 'Deleted',
-      body: `<h1 class="h2">${esc(site.siteUrl)} is gone</h1>
+      body: `<h1 class="h2">${esc(releasedHostname.hostnameOf(site))} is gone</h1>
 
              ${trouble.length
                /* SAID OUT LOUD RATHER THAN LOGGED AND HIDDEN. Every one of
@@ -2074,3 +2282,15 @@ module.exports.checkWant = checkWant;
 module.exports.publishNow = publishNow;
 module.exports.whyNotEditable = whyNotEditable;
 module.exports.buildDirFor = buildDirFor;
+
+/* EXPORTED FOR THE REBUILD, WHICH NEEDS ALL FIVE FOLDERS AND NOT JUST ONE.
+ *
+ * buildDirFor() hands back `distDir` alone, which is all the publish path
+ * ever wanted. A Local Website Options re-render calls resetUserDirs(), and
+ * that takes the whole set — dist, assets, css, js, entry — so it has to
+ * call getUserDirs() itself and needs the root they hang off.
+ *
+ * THE ALTERNATIVE WAS path.join(__dirname, '..', '..', 'dist') IN THE OTHER
+ * FILE, which is the same path written twice: correct today, and silently
+ * building into a folder nothing deploys the day either file moves. */
+module.exports.baseDistDir = baseDistDir;

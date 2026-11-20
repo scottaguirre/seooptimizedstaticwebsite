@@ -201,6 +201,43 @@ const cloudflareSiteSchema = new mongoose.Schema({
   },
 
   /**
+   * The hostname this row USED to answer on, once it gave the name back.
+   *
+   * ⚠ THE FIELD ABOVE WAS ONLY HALF THE FIX, AND THE OTHER HALF FAILED IN
+   * FRONT OF A CUSTOMER — 20 November, site 4 of a batch of 7.
+   *
+   * On 17 November checkWant() was taught that a fully released row does not
+   * reserve its hostname. `unique: true` on siteUrl was not taught anything,
+   * and it is the one that actually refuses:
+   *
+   *     checkWant  →  "free"              (the row is excluded by $nor)
+   *     create()   →  E11000 duplicate    (the index sees every row)
+   *
+   * The build had already run and the credits were already spent, so the
+   * batch reported a site that was written, paid for and nowhere — under
+   * the code `raced`, which says two requests collided when nothing had.
+   *
+   *     A RULE ENFORCED IN TWO PLACES IS A RULE THAT WILL BE CHANGED IN
+   *     ONE OF THEM. The query learned the new rule; the index could not,
+   *     because an index cannot read a comment.
+   *
+   * SO THE NAME IS HANDED BACK INSTEAD OF ARGUED ABOUT. When a teardown
+   * releases all three, `siteUrl` becomes a marker that is not a hostname
+   * and the real one moves here. The index then has nothing to hold, and
+   * "the address is free to use again" is true rather than nearly true.
+   *
+   * THE ROW STILL EXISTS, which is the whole reason for this field rather
+   * than a delete. Its name, its publish count and its dates are the only
+   * record that the site was ever there, and three result pages print the
+   * hostname AFTER the teardown has run — they read this.
+   *
+   * EMPTY ON EVERY LIVE SITE, and on every removed row that left something
+   * behind at Cloudflare. Those still hold their hostname, exactly as
+   * `released` above describes, because something is still up there.
+   */
+  releasedUrl: { type: String, default: '', trim: true, lowercase: true },
+
+  /**
    * What this site is made of, kept so it can be rendered again.
    *
    * TWO FIELDS BECAUSE THEY ANSWER TWO QUESTIONS. `contentModel` is the

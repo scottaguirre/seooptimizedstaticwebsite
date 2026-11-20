@@ -399,12 +399,35 @@ async function ensureProject({ project, env, run = runWrangler, entry, creds }) 
  * waits for a confirmation that will never come, and the job sits there
  * until the timeout kills it. The confirmation happened on a web page.
  */
+/* WRANGLER'S OWN SENTENCE FOR A PROJECT THAT IS NOT THERE.
+ *
+ * THE SAME BARGAIN deployBlog() MAKES with `projectMissing`, and its
+ * comment states the terms: "If wrangler rewords it this goes quiet and the
+ * screen falls back to what it showed before." Here the fallback is
+ * REPORTING A FAILURE — the safe direction. A reworded message costs a
+ * hostname that stays reserved until somebody presses again, which is
+ * exactly where we were; the unsafe direction would be a pattern so loose
+ * it calls a permissions error a success and frees a name while the site is
+ * still serving. */
+const PROJECT_ABSENT = /project not found|does not exist|no project|could not find/i;
+
 async function deleteProject({ project, env, run = runWrangler, creds } = {}) {
   if (!project) return { ok: false, output: 'No project name.' };
 
   const result = await run(['pages', 'project', 'delete', project, '--yes'], { env });
+  const output = scrub(`${result.stdout}\n${result.stderr}`, creds);
 
-  return { ok: 0 === result.code, output: scrub(`${result.stdout}\n${result.stderr}`, creds) };
+  if (0 === result.code) return { ok: true, output };
+
+  /* ALREADY GONE IS DONE, for the reason detachDomain() gives at length:
+   * a teardown asking for a thing to not exist, told that it does not
+   * exist, has its answer. Wrangler exits non-zero either way, so unlike
+   * the REST calls there is no status to read — only what it said. */
+  if (PROJECT_ABSENT.test(output)) {
+    return { ok: true, gone: true, output };
+  }
+
+  return { ok: false, output };
 }
 
 /**
@@ -495,7 +518,26 @@ async function cfApi(pathAndQuery, { method = 'GET', body, fetchImpl = fetch, cr
         .map(e => `${e.message}${e.code ? ` [code: ${e.code}]` : ''}`)
         .join('; ');
 
-      return { ok: false, error: scrub(said || `Cloudflare answered ${response.status}.`, { token, account }) };
+      /* `status` IS CARRIED OUT, AND IT IS NOT DECORATION — 20 November.
+       *
+       * A DELETE that answers 404 means THE THING IS NOT THERE, which for a
+       * teardown is the outcome it was asking for. A 403 means the token
+       * may not touch it, which is a real failure. Flattened into one error
+       * string those two are indistinguishable — so detachDomain() reported
+       * "the custom domain could not be taken off the project" about a
+       * project somebody had already deleted by hand, and the hostname
+       * stayed reserved for ever behind a retry that could never win.
+       *
+       *     THE DIFFERENCE BETWEEN "GONE" AND "REFUSED" IS THE STATUS
+       *     CODE. Recovering it from the sentence afterwards is guessing.
+       *
+       * Additive, like `info` below: every existing caller reads `ok` and
+       * `error` and is unaffected. */
+      return {
+        ok: false,
+        status: response.status,
+        error: scrub(said || `Cloudflare answered ${response.status}.`, { token, account }),
+      };
     }
 
     /* `info` IS CLOUDFLARE'S result_info, AND IT IS WHY A COUNT CAN BE
@@ -792,11 +834,34 @@ async function pointDomainAtProject({
 async function detachDomain({ project, domain, fetchImpl = fetch, creds } = {}) {
   if (!project || !domain) return { ok: false, error: 'No project or domain.' };
 
-  return cfApi(
+  const out = await cfApi(
     `${accountPath(creds)}/pages/projects/${encodeURIComponent(project)}`
       + `/domains/${encodeURIComponent(domain)}`,
     { method: 'DELETE', fetchImpl, creds }
   );
+
+  /* A HOSTNAME THAT IS NOT ATTACHED IS A HOSTNAME THAT IS NOT ATTACHED —
+   * 20 November.
+   *
+   * removeDnsRecord() has said this since it was written: "A MISSING RECORD
+   * IS A SUCCESS. Somebody may have cleaned up by hand … Either way there
+   * is nothing to do and nothing to report as broken." The same is true of
+   * a custom domain on a project that no longer exists, and this function
+   * never learned it — so a project deleted in the Cloudflare dashboard
+   * made every retry report a failure, and the hostname stayed reserved.
+   *
+   *     IT IS THE 404 THAT MEANS THIS, NOT THE WORDING. A 403 is the
+   *     token refusing and stays a failure; a 500 is Cloudflare having a
+   *     bad morning and stays a failure. Only "it is not there" is done.
+   *
+   * `gone` RATHER THAN A BARE ok:true, so the caller can still tell "I
+   * detached it" from "there was nothing to detach" — the same shape
+   * removeDnsRecord() uses for `removed`. */
+  if (404 === out.status) {
+    return { ok: true, gone: true, note: 'There was nothing attached to detach.' };
+  }
+
+  return out;
 }
 
 /**

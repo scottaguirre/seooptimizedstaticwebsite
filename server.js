@@ -64,6 +64,7 @@ const staticBlogsRoute = require('./routes/staticBlogsRoute');
  * keep github as we have it right now. I don't want to replace it, and I
  * dont want to replace what we have with the blog cloudflares either." */
 const cloudflareSitesRoute = require('./routes/cloudflareSitesRoute');
+const csvBatchRoute = require('./routes/csvBatchRoute');
 
 // Every post ever published, across every site, with the page it links to —
 // and a CSV of it. Read-only, and built from the campaign records rather than
@@ -474,6 +475,7 @@ app.use('/', requireAuth, downloadZipRoute);
 app.use('/', requireAuth, exportWpThemeRoute);
 app.use('/', requireAuth, blogSitesRoute);    // /blog-sites — licence keys
 app.use('/', requireAuth, staticBlogsRoute);  // /static-blogs — Cloudflare blogs, planned here rather than in wp-admin
+app.use('/', requireAuth, csvBatchRoute);     // /batch-sites — a CSV of businesses -> one batch job
 app.use('/', requireAuth, cloudflareSitesRoute); // /cloudflare-sites — generated websites on a Cloudflare subdomain
 app.use('/', requireAuth, require('./routes/editSiteRoute')); // /edit-site — change the current build's words
 app.use('/', requireAuth, blogReportRoute);   // /blog-report(.csv) — every post, every site
@@ -604,6 +606,18 @@ const blogScheduler = require('./utils/blogScheduler');
  * chose it. */
 const { startCleanupScheduler } = require('./utils/cleanupScheduler');
 
+/* HOSTNAMES STILL HELD BY SITES THAT ARE ALREADY GONE — 20 November.
+ *
+ * From this deploy a clean delete hands its address back as it happens.
+ * Rows deleted BEFORE it do not, and each one refuses the next build that
+ * asks for its name — in the middle of a batch, after the credits are
+ * spent, under the code `raced`. One pass clears the backlog.
+ *
+ * A SWEEP RATHER THAN A SCRIPT SOMEBODY HAS TO REMEMBER. The second run
+ * finds nothing: the query cannot match a row the first run freed. */
+const releasedHostname = require('./utils/cloudflareSites/releasedHostname');
+const CloudflareSite = require('./models/CloudflareSite');
+
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on http://localhost:${PORT}`);
 
@@ -618,6 +632,16 @@ app.listen(PORT, () => {
      * in one list, which is the thing that would have made its absence
      * visible. */
     startCleanupScheduler();
+
+    /* AND THE ONE-OFF PASS, NOT AWAITED. Nothing on the request path waits
+     * for it: a site being built right now is not asking for a name a
+     * deleted row holds, or it would already have been refused. Logged
+     * either way, because a sweep with nothing to do and a sweep that never
+     * ran look identical from outside — the lesson the comment above this
+     * block was written after. */
+    releasedHostname.sweep(CloudflareSite, { log })
+      .then(out => log.info('cfSites.freeHostname.swept', out))
+      .catch(err => log.error('cfSites.freeHostname.swept', err, {}));
   };
 
   mongoose.connection.once('open', startWorkers);

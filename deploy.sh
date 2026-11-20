@@ -188,6 +188,11 @@ NODE_SUITES=( \
   test-site-store.js \
   test-safe-paragraph.js \
   test-editable-text.js \
+  test-local-options-text.js \
+  test-current-site.js \
+  test-csv-batch.js \
+  test-csv-batch-route.js \
+  test-released-hostname.js \
   test-edit-site.js \
   test-github-commit.js \
   test-github-publish.js \

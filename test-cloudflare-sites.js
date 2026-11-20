@@ -1065,6 +1065,225 @@ await test('A DEPLOY WITH NO ADDRESS IN IT KEEPS THE OLD ONE', async () => {
   assert.strictEqual(saved.lastDeployUrl, 'https://p.pages.dev');
 });
 
+/* ---------------------------------------------------------------------
+ * WHOSE BUILD IS IN THE FOLDER
+ *
+ * Edwin, 19 November, with seven sites live and no Edit button on any of
+ * them. The obvious repair was "Publish again" on each row. It would have
+ * published the WRONG SITE to six of the seven.
+ *
+ *     publishNow() reads buildDirFor(userId).
+ *     dist/user_<id> is ONE FOLDER PER USER.
+ *     THE ROW DECIDES WHERE. THE FOLDER DECIDES WHAT.
+ *
+ * Nothing had ever compared the two.
+ * ------------------------------------------------------------------- */
+
+/** A build folder whose pages say which site they were rendered for. */
+const builtFor = (host) => ({
+  ok: true,
+  count: 1,
+  bytes: 40,
+  files: {
+    'index.html': Buffer.from(
+      `<head><link rel="canonical" href="https://${host}/"></head>`),
+  },
+});
+
+await test('A FOLDER HOLDING ANOTHER SITE IS REFUSED BEFORE ANYTHING DEPLOYS', async () => {
+  /* THE SEVEN-SITE CASE, EXACTLY. The batch left site seven in the folder,
+   * so row one's button would have put site seven's pages on site one's
+   * domain — a complete, well-formed, correctly-certificated website about
+   * the wrong business, reported as a successful publish. */
+  install({
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'cold-air.u-sites.com',
+      project: 'p', status: 'live',
+    }],
+    read: builtFor('austin-solutions.1-1b.com'),
+  });
+
+  await call(handler('post', '/cloudflare-sites/:id/publish'), req({ params: { id: SITE_ID } }));
+
+  assert.strictEqual(db.deployCalls.length, 0,
+    'the wrong site was uploaded to this address');
+});
+
+await test('AND IT NAMES BOTH, BECAUSE "WRONG BUILD" IS NOT ACTIONABLE', async () => {
+  /* The person is looking at a list of seven near-identical rows. Which
+   * site is in the folder and which one they pressed are the two facts
+   * that turn this from a mystery into an instruction. */
+  install({
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'cold-air.u-sites.com',
+      project: 'p', status: 'live',
+    }],
+    read: builtFor('austin-solutions.1-1b.com'),
+  });
+
+  const out = await call(handler('post', '/cloudflare-sites/:id/publish'),
+    req({ params: { id: SITE_ID } }));
+
+  assert.match(out.html, /austin-solutions\.1-1b\.com/, 'it does not say what is in the folder');
+  assert.match(out.html, /cold-air\.u-sites\.com/, 'it does not say which site was pressed');
+
+  /* WHAT TO DO INSTEAD IS THE NEXT TWO TESTS, because the answer depends on
+   * whether this site has any words kept — and this one, like the six on
+   * Edwin's list, does not. */
+});
+
+await test('AND THE MATCHING BUILD GOES STRAIGHT THROUGH', async () => {
+  /* The edit rebuild renders the site's own stored words INTO this folder
+   * and then calls publishNow, so its bytes always match the row. That is
+   * the path this check must never get in the way of — it pays one regex
+   * on one file and proceeds. */
+  install({
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'cold-air.u-sites.com',
+      project: 'p', status: 'live',
+    }],
+    read: builtFor('cold-air.u-sites.com'),
+  });
+
+  await call(handler('post', '/cloudflare-sites/:id/publish'), req({ params: { id: SITE_ID } }));
+
+  assert.strictEqual(db.deployCalls.length, 1, 'a correct build was refused');
+});
+
+await test('AND A SITE WITH NO STORED WORDS IS NOT SENT TO A SCREEN IT HAS NOT GOT', async () => {
+  /* THE FIRST VERSION OF THIS MESSAGE WAS CIRCULAR. It told everybody to
+   * "open this website's Edit words screen and save" — right for a site
+   * that has one, useless for the six that do not. Those are exactly the
+   * sites somebody presses this button on: the button is what they reached
+   * for BECAUSE there was no Edit words screen.
+   *
+   *     ADVICE THAT ASSUMES THE THING THE READER CAME HERE
+   *     WITHOUT IS NOT ADVICE. IT IS THE PROBLEM, RESTATED. */
+  install({
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'cold-air.u-sites.com',
+      project: 'p', status: 'live',
+      /* No contentModel, no buildRecipe, editable unset — one of the six. */
+    }],
+    read: builtFor('austin-solutions.1-1b.com'),
+  });
+
+  const out = await call(handler('post', '/cloudflare-sites/:id/publish'),
+    req({ params: { id: SITE_ID } }));
+
+  assert.strictEqual(db.deployCalls.length, 0, 'the wrong site was still uploaded');
+
+  assert.match(out.html, /no stored words/,
+    'it does not say why this site cannot be rebuilt');
+  /* THE WHOLE SENTENCE, NOT THE WORD "wizard" — AND A MUTANT PROVED WHY.
+   * Removing the sentence entirely left this test green, because
+   * utils/appHeader.js ships a CSS COMMENT mentioning the wizard inside
+   * every page's <style>:
+   *
+   *     /* Below the wizard's own overlay at 9999, ... *''/
+   *
+   * So the bare word is in the HTML of every screen in the app, and
+   * matching it said nothing about this message at all.
+   *
+   *     A TEST THAT MATCHES A WORD THE PAGE ALWAYS CONTAINS
+   *     IS A TEST OF THE STYLESHEET. */
+  assert.match(out.html, /Build it again from the wizard/,
+    'it does not say what would actually work');
+
+  assert.ok(!/Edit words/.test(out.html),
+    'it still points at an Edit words screen this site does not have');
+});
+
+await test('AND A SITE THAT CAN BE EDITED IS STILL SENT THERE', async () => {
+  /* The other half, and the reason the message asks rather than assuming
+   * in either direction. For a site with its words kept, the edit screen IS
+   * the answer: saving rebuilds from the stored source into this very
+   * folder and publishes it. */
+  /* WRITTEN OUT RATHER THAN editableSite(), AND THE FIRST ATTEMPT PROVED
+   * WHY: that helper closes over `const EDITABLE`, declared four hundred
+   * lines below this point, so the call threw
+   *
+   *     Cannot access 'EDITABLE' before initialization
+   *
+   * The function hoists; the const it reads does not. It is the same trap
+   * generateDinamycForm.js carries a note about — HOISTING MAKES A `const`
+   * VISIBLE, NOT USABLE — met here from the other side. */
+  install({
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'cold-air.u-sites.com',
+      project: 'p', status: 'live', editable: true,
+      contentModel: { version: 1, pages: [] },
+      buildRecipe: { version: 1, body: {} },
+    }],
+    read: builtFor('austin-solutions.1-1b.com'),
+  });
+
+  const out = await call(handler('post', '/cloudflare-sites/:id/publish'),
+    req({ params: { id: SITE_ID } }));
+
+  assert.strictEqual(db.deployCalls.length, 0);
+  assert.match(out.html, /Edit words/, 'an editable site was not pointed at its edit screen');
+  assert.ok(!/no stored words/.test(out.html),
+    'a site whose words ARE stored was told they are not');
+});
+
+await test('AND THE TWO HOSTS ARE COMPARED WITHOUT CASE', async () => {
+  /* A MUTANT FOUND THIS. Every host in the tests above is lower case, so
+   * dropping the lowercasing changed nothing and the suite stayed green.
+   *
+   * THE TWO SIDES ARE NOT NORMALISED BY THE SAME CODE. `new URL().host`
+   * lowercases for free, so the canonical side is always lower; the row's
+   * siteUrl is whatever was stored. A capital letter in it would make every
+   * republish of that site look like somebody else's build — a guard that
+   * blocks the correct publish and permits nothing extra.
+   *
+   *     A COMPARISON BETWEEN A NORMALISED VALUE AND AN UNNORMALISED
+   *     ONE IS NOT A COMPARISON. IT IS A TEST OF WHERE THE DATA
+   *     HAPPENED TO COME FROM. */
+  install({
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'COLD-AIR.U-Sites.com',
+      project: 'p', status: 'live',
+    }],
+    read: builtFor('cold-air.u-sites.com'),
+  });
+
+  await call(handler('post', '/cloudflare-sites/:id/publish'), req({ params: { id: SITE_ID } }));
+
+  assert.strictEqual(db.deployCalls.length, 1,
+    'a capital letter in the stored address blocked a correct publish');
+});
+
+await test('AND A BUILD THAT DOES NOT SAY IS NOT A MISMATCH', async () => {
+  /* canonicalTag() returns '' when there is no usable domain — deliberately,
+   * because an empty canonical tells a crawler to canonicalise the page to
+   * nothing. So a build without one is a build this cannot judge.
+   *
+   *     A CHECK THAT CANNOT SEE THE ANSWER HAS NOT FOUND A MISMATCH.
+   *
+   * Refusing here would block correct publishes to prove a point — and
+   * every build made before this check existed is one of them. */
+  install({
+    accounts: [ACCOUNT],
+    sites: [{
+      _id: SITE_ID, user: USER, siteUrl: 'cold-air.u-sites.com',
+      project: 'p', status: 'live',
+    }],
+    read: { ok: true, count: 1, bytes: 12, files: { 'index.html': Buffer.from('<h1>hi</h1>') } },
+  });
+
+  await call(handler('post', '/cloudflare-sites/:id/publish'), req({ params: { id: SITE_ID } }));
+
+  assert.strictEqual(db.deployCalls.length, 1,
+    'a build with no canonical was treated as the wrong site');
+});
+
 await test('A REMOVED SITE IS NOT REPUBLISHED', async () => {
   /* Its project and DNS record are gone from Cloudflare. Deploying would
    * create a new project under the same name and leave the hostname
@@ -2312,8 +2531,30 @@ await test('THE DELETE WRITES DOWN WHAT IT MANAGED TO TAKE DOWN', async () => {
 
   assert.match(fn[0], /site\.released = \{[\s\S]*?domain: Boolean\(released\.detached && released\.detached\.ok\)/,
     'the detach result is not recorded');
-  assert.match(fn[0], /dns: Boolean\(released\.dns && released\.dns\.ok && released\.dns\.removed\)/,
+  /* ⚠ CHANGED 20 November, AND THE OLD ASSERTION WAS PINNING A BUG.
+   *
+   * It required `&& released.dns.removed`, which is what the LOG LINE asks:
+   * did this call delete a record. The reservation needs the other
+   * question — IS ANYTHING STILL POINTING AT THE DELETED SITE.
+   *
+   * removeDnsRecord() answers `{ ok: true, removed: false }` when there was
+   * no record to remove, and says in its own header that this is a success.
+   * So a clean teardown with nothing to clean recorded its DNS as
+   * UNRELEASED: the row sat in "Deleted, but not finished" claiming the
+   * record was still at Cloudflare, while the result page — which asks
+   * `dns.ok` — reported no DNS problem at all. Both of Edwin's screenshots
+   * on 20 November show the two screens disagreeing.
+   *
+   *     "DID WE REMOVE IT" AND "IS IT GONE" ARE DIFFERENT QUESTIONS.
+   *     A RESERVATION IS OWED THE SECOND ONE.
+   */
+  assert.match(fn[0], /dns: Boolean\(released\.dns && released\.dns\.ok\)/,
     'the DNS result is not recorded');
+
+  assert.ok(!/dns: Boolean\(released\.dns && released\.dns\.ok && released\.dns\.removed\)/.test(fn[0]),
+    'the reservation reads `removed` again, so a teardown with no record to remove '
+    + 'reserves the hostname for ever');
+
   assert.match(fn[0], /project: Boolean\(project && project\.ok\)/,
     'the project result is not recorded');
 
@@ -2326,6 +2567,53 @@ await test('THE DELETE WRITES DOWN WHAT IT MANAGED TO TAKE DOWN', async () => {
 
   assert.ok(!/\} else \{\s*\n\s*site\.released = \{ domain: true/.test(fn[0]),
     'the never-deployed case is an else on the teardown, so unticking the box frees the name');
+});
+
+await test('AND THE SCREEN SAYS WHY IT FAILED, NOT ONLY WHAT FAILED', async () => {
+  /* ⚠ 20 November. Edwin pressed "Finish removing" four times and read the
+   * same two sentences each time:
+   *
+   *     The custom domain could not be taken off the project.
+   *     The Pages project could not be deleted.
+   *
+   * Written from booleans, with Cloudflare's own explanation sitting
+   * unread in the result. An hour went into logs that could not answer it
+   * either, because the log line recorded the booleans too.
+   *
+   *     A FAILURE THAT CANNOT SAY WHY IT FAILED TURNS A BUTTON INTO A
+   *     COIN TOSS.
+   *
+   * routes/staticBlogsRoute.js has printed `no — <reason>` for these same
+   * three calls since it was written. */
+  const src = require('fs').readFileSync('./routes/cloudflareSitesRoute.js', 'utf8');
+
+  const fn = /function troubleWith\([\s\S]*?\n\}/.exec(src);
+
+  assert.ok(fn, 'troubleWith has been renamed or removed');
+
+  /* EVERY ONE OF THE THREE, not whichever was easiest. A sentence left
+   * reading from a boolean is the one failure nobody can diagnose. */
+  for (const step of ['detached', 'dns', 'project']) {
+    const branch = new RegExp(`${step}[\\s\\S]{0,120}?trouble\\.push\\(reasonFrom\\(`);
+
+    assert.match(fn[0], branch, `the ${step} failure is reported without its reason`);
+  }
+
+  assert.ok(!/trouble\.push\('The /.test(fn[0]),
+    'a failure sentence is still a bare string, so it cannot carry a reason');
+
+  /* AND IT READS BOTH SHAPES. The REST calls answer with `error`;
+   * deleteProject answers with wrangler's `output`. A reader that knew only
+   * one would be silent for exactly one of the three. */
+  const reason = /function reasonFrom\([\s\S]*?\n\}/.exec(src);
+
+  assert.ok(reason, 'reasonFrom has been renamed or removed');
+  assert.match(reason[0], /step\.error \|\| step\.output/,
+    'only one of the two result shapes is read, so one step reports no reason');
+
+  /* AND THE LOG CARRIES IT TOO, which is the half that cost the hour. */
+  assert.match(src, /trouble: troubleWith\(released, project\)/,
+    'the teardown log still records booleans and no reason');
 });
 
 await test('AND BOTH THE DELETE AND THE RETRY GO THROUGH IT', async () => {

@@ -1573,6 +1573,144 @@ test('AND NO PROJECT NAME IS NOT A WRANGLER CALL', async () => {
   });
 });
 
+section('ALREADY GONE IS DONE — 20 November');
+
+/* THE NIGHT THIS SECTION IS ABOUT.
+ *
+ * Edwin pressed "Finish removing" four times on
+ * the-san-antonio-plumber.1-1o.com and read the same two sentences each
+ * time: the custom domain could not be taken off the project, the Pages
+ * project could not be deleted. DNS was not among them, so the token
+ * worked and the zone was reachable.
+ *
+ * The project had been deleted by hand in the Cloudflare dashboard. Both
+ * calls answered "not there" and BOTH REPORTED A FAILURE, so the hostname
+ * stayed reserved for ever behind a retry that could never win.
+ *
+ *     removeDnsRecord() HAS SAID THE RIGHT THING SINCE IT WAS WRITTEN:
+ *     "A MISSING RECORD IS A SUCCESS." The other two never learned it.
+ *
+ * WHAT THESE TESTS GUARD IS THE LINE BETWEEN "GONE" AND "REFUSED", because
+ * the unsafe direction is the easy one to write: a check loose enough to
+ * read a permissions error as a success frees a hostname while the site is
+ * still serving on it.
+ */
+function statusFetch(status, said = 'Not found') {
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push({ url, init });
+
+    return {
+      ok: 200 === status,
+      status,
+      json: async () => (200 === status
+        ? { success: true, result: {} }
+        : { success: false, errors: [{ message: said, code: 8000007 }] }),
+    };
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+test('A CUSTOM DOMAIN ON A PROJECT THAT IS GONE IS DETACHED', async () => {
+  await withEnv(async () => {
+    const out = await cf.detachDomain({
+      project: 'the-san-antonio-plumber-1-1o-com',
+      domain: 'the-san-antonio-plumber.1-1o.com',
+      fetchImpl: statusFetch(404),
+      creds: CREDS,
+    });
+
+    assert.strictEqual(out.ok, true, 'a 404 is still reported as a failed detach');
+    assert.strictEqual(out.gone, true, 'nothing distinguishes "gone" from "detached by us"');
+  });
+});
+
+test('BUT A REFUSAL IS STILL A REFUSAL', async () => {
+  /* ⚠ THE DIRECTION THAT MUST NOT BE GOT WRONG. A 403 is the token lacking
+   * a permission — the project is there, the domain is attached, the site
+   * may still be serving. Treating it as "gone" frees the hostname for
+   * somebody else while it is live. */
+  for (const status of [400, 401, 403, 429, 500, 502]) {
+    const out = await cf.detachDomain({
+      project: 'p',
+      domain: 'd.example.com',
+      fetchImpl: statusFetch(status, 'Authentication error'),
+      creds: CREDS,
+    });
+
+    assert.strictEqual(out.ok, false, `${status} was treated as a successful detach`);
+    assert.ok(!out.gone, `${status} was treated as "already gone"`);
+  }
+});
+
+test('AND THE REASON SURVIVES, WHICH IS HOW THE SCREEN SAYS WHY', async () => {
+  const out = await cf.detachDomain({
+    project: 'p',
+    domain: 'd.example.com',
+    fetchImpl: statusFetch(403, 'Authentication error'),
+    creds: CREDS,
+  });
+
+  assert.match(String(out.error), /Authentication error/,
+    'the page would print "could not be taken off the project" and nothing else');
+});
+
+test('AND cfApi CARRIES THE STATUS, BECAUSE THE SENTENCE CANNOT', async () => {
+  /* The wording is Cloudflare's and changes when they like. The status code
+   * is the contract — and recovering "was that a 404?" from a message is
+   * the guess this whole section exists to avoid. */
+  const out = await cf.detachDomain({
+    project: 'p', domain: 'd.example.com', fetchImpl: statusFetch(403), creds: CREDS,
+  });
+
+  assert.strictEqual(out.status, 403);
+});
+
+test('A PAGES PROJECT THAT IS GONE IS DELETED', async () => {
+  await withEnv(async () => {
+    for (const said of [
+      'Project not found.',
+      'The specified project name does not exist',
+      'Error: could not find project p',
+    ]) {
+      const run = recorder({ code: 1, stdout: '', stderr: said });
+      const out = await cf.deleteProject({ project: 'p', env: {}, run });
+
+      assert.strictEqual(out.ok, true, `wrangler said "${said}" and it was read as a failure`);
+      assert.strictEqual(out.gone, true, `"${said}" was not recorded as already gone`);
+    }
+  });
+});
+
+test('AND ANY OTHER WRANGLER FAILURE IS STILL A FAILURE', async () => {
+  await withEnv(async () => {
+    for (const said of [
+      'Authentication error [code: 10000]',
+      'A request to the Cloudflare API failed.',
+      'You have exceeded the rate limit.',
+    ]) {
+      const run = recorder({ code: 1, stdout: '', stderr: said });
+      const out = await cf.deleteProject({ project: 'p', env: {}, run });
+
+      assert.strictEqual(out.ok, false, `"${said}" was read as a deleted project`);
+      assert.ok(!out.gone, `"${said}" was read as already gone`);
+    }
+  });
+});
+
+test('AND A CLEAN DELETE IS NOT REPORTED AS "ALREADY GONE"', async () => {
+  /* The two outcomes are both successes and the caller may one day want to
+   * tell them apart — as removeDnsRecord's `removed` already lets it. */
+  await withEnv(async () => {
+    const run = recorder({ code: 0, stdout: 'Successfully deleted\n', stderr: '' });
+    const out = await cf.deleteProject({ project: 'p', env: {}, run });
+
+    assert.strictEqual(out.ok, true);
+    assert.ok(!out.gone, 'a project we deleted is reported as one that was already missing');
+  });
+});
+
 section('THE DNS RECORD, WHICH IS THE HALF THAT WAS MISSING');
 
 /* 18 OCTOBER, AND THE SHAPE OF THE BUG IS WORTH KEEPING.

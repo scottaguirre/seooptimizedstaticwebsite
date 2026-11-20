@@ -253,10 +253,21 @@ const NAV_CF_BLOGS = 'Build Cloudflare Blogs';
  * house style is not a reason to rename somebody's product. */
 const NAV_CF_LOCAL = 'Cloudflare Local Automation';
 
+/* NAMED BY EDWIN, 20 November, verbatim: "it should say build a batch of 7
+ * sites".
+ *
+ * THE NUMBER IS IN THE NAME AND THE SCREEN DOES NOT ENFORCE IT. Seven is
+ * what he builds and what the pool holds today; the route accepts whatever
+ * the shorter of the domain list and the layout list allows, up to the
+ * enqueue route's ten. A row that said "up to ten" would describe a limit
+ * nobody has met instead of the job somebody is doing. */
+const NAV_CF_BATCH = 'Build a Batch of 7 Sites';
+
 module.exports = {
   pageTitle, APP_NAME, TITLE_SEPARATOR,
   TOOL_WP_BLOGS, TOOL_CF_BLOGS, TOOL_BLOG_REPORT, TOOL_CF_SITES,
   TOOL_MY_SITES, TOOL_MY_CF_SITES, TOOL_GH_SITES,
   NAV_BUILD_SITE, NAV_GH_SITES, NAV_CF_SITES, NAV_WP_BLOGS, NAV_CF_BLOGS,
   NAV_CF_LOCAL,
+  NAV_CF_BATCH,
 };

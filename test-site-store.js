@@ -224,15 +224,192 @@ await test('AND THE IMAGES SURVIVE dist BEING WIPED', async () => {
     'the image did not come back into the fresh build folder');
 });
 
-await test('A BUILD WITH NO content.json IS REFUSED, AND SAYS WHY', async () => {
+await test('A BUILD WITH NEITHER SOURCE FILE IS REFUSED, AND SAYS WHY', async () => {
   /* Without the words there is nothing to edit, so capturing would store a
-   * record promising an edit screen it cannot fill. */
+   * record promising an edit screen it cannot fill.
+   *
+   * IT NAMES BOTH FILES NOW. The message said "no content.json" while this
+   * same function was refusing every Local Website Options build — a mode
+   * that writes localoptions.json and never writes the other. A refusal
+   * naming one of the two formats sends whoever reads it looking for a file
+   * that was never going to be there. */
   redirectStore();
 
   const kept = await siteStore.capture(buildDir({ model: false }), SITE_ID);
 
   assert.strictEqual(kept.ok, false);
   assert.match(kept.error, /content\.json/);
+  assert.match(kept.error, /localoptions\.json/);
+});
+
+/* ===================================================================== */
+
+section('Local Website Options builds, which store a different shape');
+
+/* A build folder as runLocalOptions.js leaves one: localoptions.json in
+ * _src/, no content.json, no build.json. */
+function localOptionsDir({ mode = 'localoptions', assets = ['hero-1.webp'] } = {}) {
+  const dir = tempDir('localoptions-');
+
+  fs.writeFileSync(path.join(dir, 'index.html'), '<h1>hi</h1>');
+  fs.mkdirSync(path.join(dir, '_src'), { recursive: true });
+
+  fs.writeFileSync(
+    path.join(dir, siteStore.LOCAL_OPTIONS_PATH),
+    JSON.stringify({
+      mode,
+      version: 1,
+      business: { name: 'Acme Plumbing', city: 'Leander', state: 'TX' },
+      structure: 'orchard',
+      home: { title: 'Book a Plumber in Leander, TX | Acme Plumbing', meta: 'A sentence.' },
+      services: [{ slug: 'leak-repair', name: 'Leak Repair', title: 'T', meta: 'M' }],
+    }, null, 2)
+  );
+
+  for (const [i, name] of assets.entries()) {
+    fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'assets', name), Buffer.from([0x89, 0x50, i]));
+  }
+
+  return dir;
+}
+
+await test('THE FILENAME MATCHES THE ONE THE GENERATOR ACTUALLY WRITES', () => {
+  /* siteStore COPIES the path rather than importing it, because
+   * runLocalOptions.js is eleven hundred lines that reach the model, the
+   * credit ledger and Cloudflare, and this module is loaded by the publish
+   * path. One string is cheaper to assert than a dependency is to carry —
+   * but only while something asserts it.
+   *
+   *     A COPIED CONSTANT WITH NO TEST BEHIND IT IS A SECOND
+   *     SOURCE OF TRUTH WEARING A COMMENT. */
+  const { SOURCE_PATH } = require('./utils/runLocalOptions');
+
+  assert.strictEqual(siteStore.LOCAL_OPTIONS_PATH, SOURCE_PATH,
+    'siteStore is looking for a file the generator does not write');
+});
+
+await test('A LOCAL WEBSITE OPTIONS BUILD IS CAPTURED, WHICH IT NEVER WAS BEFORE', async () => {
+  /* THE BUG THIS WHOLE SECTION EXISTS FOR. capture() read content.json,
+   * found none, and returned ok:false — so `editable` was false and the
+   * "Edit words" button never drew on a single Local Website Options site,
+   * on either door, since the edit screen shipped. */
+  redirectStore();
+
+  const kept = await siteStore.capture(localOptionsDir(), SITE_ID);
+
+  assert.strictEqual(kept.ok, true, kept.error || 'the build was refused');
+  assert.strictEqual(kept.model.mode, 'localoptions');
+  assert.strictEqual(kept.model.home.title, 'Book a Plumber in Leander, TX | Acme Plumbing');
+});
+
+await test('AND ITS IMAGES ARE KEPT LIKE ANY OTHER BUILD\'S', async () => {
+  /* The reason the capture exists at all: a re-render writes a fresh
+   * dist/user_<id> and wrangler ships a directory. This mode's sites need
+   * that every bit as much as a generator build does — more, since the
+   * whole point of the edit is to republish. */
+  redirectStore();
+
+  const kept = await siteStore.capture(localOptionsDir(), SITE_ID);
+
+  assert.strictEqual(kept.assets.files, 1);
+  assert.ok(fs.existsSync(path.join(siteStore.dirFor(SITE_ID), 'assets', 'hero-1.webp')),
+    'the image was not copied into the store');
+});
+
+await test('AND NO RECIPE IS ASKED FOR, BECAUSE THE SOURCE IS BOTH HALVES', async () => {
+  /* A generator build needs model AND recipe — the words and the decisions
+   * — because a re-render from one without the other builds a site from
+   * half an answer. A Local Website Options source is the whole input to
+   * renderSite(), which is why generate.js stores the object it rendered
+   * from rather than a copy of its interesting parts.
+   *
+   * So a null recipe here is CORRECT, and the editable check must not read
+   * it as the "published before build.json existed" case. */
+  redirectStore();
+
+  const kept = await siteStore.capture(localOptionsDir(), SITE_ID);
+
+  assert.strictEqual(kept.recipe, null,
+    'a recipe was read for a mode that does not write one');
+});
+
+await test('AND A STALE build.json IN THE FOLDER IS NOT ADOPTED', async () => {
+  /* A MUTANT FOUND THE HOLE ABOVE. `readRecipe()` returns null when there
+   * is no build.json, so "do not call it" and "call it and get null" are
+   * the same assertion on an empty folder — the test passed either way and
+   * proved nothing.
+   *
+   * THIS IS THE CASE THAT TELLS THEM APART, AND IT IS NOT HYPOTHETICAL.
+   * dist/user_<id> is ONE FOLDER PER USER, reused by every build that user
+   * runs. A Rank Fast build leaves _src/build.json in it; the next Local
+   * Website Options build into the same folder would find it sitting there
+   * unless the wipe caught it.
+   *
+   *     ADOPTING IT WOULD STORE ANOTHER SITE'S DECISIONS AGAINST
+   *     THIS ONE, AND THE ROW WOULD LOOK COMPLETE WHILE SAYING
+   *     SOMETHING UNTRUE ABOUT A BUSINESS IT WAS NEVER ABOUT.
+   *
+   * The source is the whole input to renderSite(). A recipe beside it is
+   * not a bonus; it is a second answer to a question already settled. */
+  redirectStore();
+
+  const dir = localOptionsDir();
+  writeRecipe(dir, { global: { businessName: 'Somebody Else' }, pages: {} });
+
+  assert.ok(readRecipe(dir), 'the fixture did not actually leave a build.json behind');
+
+  const kept = await siteStore.capture(dir, SITE_ID);
+
+  assert.strictEqual(kept.ok, true);
+  assert.strictEqual(kept.recipe, null,
+    'a build.json left by an earlier build was stored against this site');
+});
+
+await test('A FILE AT THAT PATH HOLDING SOMETHING ELSE IS NOT A SOURCE', async () => {
+  /* IT CHECKS THE MODE, NOT THE PATH. Treating whatever sits at that
+   * filename as a Local Website Options source would hand renderSite() an
+   * object it has never seen — and the first sign would be a re-render
+   * throwing, long after the publish that stored it. */
+  redirectStore();
+
+  const kept = await siteStore.capture(localOptionsDir({ mode: 'rankfast' }), SITE_ID);
+
+  assert.strictEqual(kept.ok, false,
+    'a file with the wrong mode was captured as a localoptions source');
+});
+
+await test('AND content.json STILL WINS WHEN A BUILD SOMEHOW HAS BOTH', async () => {
+  /* No build writes both today. But the fallback is an OR, and an OR that
+   * ran the other way round would quietly re-point every generator site at
+   * a renderer that cannot draw it. The order is the guarantee. */
+  redirectStore();
+
+  const dir = buildDir();
+  fs.mkdirSync(path.join(dir, '_src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, siteStore.LOCAL_OPTIONS_PATH),
+    JSON.stringify({ mode: 'localoptions', version: 1 }));
+
+  const kept = await siteStore.capture(dir, SITE_ID);
+
+  assert.strictEqual(kept.ok, true);
+  assert.notStrictEqual(kept.model.mode, 'localoptions',
+    'a generator build was captured as a Local Website Options source');
+  assert.ok(kept.recipe, 'the generator build lost its recipe');
+});
+
+await test('isLocalOptions() ANSWERS FROM THE DATA AND REFUSES EVERYTHING ELSE', () => {
+  /* ONE READING, BECAUSE THERE ARE THREE CALLERS — capture, the route's
+   * editable check, and the rebuild's choice of renderer. The string is
+   * easy to retype from memory in a fourth place, which is how one of them
+   * ends up asking it of the wrong object and being quietly always false. */
+  assert.strictEqual(siteStore.isLocalOptions({ mode: 'localoptions' }), true);
+
+  for (const not of [null, undefined, {}, { mode: 'rankfast' }, { mode: '' },
+    'localoptions', 0, [], { Mode: 'localoptions' }]) {
+    assert.strictEqual(siteStore.isLocalOptions(not), false,
+      `${JSON.stringify(not)} was read as a Local Website Options source`);
+  }
 });
 
 await test('BUT A MISSING RECIPE IS NOT FATAL — IT IS JUST NOT EDITABLE', async () => {

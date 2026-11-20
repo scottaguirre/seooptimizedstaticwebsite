@@ -49,7 +49,7 @@ const {
    * because a navigation label and a page title answer different questions
    * — see the note beside these in utils/pageTitle.js. */
   NAV_BUILD_SITE, NAV_GH_SITES, NAV_CF_SITES, NAV_WP_BLOGS, NAV_CF_BLOGS,
-  NAV_CF_LOCAL,
+  NAV_CF_LOCAL, NAV_CF_BATCH,
 } = require('./pageTitle');
 
 /**
@@ -524,6 +524,19 @@ function appSidebar(current = '') {
      * they land in My Cloudflare Websites with the rest — Edwin, the same
      * afternoon: one list, one place to look. */
     { group: 'Websites', href: '/local-automation', icon: 'bi-stars', label: NAV_CF_LOCAL },
+
+    /* ADDED 20 November, AND ADDED HERE AT THE SAME TIME AS THE ROUTE.
+     *
+     * This list carries a warning a few rows up about a screen that shipped
+     * with nothing linking to it, reachable only by typing its URL — and
+     * the edit screen then did it again. A door whose whole purpose is to
+     * save somebody seven trips through a form is worth nothing if they
+     * cannot find it.
+     *
+     * BESIDE THE OTHER TWO CLOUDFLARE ROWS, because it builds the same
+     * product by a third route: a form once, a form seven times, or a
+     * file. */
+    { group: 'Websites', href: '/batch-sites', icon: 'bi-filetype-csv', label: NAV_CF_BATCH },
 
     /* ADDED 23 October, on Edwin's instruction, and HERE rather than at the
      * end because the column reads as a sequence: build a site, find the

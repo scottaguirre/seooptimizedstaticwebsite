@@ -83,6 +83,53 @@ function storeRoot() {
 const ASSETS = 'assets';
 
 /**
+ * Where a Local Website Options build keeps its words.
+ *
+ * THE SECOND SHAPE, AND IT IS NOT A SECOND content.json. runLocalOptions.js
+ * says why it refuses that filename: utils/contentModel.js owns it, it is
+ * the WordPress exporter's format, and writing a different shape to the same
+ * path would be a file that lies about what it describes.
+ *
+ * WHICH IS WHY EVERY LOCAL WEBSITE OPTIONS SITE HAS BEEN UNEDITABLE SINCE
+ * THE EDIT SCREEN SHIPPED. capture() read content.json, found none, and
+ * returned `ok: false` — so `editable` was false, the button never drew, and
+ * nothing anywhere said why. Seven sites went live on 18 November before
+ * anybody noticed, and the screen that explains it can only be reached by
+ * typing its URL.
+ *
+ *     A FUNCTION THAT HANDLES ONE OF TWO FORMATS AND REPORTS
+ *     "NO CONTENT" FOR THE OTHER IS NOT MISSING A FEATURE.
+ *     IT IS WRONG ABOUT WHAT IT WAS GIVEN.
+ *
+ * COPIED, NOT IMPORTED, AND test-site-store.js HOLDS THE TWO TOGETHER.
+ * runLocalOptions.js exports SOURCE_PATH, but it is the generator: eleven
+ * hundred lines that reach the model, the credit ledger and Cloudflare.
+ * This module is required by the publish path and by tests that have no
+ * business loading any of that. One string is cheaper to assert than a
+ * dependency is to carry.
+ */
+const LOCAL_OPTIONS_PATH = path.join('_src', 'localoptions.json');
+
+/**
+ * Whether a stored model is a Local Website Options source.
+ *
+ * ONE READING, BECAUSE THERE ARE THREE CALLERS. capture() decides whether it
+ * found something usable, the route decides whether to draw the button, and
+ * the rebuild decides which renderer to run. whyNotEditable() already carries
+ * the note about what two readings of the same fields cost — a screen that
+ * offers a button the handler behind it refuses — and this is the same risk
+ * one layer down.
+ *
+ * IT ASKS THE DATA, NOT A COLUMN BESIDE IT. `sourceOf()` stamps
+ * `mode: 'localoptions'` into the file itself, so the stored words say what
+ * they are. A field on the row would be a second place for the same fact,
+ * set at capture time and wrong for every site captured before it existed.
+ */
+function isLocalOptions(model) {
+  return Boolean(model) && 'localoptions' === model.mode;
+}
+
+/**
  * Where one site's kept files live.
  *
  * THE ID IS CHECKED, NOT INTERPOLATED. It is a Mongo ObjectId today and
@@ -133,29 +180,71 @@ async function copyFlat(from, to) {
 }
 
 /**
+ * Read a Local Website Options build's stored source, or null.
+ *
+ * SAME FAILURE SHAPE AS CM.readModel() — null for absent, null for
+ * unreadable, and it says which on the way past. The caller cannot act
+ * differently on the two: a build with no source and a build with a source
+ * nobody can parse are both builds that cannot be re-rendered.
+ *
+ * AND IT CHECKS THE MODE RATHER THAN TRUSTING THE PATH. A file at that name
+ * holding something else is not a Local Website Options source, and treating
+ * it as one would hand renderSite() an object it has never seen.
+ */
+function readLocalOptions(distDir) {
+  try {
+    const target = path.join(distDir, LOCAL_OPTIONS_PATH);
+
+    if (!fs.existsSync(target)) return null;
+
+    const parsed = JSON.parse(fs.readFileSync(target, 'utf8'));
+
+    return isLocalOptions(parsed) ? parsed : null;
+  } catch (err) {
+    console.error('⚠️ Could not read localoptions.json:', err.message);
+    return null;
+  }
+}
+
+/**
  * Keep what this build needs to be rendered again.
  *
  * @returns {{ok: true, model, recipe, assets:{files,bytes,skipped}}}
  *        | {{ok: false, error}}
  *
  * THE MODEL IS REQUIRED AND THE REST IS NOT, which is the one judgement in
- * this function. Without content.json there is nothing to edit, so capturing
- * would store a record that promises an edit screen it cannot fill. Without
+ * this function. Without words there is nothing to edit, so capturing would
+ * store a record that promises an edit screen it cannot fill. Without
  * build.json or the images, an edit regenerates — expensive, not broken.
+ *
+ * TWO FORMATS, AND THE SECOND ONE NEEDS NO RECIPE. For a generator build the
+ * model is the words and the recipe is the decisions, and a re-render from
+ * one without the other builds a site from half an answer. A Local Website
+ * Options source is BOTH: `renderSite(stored)` is the whole re-render, which
+ * is why generate.js stores the same object it rendered from rather than a
+ * copy of its interesting parts. So `recipe` stays null for one and that is
+ * not a gap — see isLocalOptions() above, and the editable check in
+ * routes/cloudflareSitesRoute.js which asks this module rather than counting
+ * fields itself.
  */
 async function capture(distDir, siteId) {
-  const model = CM.readModel(distDir);
+  const model = CM.readModel(distDir) || readLocalOptions(distDir);
 
   if (!model) {
     return {
       ok: false,
-      error: 'That build has no content.json, so it cannot be edited later. '
-           + 'It was published; it just cannot be re-rendered without '
-           + 'generating the words again.',
+      error: 'That build has no content.json and no localoptions.json, so it '
+           + 'cannot be edited later. It was published; it just cannot be '
+           + 're-rendered without generating the words again.',
     };
   }
 
-  const recipe = readRecipe(distDir);
+  /* NOT ASKED FOR AT ALL ON THE SECOND PATH, rather than asked for and
+   * ignored. readRecipe() reads _src/build.json, which this mode does not
+   * write; calling it would log a miss on every Local Website Options
+   * publish and teach whoever read the log to expect a file that is not
+   * coming. */
+  const recipe = isLocalOptions(model) ? null : readRecipe(distDir);
 
   let assets = { files: 0, bytes: 0, skipped: [] };
 
@@ -254,4 +343,10 @@ async function sizeOf(siteId) {
 module.exports = {
   capture, restoreAssets, forget, sizeOf, dirFor, copyFlat, storeRoot,
   DEFAULT_ROOT, ASSETS,
+
+  /* EXPORTED SO NOBODY WRITES `model.mode === 'localoptions'` AGAIN.
+   * Three callers ask this question and the string is easy to type from
+   * memory in a fourth place — which is how one of them ends up asking it
+   * of `site.mode` or `recipe.mode` and being quietly always false. */
+  isLocalOptions, readLocalOptions, LOCAL_OPTIONS_PATH,
 };

@@ -54,7 +54,7 @@ const {
   PAGE_TITLES,
 } = require('../shape');
 
-const { CSS_PATH } = require('../theme');
+const { CSS_PATH, FAVICON_PATH } = require('../theme');
 const { SOCIAL, initials, addressLine, addressQuery } = require('../common');
 
 /* HARBOR'S OWN IDS.
@@ -419,7 +419,8 @@ function document({
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${esc(canonical)}">
-<link rel="stylesheet" href="${assetTo(CSS_PATH, depth)}">${verify}${head}${ld}
+<link rel="stylesheet" href="${assetTo(CSS_PATH, depth)}">
+<link rel="icon" href="${assetTo(FAVICON_PATH, depth)}" type="image/png">${verify}${head}${ld}
 </head>
 <body>
 ${body}

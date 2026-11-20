@@ -48,13 +48,26 @@
 const editableText = require('./cloudflareSites/editableText');
 
 /**
- * @param {object}   model  a parsed content.json
+ * @param {object}   model  a parsed content.json, OR a localoptions source
  * @param {function} esc    the caller's HTML escaper, so the two screens
  *                          cannot escape differently
+ * @param {function} [collect]  which reader to ask — editableText.collect by
+ *                              default, localOptionsText.collect for a Local
+ *                              Website Options site
  * @returns {string} markup for every editable block, grouped by page
+ *
+ * TWO READERS, ONE FORM, AND THE READER IS AN ARGUMENT RATHER THAN A BRANCH.
+ *
+ * The blocks are the same shape whichever reader built them — that is the
+ * whole contract between this file and the two of them — so nothing below
+ * this line needs to know which format it is drawing. A branch in here would
+ * be a third place that has to learn about every future format.
+ *
+ *     A FUNCTION THAT TAKES ITS SOURCE OF DATA AS AN ARGUMENT
+ *     DOES NOT NEED TO KNOW HOW MANY SOURCES THERE ARE.
  */
-function renderSections(model, esc) {
-  const blocks = editableText.collect(model);
+function renderSections(model, esc, collect = editableText.collect) {
+  const blocks = collect(model);
 
   /* GROUPED BY PAGE, in the model's own order, because that is the order
    * the site reads in and the only way somebody finds the sentence they
@@ -77,9 +90,15 @@ function renderSections(model, esc) {
       <div class="mb-4">
         <div class="small text-white-50 mb-1">${esc(block.sectionLabel)}</div>
 
+        ${/* THE LABEL IS THE BLOCK'S IF IT HAS ONE. Every block the
+              generator produces is a section with a heading, so "Heading"
+              was the only word needed. A Local Website Options site also
+              offers the page's SEARCH TITLE, which sits in the same slot
+              and is emphatically not a heading — calling it one would
+              invite somebody to write their H2 into the <title>. */''}
         ${block.headingField ? `
           <label class="form-label small text-white-50 mb-1"
-                 for="${esc(block.headingField)}">Heading</label>
+                 for="${esc(block.headingField)}">${esc(block.headingLabel || 'Heading')}</label>
           <input class="form-control mb-2" type="text"
                  id="${esc(block.headingField)}"
                  name="${esc(block.headingField)}"
@@ -104,9 +123,28 @@ function renderSections(model, esc) {
               claim is removed — no add button and no delete button,
               because the boxes already are both. */''}
         ${(() => {
+          /* THE NAME THE READER GAVE IT, OR THE ONE THIS FILE WOULD DERIVE.
+           *
+           * editableText's paragraphs are always a contiguous array, so
+           * `p::page::section::i` can be computed from the index and always
+           * was. A localoptions block can be ONE STRING PULLED FROM A NAMED
+           * KEY — a divider line, the services lede, a meta description —
+           * so it carries its own names.
+           *
+           * COMPUTING THEM HERE REGARDLESS WOULD NOT LOOK BROKEN. The box
+           * would draw, the owner would type, the save would post
+           * `p::index::seo::0`, and apply() would reject a name it never
+           * offered — one line in `rejected` and nothing on the screen that
+           * says the description was not saved.
+           *
+           *     A FIELD NAME GUESSED BY THE FORM IS A GUESS ABOUT
+           *     THE READER'S PRIVATE BUSINESS. */
+          const nameAt = (i) => (block.paragraphFields && block.paragraphFields[i])
+            || editableText.fieldName(block.pageSlug, block.sectionKey, i);
+
           const boxes = block.paragraphs.map((text, i) => `
             <textarea class="form-control mb-2 cf-edit"
-                      name="${esc(editableText.fieldName(block.pageSlug, block.sectionKey, i))}"
+                      name="${esc(nameAt(i))}"
                       rows="4" spellcheck="true">${esc(text)}</textarea>`);
 
           if (!block.trustPoints) return boxes.join('');
